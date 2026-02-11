@@ -1,0 +1,29 @@
+{
+  "name": "@neweast/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "lint": "node ../../tools/lint.js src test scripts",
+    "build": "node ../../tools/build-api.js",
+    "test": "node --test test/**/*.test.js",
+    "smoke": "node -e \"console.log('api smoke is validated by workspace smoke chain')\"",
+    "migrate": "node scripts/migrate-baseline.js",
+    "start": "node src/main.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.1.13",
+    "@nestjs/core": "11.1.13",
+    "@nestjs/platform-express": "11.1.13",
+    "ioredis": "5.9.2",
+    "mysql2": "^3.17.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "typeorm": "^0.3.28"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "11.1.13",
+    "@types/supertest": "6.0.3",
+    "supertest": "7.2.2"
+  }
+}

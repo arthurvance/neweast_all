@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/nx.json",
+  "npmScope": "neweast",
+  "workspaceLayout": {
+    "appsDir": "apps",
+    "libsDir": "libs"
+  },
+  "targetDefaults": {
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "build": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^test"]
+    },
+    "smoke": {
+      "dependsOn": ["build"]
+    }
+  },
+  "projects": {
+    "api": {
+      "root": "apps/api"
+    },
+    "web": {
+      "root": "apps/web"
+    }
+  }
+}

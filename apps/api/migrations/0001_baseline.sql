@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  version VARCHAR(255) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  executed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_schema_migrations_version (version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

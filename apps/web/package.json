@@ -1,0 +1,24 @@
+{
+  "name": "@neweast/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "lint": "node ../../tools/lint.js src test",
+    "build": "vite build --config vite.config.js",
+    "test": "node --test test/**/*.test.js",
+    "smoke": "node -e \"console.log('web smoke is validated by workspace smoke chain')\"",
+    "dev": "vite --host 0.0.0.0 --port 4173 --config vite.config.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.13",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.3",
+    "vite": "7.3.1"
+  }
+}

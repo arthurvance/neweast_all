@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/nx-project",
+  "name": "web",
+  "projectType": "application",
+  "root": "apps/web",
+  "sourceRoot": "apps/web/src",
+  "targets": {
+    "lint": {
+      "command": "pnpm --dir apps/web run lint"
+    },
+    "build": {
+      "command": "pnpm --dir apps/web run build"
+    },
+    "test": {
+      "command": "pnpm --dir apps/web run test"
+    },
+    "smoke": {
+      "command": "pnpm --dir apps/web run smoke"
+    }
+  },
+  "tags": ["scope:frontend", "type:app"]
+}

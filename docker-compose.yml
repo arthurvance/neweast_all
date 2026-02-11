@@ -1,0 +1,86 @@
+name: neweast-local
+
+services:
+  mysql:
+    image: mysql:8.4
+    # 使用 mysql_native_password 是为了兼容当前基线中轻量级离线 MySQL 探针；
+    # 后续切换到官方驱动（mysql2/TypeORM）后可升级为 caching_sha2_password。
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    environment:
+      MYSQL_DATABASE: neweast
+      MYSQL_USER: neweast
+      MYSQL_PASSWORD: neweast
+      MYSQL_ROOT_PASSWORD: rootpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: neweast
+      DB_PASSWORD: neweast
+      DB_NAME: neweast
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ALLOW_MOCK_BACKENDS: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 4173
+      API_BASE_URL: http://api:3000
+    ports:
+      - "4173:4173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql_data:

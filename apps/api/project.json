@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/nx-project",
+  "name": "api",
+  "projectType": "application",
+  "root": "apps/api",
+  "sourceRoot": "apps/api/src",
+  "targets": {
+    "lint": {
+      "command": "pnpm --dir apps/api run lint"
+    },
+    "build": {
+      "command": "pnpm --dir apps/api run build"
+    },
+    "test": {
+      "command": "pnpm --dir apps/api run test"
+    },
+    "smoke": {
+      "command": "pnpm --dir apps/api run smoke"
+    }
+  },
+  "tags": ["scope:backend", "type:app"]
+}

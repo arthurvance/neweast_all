@@ -1,0 +1,66 @@
+const { AuthProblemError, createAuthService } = require('./auth.service');
+
+const authPing = (requestId) => ({
+  module: 'auth',
+  status: 'ready',
+  request_id: requestId
+});
+
+const extractBearerToken = (authorization) => {
+  if (typeof authorization !== 'string') {
+    throw new AuthProblemError({
+      status: 401,
+      title: 'Unauthorized',
+      detail: '当前会话无效，请重新登录',
+      errorCode: 'AUTH-401-INVALID-ACCESS'
+    });
+  }
+
+  const [type, rawToken] = authorization.split(' ');
+  if (type !== 'Bearer' || !rawToken) {
+    throw new AuthProblemError({
+      status: 401,
+      title: 'Unauthorized',
+      detail: '当前会话无效，请重新登录',
+      errorCode: 'AUTH-401-INVALID-ACCESS'
+    });
+  }
+
+  return rawToken;
+};
+
+const createAuthHandlers = (authService = createAuthService()) => ({
+  login: ({ requestId, body }) =>
+    authService.login({
+      requestId,
+      phone: body.phone,
+      password: body.password
+    }),
+
+  refresh: ({ requestId, body }) =>
+    authService.refresh({
+      requestId,
+      refreshToken: body.refresh_token
+    }),
+
+  logout: ({ requestId, authorization }) =>
+    authService.logout({
+      requestId,
+      accessToken: extractBearerToken(authorization)
+    }),
+
+  changePassword: ({ requestId, authorization, body }) =>
+    authService.changePassword({
+      requestId,
+      accessToken: extractBearerToken(authorization),
+      currentPassword: body.current_password,
+      newPassword: body.new_password
+    })
+});
+
+module.exports = {
+  AuthProblemError,
+  authPing,
+  createAuthHandlers,
+  extractBearerToken
+};
