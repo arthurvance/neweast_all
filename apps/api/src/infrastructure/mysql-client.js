@@ -10,8 +10,8 @@ const connectMySql = async ({ host, port, user, password, database, connectTimeo
     connectTimeout: connectTimeoutMs
   });
 
-  const query = async (sql) => {
-    const [results] = await connection.execute(sql);
+  const query = async (sql, params = []) => {
+    const [results] = await connection.execute(sql, params);
     return results;
   };
 
@@ -19,13 +19,56 @@ const connectMySql = async ({ host, port, user, password, database, connectTimeo
     await connection.ping();
   };
 
-  const close = () => {
-    connection.end();
+  const close = async () => {
+    let timer = null;
+    try {
+      await Promise.race([
+        connection.end(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('mysql close timeout')), 3000);
+        })
+      ]);
+    } catch (_error) {
+      if (typeof connection.destroy === 'function') {
+        connection.destroy();
+      }
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
+
+  const inTransaction = async (work) => {
+    if (typeof work !== 'function') {
+      throw new Error('inTransaction requires a callback');
+    }
+
+    await connection.beginTransaction();
+    const tx = {
+      query: async (sql, params = []) => {
+        const [results] = await connection.execute(sql, params);
+        return results;
+      }
+    };
+
+    try {
+      const result = await work(tx);
+      await connection.commit();
+      return result;
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch (_rollbackError) {
+      }
+      throw error;
+    }
   };
 
   return {
     query,
     ping,
+    inTransaction,
     close
   };
 };

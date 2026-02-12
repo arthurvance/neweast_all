@@ -31,6 +31,16 @@ const loadProject = (name) => {
   };
 };
 
+const normalizeExitStatus = (status, signal) => {
+  if (typeof status === 'number') {
+    return status;
+  }
+  if (typeof signal === 'string' && signal.length > 0) {
+    return 1;
+  }
+  return 1;
+};
+
 const runCommand = (command, label) => {
   console.log(`\n> ${label}`);
   const result = spawnSync('zsh', ['-lc', command], {
@@ -38,7 +48,7 @@ const runCommand = (command, label) => {
     stdio: 'inherit',
     env: process.env
   });
-  return result.status || 0;
+  return normalizeExitStatus(result.status, result.signal);
 };
 
 const args = process.argv.slice(2);
@@ -78,8 +88,30 @@ if (projectNames.length === 0) {
   process.exit(1);
 }
 
+const shouldBootstrapTestDependencies =
+  target === 'test' &&
+  projectNames.includes('api') &&
+  String(process.env.NX_SKIP_TEST_DEPENDENCY_BOOTSTRAP || 'false').toLowerCase() !== 'true';
+
 let failed = false;
+if (target === 'smoke' && !selectedProject) {
+  process.env.SMOKE_REQUIRE_CHROME_EVIDENCE_NOT_BEFORE_MS = String(Date.now());
+}
+
+if (shouldBootstrapTestDependencies) {
+  const bootstrapStatus = runCommand(
+    'docker compose up -d mysql redis',
+    'nx test dependency bootstrap (docker compose up -d mysql redis)'
+  );
+  if (bootstrapStatus !== 0) {
+    failed = true;
+  }
+}
+
 for (const projectName of projectNames) {
+  if (failed) {
+    break;
+  }
   const project = loadProject(projectName);
   if (!project) {
     console.error(`Missing project.json for project: ${projectName}`);

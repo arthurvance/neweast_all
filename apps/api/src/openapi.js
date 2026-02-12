@@ -1,3 +1,26 @@
+const RATE_LIMIT_RESPONSE_HEADERS = {
+  'Retry-After': {
+    description: 'Seconds until this route can be retried',
+    schema: { type: 'integer', minimum: 1 }
+  },
+  'X-RateLimit-Limit': {
+    description: 'Allowed requests in the current window',
+    schema: { type: 'integer', minimum: 1 }
+  },
+  'X-RateLimit-Remaining': {
+    description: 'Remaining requests in the current window',
+    schema: { type: 'integer', minimum: 0 }
+  },
+  'X-RateLimit-Reset': {
+    description: 'Seconds until the current limit window resets',
+    schema: { type: 'integer', minimum: 1 }
+  },
+  'X-RateLimit-Policy': {
+    description: 'Applied limit policy in limit;w=window format',
+    schema: { type: 'string' }
+  }
+};
+
 const buildOpenApiSpec = () => ({
   openapi: '3.1.0',
   info: {
@@ -20,7 +43,17 @@ const buildOpenApiSpec = () => ({
                   required: ['ok', 'dependencies', 'request_id'],
                   properties: {
                     ok: { type: 'boolean' },
-                    request_id: { type: 'string' }
+                    request_id: { type: 'string' },
+                    dependencies: {
+                      type: 'object',
+                      additionalProperties: {
+                        type: 'object',
+                        properties: {
+                          ok: { type: 'boolean' },
+                          latency_ms: { type: 'number' }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -67,6 +100,46 @@ const buildOpenApiSpec = () => ({
               }
             }
           },
+          400: {
+            description: 'Invalid login payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
           401: {
             description: 'Unified login failure semantics',
             content: {
@@ -80,6 +153,246 @@ const buildOpenApiSpec = () => ({
                       status: 401,
                       detail: '手机号或密码错误',
                       error_code: 'AUTH-401-LOGIN-FAILED',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          429: {
+            description: 'Per-phone action rate limit exceeded',
+            headers: RATE_LIMIT_RESPONSE_HEADERS,
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  rate_limited: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Too Many Requests',
+                      status: 429,
+                      detail: '请求过于频繁，请稍后重试',
+                      error_code: 'AUTH-429-RATE-LIMITED',
+                      rate_limit_action: 'password_login',
+                      retry_after_seconds: 32,
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/otp/send': {
+      post: {
+        summary: 'Send OTP code for phone login',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/OtpSendRequest' },
+              examples: {
+                send_otp: {
+                  value: {
+                    phone: '13800000000'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'OTP accepted and server-side resend hint returned',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/OtpSendResponse' },
+                examples: {
+                  otp_sent: {
+                    summary: 'OTP successfully sent',
+                    value: {
+                      sent: true,
+                      resend_after_seconds: 60,
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid send payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          429: {
+            description: 'OTP send rate limit exceeded',
+            headers: RATE_LIMIT_RESPONSE_HEADERS,
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  otp_send_rate_limited: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Too Many Requests',
+                      status: 429,
+                      detail: '请求过于频繁，请稍后重试',
+                      error_code: 'AUTH-429-RATE-LIMITED',
+                      rate_limit_action: 'otp_send',
+                      retry_after_seconds: 41,
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/otp/login': {
+      post: {
+        summary: 'Login by phone + OTP',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/OtpLoginRequest' },
+              examples: {
+                otp_login: {
+                  value: {
+                    phone: '13800000000',
+                    otp_code: '123456'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'OTP login succeeded',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AuthTokenResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid OTP login payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid/expired/used OTP unified semantics',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  otp_invalid_or_expired: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '验证码错误或已失效',
+                      error_code: 'AUTH-401-OTP-FAILED',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          429: {
+            description: 'OTP login rate limit exceeded',
+            headers: RATE_LIMIT_RESPONSE_HEADERS,
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  otp_login_rate_limited: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Too Many Requests',
+                      status: 429,
+                      detail: '请求过于频繁，请稍后重试',
+                      error_code: 'AUTH-429-RATE-LIMITED',
+                      rate_limit_action: 'otp_login',
+                      retry_after_seconds: 27,
                       request_id: 'request_id_unset'
                     }
                   }
@@ -107,6 +420,46 @@ const buildOpenApiSpec = () => ({
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/AuthTokenResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid refresh payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
               }
             }
           },
@@ -202,6 +555,26 @@ const buildOpenApiSpec = () => ({
               }
             }
           },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
           401: {
             description: 'Invalid session or current password mismatch',
             content: {
@@ -247,6 +620,30 @@ const buildOpenApiSpec = () => ({
           refresh_token: { type: 'string' }
         }
       },
+      OtpSendRequest: {
+        type: 'object',
+        required: ['phone'],
+        properties: {
+          phone: { type: 'string', description: '手机号（11位）' }
+        }
+      },
+      OtpSendResponse: {
+        type: 'object',
+        required: ['sent', 'resend_after_seconds', 'request_id'],
+        properties: {
+          sent: { type: 'boolean' },
+          resend_after_seconds: { type: 'integer', minimum: 0 },
+          request_id: { type: 'string' }
+        }
+      },
+      OtpLoginRequest: {
+        type: 'object',
+        required: ['phone', 'otp_code'],
+        properties: {
+          phone: { type: 'string' },
+          otp_code: { type: 'string', minLength: 6, maxLength: 6 }
+        }
+      },
       ChangePasswordRequest: {
         type: 'object',
         required: ['current_password', 'new_password'],
@@ -285,7 +682,14 @@ const buildOpenApiSpec = () => ({
           status: { type: 'integer' },
           detail: { type: 'string' },
           request_id: { type: 'string' },
-          error_code: { type: 'string' }
+          error_code: { type: 'string' },
+          retry_after_seconds: { type: 'integer', minimum: 1 },
+          rate_limit_action: {
+            type: 'string',
+            enum: ['password_login', 'otp_send', 'otp_login']
+          },
+          rate_limit_limit: { type: 'integer', minimum: 1 },
+          rate_limit_window_seconds: { type: 'integer', minimum: 1 }
         }
       }
     }

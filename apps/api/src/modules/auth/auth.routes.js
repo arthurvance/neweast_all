@@ -30,26 +30,39 @@ const extractBearerToken = (authorization) => {
 };
 
 const createAuthHandlers = (authService = createAuthService()) => ({
-  login: ({ requestId, body }) =>
+  login: async ({ requestId, body }) =>
     authService.login({
       requestId,
       phone: body.phone,
       password: body.password
     }),
 
-  refresh: ({ requestId, body }) =>
+  otpSend: async ({ requestId, body }) =>
+    authService.sendOtp({
+      requestId,
+      phone: body.phone
+    }),
+
+  otpLogin: async ({ requestId, body }) =>
+    authService.loginWithOtp({
+      requestId,
+      phone: body.phone,
+      otpCode: body.otp_code
+    }),
+
+  refresh: async ({ requestId, body }) =>
     authService.refresh({
       requestId,
       refreshToken: body.refresh_token
     }),
 
-  logout: ({ requestId, authorization }) =>
+  logout: async ({ requestId, authorization }) =>
     authService.logout({
       requestId,
       accessToken: extractBearerToken(authorization)
     }),
 
-  changePassword: ({ requestId, authorization, body }) =>
+  changePassword: async ({ requestId, authorization, body }) =>
     authService.changePassword({
       requestId,
       accessToken: extractBearerToken(authorization),

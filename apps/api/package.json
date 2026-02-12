@@ -6,7 +6,7 @@
   "scripts": {
     "lint": "node ../../tools/lint.js src test scripts",
     "build": "node ../../tools/build-api.js",
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test --test-force-exit test/**/*.test.js",
     "smoke": "node -e \"console.log('api smoke is validated by workspace smoke chain')\"",
     "migrate": "node scripts/migrate-baseline.js",
     "start": "node src/main.js"

@@ -11,8 +11,23 @@ const dependencyProbe = async () => ({
   redis: { ok: true, detail: 'redis ok' }
 });
 
+const seedUsers = [
+  {
+    id: 'user-active',
+    phone: '13800000000',
+    password: 'Passw0rd!',
+    status: 'active'
+  },
+  {
+    id: 'user-disabled',
+    phone: '13800000001',
+    password: 'Passw0rd!',
+    status: 'disabled'
+  }
+];
+
 const createApiContext = () => ({
-  authService: createAuthService(),
+  authService: createAuthService({ seedUsers }),
   dependencyProbe
 });
 
@@ -53,6 +68,23 @@ test('auth login endpoint returns request_id and token pair', async () => {
   assert.ok(res.body.refresh_token);
   assert.ok(res.body.session_id);
   assert.ok(res.body.request_id);
+});
+
+test('auth login endpoint supports query string path', async () => {
+  const context = createApiContext();
+
+  const res = await callRoute(
+    {
+      pathname: '/auth/login?next=%2Fdashboard',
+      method: 'POST',
+      body: { phone: '13800000000', password: 'Passw0rd!' }
+    },
+    context
+  );
+
+  assert.equal(res.status, 200);
+  assert.ok(res.body.access_token);
+  assert.ok(res.body.refresh_token);
 });
 
 test('auth login failure returns standardized problem details', async () => {

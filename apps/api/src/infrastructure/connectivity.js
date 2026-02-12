@@ -17,7 +17,7 @@ const checkMySql = async (config) => {
     await client.query('SELECT 1');
     return { ok: true, mode: 'mysql-native', detail: 'connected' };
   } finally {
-    client.close();
+    await client.close();
   }
 };
 

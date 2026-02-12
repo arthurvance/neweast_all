@@ -1,46 +1,40 @@
-const { createHash, createHmac, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual, createSign, createVerify } = require('node:crypto');
+const { createHash, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, randomInt, timingSafeEqual, createSign, createVerify } = require('node:crypto');
 const { log } = require('../../common/logger');
+const { createInMemoryAuthStore } = require('./auth.store.memory');
 
 const ACCESS_TTL_SECONDS = 15 * 60;
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
+const OTP_TTL_SECONDS = 15 * 60;
+const OTP_CODE_LENGTH = 6;
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const RATE_LIMIT_MAX_ATTEMPTS = 10;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const PASSWORD_MIN_LENGTH = 6;
 const PBKDF2_ITERATIONS = 150000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
+const ACCESS_SESSION_CACHE_TTL_MS = 800;
 
-const DEFAULT_SEED_USERS = [
-  {
-    id: 'user-platform-1',
-    phone: '13800000000',
-    password: 'Passw0rd!',
-    status: 'active',
-    sessionVersion: 1
-  },
-  {
-    id: 'user-platform-disabled',
-    phone: '13800000001',
-    password: 'Passw0rd!',
-    status: 'disabled',
-    sessionVersion: 1
-  }
-];
+const DEFAULT_SEED_USERS = [];
 
 class AuthProblemError extends Error {
-  constructor({ status, title, detail, errorCode }) {
+  constructor({ status, title, detail, errorCode, extensions = {} }) {
     super(detail);
     this.name = 'AuthProblemError';
     this.status = status;
     this.title = title;
     this.detail = detail;
     this.errorCode = errorCode;
+    this.extensions = extensions;
   }
 }
 
-const authError = ({ status, title, detail, errorCode }) => new AuthProblemError({
+const authError = ({ status, title, detail, errorCode, extensions = {} }) => new AuthProblemError({
   status,
   title,
   detail,
-  errorCode
+  errorCode,
+  extensions
 });
 
 const errors = {
@@ -74,6 +68,33 @@ const errors = {
       title: 'Unauthorized',
       detail: '会话已失效，请重新登录',
       errorCode: 'AUTH-401-INVALID-REFRESH'
+    }),
+
+  otpFailed: () =>
+    authError({
+      status: 401,
+      title: 'Unauthorized',
+      detail: '验证码错误或已失效',
+      errorCode: 'AUTH-401-OTP-FAILED'
+    }),
+
+  rateLimited: ({
+    action,
+    remainingSeconds,
+    limit = RATE_LIMIT_MAX_ATTEMPTS,
+    windowSeconds = RATE_LIMIT_WINDOW_SECONDS
+  }) =>
+    authError({
+      status: 429,
+      title: 'Too Many Requests',
+      detail: '请求过于频繁，请稍后重试',
+      errorCode: 'AUTH-429-RATE-LIMITED',
+      extensions: {
+        retry_after_seconds: remainingSeconds,
+        rate_limit_action: action,
+        rate_limit_limit: limit,
+        rate_limit_window_seconds: windowSeconds
+      }
     }),
 
   weakPassword: () =>
@@ -189,13 +210,18 @@ const verifyPassword = (plainTextPassword, encodedHash) => {
     return false;
   }
 
-  const actualHex = pbkdf2Sync(
-    plainTextPassword,
-    salt,
-    iterations,
-    Buffer.from(expectedHex, 'hex').length,
-    digest
-  ).toString('hex');
+  let actualHex;
+  try {
+    actualHex = pbkdf2Sync(
+      plainTextPassword,
+      salt,
+      iterations,
+      Buffer.from(expectedHex, 'hex').length,
+      digest
+    ).toString('hex');
+  } catch (_error) {
+    return false;
+  }
 
   const expected = Buffer.from(expectedHex, 'hex');
   const actual = Buffer.from(actualHex, 'hex');
@@ -208,47 +234,190 @@ const verifyPassword = (plainTextPassword, encodedHash) => {
 };
 
 const tokenHash = (rawToken) => createHash('sha256').update(rawToken).digest('hex');
+const normalizePhone = (phone) => {
+  if (typeof phone !== 'string') {
+    return null;
+  }
+  const trimmed = phone.trim();
+  if (!/^1\d{10}$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+};
 
-const refreshFingerprint = (rawToken) => createHmac('sha256', 'refresh-fingerprint').update(rawToken).digest('hex').slice(0, 16);
+const maskPhone = (phone) => {
+  if (typeof phone !== 'string' || phone.trim().length === 0) {
+    return 'unknown';
+  }
+
+  const cleaned = phone.trim().replace(/\s/g, '');
+
+  if (/^1\d{10}$/.test(cleaned)) {
+    return `${cleaned.slice(0, 3)}****${cleaned.slice(-4)}`;
+  }
+
+  if (cleaned.length <= 4) {
+    return cleaned.replace(/./g, '*');
+  }
+
+  return `${cleaned.slice(0, 2)}${'*'.repeat(cleaned.length - 4)}${cleaned.slice(-2)}`;
+};
+
+const isUserActive = (user) => {
+  if (!user || typeof user.status !== 'string') {
+    return false;
+  }
+
+  const normalizedStatus = user.status.trim().toLowerCase();
+  return normalizedStatus === 'active' || normalizedStatus === 'enabled';
+};
+
+const createInMemoryOtpStore = ({ nowProvider }) => {
+  const otpByPhone = new Map();
+
+  return {
+    upsertOtp: async ({ phone, code, expiresAt }) => {
+      const sentAtMs = nowProvider();
+      otpByPhone.set(String(phone), {
+        codeHash: tokenHash(String(code)),
+        expiresAt: Number(expiresAt),
+        consumed: false,
+        sentAtMs
+      });
+      return { sent_at_ms: sentAtMs };
+    },
+
+    getSentAt: async ({ phone }) => {
+      const record = otpByPhone.get(String(phone));
+      return record ? record.sentAtMs : null;
+    },
+
+    verifyAndConsumeOtp: async ({ phone, code, nowMs }) => {
+      const record = otpByPhone.get(String(phone));
+      if (!record) {
+        return { ok: false, reason: 'missing' };
+      }
+      if (record.consumed) {
+        return { ok: false, reason: 'used' };
+      }
+      if (record.expiresAt <= Number(nowMs)) {
+        return { ok: false, reason: 'expired' };
+      }
+      if (record.codeHash !== tokenHash(String(code))) {
+        return { ok: false, reason: 'mismatch' };
+      }
+
+      record.consumed = true;
+      record.consumedAt = nowProvider();
+      otpByPhone.set(String(phone), record);
+      return { ok: true, reason: 'ok' };
+    }
+  };
+};
+
+const createInMemoryRateLimitStore = () => {
+  const eventsByKey = new Map();
+
+  return {
+    consume: async ({ phone, action, limit, windowSeconds, nowMs }) => {
+      const key = `${String(phone)}:${String(action)}`;
+      const windowMs = Number(windowSeconds) * 1000;
+      const floor = Number(nowMs) - windowMs;
+      const existing = eventsByKey.get(key) || [];
+      const pruned = existing.filter((eventTs) => eventTs > floor);
+      pruned.push(Number(nowMs));
+      eventsByKey.set(key, pruned);
+
+      const count = pruned.length;
+      const oldest = pruned[0] || Number(nowMs);
+      const remainingMs = Math.max(0, oldest + windowMs - Number(nowMs));
+      return {
+        allowed: count <= Number(limit),
+        count,
+        remainingSeconds: Math.max(1, Math.ceil(remainingMs / 1000))
+      };
+    }
+  };
+};
+
+const assertStoreMethod = (store, methodName, storeName) => {
+  if (!store || typeof store[methodName] !== 'function') {
+    throw new Error(`${storeName}.${methodName} is required`);
+  }
+};
+
+const assertOtpStoreContract = (store) => {
+  assertStoreMethod(store, 'upsertOtp', 'otpStore');
+  assertStoreMethod(store, 'getSentAt', 'otpStore');
+  assertStoreMethod(store, 'verifyAndConsumeOtp', 'otpStore');
+};
 
 const createAuthService = (options = {}) => {
   const now = options.now || (() => Date.now());
   const seedUsers = options.seedUsers || DEFAULT_SEED_USERS;
+  const authStore = options.authStore || createInMemoryAuthStore({ seedUsers, hashPassword });
+  const hasExternalAuthStore = Boolean(options.authStore);
 
-  const jwtKeyPair = options.jwtKeyPair || generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-  });
-
-  const usersByPhone = new Map();
-  const usersById = new Map();
-  const sessionsById = new Map();
-  const refreshTokensByHash = new Map();
-  const refreshHashesBySessionId = new Map();
-  const auditTrail = [];
-
-  for (const user of seedUsers) {
-    const normalizedUser = {
-      id: user.id,
-      phone: user.phone,
-      status: user.status || 'active',
-      sessionVersion: user.sessionVersion || 1,
-      passwordHash: hashPassword(user.password)
-    };
-
-    usersByPhone.set(normalizedUser.phone, normalizedUser);
-    usersById.set(normalizedUser.id, normalizedUser);
+  const isSecureMode = options.requireSecureOtpStores === true;
+  if (isSecureMode && (!options.otpStore || !options.rateLimitStore)) {
+    throw new Error('OTP and rate-limit stores are REQUIRED in secure mode. Fallback to memory is forbidden.');
   }
 
-  const addAuditEvent = ({ type, requestId, userId = 'unknown', sessionId = 'unknown', detail = '' }) => {
+  const allowInMemoryOtpStores = options.allowInMemoryOtpStores === true;
+  if (
+    hasExternalAuthStore &&
+    !allowInMemoryOtpStores &&
+    (!options.otpStore || !options.rateLimitStore)
+  ) {
+    throw new Error('OTP and rate-limit stores must be configured explicitly');
+  }
+
+  const otpStore = options.otpStore || createInMemoryOtpStore({ nowProvider: now });
+  const rateLimitStore = options.rateLimitStore || createInMemoryRateLimitStore();
+  assertOtpStoreContract(otpStore);
+
+  const isMultiInstance = Boolean(options.multiInstance || options.enforceExternalJwtKeys);
+  const configuredAccessSessionCacheTtlMs = Math.max(
+    0,
+    Number(options.accessSessionCacheTtlMs || ACCESS_SESSION_CACHE_TTL_MS)
+  );
+  const accessSessionCacheTtlMs = isMultiInstance ? 0 : configuredAccessSessionCacheTtlMs;
+  const accessSessionCache = new Map();
+
+  const jwtKeyPair = (() => {
+    if (options.jwtKeyPair?.privateKey && options.jwtKeyPair?.publicKey) {
+      return options.jwtKeyPair;
+    }
+
+    if (options.enforceExternalJwtKeys) {
+      throw new Error('External JWT key pair is required when enforceExternalJwtKeys is enabled');
+    }
+
+    return generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+  })();
+
+  const auditTrail = [];
+
+  const addAuditEvent = ({
+    type,
+    requestId,
+    userId = 'unknown',
+    sessionId = 'unknown',
+    detail = '',
+    metadata = {}
+  }) => {
     const event = {
       type,
       at: new Date(now()).toISOString(),
       request_id: requestId || 'request_id_unset',
       user_id: userId,
       session_id: sessionId,
-      detail
+      detail,
+      ...metadata
     };
 
     auditTrail.push(event);
@@ -261,39 +430,97 @@ const createAuthService = (options = {}) => {
     }
   };
 
-  const markRefreshTokenStatus = (refreshHash, nextStatus, note = '') => {
-    const record = refreshTokensByHash.get(refreshHash);
-    if (!record) {
-      return;
-    }
-
-    record.status = nextStatus;
-    record.updatedAt = now();
-    if (note) {
-      record.note = note;
-    }
-  };
-
-  const revokeSession = (sessionId, reason) => {
-    const session = sessionsById.get(sessionId);
-    if (!session || session.status !== 'active') {
-      return;
-    }
-
-    session.status = 'revoked';
-    session.revokedReason = reason;
-    session.updatedAt = now();
-
-    const refreshHashes = refreshHashesBySessionId.get(sessionId) || new Set();
-    for (const refreshHash of refreshHashes) {
-      const refreshRecord = refreshTokensByHash.get(refreshHash);
-      if (refreshRecord && refreshRecord.status === 'active') {
-        markRefreshTokenStatus(refreshHash, 'revoked', reason);
+  const invalidateSessionCacheBySessionId = (sessionId) => {
+    for (const key of accessSessionCache.keys()) {
+      if (key.startsWith(`${String(sessionId)}:`)) {
+        accessSessionCache.delete(key);
       }
     }
   };
 
-  const issueTokenPair = ({ userId, sessionId, sessionVersion }) => {
+  const invalidateSessionCacheByUserId = (userId) => {
+    for (const key of accessSessionCache.keys()) {
+      const parts = key.split(':');
+      if (parts[1] === String(userId)) {
+        accessSessionCache.delete(key);
+      }
+    }
+  };
+
+  const assertRateLimit = async ({ requestId, phone, action }) => {
+    const result = await rateLimitStore.consume({
+      phone,
+      action,
+      limit: RATE_LIMIT_MAX_ATTEMPTS,
+      windowSeconds: RATE_LIMIT_WINDOW_SECONDS,
+      nowMs: now()
+    });
+
+    if (result.allowed) {
+      return result;
+    }
+
+    addAuditEvent({
+      type: 'auth.rate_limited',
+      requestId,
+      detail: `rate limit exceeded for ${action}`,
+      metadata: {
+        phone_masked: maskPhone(phone),
+        rate_limit_action: action,
+        retry_after_seconds: result.remainingSeconds
+      }
+    });
+
+    throw errors.rateLimited({
+      action,
+      remainingSeconds: result.remainingSeconds,
+      limit: RATE_LIMIT_MAX_ATTEMPTS,
+      windowSeconds: RATE_LIMIT_WINDOW_SECONDS
+    });
+  };
+
+  const issueAccessToken = ({ userId, sessionId, sessionVersion }) =>
+    signJwt({
+      privateKeyPem: jwtKeyPair.privateKey,
+      ttlSeconds: ACCESS_TTL_SECONDS,
+      payload: {
+        sub: userId,
+        sid: sessionId,
+        sv: sessionVersion,
+        jti: randomUUID(),
+        typ: 'access'
+      }
+    });
+
+  const issueRefreshToken = ({ userId, sessionId, sessionVersion, refreshTokenId }) =>
+    signJwt({
+      privateKeyPem: jwtKeyPair.privateKey,
+      ttlSeconds: REFRESH_TTL_SECONDS,
+      payload: {
+        sub: userId,
+        sid: sessionId,
+        sv: sessionVersion,
+        jti: refreshTokenId,
+        typ: 'refresh'
+      }
+    });
+
+  const issueLoginTokenPair = async ({
+    userId,
+    sessionId,
+    sessionVersion
+  }) => {
+    const refreshTokenId = randomUUID();
+    const refreshHash = tokenHash(refreshTokenId);
+    const expiresAt = now() + REFRESH_TTL_SECONDS * 1000;
+
+    await authStore.createRefreshToken({
+      tokenHash: refreshHash,
+      sessionId,
+      userId,
+      expiresAt
+    });
+
     const accessToken = signJwt({
       privateKeyPem: jwtKeyPair.privateKey,
       ttlSeconds: ACCESS_TTL_SECONDS,
@@ -306,36 +533,12 @@ const createAuthService = (options = {}) => {
       }
     });
 
-    const refreshToken = signJwt({
-      privateKeyPem: jwtKeyPair.privateKey,
-      ttlSeconds: REFRESH_TTL_SECONDS,
-      payload: {
-        sub: userId,
-        sid: sessionId,
-        sv: sessionVersion,
-        jti: randomUUID(),
-        typ: 'refresh'
-      }
-    });
-
-    const refreshHash = tokenHash(refreshToken);
-    const expiresAt = now() + REFRESH_TTL_SECONDS * 1000;
-    const refreshRecord = {
-      tokenHash: refreshHash,
-      tokenFingerprint: refreshFingerprint(refreshToken),
+    const refreshToken = issueRefreshToken({
       userId,
       sessionId,
-      status: 'active',
-      createdAt: now(),
-      updatedAt: now(),
-      expiresAt
-    };
-
-    refreshTokensByHash.set(refreshHash, refreshRecord);
-    if (!refreshHashesBySessionId.has(sessionId)) {
-      refreshHashesBySessionId.set(sessionId, new Set());
-    }
-    refreshHashesBySessionId.get(sessionId).add(refreshHash);
+      sessionVersion,
+      refreshTokenId
+    });
 
     return {
       accessToken,
@@ -344,7 +547,28 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const assertValidAccessSession = (accessToken) => {
+  const createSessionAndIssueLoginTokens = async ({ userId, sessionVersion }) => {
+    const sessionId = randomUUID();
+    await authStore.createSession({
+      sessionId,
+      userId,
+      sessionVersion: Number(sessionVersion)
+    });
+
+    const { accessToken, refreshToken } = await issueLoginTokenPair({
+      userId,
+      sessionId,
+      sessionVersion: Number(sessionVersion)
+    });
+
+    return {
+      sessionId,
+      accessToken,
+      refreshToken
+    };
+  };
+
+  const assertValidAccessSession = async (accessToken) => {
     let payload;
     try {
       payload = verifyJwt({
@@ -356,28 +580,53 @@ const createAuthService = (options = {}) => {
       throw errors.invalidAccess();
     }
 
-    const session = sessionsById.get(payload.sid);
-    const user = usersById.get(payload.sub);
+    const cacheKey = `${String(payload.sid)}:${String(payload.sub)}:${String(payload.sv)}`;
+    if (accessSessionCacheTtlMs > 0) {
+      const cached = accessSessionCache.get(cacheKey);
+      if (cached && cached.expiresAt > now()) {
+        return { payload, session: cached.session, user: cached.user };
+      }
+    }
 
-    if (!session || !user || session.status !== 'active') {
+    const [session, user] = await Promise.all([authStore.findSessionById(payload.sid), authStore.findUserById(payload.sub)]);
+
+    if (!session || !user || String(session.status).toLowerCase() !== 'active') {
       throw errors.invalidAccess();
     }
 
-    if (session.userId !== payload.sub || session.sessionVersion !== payload.sv || user.sessionVersion !== payload.sv) {
+    if (
+      String(session.userId) !== String(payload.sub) ||
+      Number(session.sessionVersion) !== Number(payload.sv) ||
+      Number(user.sessionVersion) !== Number(payload.sv)
+    ) {
       throw errors.invalidAccess();
     }
 
+    if (accessSessionCacheTtlMs > 0) {
+      accessSessionCache.set(cacheKey, {
+        session,
+        user,
+        expiresAt: now() + accessSessionCacheTtlMs
+      });
+    }
     return { payload, session, user };
   };
 
-  const login = ({ requestId, phone, password }) => {
-    if (typeof phone !== 'string' || typeof password !== 'string' || phone.trim() === '' || password.trim() === '') {
+  const login = async ({ requestId, phone, password }) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone || typeof password !== 'string' || password.trim() === '') {
       throw errors.invalidPayload();
     }
 
-    const user = usersByPhone.get(phone.trim());
+    const rateLimit = await assertRateLimit({
+      requestId,
+      phone: normalizedPhone,
+      action: 'password_login'
+    });
+
+    const user = await authStore.findUserByPhone(normalizedPhone);
     const validCredentials = Boolean(
-      user && user.status === 'active' && verifyPassword(password, user.passwordHash)
+      user && isUserActive(user) && verifyPassword(password, user.passwordHash)
     );
 
     if (!validCredentials) {
@@ -385,32 +634,29 @@ const createAuthService = (options = {}) => {
         type: 'auth.login.failed',
         requestId,
         userId: user?.id,
-        detail: 'invalid credentials or unavailable user'
+        detail: 'invalid credentials or unavailable user',
+        metadata: {
+          phone_masked: maskPhone(normalizedPhone),
+          session_id_hint: 'unknown'
+        }
       });
       throw errors.loginFailed();
     }
 
-    const sessionId = randomUUID();
-    sessionsById.set(sessionId, {
-      sessionId,
+    const { sessionId, accessToken, refreshToken } = await createSessionAndIssueLoginTokens({
       userId: user.id,
-      sessionVersion: user.sessionVersion,
-      status: 'active',
-      createdAt: now(),
-      updatedAt: now()
-    });
-
-    const { accessToken, refreshToken } = issueTokenPair({
-      userId: user.id,
-      sessionId,
-      sessionVersion: user.sessionVersion
+      sessionVersion: Number(user.sessionVersion)
     });
 
     addAuditEvent({
       type: 'auth.login.succeeded',
       requestId,
       userId: user.id,
-      sessionId
+      sessionId,
+      metadata: {
+        phone_masked: maskPhone(normalizedPhone),
+        resend_after_seconds: rateLimit.remainingSeconds
+      }
     });
 
     return {
@@ -424,8 +670,204 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const refresh = ({ requestId, refreshToken }) => {
+  const sendOtp = async ({ requestId, phone }) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      throw errors.invalidPayload();
+    }
+
+    const currentTime = now();
+    let lastSentAt = null;
+    try {
+      lastSentAt = await otpStore.getSentAt({ phone: normalizedPhone });
+    } catch (error) {
+      addAuditEvent({
+        type: 'auth.otp.send.cooldown_check_failed',
+        requestId,
+        detail: `getSentAt failed: ${error.message}`,
+        metadata: { phone_masked: maskPhone(normalizedPhone) }
+      });
+      throw errors.rateLimited({
+        action: 'otp_send',
+        remainingSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+        limit: 1,
+        windowSeconds: OTP_RESEND_COOLDOWN_SECONDS
+      });
+    }
+
+    if (lastSentAt !== null && lastSentAt !== undefined) {
+      const lastSentAtMs = Number(lastSentAt);
+      if (!Number.isFinite(lastSentAtMs) || lastSentAtMs <= 0) {
+        addAuditEvent({
+          type: 'auth.otp.send.cooldown_check_failed',
+          requestId,
+          detail: `getSentAt returned invalid value: ${String(lastSentAt)}`,
+          metadata: { phone_masked: maskPhone(normalizedPhone) }
+        });
+        throw errors.rateLimited({
+          action: 'otp_send',
+          remainingSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+          limit: 1,
+          windowSeconds: OTP_RESEND_COOLDOWN_SECONDS
+        });
+      }
+
+      const cooldownEndsAt = lastSentAtMs + OTP_RESEND_COOLDOWN_SECONDS * 1000;
+      if (cooldownEndsAt > currentTime) {
+        const remainingSeconds = Math.ceil((cooldownEndsAt - currentTime) / 1000);
+        addAuditEvent({
+          type: 'auth.otp.send.cooldown',
+          requestId,
+          detail: 'otp resend within cooldown period',
+          metadata: {
+            phone_masked: maskPhone(normalizedPhone),
+            resend_after_seconds: remainingSeconds
+          }
+        });
+        throw errors.rateLimited({
+          action: 'otp_send',
+          remainingSeconds,
+          limit: 1,
+          windowSeconds: OTP_RESEND_COOLDOWN_SECONDS
+        });
+      }
+    }
+
+    await assertRateLimit({
+      requestId,
+      phone: normalizedPhone,
+      action: 'otp_send'
+    });
+
+    const otpCode = String(randomInt(0, 10 ** OTP_CODE_LENGTH)).padStart(OTP_CODE_LENGTH, '0');
+    const expiresAt = currentTime + OTP_TTL_SECONDS * 1000;
+
+    try {
+      await otpStore.upsertOtp({
+        phone: normalizedPhone,
+        code: otpCode,
+        expiresAt
+      });
+    } catch (error) {
+      addAuditEvent({
+        type: 'auth.otp.send.failed',
+        requestId,
+        detail: `otp store failure: ${error.message}`,
+        metadata: { phone_masked: maskPhone(normalizedPhone) }
+      });
+      throw error;
+    }
+
+    addAuditEvent({
+      type: 'auth.otp.send.succeeded',
+      requestId,
+      detail: 'otp code issued',
+      metadata: {
+        phone_masked: maskPhone(normalizedPhone),
+        resend_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
+      }
+    });
+
+    return {
+      sent: true,
+      resend_after_seconds: OTP_RESEND_COOLDOWN_SECONDS,
+      request_id: requestId || 'request_id_unset'
+    };
+  };
+
+  const loginWithOtp = async ({ requestId, phone, otpCode }) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone || typeof otpCode !== 'string' || !/^\d{6}$/.test(otpCode.trim())) {
+      throw errors.invalidPayload();
+    }
+
+    await assertRateLimit({
+      requestId,
+      phone: normalizedPhone,
+      action: 'otp_login'
+    });
+
+    let verifyResult;
+    try {
+      verifyResult = await otpStore.verifyAndConsumeOtp({
+        phone: normalizedPhone,
+        code: otpCode.trim(),
+        nowMs: now()
+      });
+    } catch (error) {
+      addAuditEvent({
+        type: 'auth.otp.login.failed',
+        requestId,
+        detail: `otp store failure: ${error.message}`,
+        metadata: { phone_masked: maskPhone(normalizedPhone) }
+      });
+      throw error;
+    }
+
+    if (!verifyResult || verifyResult.ok !== true) {
+      addAuditEvent({
+        type: 'auth.otp.login.failed',
+        requestId,
+        detail: `otp rejected: ${verifyResult?.reason || 'unknown'}`,
+        metadata: {
+          phone_masked: maskPhone(normalizedPhone),
+          session_id_hint: 'unknown'
+        }
+      });
+      throw errors.otpFailed();
+    }
+
+    const user = await authStore.findUserByPhone(normalizedPhone);
+    if (!user || !isUserActive(user)) {
+      addAuditEvent({
+        type: 'auth.otp.login.failed',
+        requestId,
+        userId: user?.id,
+        detail: 'otp accepted but user unavailable',
+        metadata: {
+          phone_masked: maskPhone(normalizedPhone),
+          session_id_hint: 'unknown'
+        }
+      });
+      throw errors.otpFailed();
+    }
+
+    const { sessionId, accessToken, refreshToken } = await createSessionAndIssueLoginTokens({
+      userId: user.id,
+      sessionVersion: Number(user.sessionVersion)
+    });
+
+    addAuditEvent({
+      type: 'auth.otp.login.succeeded',
+      requestId,
+      userId: user.id,
+      sessionId,
+      metadata: {
+        phone_masked: maskPhone(normalizedPhone)
+      }
+    });
+
+    return {
+      token_type: 'Bearer',
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_in: ACCESS_TTL_SECONDS,
+      refresh_expires_in: REFRESH_TTL_SECONDS,
+      session_id: sessionId,
+      request_id: requestId || 'request_id_unset'
+    };
+  };
+
+  const refresh = async ({ requestId, refreshToken }) => {
     if (typeof refreshToken !== 'string' || refreshToken.trim() === '') {
+      addAuditEvent({
+        type: 'auth.refresh.replay_or_invalid',
+        requestId,
+        detail: 'refresh payload missing',
+        metadata: {
+          session_id_hint: 'unknown'
+        }
+      });
       throw errors.invalidPayload();
     }
 
@@ -437,29 +879,53 @@ const createAuthService = (options = {}) => {
         expectedTyp: 'refresh'
       });
     } catch (_error) {
+      addAuditEvent({
+        type: 'auth.refresh.replay_or_invalid',
+        requestId,
+        detail: 'refresh token malformed',
+        metadata: {
+          session_id_hint: 'unknown'
+        }
+      });
       throw errors.invalidRefresh();
     }
 
-    const refreshHash = tokenHash(refreshToken);
-    const refreshRecord = refreshTokensByHash.get(refreshHash);
-    const session = sessionsById.get(payload.sid);
-    const user = usersById.get(payload.sub);
+    const refreshHash = tokenHash(String(payload.jti || ''));
+    const [refreshRecord, session, user] = await Promise.all([
+      authStore.findRefreshTokenByHash(refreshHash),
+      authStore.findSessionById(payload.sid),
+      authStore.findUserById(payload.sub)
+    ]);
 
     const invalidState = (
       !refreshRecord ||
-      refreshRecord.status !== 'active' ||
+      String(refreshRecord.status).toLowerCase() !== 'active' ||
       refreshRecord.expiresAt <= now() ||
       !session ||
-      session.status !== 'active' ||
+      String(session.status).toLowerCase() !== 'active' ||
       !user ||
-      session.userId !== user.id ||
-      session.sessionVersion !== payload.sv ||
-      user.sessionVersion !== payload.sv
+      String(session.userId) !== String(user.id) ||
+      Number(session.sessionVersion) !== Number(payload.sv) ||
+      Number(user.sessionVersion) !== Number(payload.sv)
     );
 
     if (invalidState) {
+      const refreshStatus = refreshRecord ? String(refreshRecord.status).toLowerCase() : 'missing';
+      const replayDetected = refreshStatus === 'rotated' || refreshStatus === 'revoked';
+
       if (refreshRecord && refreshRecord.status === 'active') {
-        markRefreshTokenStatus(refreshHash, 'revoked', 'invalid session state');
+        await authStore.markRefreshTokenStatus({
+          tokenHash: refreshHash,
+          status: 'revoked'
+        });
+      }
+
+      if (replayDetected) {
+        await authStore.revokeSession({
+          sessionId: refreshRecord.sessionId || payload.sid,
+          reason: 'refresh-replay-detected'
+        });
+        invalidateSessionCacheBySessionId(refreshRecord.sessionId || payload.sid);
       }
 
       addAuditEvent({
@@ -467,32 +933,82 @@ const createAuthService = (options = {}) => {
         requestId,
         userId: payload.sub,
         sessionId: payload.sid,
-        detail: 'refresh token rejected'
+        detail: 'refresh token rejected',
+        metadata: {
+          session_id_hint: String(payload.sid || 'unknown')
+        }
       });
       throw errors.invalidRefresh();
     }
 
-    markRefreshTokenStatus(refreshHash, 'rotated', 'token rotated');
+    const sessionId = session.sessionId || session.session_id || payload.sid;
+    const nextRefreshTokenId = randomUUID();
+    const nextRefreshHash = tokenHash(nextRefreshTokenId);
+    const nextRefreshExpiresAt = now() + REFRESH_TTL_SECONDS * 1000;
 
-    const { accessToken, refreshToken: nextRefreshToken, refreshHash: nextRefreshHash } = issueTokenPair({
+    if (typeof authStore.rotateRefreshToken === 'function') {
+      const rotated = await authStore.rotateRefreshToken({
+        previousTokenHash: refreshHash,
+        nextTokenHash: nextRefreshHash,
+        sessionId,
+        userId: user.id,
+        expiresAt: nextRefreshExpiresAt
+      });
+
+      if (!rotated || rotated.ok !== true) {
+        await authStore.revokeSession({
+          sessionId,
+          reason: 'refresh-rotation-conflict'
+        });
+        invalidateSessionCacheBySessionId(sessionId);
+        addAuditEvent({
+          type: 'auth.refresh.replay_or_invalid',
+          requestId,
+          userId: user.id,
+          sessionId,
+          detail: 'refresh token rejected by rotation conflict',
+          metadata: {
+            session_id_hint: String(sessionId || 'unknown')
+          }
+        });
+        throw errors.invalidRefresh();
+      }
+    } else {
+      await authStore.markRefreshTokenStatus({
+        tokenHash: refreshHash,
+        status: 'rotated'
+      });
+
+      await authStore.createRefreshToken({
+        tokenHash: nextRefreshHash,
+        sessionId,
+        userId: user.id,
+        expiresAt: nextRefreshExpiresAt
+      });
+
+      await authStore.linkRefreshRotation({
+        previousTokenHash: refreshHash,
+        nextTokenHash: nextRefreshHash
+      });
+    }
+
+    const accessToken = issueAccessToken({
       userId: user.id,
-      sessionId: session.sessionId,
-      sessionVersion: user.sessionVersion
+      sessionId,
+      sessionVersion: Number(user.sessionVersion)
     });
-
-    const nextRecord = refreshTokensByHash.get(nextRefreshHash);
-    nextRecord.rotatedFrom = refreshHash;
-
-    const previousRecord = refreshTokensByHash.get(refreshHash);
-    previousRecord.rotatedTo = nextRefreshHash;
-
-    session.updatedAt = now();
+    const nextRefreshToken = issueRefreshToken({
+      userId: user.id,
+      sessionId,
+      sessionVersion: Number(user.sessionVersion),
+      refreshTokenId: nextRefreshTokenId
+    });
 
     addAuditEvent({
       type: 'auth.refresh.succeeded',
       requestId,
       userId: user.id,
-      sessionId: session.sessionId
+      sessionId
     });
 
     return {
@@ -501,37 +1017,62 @@ const createAuthService = (options = {}) => {
       refresh_token: nextRefreshToken,
       expires_in: ACCESS_TTL_SECONDS,
       refresh_expires_in: REFRESH_TTL_SECONDS,
-      session_id: session.sessionId,
+      session_id: sessionId,
       request_id: requestId || 'request_id_unset'
     };
   };
 
-  const logout = ({ requestId, accessToken }) => {
-    const { session, user } = assertValidAccessSession(accessToken);
-    revokeSession(session.sessionId, 'logout-current-session');
+  const logout = async ({ requestId, accessToken }) => {
+    const { session, user } = await assertValidAccessSession(accessToken);
+    const sessionId = session.sessionId || session.session_id;
+    await authStore.revokeSession({
+      sessionId,
+      reason: 'logout-current-session'
+    });
+    invalidateSessionCacheBySessionId(sessionId);
 
     addAuditEvent({
       type: 'auth.logout.current_session',
       requestId,
       userId: user.id,
-      sessionId: session.sessionId
+      sessionId
     });
 
     return {
       ok: true,
-      session_id: session.sessionId,
+      session_id: sessionId,
       request_id: requestId || 'request_id_unset'
     };
   };
 
-  const changePassword = ({ requestId, accessToken, currentPassword, newPassword }) => {
+  const changePassword = async ({ requestId, accessToken, currentPassword, newPassword }) => {
     if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+      addAuditEvent({
+        type: 'auth.password_change.rejected',
+        requestId,
+        detail: 'password payload invalid',
+        metadata: {
+          session_id_hint: 'unknown'
+        }
+      });
       throw errors.invalidPayload();
     }
 
-    validatePasswordPolicy(newPassword);
+    try {
+      validatePasswordPolicy(newPassword);
+    } catch (error) {
+      addAuditEvent({
+        type: 'auth.password_change.rejected',
+        requestId,
+        detail: 'new password policy violation',
+        metadata: {
+          session_id_hint: 'unknown'
+        }
+      });
+      throw error;
+    }
 
-    const { session, user } = assertValidAccessSession(accessToken);
+    const { session, user } = await assertValidAccessSession(accessToken);
     const currentPasswordValid = verifyPassword(currentPassword, user.passwordHash);
 
     if (!currentPasswordValid) {
@@ -539,26 +1080,41 @@ const createAuthService = (options = {}) => {
         type: 'auth.password_change.rejected',
         requestId,
         userId: user.id,
-        sessionId: session.sessionId,
-        detail: 'current password mismatch'
+        sessionId: session.sessionId || session.session_id,
+        detail: 'current password mismatch',
+        metadata: {
+          phone_masked: maskPhone(user.phone)
+        }
       });
       throw errors.loginFailed();
     }
 
-    user.passwordHash = hashPassword(newPassword);
-    user.sessionVersion += 1;
-
-    for (const candidateSession of sessionsById.values()) {
-      if (candidateSession.userId === user.id) {
-        revokeSession(candidateSession.sessionId, 'password-changed');
-      }
+    const updatedUser = typeof authStore.updateUserPasswordAndRevokeSessions === 'function'
+      ? await authStore.updateUserPasswordAndRevokeSessions({
+        userId: user.id,
+        passwordHash: hashPassword(newPassword),
+        reason: 'password-changed'
+      })
+      : await authStore.updateUserPasswordAndBumpSessionVersion({
+        userId: user.id,
+        passwordHash: hashPassword(newPassword)
+      });
+    if (!updatedUser) {
+      throw errors.invalidAccess();
     }
+    if (typeof authStore.updateUserPasswordAndRevokeSessions !== 'function') {
+      await authStore.revokeAllUserSessions({
+        userId: user.id,
+        reason: 'password-changed'
+      });
+    }
+    invalidateSessionCacheByUserId(user.id);
 
     addAuditEvent({
       type: 'auth.password_change.succeeded',
       requestId,
       userId: user.id,
-      sessionId: session.sessionId
+      sessionId: session.sessionId || session.session_id
     });
 
     return {
@@ -570,15 +1126,17 @@ const createAuthService = (options = {}) => {
 
   return {
     login,
+    sendOtp,
+    loginWithOtp,
     refresh,
     logout,
     changePassword,
     // Test support
     _internals: {
       auditTrail,
-      usersById,
-      sessionsById,
-      refreshTokensByHash
+      authStore,
+      accessSessionCache,
+      accessSessionCacheTtlMs
     }
   };
 };
@@ -586,6 +1144,9 @@ const createAuthService = (options = {}) => {
 module.exports = {
   ACCESS_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
+  OTP_TTL_SECONDS,
+  RATE_LIMIT_WINDOW_SECONDS,
+  RATE_LIMIT_MAX_ATTEMPTS,
   AuthProblemError,
   createAuthService
 };

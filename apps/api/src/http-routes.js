@@ -28,25 +28,37 @@ const createRouteHandlers = (config, options) => {
 
     authPing: (requestId) => authPing(requestId),
 
-    authLogin: (requestId, body) =>
+    authLogin: async (requestId, body) =>
       auth.login({
         requestId,
         body: body || {}
       }),
 
-    authRefresh: (requestId, body) =>
+    authOtpSend: async (requestId, body) =>
+      auth.otpSend({
+        requestId,
+        body: body || {}
+      }),
+
+    authOtpLogin: async (requestId, body) =>
+      auth.otpLogin({
+        requestId,
+        body: body || {}
+      }),
+
+    authRefresh: async (requestId, body) =>
       auth.refresh({
         requestId,
         body: body || {}
       }),
 
-    authLogout: (requestId, authorization) =>
+    authLogout: async (requestId, authorization) =>
       auth.logout({
         requestId,
         authorization
       }),
 
-    authChangePassword: (requestId, authorization, body) =>
+    authChangePassword: async (requestId, authorization, body) =>
       auth.changePassword({
         requestId,
         authorization,

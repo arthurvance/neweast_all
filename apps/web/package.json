@@ -6,8 +6,8 @@
   "scripts": {
     "lint": "node ../../tools/lint.js src test",
     "build": "vite build --config vite.config.js",
-    "test": "node --test test/**/*.test.js",
-    "smoke": "node -e \"console.log('web smoke is validated by workspace smoke chain')\"",
+    "test": "node --test test/server.test.js && node --test test/chrome.playwright.test.js",
+    "smoke": "node --test test/chrome.playwright.test.js",
     "dev": "vite --host 0.0.0.0 --port 4173 --config vite.config.js",
     "start": "node server.js"
   },

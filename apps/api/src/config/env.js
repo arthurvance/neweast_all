@@ -23,11 +23,15 @@ const readConfig = (env = process.env) => ({
   DB_PASSWORD: env.DB_PASSWORD ?? 'neweast',
   DB_NAME: env.DB_NAME ?? 'neweast',
   DB_CONNECT_TIMEOUT_MS: asNumber(env.DB_CONNECT_TIMEOUT_MS, 1500),
+  AUTH_JWT_PRIVATE_KEY: env.AUTH_JWT_PRIVATE_KEY ?? '',
+  AUTH_JWT_PUBLIC_KEY: env.AUTH_JWT_PUBLIC_KEY ?? '',
+  AUTH_MULTI_INSTANCE: asBool(env.AUTH_MULTI_INSTANCE, false),
   REDIS_HOST: env.REDIS_HOST ?? 'redis',
   REDIS_PORT: asNumber(env.REDIS_PORT, 6379),
   REDIS_CONNECT_TIMEOUT_MS: asNumber(env.REDIS_CONNECT_TIMEOUT_MS, 1200),
   LOG_FORMAT: env.LOG_FORMAT ?? 'json',
-  ALLOW_MOCK_BACKENDS: asBool(env.ALLOW_MOCK_BACKENDS, false)
+  ALLOW_MOCK_BACKENDS: asBool(env.ALLOW_MOCK_BACKENDS, false),
+  API_JSON_BODY_LIMIT_BYTES: asNumber(env.API_JSON_BODY_LIMIT_BYTES, 1024 * 1024)
 });
 
 module.exports = { readConfig };
