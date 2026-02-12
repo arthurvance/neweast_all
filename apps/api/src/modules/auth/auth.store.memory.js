@@ -3,6 +3,8 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const usersById = new Map();
   const sessionsById = new Map();
   const refreshTokensByHash = new Map();
+  const domainsByUserId = new Map();
+  const tenantsByUserId = new Map();
 
   for (const user of seedUsers) {
     const normalizedUser = {
@@ -15,6 +17,37 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     usersByPhone.set(normalizedUser.phone, normalizedUser);
     usersById.set(normalizedUser.id, normalizedUser);
+
+    const rawDomains = Array.isArray(user.domains) ? user.domains : ['platform', 'tenant'];
+    domainsByUserId.set(
+      normalizedUser.id,
+      new Set(
+        rawDomains
+          .map((domain) => String(domain || '').trim().toLowerCase())
+          .filter((domain) => domain === 'platform' || domain === 'tenant')
+      )
+    );
+
+    const rawTenants = Array.isArray(user.tenants) ? user.tenants : [];
+    tenantsByUserId.set(
+      normalizedUser.id,
+      rawTenants
+        .filter((tenant) => tenant && tenant.tenantId)
+        .map((tenant) => ({
+          tenantId: String(tenant.tenantId),
+          tenantName: tenant.tenantName ? String(tenant.tenantName) : null,
+          status: String(tenant.status || 'active').toLowerCase(),
+          permission: tenant.permission
+            ? {
+              scopeLabel: tenant.permission.scopeLabel || null,
+              canViewMemberAdmin: Boolean(tenant.permission.canViewMemberAdmin),
+              canOperateMemberAdmin: Boolean(tenant.permission.canOperateMemberAdmin),
+              canViewBilling: Boolean(tenant.permission.canViewBilling),
+              canOperateBilling: Boolean(tenant.permission.canOperateBilling)
+            }
+            : null
+        }))
+    );
   }
 
   const clone = (value) => (value ? { ...value } : null);
@@ -24,11 +57,13 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     findUserById: async (userId) => clone(usersById.get(String(userId)) || null),
 
-    createSession: async ({ sessionId, userId, sessionVersion }) => {
+    createSession: async ({ sessionId, userId, sessionVersion, entryDomain = 'platform', activeTenantId = null }) => {
       sessionsById.set(sessionId, {
         sessionId,
         userId: String(userId),
         sessionVersion: Number(sessionVersion),
+        entryDomain: String(entryDomain || 'platform').toLowerCase(),
+        activeTenantId: activeTenantId ? String(activeTenantId) : null,
         status: 'active',
         revokedReason: null,
         createdAt: Date.now(),
@@ -37,6 +72,95 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     },
 
     findSessionById: async (sessionId) => clone(sessionsById.get(sessionId) || null),
+
+    updateSessionContext: async ({ sessionId, entryDomain, activeTenantId }) => {
+      const session = sessionsById.get(sessionId);
+      if (!session) {
+        return false;
+      }
+
+      if (entryDomain !== undefined) {
+        session.entryDomain = String(entryDomain || 'platform').toLowerCase();
+      }
+      if (activeTenantId !== undefined) {
+        session.activeTenantId = activeTenantId ? String(activeTenantId) : null;
+      }
+      session.updatedAt = Date.now();
+      sessionsById.set(sessionId, session);
+      return true;
+    },
+
+    findDomainAccessByUserId: async (userId) => {
+      const userDomains = domainsByUserId.get(String(userId)) || new Set();
+      return {
+        platform: userDomains.has('platform'),
+        tenant: userDomains.has('tenant')
+      };
+    },
+
+    ensureDefaultDomainAccessForUser: async (userId) => {
+      const normalizedUserId = String(userId);
+      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+      if (userDomains.size > 0 || userDomains.has('platform')) {
+        domainsByUserId.set(normalizedUserId, userDomains);
+        return { inserted: false };
+      }
+      userDomains.add('platform');
+      domainsByUserId.set(normalizedUserId, userDomains);
+      return { inserted: true };
+    },
+
+    ensureTenantDomainAccessForUser: async (userId) => {
+      const normalizedUserId = String(userId);
+      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+      if (userDomains.has('tenant')) {
+        domainsByUserId.set(normalizedUserId, userDomains);
+        return { inserted: false };
+      }
+
+      const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
+        (tenant) => String(tenant?.status || 'active').toLowerCase() === 'active'
+      );
+      if (!hasActiveTenantMembership) {
+        domainsByUserId.set(normalizedUserId, userDomains);
+        return { inserted: false };
+      }
+
+      userDomains.add('tenant');
+      domainsByUserId.set(normalizedUserId, userDomains);
+      return { inserted: true };
+    },
+
+    listTenantOptionsByUserId: async (userId) =>
+      (tenantsByUserId.get(String(userId)) || [])
+        .filter((tenant) => String(tenant?.status || 'active').toLowerCase() === 'active')
+        .map((tenant) => ({ ...tenant })),
+
+    findTenantPermissionByUserAndTenantId: async ({ userId, tenantId }) => {
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedTenantId) {
+        return null;
+      }
+
+      const tenant = (tenantsByUserId.get(String(userId)) || []).find(
+        (item) =>
+          String(item.tenantId) === normalizedTenantId &&
+          String(item?.status || 'active').toLowerCase() === 'active'
+      );
+      if (!tenant) {
+        return null;
+      }
+      if (tenant.permission) {
+        return {
+          scopeLabel: tenant.permission.scopeLabel || `组织权限（${tenant.tenantName || tenant.tenantId}）`,
+          canViewMemberAdmin: Boolean(tenant.permission.canViewMemberAdmin),
+          canOperateMemberAdmin: Boolean(tenant.permission.canOperateMemberAdmin),
+          canViewBilling: Boolean(tenant.permission.canViewBilling),
+          canOperateBilling: Boolean(tenant.permission.canOperateBilling)
+        };
+      }
+      return null;
+    },
 
     revokeSession: async ({ sessionId, reason }) => {
       const session = sessionsById.get(sessionId);

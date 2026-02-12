@@ -223,6 +223,18 @@ const createRouteTable = ({ handlers, requestId, headers, body }) => ({
     runAuthRoute(() => handlers.authOtpSend(requestId, body || {}), requestId),
   'POST /auth/otp/login': async () =>
     runAuthRoute(() => handlers.authOtpLogin(requestId, body || {}), requestId),
+  'GET /auth/tenant/options': async () =>
+    runAuthRoute(() => handlers.authTenantOptions(requestId, headers.authorization), requestId),
+  'POST /auth/tenant/select': async () =>
+    runAuthRoute(
+      () => handlers.authTenantSelect(requestId, headers.authorization, body || {}),
+      requestId
+    ),
+  'POST /auth/tenant/switch': async () =>
+    runAuthRoute(
+      () => handlers.authTenantSwitch(requestId, headers.authorization, body || {}),
+      requestId
+    ),
   'POST /auth/refresh': async () =>
     runAuthRoute(() => handlers.authRefresh(requestId, body || {}), requestId),
   'POST /auth/logout': async () =>
@@ -245,6 +257,9 @@ const ROUTED_API_PATHS = new Set([
   '/auth/login',
   '/auth/otp/send',
   '/auth/otp/login',
+  '/auth/tenant/options',
+  '/auth/tenant/select',
+  '/auth/tenant/switch',
   '/auth/refresh',
   '/auth/logout',
   '/auth/change-password',

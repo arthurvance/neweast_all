@@ -18,6 +18,8 @@ const toSessionRecord = (row) => {
     sessionId: row.session_id,
     userId: String(row.user_id),
     sessionVersion: Number(row.session_version),
+    entryDomain: row.entry_domain ? String(row.entry_domain) : 'platform',
+    activeTenantId: row.active_tenant_id ? String(row.active_tenant_id) : null,
     status: row.status,
     revokedReason: row.revoked_reason || null
   };
@@ -52,6 +54,9 @@ const toUserRecord = (row) => {
     sessionVersion: Number(row.session_version)
   };
 };
+
+const toBoolean = (value) =>
+  value === true || value === 1 || value === '1' || String(value || '').toLowerCase() === 'true';
 
 const createMySqlAuthStore = ({ dbClient }) => {
   if (!dbClient || typeof dbClient.query !== 'function') {
@@ -88,20 +93,32 @@ const createMySqlAuthStore = ({ dbClient }) => {
       return toUserRecord(rows[0]);
     },
 
-    createSession: async ({ sessionId, userId, sessionVersion }) => {
+    createSession: async ({
+      sessionId,
+      userId,
+      sessionVersion,
+      entryDomain = 'platform',
+      activeTenantId = null
+    }) => {
       await dbClient.query(
         `
-          INSERT INTO auth_sessions (session_id, user_id, session_version, status)
-          VALUES (?, ?, ?, 'active')
+          INSERT INTO auth_sessions (session_id, user_id, session_version, entry_domain, active_tenant_id, status)
+          VALUES (?, ?, ?, ?, ?, 'active')
         `,
-        [sessionId, String(userId), Number(sessionVersion)]
+        [
+          sessionId,
+          String(userId),
+          Number(sessionVersion),
+          String(entryDomain || 'platform').toLowerCase(),
+          activeTenantId ? String(activeTenantId) : null
+        ]
       );
     },
 
     findSessionById: async (sessionId) => {
       const rows = await dbClient.query(
         `
-          SELECT session_id, user_id, session_version, status, revoked_reason
+          SELECT session_id, user_id, session_version, entry_domain, active_tenant_id, status, revoked_reason
           FROM auth_sessions
           WHERE session_id = ?
           LIMIT 1
@@ -109,6 +126,206 @@ const createMySqlAuthStore = ({ dbClient }) => {
         [sessionId]
       );
       return toSessionRecord(rows[0]);
+    },
+
+    updateSessionContext: async ({ sessionId, entryDomain, activeTenantId }) => {
+      await dbClient.query(
+        `
+          UPDATE auth_sessions
+          SET entry_domain = COALESCE(?, entry_domain),
+              active_tenant_id = ?,
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE session_id = ?
+        `,
+        [
+          entryDomain === undefined ? null : String(entryDomain || 'platform').toLowerCase(),
+          activeTenantId ? String(activeTenantId) : null,
+          String(sessionId)
+        ]
+      );
+      return true;
+    },
+
+    findDomainAccessByUserId: async (userId) => {
+      const normalizedUserId = String(userId);
+      try {
+        const rows = await dbClient.query(
+          `
+            SELECT domain, status
+            FROM auth_user_domain_access
+            WHERE user_id = ?
+          `,
+          [normalizedUserId]
+        );
+
+        const domainRows = Array.isArray(rows) ? rows : [];
+        const activeDomains = new Set();
+        let hasAnyTenantDomainRecord = false;
+        for (const row of domainRows) {
+          const domain = String(row?.domain || '').trim().toLowerCase();
+          if (!domain) {
+            continue;
+          }
+          if (domain === 'tenant') {
+            hasAnyTenantDomainRecord = true;
+          }
+          const status = String(row?.status || '').trim().toLowerCase();
+          if (!status || status === 'active') {
+            activeDomains.add(domain);
+          }
+        }
+
+        let tenantFromMembership = false;
+        if (!activeDomains.has('tenant') && !hasAnyTenantDomainRecord) {
+          const tenantRows = await dbClient.query(
+            `
+              SELECT COUNT(*) AS tenant_count
+              FROM auth_user_tenants
+              WHERE user_id = ? AND status = 'active'
+            `,
+            [normalizedUserId]
+          );
+          const tenantCount = Number(tenantRows?.[0]?.tenant_count || 0);
+          tenantFromMembership = tenantCount > 0;
+        }
+
+        return {
+          platform: activeDomains.has('platform'),
+          tenant: activeDomains.has('tenant') || tenantFromMembership
+        };
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    ensureDefaultDomainAccessForUser: async (userId) => {
+      const normalizedUserId = String(userId);
+      const countRows = await dbClient.query(
+        `
+          SELECT COUNT(*) AS domain_count
+          FROM auth_user_domain_access
+          WHERE user_id = ?
+        `,
+        [normalizedUserId]
+      );
+      const domainCount = Number(countRows?.[0]?.domain_count || 0);
+      if (domainCount > 0) {
+        return { inserted: false };
+      }
+
+      const result = await dbClient.query(
+        `
+          INSERT INTO auth_user_domain_access (user_id, domain, status)
+          VALUES (?, 'platform', 'active')
+          ON DUPLICATE KEY UPDATE
+            status = VALUES(status),
+            updated_at = CURRENT_TIMESTAMP(3)
+        `,
+        [normalizedUserId]
+      );
+
+      return { inserted: Number(result?.affectedRows || 0) > 0 };
+    },
+
+    ensureTenantDomainAccessForUser: async (userId) => {
+      const normalizedUserId = String(userId);
+
+      const tenantDomainRows = await dbClient.query(
+        `
+          SELECT status
+          FROM auth_user_domain_access
+          WHERE user_id = ? AND domain = 'tenant'
+          LIMIT 1
+        `,
+        [normalizedUserId]
+      );
+      if (Array.isArray(tenantDomainRows) && tenantDomainRows.length > 0) {
+        return { inserted: false };
+      }
+
+      const tenantCountRows = await dbClient.query(
+        `
+          SELECT COUNT(*) AS tenant_count
+          FROM auth_user_tenants
+          WHERE user_id = ? AND status = 'active'
+        `,
+        [normalizedUserId]
+      );
+      const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
+      if (tenantCount <= 0) {
+        return { inserted: false };
+      }
+
+      const result = await dbClient.query(
+        `
+          INSERT IGNORE INTO auth_user_domain_access (user_id, domain, status)
+          VALUES (?, 'tenant', 'active')
+        `,
+        [normalizedUserId]
+      );
+      return { inserted: Number(result?.affectedRows || 0) > 0 };
+    },
+
+    findTenantPermissionByUserAndTenantId: async ({ userId, tenantId }) => {
+      const normalizedUserId = String(userId);
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedTenantId) {
+        return null;
+      }
+
+      try {
+        const rows = await dbClient.query(
+          `
+            SELECT tenant_id,
+                   tenant_name,
+                   can_view_member_admin,
+                   can_operate_member_admin,
+                   can_view_billing,
+                   can_operate_billing
+            FROM auth_user_tenants
+            WHERE user_id = ? AND tenant_id = ? AND status = 'active'
+            LIMIT 1
+          `,
+          [normalizedUserId, normalizedTenantId]
+        );
+        const row = rows?.[0];
+        if (!row) {
+          return null;
+        }
+        return {
+          scopeLabel: `组织权限（${String(row.tenant_name || normalizedTenantId)}）`,
+          canViewMemberAdmin: toBoolean(row.can_view_member_admin),
+          canOperateMemberAdmin: toBoolean(row.can_operate_member_admin),
+          canViewBilling: toBoolean(row.can_view_billing),
+          canOperateBilling: toBoolean(row.can_operate_billing)
+        };
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    listTenantOptionsByUserId: async (userId) => {
+      const normalizedUserId = String(userId);
+      try {
+        const rows = await dbClient.query(
+          `
+            SELECT tenant_id, tenant_name
+            FROM auth_user_tenants
+            WHERE user_id = ? AND status = 'active'
+            ORDER BY tenant_id ASC
+          `,
+          [normalizedUserId]
+        );
+
+        return (Array.isArray(rows) ? rows : [])
+          .map((row) => ({
+            tenantId: String(row.tenant_id || '').trim(),
+            tenantName: row.tenant_name ? String(row.tenant_name) : null
+          }))
+          .filter((row) => row.tenantId.length > 0);
+      } catch (error) {
+        throw error;
+      }
     },
 
     revokeSession: async ({ sessionId, reason }) => {

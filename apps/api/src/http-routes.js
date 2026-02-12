@@ -46,6 +46,26 @@ const createRouteHandlers = (config, options) => {
         body: body || {}
       }),
 
+    authTenantOptions: async (requestId, authorization) =>
+      auth.tenantOptions({
+        requestId,
+        authorization
+      }),
+
+    authTenantSelect: async (requestId, authorization, body) =>
+      auth.tenantSelect({
+        requestId,
+        authorization,
+        body: body || {}
+      }),
+
+    authTenantSwitch: async (requestId, authorization, body) =>
+      auth.tenantSwitch({
+        requestId,
+        authorization,
+        body: body || {}
+      }),
+
     authRefresh: async (requestId, body) =>
       auth.refresh({
         requestId,

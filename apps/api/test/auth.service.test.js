@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { generateKeyPairSync } = require('node:crypto');
 const { createAuthService, AuthProblemError } = require('../src/modules/auth/auth.service');
+const { createInMemoryAuthStore } = require('../src/modules/auth/auth.store.memory');
 
 const seedUsers = [
   {
@@ -18,7 +19,31 @@ const seedUsers = [
   }
 ];
 
+const tenantPermissionA = {
+  scopeLabel: '组织权限快照 A',
+  canViewMemberAdmin: true,
+  canOperateMemberAdmin: true,
+  canViewBilling: true,
+  canOperateBilling: false
+};
+
+const tenantPermissionB = {
+  scopeLabel: '组织权限快照 B',
+  canViewMemberAdmin: false,
+  canOperateMemberAdmin: false,
+  canViewBilling: true,
+  canOperateBilling: true
+};
+
 const createService = () => createAuthService({ seedUsers });
+const noOpOtpStore = {
+  upsertOtp: async () => ({ sent_at_ms: Date.now() }),
+  getSentAt: async () => null,
+  verifyAndConsumeOtp: async () => ({ ok: false, reason: 'missing' })
+};
+const passRateLimitStore = {
+  consume: async () => ({ allowed: true, count: 1, remainingSeconds: 60 })
+};
 
 test('default service does not allow legacy seeded credentials', async () => {
   const service = createAuthService();
@@ -123,6 +148,513 @@ test('login success returns token pair and session metadata', async () => {
   assert.ok(result.access_token);
   assert.ok(result.refresh_token);
   assert.ok(result.session_id);
+  assert.deepEqual(result.tenant_permission_context, {
+    scope_label: '平台入口（无组织侧权限上下文）',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: false,
+    can_operate_billing: false
+  });
+});
+
+test('tenant entry provisions tenant-domain access from active memberships when explicit tenant-domain row is missing', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'domain-tenant-provision-user',
+        phone: '13810000000',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        tenants: [{ tenantId: 'tenant-a', tenantName: 'A', permission: tenantPermissionA }]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-provision',
+    phone: '13810000000',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(login.entry_domain, 'tenant');
+  assert.equal(login.active_tenant_id, 'tenant-a');
+  assert.equal(login.tenant_selection_required, false);
+
+  const access = await service._internals.authStore.findDomainAccessByUserId(
+    'domain-tenant-provision-user'
+  );
+  assert.deepEqual(access, { platform: true, tenant: true });
+
+  const tenantGranted = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.tenant_granted'
+  );
+  assert.ok(tenantGranted);
+});
+
+test('tenant entry failure does not grant default platform-domain access on password login', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'domain-no-membership-user',
+        phone: '13810000012',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: [],
+        tenants: []
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-login-no-membership',
+        phone: '13810000012',
+        password: 'Passw0rd!',
+        entryDomain: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const access = await service._internals.authStore.findDomainAccessByUserId(
+    'domain-no-membership-user'
+  );
+  assert.deepEqual(access, { platform: false, tenant: false });
+
+  const defaultGranted = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.default_granted'
+  );
+  assert.equal(defaultGranted, undefined);
+});
+
+test('tenant entry failure does not grant default platform-domain access on otp login', async () => {
+  const otpStore = {
+    upsertOtp: async () => ({ sent_at_ms: Date.now() }),
+    getSentAt: async () => null,
+    verifyAndConsumeOtp: async () => ({ ok: true, reason: 'ok' })
+  };
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'otp-domain-no-membership-user',
+        phone: '13810000013',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: [],
+        tenants: []
+      }
+    ],
+    otpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  await assert.rejects(
+    () =>
+      service.loginWithOtp({
+        requestId: 'req-otp-login-no-membership',
+        phone: '13810000013',
+        otpCode: '123456',
+        entryDomain: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const access = await service._internals.authStore.findDomainAccessByUserId(
+    'otp-domain-no-membership-user'
+  );
+  assert.deepEqual(access, { platform: false, tenant: false });
+
+  const defaultGranted = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.default_granted'
+  );
+  assert.equal(defaultGranted, undefined);
+});
+
+test('login is fail-closed when authStore.findDomainAccessByUserId is unavailable', async () => {
+  const bootstrapService = createAuthService({
+    seedUsers: [
+      {
+        id: 'domain-missing-method-user',
+        phone: '13810000010',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const baseStore = bootstrapService._internals.authStore;
+  const authStore = {
+    ...baseStore,
+    findDomainAccessByUserId: undefined
+  };
+
+  const service = createAuthService({
+    authStore,
+    otpStore: noOpOtpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-login-fail-closed',
+        phone: '13810000010',
+        password: 'Passw0rd!',
+        entryDomain: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('login provisions default platform domain access when user has no domain rows', async () => {
+  const bootstrapService = createAuthService({
+    seedUsers: [
+      {
+        id: 'domain-default-user',
+        phone: '13810000011',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: []
+      }
+    ]
+  });
+  const authStore = bootstrapService._internals.authStore;
+  const service = createAuthService({
+    authStore,
+    otpStore: noOpOtpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-default-domain-provision',
+    phone: '13810000011',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  assert.equal(login.entry_domain, 'platform');
+
+  const access = await authStore.findDomainAccessByUserId('domain-default-user');
+  assert.deepEqual(access, { platform: true, tenant: false });
+
+  const defaultGranted = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.default_granted'
+  );
+  assert.ok(defaultGranted);
+});
+
+test('tenant entry with multiple options requires selection and persists active tenant in session', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-multi-user',
+        phone: '13810000001',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-multi',
+    phone: '13810000001',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  assert.equal(login.entry_domain, 'tenant');
+  assert.equal(login.tenant_selection_required, true);
+  assert.equal(login.active_tenant_id, null);
+  assert.equal(login.tenant_options.length, 2);
+  assert.deepEqual(login.tenant_permission_context, {
+    scope_label: '组织未选择（无可操作权限）',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: false,
+    can_operate_billing: false
+  });
+
+  const beforeSelect = await service.tenantOptions({
+    requestId: 'req-tenant-options-before',
+    accessToken: login.access_token
+  });
+  assert.equal(beforeSelect.tenant_selection_required, true);
+  assert.equal(beforeSelect.active_tenant_id, null);
+  assert.deepEqual(beforeSelect.tenant_permission_context, {
+    scope_label: '组织未选择（无可操作权限）',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: false,
+    can_operate_billing: false
+  });
+
+  const selected = await service.selectTenant({
+    requestId: 'req-tenant-select',
+    accessToken: login.access_token,
+    tenantId: 'tenant-b'
+  });
+  assert.equal(selected.entry_domain, 'tenant');
+  assert.equal(selected.active_tenant_id, 'tenant-b');
+  assert.equal(selected.tenant_selection_required, false);
+  assert.deepEqual(selected.tenant_permission_context, {
+    scope_label: '组织权限快照 B',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: true,
+    can_operate_billing: true
+  });
+
+  const afterSelect = await service.tenantOptions({
+    requestId: 'req-tenant-options-after',
+    accessToken: login.access_token
+  });
+  assert.equal(afterSelect.active_tenant_id, 'tenant-b');
+  assert.equal(afterSelect.tenant_selection_required, false);
+  assert.deepEqual(afterSelect.tenant_permission_context, {
+    scope_label: '组织权限快照 B',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: true,
+    can_operate_billing: true
+  });
+});
+
+test('tenant entry with single option binds active tenant directly', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-single-user',
+        phone: '13810000002',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [{
+          tenantId: 'tenant-single',
+          tenantName: 'Single Tenant',
+          permission: {
+            scopeLabel: '组织权限快照 Single',
+            canViewMemberAdmin: true,
+            canOperateMemberAdmin: false,
+            canViewBilling: false,
+            canOperateBilling: false
+          }
+        }]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-single',
+    phone: '13810000002',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  assert.equal(login.entry_domain, 'tenant');
+  assert.equal(login.tenant_selection_required, false);
+  assert.equal(login.active_tenant_id, 'tenant-single');
+});
+
+test('tenant entry is rejected when tenant permission context is missing', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-missing-permission-user',
+        phone: '13810000020',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [{ tenantId: 'tenant-missing', tenantName: 'Tenant Missing Permission' }]
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-login-tenant-missing-permission',
+        phone: '13810000020',
+        password: 'Passw0rd!',
+        entryDomain: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('tenant options reconciles stale active_tenant_id against latest tenant options', async () => {
+  const bootstrapService = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-reconcile-user',
+        phone: '13810000021',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+  const baseStore = bootstrapService._internals.authStore;
+
+  let tenantOptions = [
+    { tenantId: 'tenant-a', tenantName: 'Tenant A' },
+    { tenantId: 'tenant-b', tenantName: 'Tenant B' }
+  ];
+  const authStore = {
+    ...baseStore,
+    listTenantOptionsByUserId: async () => tenantOptions.map((item) => ({ ...item }))
+  };
+  const service = createAuthService({
+    authStore,
+    otpStore: noOpOtpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-reconcile',
+    phone: '13810000021',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(login.tenant_selection_required, true);
+
+  const selected = await service.selectTenant({
+    requestId: 'req-tenant-reconcile-select-a',
+    accessToken: login.access_token,
+    tenantId: 'tenant-a'
+  });
+  assert.equal(selected.active_tenant_id, 'tenant-a');
+
+  tenantOptions = [{ tenantId: 'tenant-b', tenantName: 'Tenant B' }];
+  const reconciled = await service.tenantOptions({
+    requestId: 'req-tenant-reconcile-options',
+    accessToken: login.access_token
+  });
+
+  assert.equal(reconciled.active_tenant_id, 'tenant-b');
+  assert.equal(reconciled.tenant_selection_required, false);
+  assert.deepEqual(reconciled.tenant_permission_context, {
+    scope_label: '组织权限快照 B',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: true,
+    can_operate_billing: true
+  });
+
+  const session = await authStore.findSessionById(login.session_id);
+  assert.equal(session.activeTenantId, 'tenant-b');
+});
+
+test('tenant switch rejects tenant outside session allowed options', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-switch-user',
+        phone: '13810000003',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-switch',
+    phone: '13810000003',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(login.tenant_selection_required, true);
+
+  await assert.rejects(
+    () =>
+      service.switchTenant({
+        requestId: 'req-tenant-switch-denied',
+        accessToken: login.access_token,
+        tenantId: 'tenant-outside'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('tenant options in platform entry session returns empty tenant_options for minimal exposure', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-options-user',
+        phone: '13810000030',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-platform-options',
+    phone: '13810000030',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  assert.equal(login.entry_domain, 'platform');
+
+  const options = await service.tenantOptions({
+    requestId: 'req-tenant-options-platform',
+    accessToken: login.access_token
+  });
+
+  assert.equal(options.entry_domain, 'platform');
+  assert.equal(options.tenant_selection_required, false);
+  assert.equal(options.active_tenant_id, null);
+  assert.deepEqual(options.tenant_options, []);
+  assert.deepEqual(options.tenant_permission_context, {
+    scope_label: '平台入口（无组织侧权限上下文）',
+    can_view_member_admin: false,
+    can_operate_member_admin: false,
+    can_view_billing: false,
+    can_operate_billing: false
+  });
 });
 
 test('login failure keeps unified semantics and does not leak account state', async () => {

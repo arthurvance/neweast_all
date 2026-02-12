@@ -9,7 +9,8 @@
     "test": "node --test --test-force-exit test/**/*.test.js",
     "smoke": "node -e \"console.log('api smoke is validated by workspace smoke chain')\"",
     "migrate": "node scripts/migrate-baseline.js",
-    "start": "node src/main.js"
+    "start": "node src/main.js",
+    "migrate:down": "node scripts/migrate-baseline.js --down"
   },
   "dependencies": {
     "@nestjs/common": "11.1.13",

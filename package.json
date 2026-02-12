@@ -13,7 +13,8 @@
     "build": "pnpm nx build",
     "test": "pnpm nx test",
     "smoke": "pnpm nx smoke",
-    "migrate": "node apps/api/scripts/migrate-baseline.js"
+    "migrate": "node apps/api/scripts/migrate-baseline.js",
+    "migrate:down": "node apps/api/scripts/migrate-baseline.js --down"
   },
   "devDependencies": {
     "@esbuild/darwin-arm64": "0.27.3",

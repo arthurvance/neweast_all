@@ -192,6 +192,46 @@ const createOtpApiServer = async () => {
   const requests = [];
   const responses = [];
   let otpSendCalls = 0;
+  const tenantToken = 'tenant-flow-access-token';
+  const tenantOptions = [
+    { tenant_id: 'tenant-101', tenant_name: 'Tenant 101' },
+    { tenant_id: 'tenant-202', tenant_name: 'Tenant 202' }
+  ];
+  let activeTenantId = null;
+  const tenantPermissionById = {
+    'tenant-101': {
+      scope_label: '组织权限（Tenant 101）',
+      can_view_member_admin: true,
+      can_operate_member_admin: true,
+      can_view_billing: true,
+      can_operate_billing: false
+    },
+    'tenant-202': {
+      scope_label: '组织权限（Tenant 202）',
+      can_view_member_admin: false,
+      can_operate_member_admin: false,
+      can_view_billing: true,
+      can_operate_billing: true
+    }
+  };
+  const currentTenantPermissionContext = () => {
+    if (!activeTenantId) {
+      return {
+        scope_label: '组织未选择（无可操作权限）',
+        can_view_member_admin: false,
+        can_operate_member_admin: false,
+        can_view_billing: false,
+        can_operate_billing: false
+      };
+    }
+    return tenantPermissionById[activeTenantId] || {
+      scope_label: `组织权限（${activeTenantId}）`,
+      can_view_member_admin: false,
+      can_operate_member_admin: false,
+      can_view_billing: false,
+      can_operate_billing: false
+    };
+  };
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) {
@@ -316,6 +356,133 @@ const createOtpApiServer = async () => {
           request_id: 'chrome-regression-login'
         }
       });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/auth/login') {
+      if (body.phone === '13800000005' && body.password === 'Passw0rd!') {
+        sendJson({
+          status: 200,
+          contentType: 'application/json',
+          payload: {
+            token_type: 'Bearer',
+            access_token: tenantToken,
+            refresh_token: 'tenant-flow-refresh-token',
+            expires_in: 900,
+            refresh_expires_in: 604800,
+            session_id: 'tenant-flow-session',
+            entry_domain: body.entry_domain || 'platform',
+            active_tenant_id: body.entry_domain === 'tenant' ? activeTenantId : null,
+            tenant_selection_required: body.entry_domain === 'tenant' ? activeTenantId === null : false,
+            tenant_options: body.entry_domain === 'tenant' ? tenantOptions : [],
+            tenant_permission_context: body.entry_domain === 'tenant'
+              ? currentTenantPermissionContext()
+              : {
+                scope_label: '平台入口（无组织侧权限上下文）',
+                can_view_member_admin: false,
+                can_operate_member_admin: false,
+                can_view_billing: false,
+                can_operate_billing: false
+              },
+            request_id: 'chrome-regression-password-login'
+          }
+        });
+        return;
+      }
+
+      sendJson({
+        status: 401,
+        contentType: 'application/problem+json',
+        payload: {
+          type: 'about:blank',
+          title: 'Unauthorized',
+          status: 401,
+          detail: '手机号或密码错误',
+          error_code: 'AUTH-401-LOGIN-FAILED',
+          request_id: 'chrome-regression-password-login-failed'
+        }
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/auth/tenant/options') {
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          session_id: 'tenant-flow-session',
+          entry_domain: 'tenant',
+          active_tenant_id: activeTenantId,
+          tenant_selection_required: activeTenantId === null,
+          tenant_options: tenantOptions,
+          tenant_permission_context: currentTenantPermissionContext(),
+          request_id: 'chrome-regression-tenant-options'
+        }
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/auth/tenant/select') {
+      if (tenantOptions.some((option) => option.tenant_id === body.tenant_id)) {
+        activeTenantId = body.tenant_id;
+        sendJson({
+          status: 200,
+          contentType: 'application/json',
+          payload: {
+            session_id: 'tenant-flow-session',
+            entry_domain: 'tenant',
+            active_tenant_id: activeTenantId,
+            tenant_selection_required: false,
+            tenant_permission_context: currentTenantPermissionContext(),
+            request_id: 'chrome-regression-tenant-select'
+          }
+        });
+      } else {
+        sendJson({
+          status: 403,
+          contentType: 'application/problem+json',
+          payload: {
+            type: 'about:blank',
+            title: 'Forbidden',
+            status: 403,
+            detail: '当前入口无可用访问域权限',
+            error_code: 'AUTH-403-NO-DOMAIN',
+            request_id: 'chrome-regression-tenant-select-denied'
+          }
+        });
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/auth/tenant/switch') {
+      if (tenantOptions.some((option) => option.tenant_id === body.tenant_id)) {
+        activeTenantId = body.tenant_id;
+        sendJson({
+          status: 200,
+          contentType: 'application/json',
+          payload: {
+            session_id: 'tenant-flow-session',
+            entry_domain: 'tenant',
+            active_tenant_id: activeTenantId,
+            tenant_selection_required: false,
+            tenant_permission_context: currentTenantPermissionContext(),
+            request_id: 'chrome-regression-tenant-switch'
+          }
+        });
+      } else {
+        sendJson({
+          status: 403,
+          contentType: 'application/problem+json',
+          payload: {
+            type: 'about:blank',
+            title: 'Forbidden',
+            status: 403,
+            detail: '当前入口无可用访问域权限',
+            error_code: 'AUTH-403-NO-DOMAIN',
+            request_id: 'chrome-regression-tenant-switch-denied'
+          }
+        });
+      }
       return;
     }
 
@@ -767,6 +934,121 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     10000,
     'otp login failure message should follow retry semantics'
   );
+  assert.match(
+    String(await evaluate(cdp, sessionId, `document.querySelector('[data-testid="message-global"]')?.textContent || ''`)),
+    /验证码错误或已失效.*请稍后重试/
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="entry-tenant"]').click(); return true; })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="mode-password"]').click(); return true; })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const phone = document.querySelector('[data-testid="input-phone"]');
+      const password = document.querySelector('[data-testid="input-password"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(phone, '13800000005');
+      phone.dispatchEvent(new Event('input', { bubbles: true }));
+      phone.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(password, 'Passw0rd!');
+      password.dispatchEvent(new Event('input', { bubbles: true }));
+      password.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="button-submit-login"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-select"]'))`,
+    10000,
+    'tenant-entry login should require tenant selection when multiple options exist'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-select"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      setter.call(select, 'tenant-101');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-select-confirm"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
+      const text = String(dashboard?.textContent || '');
+      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
+      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      return (
+        Boolean(dashboard) &&
+        text.includes('tenant-101') &&
+        Boolean(memberBtn) &&
+        memberBtn.disabled === false &&
+        Boolean(billingBtn) &&
+        billingBtn.disabled === true
+      );
+    })()`,
+    10000,
+    'tenant select should navigate to dashboard and materialize server-driven tenant-101 permissions'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-switch"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      setter.call(select, 'tenant-202');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-switch-confirm"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
+      const text = String(dashboard?.textContent || '');
+      const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
+      const memberHidden = document.querySelector('[data-testid="permission-member-admin-hidden"]');
+      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      return (
+        text.includes('tenant-202') &&
+        message.includes('请稍后重试') === false &&
+        Boolean(memberHidden) &&
+        Boolean(billingBtn) &&
+        billingBtn.disabled === false
+      );
+    })()`,
+    10000,
+    'tenant switch should recompute visibility and operability according to server-driven tenant-202 permissions'
+  );
 
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
   screenshotPath = join(evidenceDir, `chrome-regression-${timestamp}.png`);
@@ -796,11 +1078,26 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   });
   assert.deepEqual(api.requests.find((request) => request.path === '/auth/otp/login')?.body, {
     phone: '13800000000',
-    otp_code: '123456'
+    otp_code: '123456',
+    entry_domain: 'platform'
+  });
+  assert.deepEqual(
+    api.requests.find((request) => request.path === '/auth/login' && request.body?.phone === '13800000005')?.body,
+    {
+      phone: '13800000005',
+      password: 'Passw0rd!',
+      entry_domain: 'tenant'
+    }
+  );
+  assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/select')?.body, {
+    tenant_id: 'tenant-101'
+  });
+  assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/switch')?.body, {
+    tenant_id: 'tenant-202'
   });
   assert.match(
     String(await evaluate(cdp, sessionId, `document.querySelector('[data-testid="message-global"]')?.textContent || ''`)),
-    /验证码错误或已失效.*请稍后重试/
+    /组织切换成功/
   );
 
   const reportPath = join(evidenceDir, `chrome-regression-${timestamp}.json`);
@@ -815,11 +1112,15 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
         screenshots: [resolve(screenshotPath)],
         assertions: {
           mode_switch: true,
+          entry_domain_switch: true,
           otp_send_countdown_on_success: true,
           otp_send_cooldown_429: true,
           otp_send_rate_limit_headers: true,
           otp_rate_limit_countdown_recovery: true,
-          otp_login_failure_semantics: true
+          otp_login_failure_semantics: true,
+          tenant_selection_flow: true,
+          tenant_switch_flow: true,
+          tenant_permission_recompute: true
         },
         requests: api.requests
       },

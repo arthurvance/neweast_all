@@ -1,0 +1,91 @@
+# generated: 2026-02-11T16:55:24+0800
+# project: neweast
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: /Users/helloworld/dev/neweast/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-02-11T16:55:24+0800
+project: neweast
+project_key: NOKEY
+tracking_system: file-system
+story_location: "/Users/helloworld/Documents/project_code/neweast/_bmad-output/implementation-artifacts"
+
+development_status:
+  epic-1: in-progress
+  1-1-基座初始化与全-docker-本地环境: done
+  1-2-密码登录-会话刷新与当前会话登出: done
+  1-3-验证码登录与发送频控: done
+  1-4-双入口域识别与组织选择-切换: done
+  1-5-菜单-按钮-api-访问控制与统一拒绝语义: backlog
+  1-6-双域权限边界与服务端租户最终判定: backlog
+  1-7-refresh-rotation-重放识别与并发会话策略: backlog
+  1-8-关键状态变更触发-session-version-会话收敛: backlog
+  1-9-默认密码策略与用户创建一致性: backlog
+  1-10-认证错误码与可重试语义统一映射: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-组织创建与初始负责人校验: backlog
+  2-2-组织状态治理-启用-禁用: backlog
+  2-3-平台用户创建与状态管理: backlog
+  2-4-平台角色管理与受保护角色约束: backlog
+  2-5-平台权限树配置与角色分配生效: backlog
+  2-6-平台侧负责人变更入口: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-组织成员管理与身份复用: backlog
+  3-2-组织角色管理: backlog
+  3-3-组织权限树与成员角色分配: backlog
+  3-4-组织成员资料维护: backlog
+  3-5-负责人变更后的接管保障: backlog
+  3-6-负责人变更并发冲突与安全重试: backlog
+  3-7-组织软删除级联一致性: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-审计事件记录与按域查询: backlog
+  4-2-请求追踪关联与跨链路可观测: backlog
+  4-3-受控系统配置治理: backlog
+  4-4-受保护角色约束与角色状态失效: backlog
+  4-5-权限树最终授权落库: backlog
+  4-6-发布前回归门禁分组报告: backlog
+  4-7-用户软删除会话撤销: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-集成目录与生命周期管理: backlog
+  5-2-版本化契约交互与兼容管理: backlog
+  5-3-集成变更前契约一致性校验: backlog
+  5-4-失败重试-恢复与再处理闭环: backlog
+  5-5-集成清单冻结-解冻与门禁分组报告: backlog
+  epic-5-retrospective: optional

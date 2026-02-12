@@ -103,6 +103,14 @@ const errors = {
       title: 'Bad Request',
       detail: `新密码不满足策略，最小长度 ${PASSWORD_MIN_LENGTH}`,
       errorCode: 'AUTH-400-WEAK-PASSWORD'
+    }),
+
+  noDomainAccess: () =>
+    authError({
+      status: 403,
+      title: 'Forbidden',
+      detail: '当前入口无可用访问域权限',
+      errorCode: 'AUTH-403-NO-DOMAIN'
     })
 };
 
@@ -270,6 +278,60 @@ const isUserActive = (user) => {
 
   const normalizedStatus = user.status.trim().toLowerCase();
   return normalizedStatus === 'active' || normalizedStatus === 'enabled';
+};
+
+const normalizeEntryDomain = (entryDomain) => {
+  const normalized = String(entryDomain || 'platform').trim().toLowerCase();
+  if (normalized !== 'platform' && normalized !== 'tenant') {
+    return null;
+  }
+  return normalized;
+};
+
+const normalizeTenantId = (tenantId) => {
+  if (tenantId === null || tenantId === undefined) {
+    return null;
+  }
+  const normalized = String(tenantId).trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
+const buildPlatformPermissionContext = () => ({
+  scope_label: '平台入口（无组织侧权限上下文）',
+  can_view_member_admin: false,
+  can_operate_member_admin: false,
+  can_view_billing: false,
+  can_operate_billing: false
+});
+
+const buildTenantUnselectedPermissionContext = () => ({
+  scope_label: '组织未选择（无可操作权限）',
+  can_view_member_admin: false,
+  can_operate_member_admin: false,
+  can_view_billing: false,
+  can_operate_billing: false
+});
+
+const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel) => {
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return null;
+  }
+  return {
+    scope_label: permissionContext.scopeLabel
+      || permissionContext.scope_label
+      || fallbackScopeLabel
+      || '组织权限快照（默认）',
+    can_view_member_admin: Boolean(
+      permissionContext.canViewMemberAdmin ?? permissionContext.can_view_member_admin
+    ),
+    can_operate_member_admin: Boolean(
+      permissionContext.canOperateMemberAdmin ?? permissionContext.can_operate_member_admin
+    ),
+    can_view_billing: Boolean(permissionContext.canViewBilling ?? permissionContext.can_view_billing),
+    can_operate_billing: Boolean(
+      permissionContext.canOperateBilling ?? permissionContext.can_operate_billing
+    )
+  };
 };
 
 const createInMemoryOtpStore = ({ nowProvider }) => {
@@ -447,6 +509,230 @@ const createAuthService = (options = {}) => {
     }
   };
 
+  const buildSessionContext = (session = {}) => ({
+    entry_domain: normalizeEntryDomain(session.entryDomain || session.entry_domain || 'platform') || 'platform',
+    active_tenant_id: normalizeTenantId(session.activeTenantId || session.active_tenant_id)
+  });
+
+  const getDomainAccessForUser = async (userId) => {
+    if (typeof authStore.findDomainAccessByUserId === 'function') {
+      const access = await authStore.findDomainAccessByUserId(String(userId));
+      return {
+        platform: Boolean(access?.platform),
+        tenant: Boolean(access?.tenant)
+      };
+    }
+    return { platform: false, tenant: false };
+  };
+
+  const ensureDefaultDomainAccessForUser = async ({ requestId, userId }) => {
+    if (typeof authStore.ensureDefaultDomainAccessForUser !== 'function') {
+      return;
+    }
+    const result = await authStore.ensureDefaultDomainAccessForUser(String(userId));
+    if (result?.inserted === true) {
+      addAuditEvent({
+        type: 'auth.domain.default_granted',
+        requestId,
+        userId,
+        detail: 'default platform domain access provisioned',
+        metadata: {
+          entry_domain: 'platform',
+          tenant_id: null
+        }
+      });
+    }
+  };
+
+  const ensureTenantDomainAccessForUser = async ({ requestId, userId, entryDomain }) => {
+    if (entryDomain !== 'tenant') {
+      return;
+    }
+    if (typeof authStore.ensureTenantDomainAccessForUser !== 'function') {
+      return;
+    }
+    const result = await authStore.ensureTenantDomainAccessForUser(String(userId));
+    if (result?.inserted === true) {
+      addAuditEvent({
+        type: 'auth.domain.tenant_granted',
+        requestId,
+        userId,
+        detail: 'tenant domain access provisioned from active tenant membership',
+        metadata: {
+          entry_domain: 'tenant',
+          tenant_id: null
+        }
+      });
+    }
+  };
+
+  const getTenantOptionsForUser = async (userId) => {
+    if (typeof authStore.listTenantOptionsByUserId !== 'function') {
+      return [];
+    }
+    const options = await authStore.listTenantOptionsByUserId(String(userId));
+    if (!Array.isArray(options)) {
+      return [];
+    }
+    return options
+      .map((option) => ({
+        tenant_id: normalizeTenantId(option.tenantId || option.tenant_id),
+        tenant_name: option.tenantName || option.tenant_name || null
+      }))
+      .filter((option) => option.tenant_id);
+  };
+
+  const rejectNoDomainAccess = ({
+    requestId,
+    userId,
+    sessionId = 'unknown',
+    entryDomain,
+    tenantId,
+    detail
+  }) => {
+    addAuditEvent({
+      type: 'auth.domain.rejected',
+      requestId,
+      userId,
+      sessionId,
+      detail,
+      metadata: {
+        entry_domain: entryDomain,
+        tenant_id: normalizeTenantId(tenantId)
+      }
+    });
+    throw errors.noDomainAccess();
+  };
+
+  const getTenantPermissionContext = async ({
+    requestId,
+    userId,
+    sessionId,
+    entryDomain,
+    activeTenantId
+  }) => {
+    if (entryDomain !== 'tenant') {
+      return buildPlatformPermissionContext();
+    }
+
+    const normalizedTenantId = normalizeTenantId(activeTenantId);
+    if (!normalizedTenantId) {
+      return buildTenantUnselectedPermissionContext();
+    }
+
+    if (typeof authStore.findTenantPermissionByUserAndTenantId !== 'function') {
+      rejectNoDomainAccess({
+        requestId,
+        userId,
+        sessionId,
+        entryDomain,
+        tenantId: normalizedTenantId,
+        detail: `tenant permission lookup unavailable: ${normalizedTenantId}`
+      });
+    }
+
+    const permissionContext = await authStore.findTenantPermissionByUserAndTenantId({
+      userId: String(userId),
+      tenantId: normalizedTenantId
+    });
+    const normalized = normalizeTenantPermissionContext(
+      permissionContext,
+      `组织权限（${normalizedTenantId}）`
+    );
+    if (!normalized) {
+      rejectNoDomainAccess({
+        requestId,
+        userId,
+        sessionId,
+        entryDomain,
+        tenantId: normalizedTenantId,
+        detail: `tenant permission missing: ${normalizedTenantId}`
+      });
+    }
+    return normalized;
+  };
+
+  const reconcileTenantSessionContext = async ({
+    requestId,
+    userId,
+    sessionId,
+    sessionContext,
+    options
+  }) => {
+    if (sessionContext.entry_domain !== 'tenant') {
+      return sessionContext;
+    }
+
+    if (!Array.isArray(options) || options.length === 0) {
+      rejectNoDomainAccess({
+        requestId,
+        userId,
+        sessionId,
+        entryDomain: sessionContext.entry_domain,
+        tenantId: null,
+        detail: 'tenant entry without active tenant relationship'
+      });
+    }
+
+    const optionTenantIds = new Set(options.map((option) => option.tenant_id));
+    const currentActiveTenantId = normalizeTenantId(sessionContext.active_tenant_id);
+
+    if (currentActiveTenantId && optionTenantIds.has(currentActiveTenantId)) {
+      return sessionContext;
+    }
+
+    const nextActiveTenantId = options.length === 1 ? options[0].tenant_id : null;
+    if (currentActiveTenantId && !optionTenantIds.has(currentActiveTenantId)) {
+      addAuditEvent({
+        type: 'auth.tenant.context.invalidated',
+        requestId,
+        userId,
+        sessionId,
+        detail: `active tenant no longer allowed: ${currentActiveTenantId}`,
+        metadata: {
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: currentActiveTenantId
+        }
+      });
+    }
+
+    if (currentActiveTenantId !== nextActiveTenantId) {
+      if (typeof authStore.updateSessionContext !== 'function') {
+        throw new Error('authStore.updateSessionContext is required');
+      }
+      await authStore.updateSessionContext({
+        sessionId,
+        entryDomain: 'tenant',
+        activeTenantId: nextActiveTenantId
+      });
+      invalidateSessionCacheBySessionId(sessionId);
+    }
+
+    return {
+      entry_domain: 'tenant',
+      active_tenant_id: nextActiveTenantId
+    };
+  };
+
+  const assertDomainAccess = async ({ requestId, userId, entryDomain }) => {
+    const access = await getDomainAccessForUser(userId);
+    const allowed = entryDomain === 'platform' ? access.platform : access.tenant;
+    if (!allowed) {
+      addAuditEvent({
+        type: 'auth.domain.rejected',
+        requestId,
+        userId,
+        detail: `domain access denied: ${entryDomain}`,
+        metadata: {
+          entry_domain: entryDomain,
+          tenant_id: null
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+    return access;
+  };
+
   const assertRateLimit = async ({ requestId, phone, action }) => {
     const result = await rateLimitStore.consume({
       phone,
@@ -547,12 +833,19 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const createSessionAndIssueLoginTokens = async ({ userId, sessionVersion }) => {
+  const createSessionAndIssueLoginTokens = async ({
+    userId,
+    sessionVersion,
+    entryDomain,
+    activeTenantId
+  }) => {
     const sessionId = randomUUID();
     await authStore.createSession({
       sessionId,
       userId,
-      sessionVersion: Number(sessionVersion)
+      sessionVersion: Number(sessionVersion),
+      entryDomain,
+      activeTenantId
     });
 
     const { accessToken, refreshToken } = await issueLoginTokenPair({
@@ -564,7 +857,11 @@ const createAuthService = (options = {}) => {
     return {
       sessionId,
       accessToken,
-      refreshToken
+      refreshToken,
+      sessionContext: {
+        entry_domain: entryDomain,
+        active_tenant_id: normalizeTenantId(activeTenantId)
+      }
     };
   };
 
@@ -612,9 +909,15 @@ const createAuthService = (options = {}) => {
     return { payload, session, user };
   };
 
-  const login = async ({ requestId, phone, password }) => {
+  const login = async ({ requestId, phone, password, entryDomain }) => {
     const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone || typeof password !== 'string' || password.trim() === '') {
+    const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
+    if (
+      !normalizedPhone ||
+      typeof password !== 'string' ||
+      password.trim() === '' ||
+      !normalizedEntryDomain
+    ) {
       throw errors.invalidPayload();
     }
 
@@ -643,9 +946,65 @@ const createAuthService = (options = {}) => {
       throw errors.loginFailed();
     }
 
-    const { sessionId, accessToken, refreshToken } = await createSessionAndIssueLoginTokens({
+    if (normalizedEntryDomain === 'platform') {
+      await ensureDefaultDomainAccessForUser({
+        requestId,
+        userId: user.id
+      });
+    }
+    if (normalizedEntryDomain === 'tenant') {
+      await ensureTenantDomainAccessForUser({
+        requestId,
+        userId: user.id,
+        entryDomain: normalizedEntryDomain
+      });
+    }
+
+    await assertDomainAccess({
+      requestId,
       userId: user.id,
-      sessionVersion: Number(user.sessionVersion)
+      entryDomain: normalizedEntryDomain
+    });
+    const tenantOptions = normalizedEntryDomain === 'tenant'
+      ? await getTenantOptionsForUser(user.id)
+      : [];
+
+    if (normalizedEntryDomain === 'tenant' && tenantOptions.length === 0) {
+      addAuditEvent({
+        type: 'auth.domain.rejected',
+        requestId,
+        userId: user.id,
+        detail: 'tenant entry without active tenant relationship',
+        metadata: {
+          entry_domain: normalizedEntryDomain,
+          tenant_id: null
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+
+    const tenantSelectionRequired = normalizedEntryDomain === 'tenant' && tenantOptions.length > 1;
+    const activeTenantId = normalizedEntryDomain === 'tenant' && tenantOptions.length === 1
+      ? tenantOptions[0].tenant_id
+      : null;
+
+    const { sessionId, accessToken, refreshToken, sessionContext } = await createSessionAndIssueLoginTokens({
+      userId: user.id,
+      sessionVersion: Number(user.sessionVersion),
+      entryDomain: normalizedEntryDomain,
+      activeTenantId
+    });
+
+    addAuditEvent({
+      type: 'auth.domain.bound',
+      requestId,
+      userId: user.id,
+      sessionId,
+      detail: `domain bound to session: ${normalizedEntryDomain}`,
+      metadata: {
+        entry_domain: normalizedEntryDomain,
+        tenant_id: sessionContext.active_tenant_id
+      }
     });
 
     addAuditEvent({
@@ -655,8 +1014,18 @@ const createAuthService = (options = {}) => {
       sessionId,
       metadata: {
         phone_masked: maskPhone(normalizedPhone),
-        resend_after_seconds: rateLimit.remainingSeconds
+        resend_after_seconds: rateLimit.remainingSeconds,
+        entry_domain: normalizedEntryDomain,
+        tenant_id: sessionContext.active_tenant_id
       }
+    });
+
+    const tenantPermissionContext = await getTenantPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
     });
 
     return {
@@ -666,6 +1035,11 @@ const createAuthService = (options = {}) => {
       expires_in: ACCESS_TTL_SECONDS,
       refresh_expires_in: REFRESH_TTL_SECONDS,
       session_id: sessionId,
+      entry_domain: sessionContext.entry_domain,
+      active_tenant_id: sessionContext.active_tenant_id,
+      tenant_selection_required: tenantSelectionRequired,
+      tenant_options: tenantOptions,
+      tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
   };
@@ -775,9 +1149,15 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const loginWithOtp = async ({ requestId, phone, otpCode }) => {
+  const loginWithOtp = async ({ requestId, phone, otpCode, entryDomain }) => {
     const normalizedPhone = normalizePhone(phone);
-    if (!normalizedPhone || typeof otpCode !== 'string' || !/^\d{6}$/.test(otpCode.trim())) {
+    const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
+    if (
+      !normalizedPhone ||
+      typeof otpCode !== 'string' ||
+      !/^\d{6}$/.test(otpCode.trim()) ||
+      !normalizedEntryDomain
+    ) {
       throw errors.invalidPayload();
     }
 
@@ -832,9 +1212,65 @@ const createAuthService = (options = {}) => {
       throw errors.otpFailed();
     }
 
-    const { sessionId, accessToken, refreshToken } = await createSessionAndIssueLoginTokens({
+    if (normalizedEntryDomain === 'platform') {
+      await ensureDefaultDomainAccessForUser({
+        requestId,
+        userId: user.id
+      });
+    }
+    if (normalizedEntryDomain === 'tenant') {
+      await ensureTenantDomainAccessForUser({
+        requestId,
+        userId: user.id,
+        entryDomain: normalizedEntryDomain
+      });
+    }
+
+    await assertDomainAccess({
+      requestId,
       userId: user.id,
-      sessionVersion: Number(user.sessionVersion)
+      entryDomain: normalizedEntryDomain
+    });
+    const tenantOptions = normalizedEntryDomain === 'tenant'
+      ? await getTenantOptionsForUser(user.id)
+      : [];
+
+    if (normalizedEntryDomain === 'tenant' && tenantOptions.length === 0) {
+      addAuditEvent({
+        type: 'auth.domain.rejected',
+        requestId,
+        userId: user.id,
+        detail: 'tenant entry without active tenant relationship',
+        metadata: {
+          entry_domain: normalizedEntryDomain,
+          tenant_id: null
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+
+    const tenantSelectionRequired = normalizedEntryDomain === 'tenant' && tenantOptions.length > 1;
+    const activeTenantId = normalizedEntryDomain === 'tenant' && tenantOptions.length === 1
+      ? tenantOptions[0].tenant_id
+      : null;
+
+    const { sessionId, accessToken, refreshToken, sessionContext } = await createSessionAndIssueLoginTokens({
+      userId: user.id,
+      sessionVersion: Number(user.sessionVersion),
+      entryDomain: normalizedEntryDomain,
+      activeTenantId
+    });
+
+    addAuditEvent({
+      type: 'auth.domain.bound',
+      requestId,
+      userId: user.id,
+      sessionId,
+      detail: `domain bound to session: ${normalizedEntryDomain}`,
+      metadata: {
+        entry_domain: normalizedEntryDomain,
+        tenant_id: sessionContext.active_tenant_id
+      }
     });
 
     addAuditEvent({
@@ -843,8 +1279,18 @@ const createAuthService = (options = {}) => {
       userId: user.id,
       sessionId,
       metadata: {
-        phone_masked: maskPhone(normalizedPhone)
+        phone_masked: maskPhone(normalizedPhone),
+        entry_domain: normalizedEntryDomain,
+        tenant_id: sessionContext.active_tenant_id
       }
+    });
+
+    const tenantPermissionContext = await getTenantPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
     });
 
     return {
@@ -854,6 +1300,11 @@ const createAuthService = (options = {}) => {
       expires_in: ACCESS_TTL_SECONDS,
       refresh_expires_in: REFRESH_TTL_SECONDS,
       session_id: sessionId,
+      entry_domain: sessionContext.entry_domain,
+      active_tenant_id: sessionContext.active_tenant_id,
+      tenant_selection_required: tenantSelectionRequired,
+      tenant_options: tenantOptions,
+      tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
   };
@@ -1003,6 +1454,27 @@ const createAuthService = (options = {}) => {
       sessionVersion: Number(user.sessionVersion),
       refreshTokenId: nextRefreshTokenId
     });
+    let sessionContext = buildSessionContext(session);
+    const refreshedTenantOptions = sessionContext.entry_domain === 'tenant'
+      ? await getTenantOptionsForUser(user.id)
+      : [];
+    sessionContext = await reconcileTenantSessionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      sessionContext,
+      options: refreshedTenantOptions
+    });
+    const tenantSelectionRequired = sessionContext.entry_domain === 'tenant'
+      && refreshedTenantOptions.length > 1
+      && !sessionContext.active_tenant_id;
+    const tenantPermissionContext = await getTenantPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
+    });
 
     addAuditEvent({
       type: 'auth.refresh.succeeded',
@@ -1018,6 +1490,11 @@ const createAuthService = (options = {}) => {
       expires_in: ACCESS_TTL_SECONDS,
       refresh_expires_in: REFRESH_TTL_SECONDS,
       session_id: sessionId,
+      entry_domain: sessionContext.entry_domain,
+      active_tenant_id: sessionContext.active_tenant_id,
+      tenant_selection_required: tenantSelectionRequired,
+      tenant_options: refreshedTenantOptions,
+      tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
   };
@@ -1124,10 +1601,160 @@ const createAuthService = (options = {}) => {
     };
   };
 
+  const tenantOptions = async ({ requestId, accessToken }) => {
+    const { session, user } = await assertValidAccessSession(accessToken);
+    const sessionId = session.sessionId || session.session_id;
+    let sessionContext = buildSessionContext(session);
+    let options = [];
+    if (sessionContext.entry_domain === 'tenant') {
+      options = await getTenantOptionsForUser(user.id);
+      sessionContext = await reconcileTenantSessionContext({
+        requestId,
+        userId: user.id,
+        sessionId,
+        sessionContext,
+        options
+      });
+    } else {
+      sessionContext = {
+        entry_domain: 'platform',
+        active_tenant_id: null
+      };
+    }
+    const selectionRequired = sessionContext.entry_domain === 'tenant'
+      && options.length > 1
+      && !sessionContext.active_tenant_id;
+
+    const tenantPermissionContext = await getTenantPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
+    });
+
+    return {
+      session_id: sessionId,
+      entry_domain: sessionContext.entry_domain,
+      active_tenant_id: sessionContext.active_tenant_id,
+      tenant_selection_required: selectionRequired,
+      tenant_options: options,
+      tenant_permission_context: tenantPermissionContext,
+      request_id: requestId || 'request_id_unset'
+    };
+  };
+
+  const selectOrSwitchTenant = async ({ requestId, accessToken, tenantId, eventType }) => {
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    if (!normalizedTenantId) {
+      throw errors.invalidPayload();
+    }
+
+    const { session, user } = await assertValidAccessSession(accessToken);
+    const sessionId = session.sessionId || session.session_id;
+    const sessionContext = buildSessionContext(session);
+
+    await assertDomainAccess({
+      requestId,
+      userId: user.id,
+      entryDomain: 'tenant'
+    });
+
+    if (sessionContext.entry_domain !== 'tenant') {
+      addAuditEvent({
+        type: 'auth.domain.rejected',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: `tenant selection rejected for entry domain ${sessionContext.entry_domain}`,
+        metadata: {
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: normalizedTenantId
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+
+    const options = await getTenantOptionsForUser(user.id);
+    const matched = options.find((item) => item.tenant_id === normalizedTenantId);
+    if (!matched) {
+      addAuditEvent({
+        type: 'auth.domain.rejected',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: `tenant selection rejected: ${normalizedTenantId}`,
+        metadata: {
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: normalizedTenantId
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+
+    if (typeof authStore.updateSessionContext !== 'function') {
+      throw new Error('authStore.updateSessionContext is required');
+    }
+    await authStore.updateSessionContext({
+      sessionId,
+      entryDomain: 'tenant',
+      activeTenantId: normalizedTenantId
+    });
+    invalidateSessionCacheBySessionId(sessionId);
+
+    addAuditEvent({
+      type: eventType,
+      requestId,
+      userId: user.id,
+      sessionId,
+      detail: `active tenant updated: ${normalizedTenantId}`,
+      metadata: {
+        entry_domain: 'tenant',
+        tenant_id: normalizedTenantId
+      }
+    });
+
+    const tenantPermissionContext = await getTenantPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: 'tenant',
+      activeTenantId: normalizedTenantId
+    });
+
+    return {
+      session_id: sessionId,
+      entry_domain: 'tenant',
+      active_tenant_id: normalizedTenantId,
+      tenant_selection_required: false,
+      tenant_permission_context: tenantPermissionContext,
+      request_id: requestId || 'request_id_unset'
+    };
+  };
+
+  const selectTenant = async ({ requestId, accessToken, tenantId }) =>
+    selectOrSwitchTenant({
+      requestId,
+      accessToken,
+      tenantId,
+      eventType: 'auth.tenant.selected'
+    });
+
+  const switchTenant = async ({ requestId, accessToken, tenantId }) =>
+    selectOrSwitchTenant({
+      requestId,
+      accessToken,
+      tenantId,
+      eventType: 'auth.tenant.switched'
+    });
+
   return {
     login,
     sendOtp,
     loginWithOtp,
+    tenantOptions,
+    selectTenant,
+    switchTenant,
     refresh,
     logout,
     changePassword,

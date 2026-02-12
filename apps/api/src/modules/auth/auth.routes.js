@@ -34,7 +34,8 @@ const createAuthHandlers = (authService = createAuthService()) => ({
     authService.login({
       requestId,
       phone: body.phone,
-      password: body.password
+      password: body.password,
+      entryDomain: body.entry_domain
     }),
 
   otpSend: async ({ requestId, body }) =>
@@ -47,7 +48,28 @@ const createAuthHandlers = (authService = createAuthService()) => ({
     authService.loginWithOtp({
       requestId,
       phone: body.phone,
-      otpCode: body.otp_code
+      otpCode: body.otp_code,
+      entryDomain: body.entry_domain
+    }),
+
+  tenantOptions: async ({ requestId, authorization }) =>
+    authService.tenantOptions({
+      requestId,
+      accessToken: extractBearerToken(authorization)
+    }),
+
+  tenantSelect: async ({ requestId, authorization, body }) =>
+    authService.selectTenant({
+      requestId,
+      accessToken: extractBearerToken(authorization),
+      tenantId: body.tenant_id
+    }),
+
+  tenantSwitch: async ({ requestId, authorization, body }) =>
+    authService.switchTenant({
+      requestId,
+      accessToken: extractBearerToken(authorization),
+      tenantId: body.tenant_id
     }),
 
   refresh: async ({ requestId, body }) =>

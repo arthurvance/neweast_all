@@ -30,6 +30,44 @@ const parseJsonBody = (rawBody) => {
 };
 
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+const REQUIRED_AUTH_SCHEMA = {
+  auth_sessions: [
+    'session_id',
+    'user_id',
+    'session_version',
+    'entry_domain',
+    'active_tenant_id',
+    'status',
+    'revoked_reason',
+    'updated_at'
+  ],
+  auth_user_domain_access: ['user_id', 'domain', 'status'],
+  auth_user_tenants: [
+    'user_id',
+    'tenant_id',
+    'tenant_name',
+    'status',
+    'can_view_member_admin',
+    'can_operate_member_admin',
+    'can_view_billing',
+    'can_operate_billing'
+  ]
+};
+
+const readInfoSchemaField = (row, fieldName) => {
+  if (!row || typeof row !== 'object') {
+    return '';
+  }
+  const lowerValue = row[fieldName];
+  if (typeof lowerValue === 'string' && lowerValue.length > 0) {
+    return lowerValue.trim();
+  }
+  const upperValue = row[String(fieldName).toUpperCase()];
+  if (typeof upperValue === 'string' && upperValue.length > 0) {
+    return upperValue.trim();
+  }
+  return '';
+};
 
 const resolveJsonBodyLimitBytes = (value) => {
   const parsed = Number(value);
@@ -37,6 +75,58 @@ const resolveJsonBodyLimitBytes = (value) => {
     return DEFAULT_JSON_BODY_LIMIT_BYTES;
   }
   return Math.floor(parsed);
+};
+
+const ensureAuthSchemaPreflight = async ({ dbClient }) => {
+  const requiredTables = Object.keys(REQUIRED_AUTH_SCHEMA);
+  const tablePlaceholders = requiredTables.map(() => '?').join(', ');
+  const tableRows = await dbClient.query(
+    `
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = DATABASE()
+        AND table_name IN (${tablePlaceholders})
+    `,
+    requiredTables
+  );
+  const availableTables = new Set(
+    (Array.isArray(tableRows) ? tableRows : []).map((row) =>
+      readInfoSchemaField(row, 'table_name')
+    )
+  );
+  const missingTables = requiredTables.filter((tableName) => !availableTables.has(tableName));
+  if (missingTables.length > 0) {
+    throw new Error(
+      `Auth schema preflight failed: missing tables: ${missingTables.join(', ')}`
+    );
+  }
+
+  for (const [tableName, requiredColumns] of Object.entries(REQUIRED_AUTH_SCHEMA)) {
+    const placeholders = requiredColumns.map(() => '?').join(', ');
+    const columnRows = await dbClient.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = ?
+          AND column_name IN (${placeholders})
+      `,
+      [tableName, ...requiredColumns]
+    );
+    const availableColumns = new Set(
+      (Array.isArray(columnRows) ? columnRows : []).map((row) =>
+        readInfoSchemaField(row, 'column_name')
+      )
+    );
+    const missingColumns = requiredColumns.filter(
+      (columnName) => !availableColumns.has(columnName)
+    );
+    if (missingColumns.length > 0) {
+      throw new Error(
+        `Auth schema preflight failed: ${tableName} missing columns: ${missingColumns.join(', ')}`
+      );
+    }
+  }
 };
 
 const createApiApp = async (config, options = {}) => {
@@ -93,6 +183,7 @@ const createApiApp = async (config, options = {}) => {
           database: config.DB_NAME,
           connectTimeoutMs: config.DB_CONNECT_TIMEOUT_MS
         });
+        await ensureAuthSchemaPreflight({ dbClient });
 
         const authStore = createMySqlAuthStore({ dbClient });
         const privateKey = normalizePem(config.AUTH_JWT_PRIVATE_KEY);
@@ -330,6 +421,9 @@ const createApiApp = async (config, options = {}) => {
     ['post', '/auth/login'],
     ['post', '/auth/otp/send'],
     ['post', '/auth/otp/login'],
+    ['get', '/auth/tenant/options'],
+    ['post', '/auth/tenant/select'],
+    ['post', '/auth/tenant/switch'],
     ['post', '/auth/refresh'],
     ['post', '/auth/logout'],
     ['post', '/auth/change-password'],

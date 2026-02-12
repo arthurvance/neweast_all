@@ -84,7 +84,8 @@ const buildOpenApiSpec = () => ({
                 success_case: {
                   value: {
                     phone: '13800000000',
-                    password: 'Passw0rd!'
+                    password: 'Passw0rd!',
+                    entry_domain: 'platform'
                   }
                 }
               }
@@ -153,6 +154,26 @@ const buildOpenApiSpec = () => ({
                       status: 401,
                       detail: '手机号或密码错误',
                       error_code: 'AUTH-401-LOGIN-FAILED',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'No access to target domain',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
                       request_id: 'request_id_unset'
                     }
                   }
@@ -301,7 +322,8 @@ const buildOpenApiSpec = () => ({
                 otp_login: {
                   value: {
                     phone: '13800000000',
-                    otp_code: '123456'
+                    otp_code: '123456',
+                    entry_domain: 'platform'
                   }
                 }
               }
@@ -377,6 +399,26 @@ const buildOpenApiSpec = () => ({
               }
             }
           },
+          403: {
+            description: 'No access to target domain',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
           429: {
             description: 'OTP login rate limit exceeded',
             headers: RATE_LIMIT_RESPONSE_HEADERS,
@@ -393,6 +435,158 @@ const buildOpenApiSpec = () => ({
                       error_code: 'AUTH-429-RATE-LIMITED',
                       rate_limit_action: 'otp_login',
                       retry_after_seconds: 27,
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/tenant/options': {
+      get: {
+        summary: 'List current user tenant options and active session context',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Tenant options and session context',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantContextResponse' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'No access to tenant domain',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/tenant/select': {
+      post: {
+        summary: 'Select active tenant for current session',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TenantSelectRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant selected and persisted to session context',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantSelectResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'No access to selected tenant',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/tenant/switch': {
+      post: {
+        summary: 'Switch active tenant in current session',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TenantSelectRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant switched and persisted to session context',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantSelectResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'No access to selected tenant',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
                       request_id: 'request_id_unset'
                     }
                   }
@@ -610,7 +804,13 @@ const buildOpenApiSpec = () => ({
         required: ['phone', 'password'],
         properties: {
           phone: { type: 'string', description: '手机号' },
-          password: { type: 'string', format: 'password' }
+          password: { type: 'string', format: 'password' },
+          entry_domain: {
+            type: 'string',
+            enum: ['platform', 'tenant'],
+            default: 'platform',
+            description: '可选，默认 platform'
+          }
         }
       },
       AuthRefreshRequest: {
@@ -641,7 +841,13 @@ const buildOpenApiSpec = () => ({
         required: ['phone', 'otp_code'],
         properties: {
           phone: { type: 'string' },
-          otp_code: { type: 'string', minLength: 6, maxLength: 6 }
+          otp_code: { type: 'string', minLength: 6, maxLength: 6 },
+          entry_domain: {
+            type: 'string',
+            enum: ['platform', 'tenant'],
+            default: 'platform',
+            description: '可选，默认 platform'
+          }
         }
       },
       ChangePasswordRequest: {
@@ -661,6 +867,9 @@ const buildOpenApiSpec = () => ({
           'expires_in',
           'refresh_expires_in',
           'session_id',
+          'entry_domain',
+          'tenant_selection_required',
+          'tenant_permission_context',
           'request_id'
         ],
         properties: {
@@ -670,7 +879,96 @@ const buildOpenApiSpec = () => ({
           expires_in: { type: 'integer' },
           refresh_expires_in: { type: 'integer' },
           session_id: { type: 'string' },
+          entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
+          active_tenant_id: { type: 'string', nullable: true },
+          tenant_selection_required: { type: 'boolean' },
+          tenant_options: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/TenantOption' }
+          },
+          tenant_permission_context: {
+            $ref: '#/components/schemas/TenantPermissionContext'
+          },
           request_id: { type: 'string' }
+        }
+      },
+      TenantOption: {
+        type: 'object',
+        required: ['tenant_id'],
+        properties: {
+          tenant_id: { type: 'string' },
+          tenant_name: { type: 'string', nullable: true }
+        }
+      },
+      TenantContextResponse: {
+        type: 'object',
+        required: [
+          'session_id',
+          'entry_domain',
+          'active_tenant_id',
+          'tenant_selection_required',
+          'tenant_options',
+          'tenant_permission_context',
+          'request_id'
+        ],
+        properties: {
+          session_id: { type: 'string' },
+          entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
+          active_tenant_id: { type: 'string', nullable: true },
+          tenant_selection_required: { type: 'boolean' },
+          tenant_options: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/TenantOption' }
+          },
+          tenant_permission_context: {
+            $ref: '#/components/schemas/TenantPermissionContext'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantSelectRequest: {
+        type: 'object',
+        required: ['tenant_id'],
+        properties: {
+          tenant_id: { type: 'string' }
+        }
+      },
+      TenantSelectResponse: {
+        type: 'object',
+        required: [
+          'session_id',
+          'entry_domain',
+          'active_tenant_id',
+          'tenant_selection_required',
+          'tenant_permission_context',
+          'request_id'
+        ],
+        properties: {
+          session_id: { type: 'string' },
+          entry_domain: { type: 'string', enum: ['tenant'] },
+          active_tenant_id: { type: 'string' },
+          tenant_selection_required: { type: 'boolean' },
+          tenant_permission_context: {
+            $ref: '#/components/schemas/TenantPermissionContext'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantPermissionContext: {
+        type: 'object',
+        required: [
+          'scope_label',
+          'can_view_member_admin',
+          'can_operate_member_admin',
+          'can_view_billing',
+          'can_operate_billing'
+        ],
+        properties: {
+          scope_label: { type: 'string' },
+          can_view_member_admin: { type: 'boolean' },
+          can_operate_member_admin: { type: 'boolean' },
+          can_view_billing: { type: 'boolean' },
+          can_operate_billing: { type: 'boolean' }
         }
       },
       ProblemDetails: {
