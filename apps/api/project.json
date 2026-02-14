@@ -6,7 +6,7 @@
   "sourceRoot": "apps/api/src",
   "targets": {
     "lint": {
-      "command": "pnpm --dir apps/api run lint"
+      "command": "pnpm --dir apps/api run check:route-permissions && pnpm --dir apps/api run lint"
     },
     "build": {
       "command": "pnpm --dir apps/api run build"

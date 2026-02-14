@@ -5,15 +5,31 @@ const Redis = require('ioredis');
 const { NestFactory } = require('@nestjs/core');
 const { AppModule } = require('./app.module');
 const { createRouteHandlers } = require('./http-routes');
-const { dispatchApiRoute } = require('./server');
+const {
+  dispatchApiRoute,
+  listExecutableRouteKeys,
+  resolveRouteDeclarationLookup,
+  ensureAuthorizeRouteCapabilityOrThrow,
+  createCorsPolicy,
+  applyCorsPolicyToHeaders
+} = require('./server');
 const { checkDependencies } = require('./infrastructure/connectivity');
 const { connectMySql } = require('./infrastructure/mysql-client');
 const { buildProblemDetails } = require('./common/problem-details');
 const { log } = require('./common/logger');
-const { createAuthService } = require('./modules/auth/auth.service');
+const {
+  createAuthService,
+  listSupportedRoutePermissionCodes,
+  listSupportedRoutePermissionScopes
+} = require('./modules/auth/auth.service');
 const { createMySqlAuthStore } = require('./modules/auth/auth.store.mysql');
 const { createRedisOtpStore } = require('./modules/auth/auth.otp.store.redis');
 const { createRedisRateLimitStore } = require('./modules/auth/auth.rate-limit.redis');
+const {
+  ROUTE_DEFINITIONS,
+  toRouteDefinitionsSnapshot,
+  ensureRoutePermissionDeclarationsOrThrow
+} = require('./route-permissions');
 
 const normalizePem = (rawPem) => {
   if (typeof rawPem !== 'string') {
@@ -131,6 +147,24 @@ const ensureAuthSchemaPreflight = async ({ dbClient }) => {
 
 const createApiApp = async (config, options = {}) => {
   const dependencyProbe = options.dependencyProbe || checkDependencies;
+  const routeDefinitions = toRouteDefinitionsSnapshot(
+    Array.isArray(options.routeDefinitions)
+      ? options.routeDefinitions
+      : ROUTE_DEFINITIONS
+  );
+  const executableRouteKeys = Array.isArray(options.executableRouteKeys)
+    ? options.executableRouteKeys
+    : listExecutableRouteKeys();
+  const supportedPermissionCodes =
+    options.supportedPermissionCodes || listSupportedRoutePermissionCodes();
+  const supportedPermissionScopes =
+    options.supportedPermissionScopes || listSupportedRoutePermissionScopes();
+  ensureRoutePermissionDeclarationsOrThrow(routeDefinitions, {
+    executableRouteKeys,
+    supportedPermissionCodes,
+    supportedPermissionScopes
+  });
+  const routeDeclarationLookup = resolveRouteDeclarationLookup({ routeDefinitions });
   let authService = options.authService;
   let closeAuthResources = async () => {};
   const requirePersistentAuthStore = options.requirePersistentAuthStore === true;
@@ -227,9 +261,14 @@ const createApiApp = async (config, options = {}) => {
     dependencyProbe,
     authService
   });
+  ensureAuthorizeRouteCapabilityOrThrow({
+    routeDefinitions,
+    handlers
+  });
   const jsonBodyLimitBytes = resolveJsonBodyLimitBytes(
     config.API_JSON_BODY_LIMIT_BYTES
   );
+  const corsPolicy = createCorsPolicy(config);
   const app = await NestFactory.create(AppModule, { logger: false });
   const expressApp = app.getHttpAdapter().getInstance();
 
@@ -237,6 +276,14 @@ const createApiApp = async (config, options = {}) => {
 
   expressApp.use((req, _res, next) => {
     req.request_id = req.headers['x-request-id'] || randomUUID();
+    next();
+  });
+
+  expressApp.use((req, res, next) => {
+    const corsHeaders = applyCorsPolicyToHeaders({}, corsPolicy, req.headers.origin);
+    for (const [header, value] of Object.entries(corsHeaders)) {
+      res.setHeader(header, value);
+    }
     next();
   });
 
@@ -388,10 +435,17 @@ const createApiApp = async (config, options = {}) => {
         headers: req.headers,
         body: req.body || {},
         requestId: req.request_id,
-        handlers
+        handlers,
+        routeDefinitions,
+        routeDeclarationLookup
       });
 
-      for (const [header, value] of Object.entries(route.headers || {})) {
+      const routeHeaders = applyCorsPolicyToHeaders(
+        route.headers || {},
+        corsPolicy,
+        req.headers.origin
+      );
+      for (const [header, value] of Object.entries(routeHeaders)) {
         res.setHeader(header, value);
       }
 
@@ -414,23 +468,9 @@ const createApiApp = async (config, options = {}) => {
     }
   };
 
-  const routeTable = [
-    ['get', '/health'],
-    ['get', '/openapi.json'],
-    ['get', '/auth/ping'],
-    ['post', '/auth/login'],
-    ['post', '/auth/otp/send'],
-    ['post', '/auth/otp/login'],
-    ['get', '/auth/tenant/options'],
-    ['post', '/auth/tenant/select'],
-    ['post', '/auth/tenant/switch'],
-    ['post', '/auth/refresh'],
-    ['post', '/auth/logout'],
-    ['post', '/auth/change-password'],
-    ['get', '/smoke']
-  ];
-
-  for (const [method, path] of routeTable) {
+  for (const routeDefinition of routeDefinitions) {
+    const method = String(routeDefinition.method || 'GET').trim().toLowerCase();
+    const path = String(routeDefinition.path || '/');
     expressApp[method](path, dispatchRegisteredRoute);
   }
 
@@ -462,7 +502,10 @@ const createApiApp = async (config, options = {}) => {
       status: 500,
       title: 'Internal Server Error',
       detail: 'Unexpected server failure',
-      requestId: req.request_id
+      requestId: req.request_id,
+      extensions: {
+        error_code: 'AUTH-500-INTERNAL'
+      }
     });
     res.status(500).type('application/problem+json').json(payload);
   });

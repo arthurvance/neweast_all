@@ -31,7 +31,12 @@ const readConfig = (env = process.env) => ({
   REDIS_CONNECT_TIMEOUT_MS: asNumber(env.REDIS_CONNECT_TIMEOUT_MS, 1200),
   LOG_FORMAT: env.LOG_FORMAT ?? 'json',
   ALLOW_MOCK_BACKENDS: asBool(env.ALLOW_MOCK_BACKENDS, false),
-  API_JSON_BODY_LIMIT_BYTES: asNumber(env.API_JSON_BODY_LIMIT_BYTES, 1024 * 1024)
+  API_JSON_BODY_LIMIT_BYTES: asNumber(env.API_JSON_BODY_LIMIT_BYTES, 1024 * 1024),
+  API_CORS_ALLOWED_ORIGINS:
+    env.API_CORS_ALLOWED_ORIGINS
+    ?? (env.NODE_ENV === 'production'
+      ? ''
+      : 'http://localhost:4173,http://127.0.0.1:4173')
 });
 
 module.exports = { readConfig };

@@ -236,7 +236,97 @@ test('tenant switch updates active_tenant_id and rejects unknown tenant options'
   assert.equal(denied.body.error_code, 'AUTH-403-NO-DOMAIN');
 });
 
-test('tenant options in platform entry returns empty tenant_options', async () => {
+test('tenant context routes reconcile stale active_tenant_id before route authorization rejects request', async () => {
+  const context = {
+    dependencyProbe,
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'domain-user-5',
+          phone: '13820000004',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform', 'tenant'],
+          tenants: [
+            { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+            { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+          ]
+        }
+      ]
+    })
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13820000004',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+
+  const selected = await callRoute(
+    {
+      pathname: '/auth/tenant/select',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: { tenant_id: 'tenant-a' }
+    },
+    context
+  );
+  assert.equal(selected.status, 200);
+  assert.equal(selected.body.active_tenant_id, 'tenant-a');
+
+  const authStore = context.authService._internals.authStore;
+  await authStore.updateSessionContext({
+    sessionId: selected.body.session_id,
+    entryDomain: 'tenant',
+    activeTenantId: 'tenant-stale'
+  });
+
+  const options = await callRoute(
+    {
+      pathname: '/auth/tenant/options',
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    },
+    context
+  );
+  assert.equal(options.status, 200);
+  assert.equal(options.body.active_tenant_id, null);
+  assert.equal(options.body.tenant_selection_required, true);
+
+  await authStore.updateSessionContext({
+    sessionId: selected.body.session_id,
+    entryDomain: 'tenant',
+    activeTenantId: 'tenant-stale'
+  });
+
+  const switched = await callRoute(
+    {
+      pathname: '/auth/tenant/switch',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: { tenant_id: 'tenant-b' }
+    },
+    context
+  );
+  assert.equal(switched.status, 200);
+  assert.equal(switched.body.active_tenant_id, 'tenant-b');
+});
+
+test('tenant options in platform entry is blocked with AUTH-403-NO-DOMAIN', async () => {
   const context = {
     dependencyProbe,
     authService: createAuthService({
@@ -282,16 +372,7 @@ test('tenant options in platform entry returns empty tenant_options', async () =
     context
   );
 
-  assert.equal(options.status, 200);
-  assert.equal(options.body.entry_domain, 'platform');
-  assert.equal(options.body.tenant_selection_required, false);
-  assert.equal(options.body.active_tenant_id, null);
-  assert.deepEqual(options.body.tenant_options, []);
-  assert.deepEqual(options.body.tenant_permission_context, {
-    scope_label: '平台入口（无组织侧权限上下文）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
-  });
+  assert.equal(options.status, 403);
+  assert.equal(options.body.error_code, 'AUTH-403-NO-DOMAIN');
+  assert.equal(typeof options.body.request_id, 'string');
 });

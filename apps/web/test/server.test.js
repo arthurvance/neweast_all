@@ -80,3 +80,306 @@ test('web root route accepts query string for invite/deeplink flows', async () =
   assert.equal(route.headers['content-type'], 'text/html; charset=utf-8');
   assert.match(route.body, /<!doctype html>/i);
 });
+
+test('tenant mutation resolver differentiates missing tenant_options vs explicit empty list', async () => {
+  const { resolveTenantMutationUiState } = await import('../src/tenant-mutation.mjs');
+
+  const partialPayloadState = resolveTenantMutationUiState({
+    nextTenantOptions: [],
+    nextActiveTenantId: 'tenant-b',
+    hasTenantOptions: false,
+    previousTenantSelectionValue: 'tenant-a',
+    previousTenantOptions: [{ tenant_id: 'tenant-a', tenant_name: 'A' }]
+  });
+  assert.equal(partialPayloadState.tenantSelectionValue, 'tenant-a');
+  assert.equal(partialPayloadState.tenantSwitchValue, 'tenant-a');
+  assert.equal(partialPayloadState.tenantOptionsUpdate, undefined);
+
+  const partialPayloadKnownActiveState = resolveTenantMutationUiState({
+    nextTenantOptions: [],
+    nextActiveTenantId: 'tenant-b',
+    hasTenantOptions: false,
+    previousTenantSelectionValue: 'tenant-a',
+    previousTenantOptions: [
+      { tenant_id: 'tenant-a', tenant_name: 'A' },
+      { tenant_id: 'tenant-b', tenant_name: 'B' }
+    ]
+  });
+  assert.equal(partialPayloadKnownActiveState.tenantSelectionValue, 'tenant-b');
+  assert.equal(partialPayloadKnownActiveState.tenantSwitchValue, 'tenant-b');
+  assert.equal(partialPayloadKnownActiveState.tenantOptionsUpdate, undefined);
+
+  const partialPayloadWithoutKnownOptionsState = resolveTenantMutationUiState({
+    nextTenantOptions: [],
+    nextActiveTenantId: 'tenant-z',
+    hasTenantOptions: false,
+    previousTenantSelectionValue: '',
+    previousTenantOptions: []
+  });
+  assert.equal(partialPayloadWithoutKnownOptionsState.tenantSelectionValue, '');
+  assert.equal(partialPayloadWithoutKnownOptionsState.tenantSwitchValue, '');
+  assert.equal(partialPayloadWithoutKnownOptionsState.tenantOptionsUpdate, undefined);
+
+  const explicitEmptyOptionsState = resolveTenantMutationUiState({
+    nextTenantOptions: [],
+    nextActiveTenantId: 'tenant-b',
+    hasTenantOptions: true,
+    previousTenantSelectionValue: 'tenant-a'
+  });
+  assert.equal(explicitEmptyOptionsState.tenantSelectionValue, '');
+  assert.equal(explicitEmptyOptionsState.tenantSwitchValue, '');
+  assert.deepEqual(explicitEmptyOptionsState.tenantOptionsUpdate, []);
+
+  const activeTenantPreferredState = resolveTenantMutationUiState({
+    nextTenantOptions: [
+      { tenant_id: 'tenant-a', tenant_name: 'A' },
+      { tenant_id: 'tenant-b', tenant_name: 'B' }
+    ],
+    nextActiveTenantId: 'tenant-b',
+    hasTenantOptions: true,
+    previousTenantSelectionValue: 'tenant-a'
+  });
+  assert.equal(activeTenantPreferredState.tenantSelectionValue, 'tenant-b');
+  assert.equal(activeTenantPreferredState.tenantSwitchValue, 'tenant-b');
+
+  const activeTenantOutOfOptionsState = resolveTenantMutationUiState({
+    nextTenantOptions: [
+      { tenant_id: 'tenant-a', tenant_name: 'A' },
+      { tenant_id: 'tenant-b', tenant_name: 'B' }
+    ],
+    nextActiveTenantId: 'tenant-c',
+    hasTenantOptions: true,
+    previousTenantSelectionValue: 'tenant-a'
+  });
+  assert.equal(activeTenantOutOfOptionsState.tenantSelectionValue, 'tenant-a');
+  assert.equal(activeTenantOutOfOptionsState.tenantSwitchValue, 'tenant-a');
+
+  const missingActiveFallsBackToPreviousState = resolveTenantMutationUiState({
+    nextTenantOptions: [
+      { tenant_id: 'tenant-a', tenant_name: 'A' },
+      { tenant_id: 'tenant-b', tenant_name: 'B' }
+    ],
+    nextActiveTenantId: '',
+    hasTenantOptions: true,
+    previousTenantSelectionValue: 'tenant-b'
+  });
+  assert.equal(missingActiveFallsBackToPreviousState.tenantSelectionValue, 'tenant-b');
+  assert.equal(missingActiveFallsBackToPreviousState.tenantSwitchValue, 'tenant-b');
+});
+
+test('tenant mutation permission context is fail-closed when payload omits tenant_permission_context', async () => {
+  const { resolveTenantMutationPermissionContext } = await import('../src/tenant-mutation.mjs');
+
+  const withContext = resolveTenantMutationPermissionContext({
+    hasTenantPermissionContext: true,
+    nextTenantPermissionContext: {
+      scope_label: '组织权限（Tenant B）',
+      can_view_member_admin: true
+    }
+  });
+  assert.deepEqual(withContext, {
+    scope_label: '组织权限（Tenant B）',
+    can_view_member_admin: true
+  });
+
+  const missingContext = resolveTenantMutationPermissionContext({
+    hasTenantPermissionContext: false,
+    nextTenantPermissionContext: {
+      scope_label: 'stale-context',
+      can_view_member_admin: true
+    }
+  });
+  assert.equal(missingContext, null);
+});
+
+test('tenant mutation session state consumes rotated session fields from mutation payload', async () => {
+  const { resolveTenantMutationSessionState } = await import('../src/tenant-mutation.mjs');
+
+  const withRotatedSession = resolveTenantMutationSessionState({
+    previousSessionState: {
+      access_token: 'old-access-token',
+      session_id: 'old-session-id',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-a',
+      tenant_selection_required: false,
+      tenant_permission_context: { scope_label: 'old' }
+    },
+    payload: {
+      access_token: 'new-access-token',
+      session_id: 'new-session-id',
+      entry_domain: 'tenant',
+      tenant_selection_required: false
+    },
+    nextActiveTenantId: 'tenant-b',
+    nextTenantPermissionContext: { scope_label: 'new' }
+  });
+  assert.equal(withRotatedSession.access_token, 'new-access-token');
+  assert.equal(withRotatedSession.session_id, 'new-session-id');
+  assert.equal(withRotatedSession.active_tenant_id, 'tenant-b');
+  assert.deepEqual(withRotatedSession.tenant_permission_context, { scope_label: 'new' });
+
+  const withMissingSessionFields = resolveTenantMutationSessionState({
+    previousSessionState: {
+      access_token: 'kept-access-token',
+      session_id: 'kept-session-id',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-a',
+      tenant_selection_required: false,
+      tenant_permission_context: { scope_label: 'kept' }
+    },
+    payload: {
+      entry_domain: 'tenant',
+      tenant_selection_required: true
+    },
+    nextActiveTenantId: 'tenant-c',
+    nextTenantPermissionContext: null
+  });
+  assert.equal(withMissingSessionFields.access_token, 'kept-access-token');
+  assert.equal(withMissingSessionFields.session_id, 'kept-session-id');
+  assert.equal(withMissingSessionFields.active_tenant_id, 'tenant-c');
+  assert.equal(withMissingSessionFields.tenant_selection_required, true);
+  assert.equal(withMissingSessionFields.tenant_permission_context, null);
+});
+
+test('tenant refresh session binding uses expected session context to avoid stale-drop after mutation rotation', async () => {
+  const { isTenantRefreshResultBoundToCurrentSession } = await import(
+    '../src/tenant-mutation.mjs'
+  );
+
+  const staleCurrentSession = {
+    access_token: 'old-access-token',
+    session_id: 'old-session-id'
+  };
+  const expectedSession = {
+    access_token: 'new-access-token',
+    session_id: 'new-session-id'
+  };
+
+  const rejectedWithoutExpectedSession = isTenantRefreshResultBoundToCurrentSession({
+    currentSession: staleCurrentSession,
+    requestAccessToken: 'new-access-token',
+    requestSessionId: 'new-session-id',
+    responsePayload: {
+      session_id: 'new-session-id'
+    }
+  });
+  assert.equal(rejectedWithoutExpectedSession, false);
+
+  const acceptedWithExpectedSession = isTenantRefreshResultBoundToCurrentSession({
+    currentSession: staleCurrentSession,
+    expectedSession,
+    requestAccessToken: 'new-access-token',
+    requestSessionId: 'new-session-id',
+    responsePayload: {
+      session_id: 'new-session-id'
+    }
+  });
+  assert.equal(acceptedWithExpectedSession, true);
+});
+
+test('tenant refresh ui resolver keeps selection and switch values aligned after tenant list shrink', async () => {
+  const { resolveTenantRefreshUiState } = await import('../src/tenant-mutation.mjs');
+
+  const refreshState = resolveTenantRefreshUiState({
+    tenantOptions: [
+      { tenant_id: 'tenant-a', tenant_name: 'A' },
+      { tenant_id: 'tenant-b', tenant_name: 'B' }
+    ],
+    activeTenantId: '',
+    previousTenantSelectionValue: 'tenant-stale'
+  });
+
+  assert.deepEqual(refreshState.tenantOptionsUpdate, [
+    { tenant_id: 'tenant-a', tenant_name: 'A' },
+    { tenant_id: 'tenant-b', tenant_name: 'B' }
+  ]);
+  assert.equal(refreshState.tenantSelectionValue, 'tenant-a');
+  assert.equal(refreshState.tenantSwitchValue, 'tenant-a');
+});
+
+test('latest request executor ignores stale tenant refresh success payloads', async () => {
+  const { createLatestRequestExecutor } = await import('../src/latest-request.mjs');
+  const executor = createLatestRequestExecutor();
+  const applied = [];
+
+  let resolveFirst;
+  let resolveSecond;
+  const firstRequest = new Promise((resolve) => {
+    resolveFirst = resolve;
+  });
+  const secondRequest = new Promise((resolve) => {
+    resolveSecond = resolve;
+  });
+
+  const firstRun = executor.run(
+    () => firstRequest,
+    (payload) => applied.push(payload)
+  );
+  const secondRun = executor.run(
+    () => secondRequest,
+    (payload) => applied.push(payload)
+  );
+
+  resolveSecond({ active_tenant_id: 'tenant-new' });
+  const secondResult = await secondRun;
+  resolveFirst({ active_tenant_id: 'tenant-old' });
+  const firstResult = await firstRun;
+
+  assert.deepEqual(secondResult, { active_tenant_id: 'tenant-new' });
+  assert.equal(firstResult, undefined);
+  assert.deepEqual(applied, [{ active_tenant_id: 'tenant-new' }]);
+});
+
+test('latest request executor suppresses stale tenant refresh failures', async () => {
+  const { createLatestRequestExecutor } = await import('../src/latest-request.mjs');
+  const executor = createLatestRequestExecutor();
+  const applied = [];
+
+  let rejectFirst;
+  const firstRequest = new Promise((_resolve, reject) => {
+    rejectFirst = reject;
+  });
+
+  const firstRun = executor.run(
+    () => firstRequest,
+    (payload) => applied.push(payload)
+  );
+  const secondRun = executor.run(
+    () => Promise.resolve({ active_tenant_id: 'tenant-new' }),
+    (payload) => applied.push(payload)
+  );
+
+  const secondResult = await secondRun;
+  rejectFirst(new Error('stale refresh failed'));
+  const firstResult = await firstRun;
+
+  assert.deepEqual(secondResult, { active_tenant_id: 'tenant-new' });
+  assert.equal(firstResult, undefined);
+  assert.deepEqual(applied, [{ active_tenant_id: 'tenant-new' }]);
+});
+
+test('latest request executor drops result when session binding check fails', async () => {
+  const { createLatestRequestExecutor } = await import('../src/latest-request.mjs');
+  const executor = createLatestRequestExecutor();
+  const applied = [];
+
+  let resolveRequest;
+  const pendingRequest = new Promise((resolve) => {
+    resolveRequest = resolve;
+  });
+
+  let currentSessionId = 'session-new';
+  const runPromise = executor.run(
+    () => pendingRequest,
+    (payload) => applied.push(payload),
+    {
+      isResultCurrent: (payload) => payload.session_id === currentSessionId
+    }
+  );
+
+  resolveRequest({ session_id: 'session-old', active_tenant_id: 'tenant-old' });
+  const result = await runPromise;
+
+  assert.equal(result, undefined);
+  assert.deepEqual(applied, []);
+});

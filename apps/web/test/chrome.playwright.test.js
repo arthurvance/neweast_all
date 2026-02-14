@@ -7,6 +7,9 @@ const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('n
 const { once } = require('node:events');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
+const { createApiApp } = require('../../api/src/app');
+const { readConfig } = require('../../api/src/config/env');
+const { createAuthService } = require('../../api/src/modules/auth/auth.service');
 
 const WORKSPACE_ROOT = resolve(__dirname, '../../..');
 const CHROME_BIN_CANDIDATES = [
@@ -16,6 +19,12 @@ const CHROME_BIN_CANDIDATES = [
   '/usr/bin/chromium-browser',
   '/usr/bin/chromium'
 ].filter(Boolean);
+const REAL_API_TEST_USER = {
+  phone: '13920000001',
+  password: 'Passw0rd!',
+  tenantA: 'tenant-a',
+  tenantB: 'tenant-b'
+};
 
 const sleep = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
@@ -197,6 +206,8 @@ const createOtpApiServer = async () => {
     { tenant_id: 'tenant-101', tenant_name: 'Tenant 101' },
     { tenant_id: 'tenant-202', tenant_name: 'Tenant 202' }
   ];
+  let failTenantOptionsOnceAfterSelect = false;
+  let failTenantOptionsOnceAfterSwitch = false;
   let activeTenantId = null;
   const tenantPermissionById = {
     'tenant-101': {
@@ -209,7 +220,7 @@ const createOtpApiServer = async () => {
     'tenant-202': {
       scope_label: '组织权限（Tenant 202）',
       can_view_member_admin: false,
-      can_operate_member_admin: false,
+      can_operate_member_admin: true,
       can_view_billing: true,
       can_operate_billing: true
     }
@@ -406,6 +417,23 @@ const createOtpApiServer = async () => {
     }
 
     if (req.method === 'GET' && req.url === '/auth/tenant/options') {
+      if (failTenantOptionsOnceAfterSelect || failTenantOptionsOnceAfterSwitch) {
+        failTenantOptionsOnceAfterSelect = false;
+        failTenantOptionsOnceAfterSwitch = false;
+        sendJson({
+          status: 503,
+          contentType: 'application/problem+json',
+          payload: {
+            type: 'about:blank',
+            title: 'Service Unavailable',
+            status: 503,
+            detail: '组织上下文刷新失败',
+            error_code: 'AUTH-503-TENANT-REFRESH',
+            request_id: 'chrome-regression-tenant-options-failed'
+          }
+        });
+        return;
+      }
       sendJson({
         status: 200,
         contentType: 'application/json',
@@ -425,6 +453,7 @@ const createOtpApiServer = async () => {
     if (req.method === 'POST' && req.url === '/auth/tenant/select') {
       if (tenantOptions.some((option) => option.tenant_id === body.tenant_id)) {
         activeTenantId = body.tenant_id;
+        failTenantOptionsOnceAfterSelect = true;
         sendJson({
           status: 200,
           contentType: 'application/json',
@@ -433,6 +462,7 @@ const createOtpApiServer = async () => {
             entry_domain: 'tenant',
             active_tenant_id: activeTenantId,
             tenant_selection_required: false,
+            tenant_options: tenantOptions,
             tenant_permission_context: currentTenantPermissionContext(),
             request_id: 'chrome-regression-tenant-select'
           }
@@ -457,6 +487,7 @@ const createOtpApiServer = async () => {
     if (req.method === 'POST' && req.url === '/auth/tenant/switch') {
       if (tenantOptions.some((option) => option.tenant_id === body.tenant_id)) {
         activeTenantId = body.tenant_id;
+        failTenantOptionsOnceAfterSwitch = true;
         sendJson({
           status: 200,
           contentType: 'application/json',
@@ -465,6 +496,7 @@ const createOtpApiServer = async () => {
             entry_domain: 'tenant',
             active_tenant_id: activeTenantId,
             tenant_selection_required: false,
+            tenant_options: tenantOptions,
             tenant_permission_context: currentTenantPermissionContext(),
             request_id: 'chrome-regression-tenant-switch'
           }
@@ -511,6 +543,93 @@ const createOtpApiServer = async () => {
     close: async () => {
       await new Promise((resolveClose) => server.close(() => resolveClose()));
     }
+  };
+};
+
+const createRealApiServer = async () => {
+  const config = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true'
+  });
+  const authService = createAuthService({
+    seedUsers: [
+      {
+        id: 'chrome-real-user',
+        phone: REAL_API_TEST_USER.phone,
+        password: REAL_API_TEST_USER.password,
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          {
+            tenantId: REAL_API_TEST_USER.tenantA,
+            tenantName: 'Tenant A',
+            status: 'active',
+            permission: {
+              scopeLabel: '组织权限（Tenant A）',
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: true,
+              canOperateBilling: false
+            }
+          },
+          {
+            tenantId: REAL_API_TEST_USER.tenantB,
+            tenantName: 'Tenant B',
+            status: 'active',
+            permission: {
+              scopeLabel: '组织权限（Tenant B）',
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: true,
+              canOperateBilling: true
+            }
+          }
+        ]
+      }
+    ],
+    allowInMemoryOtpStores: true,
+    requireSecureOtpStores: false
+  });
+
+  const app = await createApiApp(config, {
+    dependencyProbe: async () => ({
+      db: { ok: true, detail: 'mock db' },
+      redis: { ok: true, detail: 'mock redis' }
+    }),
+    authService
+  });
+  await app.init();
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  const apiPort = typeof address === 'object' && address ? address.port : 0;
+
+  return {
+    apiPort,
+    close: async () => {
+      await app.close();
+    }
+  };
+};
+
+const requestRealApi = async ({ baseUrl, method = 'GET', path, body, accessToken }) => {
+  const headers = {
+    accept: 'application/json, application/problem+json'
+  };
+  if (body !== undefined) {
+    headers['content-type'] = 'application/json';
+  }
+  if (accessToken) {
+    headers.authorization = `Bearer ${accessToken}`;
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const payload = await response.json();
+  return {
+    status: response.status,
+    body: payload
   };
 };
 
@@ -882,6 +1001,14 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     10000,
     'otp send cooldown (429) should show retry message'
   );
+  const cooldownMessageText = String(
+    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="message-global"]')?.textContent || ''`)
+  );
+  assert.equal(
+    cooldownMessageText.indexOf('请稍后重试') === cooldownMessageText.lastIndexOf('请稍后重试'),
+    true,
+    'retry message must not contain duplicate "请稍后重试" suffix (was: ' + cooldownMessageText + ')'
+  );
   await waitForCondition(
     cdp,
     sessionId,
@@ -999,15 +1126,21 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     `(() => {
       const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
       const text = String(dashboard?.textContent || '');
+      const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
+      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
+      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
       const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
       const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
       return (
         Boolean(dashboard) &&
         text.includes('tenant-101') &&
+        message.includes('组织选择成功') &&
+        message.includes('请稍后重试') === false &&
+        Boolean(memberMenu) &&
+        billingMenu === null &&
         Boolean(memberBtn) &&
         memberBtn.disabled === false &&
-        Boolean(billingBtn) &&
-        billingBtn.disabled === true
+        billingBtn === null
       );
     })()`,
     10000,
@@ -1036,12 +1169,16 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
       const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
       const text = String(dashboard?.textContent || '');
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
-      const memberHidden = document.querySelector('[data-testid="permission-member-admin-hidden"]');
+      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
+      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
+      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
       const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
       return (
         text.includes('tenant-202') &&
         message.includes('请稍后重试') === false &&
-        Boolean(memberHidden) &&
+        memberMenu === null &&
+        Boolean(billingMenu) &&
+        memberBtn === null &&
         Boolean(billingBtn) &&
         billingBtn.disabled === false
       );
@@ -1095,9 +1232,24 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/switch')?.body, {
     tenant_id: 'tenant-202'
   });
-  assert.match(
-    String(await evaluate(cdp, sessionId, `document.querySelector('[data-testid="message-global"]')?.textContent || ''`)),
-    /组织切换成功/
+  assert.equal(
+    api.responses.filter(
+      (response) =>
+        response.path === '/auth/tenant/options'
+        && response.status === 503
+        && response.body?.error_code === 'AUTH-503-TENANT-REFRESH'
+    ).length,
+    2
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
+      return message.includes('组织切换成功') && message.includes('组织上下文刷新失败');
+    })()`,
+    10000,
+    'tenant switch refresh failure should surface warning in message (not silently swallowed)'
   );
 
   const reportPath = join(evidenceDir, `chrome-regression-${timestamp}.json`);
@@ -1127,6 +1279,287 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
       null,
       2
     )
+  );
+
+  if (vite.exitCode !== null) {
+    throw new Error(`vite process exited early (${vite.exitCode}): ${viteLogs.stderr || viteLogs.stdout}`);
+  }
+  if (chrome.exitCode !== null) {
+    throw new Error(
+      `chrome process exited early (${chrome.exitCode}): ${chromeLogs.stderr || chromeLogs.stdout}`
+    );
+  }
+});
+
+test('chrome regression validates tenant permission UI against real API authorization semantics', async (t) => {
+  const chromeBinary = resolveChromeBinary();
+  const api = await createRealApiServer();
+  const apiBaseUrl = `http://127.0.0.1:${api.apiPort}`;
+  const webPort = await reservePort();
+  const cdpPort = await reservePort();
+  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-real-api-profile-'));
+
+  let vite = null;
+  let chrome = null;
+  let cdp = null;
+
+  const viteLogs = { stdout: '', stderr: '' };
+  const chromeLogs = { stdout: '', stderr: '' };
+
+  t.after(async () => {
+    await cdp?.close();
+    await stopProcess(chrome);
+    await stopProcess(vite);
+    await api.close();
+    rmSync(chromeProfileDir, { recursive: true, force: true });
+  });
+
+  vite = spawn(
+    'pnpm',
+    [
+      '--dir',
+      'apps/web',
+      'exec',
+      'vite',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(webPort),
+      '--strictPort',
+      '--config',
+      'vite.config.js'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      env: {
+        ...process.env,
+        VITE_PROXY_TARGET: apiBaseUrl
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  vite.stdout.on('data', (data) => {
+    viteLogs.stdout += String(data);
+  });
+  vite.stderr.on('data', (data) => {
+    viteLogs.stderr += String(data);
+  });
+
+  await waitForHttp(`http://127.0.0.1:${webPort}/`, 30000, 'vite web server');
+
+  chrome = spawn(
+    chromeBinary,
+    [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${chromeProfileDir}`,
+      '--headless=new',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--no-first-run',
+      '--no-default-browser-check',
+      'about:blank'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  chrome.stdout.on('data', (data) => {
+    chromeLogs.stdout += String(data);
+  });
+  chrome.stderr.on('data', (data) => {
+    chromeLogs.stderr += String(data);
+  });
+
+  const version = await (
+    await waitForHttp(`http://127.0.0.1:${cdpPort}/json/version`, 20000, 'chrome devtools endpoint')
+  ).json();
+  cdp = new CdpClient(version.webSocketDebuggerUrl);
+  await cdp.connect();
+
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${webPort}/` }, sessionId);
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'page title should be visible'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="entry-tenant"]').click(); return true; })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="mode-password"]').click(); return true; })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const phone = document.querySelector('[data-testid="input-phone"]');
+      const password = document.querySelector('[data-testid="input-password"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(phone, '${REAL_API_TEST_USER.phone}');
+      phone.dispatchEvent(new Event('input', { bubbles: true }));
+      phone.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(password, '${REAL_API_TEST_USER.password}');
+      password.dispatchEvent(new Event('input', { bubbles: true }));
+      password.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="button-submit-login"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-select"]'))`,
+    10000,
+    'tenant entry login should require tenant selection'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-select"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      setter.call(select, '${REAL_API_TEST_USER.tenantA}');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-select-confirm"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
+      const text = String(dashboard?.textContent || '');
+      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
+      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
+      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
+      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      return (
+        Boolean(dashboard) &&
+        text.includes('${REAL_API_TEST_USER.tenantA}') &&
+        Boolean(memberMenu) &&
+        billingMenu === null &&
+        Boolean(memberBtn) &&
+        memberBtn.disabled === false &&
+        billingBtn === null
+      );
+    })()`,
+    10000,
+    'tenant-a UI permissions should match expected visibility/operability'
+  );
+
+  const loginByApi = await requestRealApi({
+    baseUrl: apiBaseUrl,
+    method: 'POST',
+    path: '/auth/login',
+    body: {
+      phone: REAL_API_TEST_USER.phone,
+      password: REAL_API_TEST_USER.password,
+      entry_domain: 'tenant'
+    }
+  });
+  assert.equal(loginByApi.status, 200);
+  const accessToken = loginByApi.body.access_token;
+  assert.equal(typeof accessToken, 'string');
+
+  const selectTenantAByApi = await requestRealApi({
+    baseUrl: apiBaseUrl,
+    method: 'POST',
+    path: '/auth/tenant/select',
+    accessToken,
+    body: {
+      tenant_id: REAL_API_TEST_USER.tenantA
+    }
+  });
+  assert.equal(selectTenantAByApi.status, 200);
+  const probeAllowedByApi = await requestRealApi({
+    baseUrl: apiBaseUrl,
+    method: 'GET',
+    path: '/auth/tenant/member-admin/probe',
+    accessToken
+  });
+  assert.equal(probeAllowedByApi.status, 200);
+  assert.equal(probeAllowedByApi.body.ok, true);
+  assert.equal(typeof probeAllowedByApi.body.request_id, 'string');
+
+  const switchTenantBByApi = await requestRealApi({
+    baseUrl: apiBaseUrl,
+    method: 'POST',
+    path: '/auth/tenant/switch',
+    accessToken,
+    body: {
+      tenant_id: REAL_API_TEST_USER.tenantB
+    }
+  });
+  assert.equal(switchTenantBByApi.status, 200);
+  const probeDeniedByApi = await requestRealApi({
+    baseUrl: apiBaseUrl,
+    method: 'GET',
+    path: '/auth/tenant/member-admin/probe',
+    accessToken
+  });
+  assert.equal(probeDeniedByApi.status, 403);
+  assert.equal(probeDeniedByApi.body.error_code, 'AUTH-403-FORBIDDEN');
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-switch"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      setter.call(select, '${REAL_API_TEST_USER.tenantB}');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-switch-confirm"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
+      const text = String(dashboard?.textContent || '');
+      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
+      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
+      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
+      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      return (
+        Boolean(dashboard) &&
+        text.includes('${REAL_API_TEST_USER.tenantB}') &&
+        memberMenu === null &&
+        Boolean(billingMenu) &&
+        memberBtn === null &&
+        Boolean(billingBtn) &&
+        billingBtn.disabled === false
+      );
+    })()`,
+    10000,
+    'tenant-b UI permissions should match expected visibility/operability'
   );
 
   if (vite.exitCode !== null) {

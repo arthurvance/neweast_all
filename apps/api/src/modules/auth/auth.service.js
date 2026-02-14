@@ -16,6 +16,41 @@ const PBKDF2_DIGEST = 'sha512';
 const ACCESS_SESSION_CACHE_TTL_MS = 800;
 
 const DEFAULT_SEED_USERS = [];
+const ROUTE_PERMISSION_EVALUATORS = Object.freeze({
+  'tenant.context.read': () => true,
+  'tenant.context.switch': () => true,
+  'auth.session.logout': () => true,
+  'auth.session.change_password': () => true,
+  'tenant.member_admin.view': ({ tenantPermissionContext }) =>
+    Boolean(tenantPermissionContext?.can_view_member_admin),
+  'tenant.member_admin.operate': ({ tenantPermissionContext }) =>
+    Boolean(tenantPermissionContext?.can_view_member_admin) && Boolean(tenantPermissionContext?.can_operate_member_admin),
+  'tenant.billing.view': ({ tenantPermissionContext }) =>
+    Boolean(tenantPermissionContext?.can_view_billing),
+  'tenant.billing.operate': ({ tenantPermissionContext }) =>
+    Boolean(tenantPermissionContext?.can_view_billing) && Boolean(tenantPermissionContext?.can_operate_billing)
+});
+const ROUTE_PERMISSION_SCOPE_RULES = Object.freeze({
+  'tenant.context.read': Object.freeze(['tenant']),
+  'tenant.context.switch': Object.freeze(['tenant']),
+  'auth.session.logout': Object.freeze(['session']),
+  'auth.session.change_password': Object.freeze(['session']),
+  'tenant.member_admin.view': Object.freeze(['tenant']),
+  'tenant.member_admin.operate': Object.freeze(['tenant']),
+  'tenant.billing.view': Object.freeze(['tenant']),
+  'tenant.billing.operate': Object.freeze(['tenant'])
+});
+const TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT = new Set([
+  'tenant.context.read',
+  'tenant.context.switch'
+]);
+const listSupportedRoutePermissionScopes = () =>
+  Object.fromEntries(
+    Object.entries(ROUTE_PERMISSION_SCOPE_RULES).map(([permissionCode, scopes]) => [
+      permissionCode,
+      [...scopes]
+    ])
+  );
 
 class AuthProblemError extends Error {
   constructor({ status, title, detail, errorCode, extensions = {} }) {
@@ -111,6 +146,14 @@ const errors = {
       title: 'Forbidden',
       detail: '当前入口无可用访问域权限',
       errorCode: 'AUTH-403-NO-DOMAIN'
+    }),
+
+  forbidden: () =>
+    authError({
+      status: 403,
+      title: 'Forbidden',
+      detail: '当前操作无权限',
+      errorCode: 'AUTH-403-FORBIDDEN'
     })
 };
 
@@ -909,6 +952,43 @@ const createAuthService = (options = {}) => {
     return { payload, session, user };
   };
 
+  const resolveAuthorizedSession = async ({ accessToken, authorizationContext = null }) => {
+    const authorizedSession = await assertValidAccessSession(accessToken);
+    if (!authorizationContext || typeof authorizationContext !== 'object') {
+      return authorizedSession;
+    }
+
+    const contextSession = authorizationContext.session;
+    const contextUser = authorizationContext.user;
+    if (!contextSession || !contextUser) {
+      return authorizedSession;
+    }
+
+    const resolvedSessionId = String(
+      authorizedSession.session?.sessionId || authorizedSession.session?.session_id || ''
+    ).trim();
+    const resolvedUserId = String(
+      authorizedSession.user?.id || authorizedSession.user?.user_id || ''
+    ).trim();
+    const contextSessionId = String(
+      contextSession?.sessionId || contextSession?.session_id || ''
+    ).trim();
+    const contextUserId = String(contextUser?.id || contextUser?.user_id || '').trim();
+
+    if (
+      resolvedSessionId.length === 0
+      || resolvedUserId.length === 0
+      || contextSessionId.length === 0
+      || contextUserId.length === 0
+      || resolvedSessionId !== contextSessionId
+      || resolvedUserId !== contextUserId
+    ) {
+      throw errors.invalidAccess();
+    }
+
+    return authorizedSession;
+  };
+
   const login = async ({ requestId, phone, password, entryDomain }) => {
     const normalizedPhone = normalizePhone(phone);
     const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
@@ -1499,8 +1579,11 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const logout = async ({ requestId, accessToken }) => {
-    const { session, user } = await assertValidAccessSession(accessToken);
+  const logout = async ({ requestId, accessToken, authorizationContext = null }) => {
+    const { session, user } = await resolveAuthorizedSession({
+      accessToken,
+      authorizationContext
+    });
     const sessionId = session.sessionId || session.session_id;
     await authStore.revokeSession({
       sessionId,
@@ -1522,7 +1605,13 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const changePassword = async ({ requestId, accessToken, currentPassword, newPassword }) => {
+  const changePassword = async ({
+    requestId,
+    accessToken,
+    currentPassword,
+    newPassword,
+    authorizationContext = null
+  }) => {
     if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
       addAuditEvent({
         type: 'auth.password_change.rejected',
@@ -1549,7 +1638,10 @@ const createAuthService = (options = {}) => {
       throw error;
     }
 
-    const { session, user } = await assertValidAccessSession(accessToken);
+    const { session, user } = await resolveAuthorizedSession({
+      accessToken,
+      authorizationContext
+    });
     const currentPasswordValid = verifyPassword(currentPassword, user.passwordHash);
 
     if (!currentPasswordValid) {
@@ -1601,26 +1693,35 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const tenantOptions = async ({ requestId, accessToken }) => {
-    const { session, user } = await assertValidAccessSession(accessToken);
+  const tenantOptions = async ({
+    requestId,
+    accessToken,
+    authorizationContext = null
+  }) => {
+    const { session, user } = await resolveAuthorizedSession({
+      accessToken,
+      authorizationContext
+    });
     const sessionId = session.sessionId || session.session_id;
     let sessionContext = buildSessionContext(session);
-    let options = [];
-    if (sessionContext.entry_domain === 'tenant') {
-      options = await getTenantOptionsForUser(user.id);
-      sessionContext = await reconcileTenantSessionContext({
+    if (sessionContext.entry_domain !== 'tenant') {
+      rejectNoDomainAccess({
         requestId,
         userId: user.id,
         sessionId,
-        sessionContext,
-        options
+        entryDomain: sessionContext.entry_domain,
+        tenantId: null,
+        detail: `tenant options rejected for entry domain ${sessionContext.entry_domain}`
       });
-    } else {
-      sessionContext = {
-        entry_domain: 'platform',
-        active_tenant_id: null
-      };
     }
+    const options = await getTenantOptionsForUser(user.id);
+    sessionContext = await reconcileTenantSessionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      sessionContext,
+      options
+    });
     const selectionRequired = sessionContext.entry_domain === 'tenant'
       && options.length > 1
       && !sessionContext.active_tenant_id;
@@ -1644,13 +1745,138 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const selectOrSwitchTenant = async ({ requestId, accessToken, tenantId, eventType }) => {
+  const authorizeRoute = async ({
+    requestId,
+    accessToken,
+    permissionCode,
+    scope = 'session'
+  }) => {
+    const normalizedPermissionCode = String(permissionCode || '').trim();
+    if (normalizedPermissionCode.length === 0) {
+      throw errors.forbidden();
+    }
+
+    const { session, user } = await resolveAuthorizedSession({ accessToken });
+    const sessionId = session.sessionId || session.session_id;
+    const sessionContext = buildSessionContext(session);
+    const normalizedScope = String(scope || 'session').trim().toLowerCase();
+    const normalizedActiveTenantId = normalizeTenantId(sessionContext.active_tenant_id);
+
+    if (normalizedScope === 'tenant' && sessionContext.entry_domain !== 'tenant') {
+      addAuditEvent({
+        type: 'auth.route.forbidden',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: `tenant scoped route blocked in ${sessionContext.entry_domain} entry`,
+        metadata: {
+          permission_code: normalizedPermissionCode,
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: sessionContext.active_tenant_id
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+    if (
+      normalizedScope === 'tenant'
+      && sessionContext.entry_domain === 'tenant'
+      && !normalizedActiveTenantId
+      && !TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT.has(normalizedPermissionCode)
+    ) {
+      addAuditEvent({
+        type: 'auth.route.forbidden',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: 'tenant scoped route blocked without active tenant context',
+        metadata: {
+          permission_code: normalizedPermissionCode,
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: null
+        }
+      });
+      throw errors.noDomainAccess();
+    }
+
+    const shouldResolveTenantPermissionContext =
+      normalizedScope === 'tenant'
+      && !TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT.has(normalizedPermissionCode);
+
+    const tenantPermissionContext = shouldResolveTenantPermissionContext
+      ? await getTenantPermissionContext({
+        requestId,
+        userId: user.id,
+        sessionId,
+        entryDomain: sessionContext.entry_domain,
+        activeTenantId: normalizedActiveTenantId
+      })
+      : null;
+
+    const evaluator = ROUTE_PERMISSION_EVALUATORS[normalizedPermissionCode];
+    if (typeof evaluator !== 'function') {
+      addAuditEvent({
+        type: 'auth.route.forbidden',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: `unknown permission code declaration: ${normalizedPermissionCode}`,
+        metadata: {
+          permission_code: normalizedPermissionCode,
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: normalizedActiveTenantId
+        }
+      });
+      throw errors.forbidden();
+    }
+
+    const allowed = evaluator({
+      tenantPermissionContext,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: normalizedActiveTenantId
+    });
+    if (!allowed) {
+      addAuditEvent({
+        type: 'auth.route.forbidden',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: `permission denied: ${normalizedPermissionCode}`,
+        metadata: {
+          permission_code: normalizedPermissionCode,
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: normalizedActiveTenantId
+        }
+      });
+      throw errors.forbidden();
+    }
+
+    return {
+      session_id: sessionId,
+      user_id: user.id,
+      entry_domain: sessionContext.entry_domain,
+      active_tenant_id: normalizedActiveTenantId || null,
+      tenant_permission_context: tenantPermissionContext,
+      session,
+      user
+    };
+  };
+
+  const selectOrSwitchTenant = async ({
+    requestId,
+    accessToken,
+    tenantId,
+    eventType,
+    authorizationContext = null
+  }) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
     if (!normalizedTenantId) {
       throw errors.invalidPayload();
     }
 
-    const { session, user } = await assertValidAccessSession(accessToken);
+    const { session, user } = await resolveAuthorizedSession({
+      accessToken,
+      authorizationContext
+    });
     const sessionId = session.sessionId || session.session_id;
     const sessionContext = buildSessionContext(session);
 
@@ -1732,20 +1958,32 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const selectTenant = async ({ requestId, accessToken, tenantId }) =>
+  const selectTenant = async ({
+    requestId,
+    accessToken,
+    tenantId,
+    authorizationContext = null
+  }) =>
     selectOrSwitchTenant({
       requestId,
       accessToken,
       tenantId,
-      eventType: 'auth.tenant.selected'
+      eventType: 'auth.tenant.selected',
+      authorizationContext
     });
 
-  const switchTenant = async ({ requestId, accessToken, tenantId }) =>
+  const switchTenant = async ({
+    requestId,
+    accessToken,
+    tenantId,
+    authorizationContext = null
+  }) =>
     selectOrSwitchTenant({
       requestId,
       accessToken,
       tenantId,
-      eventType: 'auth.tenant.switched'
+      eventType: 'auth.tenant.switched',
+      authorizationContext
     });
 
   return {
@@ -1753,6 +1991,7 @@ const createAuthService = (options = {}) => {
     sendOtp,
     loginWithOtp,
     tenantOptions,
+    authorizeRoute,
     selectTenant,
     switchTenant,
     refresh,
@@ -1774,6 +2013,8 @@ module.exports = {
   OTP_TTL_SECONDS,
   RATE_LIMIT_WINDOW_SECONDS,
   RATE_LIMIT_MAX_ATTEMPTS,
+  listSupportedRoutePermissionCodes: () => Object.keys(ROUTE_PERMISSION_EVALUATORS),
+  listSupportedRoutePermissionScopes,
   AuthProblemError,
   createAuthService
 };

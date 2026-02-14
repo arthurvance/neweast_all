@@ -614,7 +614,7 @@ test('tenant switch rejects tenant outside session allowed options', async () =>
   );
 });
 
-test('tenant options in platform entry session returns empty tenant_options for minimal exposure', async () => {
+test('tenant options in platform entry session is blocked with AUTH-403-NO-DOMAIN', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -639,22 +639,74 @@ test('tenant options in platform entry session returns empty tenant_options for 
   });
   assert.equal(login.entry_domain, 'platform');
 
-  const options = await service.tenantOptions({
-    requestId: 'req-tenant-options-platform',
-    accessToken: login.access_token
+  await assert.rejects(
+    () =>
+      service.tenantOptions({
+        requestId: 'req-tenant-options-platform',
+        accessToken: login.access_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('selectTenant rejects stale authorizationContext after session domain changes', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-stale-context-user',
+        phone: '13810000031',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
   });
 
-  assert.equal(options.entry_domain, 'platform');
-  assert.equal(options.tenant_selection_required, false);
-  assert.equal(options.active_tenant_id, null);
-  assert.deepEqual(options.tenant_options, []);
-  assert.deepEqual(options.tenant_permission_context, {
-    scope_label: '平台入口（无组织侧权限上下文）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+  const login = await service.login({
+    requestId: 'req-login-tenant-stale-context',
+    phone: '13810000031',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
   });
+
+  const authorizationContext = await service.authorizeRoute({
+    requestId: 'req-authorize-tenant-stale-context',
+    accessToken: login.access_token,
+    permissionCode: 'tenant.context.switch',
+    scope: 'tenant'
+  });
+
+  await service._internals.authStore.updateSessionContext({
+    sessionId: login.session_id,
+    entryDomain: 'platform',
+    activeTenantId: null
+  });
+  service._internals.accessSessionCache.clear();
+
+  await assert.rejects(
+    () =>
+      service.selectTenant({
+        requestId: 'req-select-tenant-stale-context',
+        accessToken: login.access_token,
+        tenantId: 'tenant-a',
+        authorizationContext
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
 });
 
 test('login failure keeps unified semantics and does not leak account state', async () => {
@@ -781,6 +833,60 @@ test('logout only revokes current session, keeping concurrent sessions valid', a
     (error) => {
       assert.ok(error instanceof AuthProblemError);
       assert.equal(error.status, 401);
+      return true;
+    }
+  );
+});
+
+test('logout rejects invalid access token even when authorizationContext is provided', async () => {
+  const service = createService();
+  const session = await service.login({
+    requestId: 'req-login-context-invalid-token',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+
+  await assert.rejects(
+    () =>
+      service.logout({
+        requestId: 'req-logout-context-invalid-token',
+        accessToken: 'definitely-invalid-token',
+        authorizationContext: {
+          session: { sessionId: session.session_id },
+          user: { id: 'user-active' }
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+});
+
+test('logout rejects authorizationContext that does not match validated access session', async () => {
+  const service = createService();
+  const session = await service.login({
+    requestId: 'req-login-context-mismatch',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+
+  await assert.rejects(
+    () =>
+      service.logout({
+        requestId: 'req-logout-context-mismatch',
+        accessToken: session.access_token,
+        authorizationContext: {
+          session: { sessionId: `${session.session_id}-tampered` },
+          user: { id: 'user-active' }
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
       return true;
     }
   );
@@ -937,4 +1043,274 @@ test('sendOtp normalizes string getSentAt value and keeps cooldown seconds bound
   );
 
   assert.equal(upsertCalled, false);
+});
+
+test('authorizeRoute returns AUTH-403-FORBIDDEN when tenant permission snapshot denies action', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-user',
+        phone: '13830000000',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-login',
+    phone: '13830000000',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  await service.selectTenant({
+    requestId: 'req-route-authz-select',
+    accessToken: login.access_token,
+    tenantId: 'tenant-b'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-forbidden',
+        accessToken: login.access_token,
+        permissionCode: 'tenant.member_admin.operate',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+});
+
+test('authorizeRoute returns AUTH-403-FORBIDDEN when operate=true but view=false (operate implies view)', async () => {
+  const operateWithoutViewPermission = {
+    scopeLabel: '组织权限 operate-no-view',
+    canViewMemberAdmin: false,
+    canOperateMemberAdmin: true,
+    canViewBilling: false,
+    canOperateBilling: true
+  };
+
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-ov-user',
+        phone: '13830000099',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-ov', tenantName: 'Tenant OV', permission: operateWithoutViewPermission }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-ov-login',
+    phone: '13830000099',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-ov-member-admin',
+        accessToken: login.access_token,
+        permissionCode: 'tenant.member_admin.operate',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-ov-billing',
+        accessToken: login.access_token,
+        permissionCode: 'tenant.billing.operate',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+});
+
+test('authorizeRoute returns AUTH-403-NO-DOMAIN for tenant scoped route in platform entry', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-user',
+        phone: '13830000001',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [{ tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-login',
+    phone: '13830000001',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-no-domain',
+        accessToken: login.access_token,
+        permissionCode: 'tenant.context.switch',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('authorizeRoute returns AUTH-403-NO-DOMAIN for tenant scoped route when active_tenant_id is missing', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-tenant-unselected-user',
+        phone: '13830000003',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-tenant-unselected-login',
+    phone: '13830000003',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(login.active_tenant_id, null);
+  assert.equal(login.tenant_selection_required, true);
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-tenant-unselected-no-domain',
+        accessToken: login.access_token,
+        permissionCode: 'tenant.member_admin.view',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('authorizeRoute session-scope succeeds without loading tenant permission context', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'session-scope-user',
+        phone: '13830000077',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-ss-login',
+    phone: '13830000077',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  // Session-scope authorizeRoute should succeed without loading tenant permission context
+  const result = await service.authorizeRoute({
+    requestId: 'req-ss-logout',
+    accessToken: login.access_token,
+    permissionCode: 'auth.session.logout',
+    scope: 'session'
+  });
+
+  assert.equal(result.session_id, login.session_id);
+  assert.equal(result.user_id, 'session-scope-user');
+  assert.equal(result.tenant_permission_context, null);
+});
+
+test('extractBearerToken accepts case-insensitive Authorization scheme', () => {
+  const { extractBearerToken } = require('../src/modules/auth/auth.routes');
+
+  assert.equal(extractBearerToken('Bearer abc123'), 'abc123');
+  assert.equal(extractBearerToken(' Bearer abc123'), 'abc123');
+  assert.equal(extractBearerToken('Bearer abc123 '), 'abc123');
+  assert.equal(extractBearerToken('\tBearer abc123\t'), 'abc123');
+  assert.equal(extractBearerToken('bearer abc123'), 'abc123');
+  assert.equal(extractBearerToken('BEARER abc123'), 'abc123');
+  assert.equal(extractBearerToken('bEaReR abc123'), 'abc123');
+  assert.equal(extractBearerToken('Bearer   abc123'), 'abc123', 'multi-space between scheme and token');
+  assert.equal(extractBearerToken('bearer\tabc123'), 'abc123', 'tab between scheme and token');
+});
+
+test('extractBearerToken rejects missing or malformed authorization', () => {
+  const { extractBearerToken } = require('../src/modules/auth/auth.routes');
+
+  assert.throws(() => extractBearerToken(undefined), (error) => {
+    assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+    return true;
+  });
+  assert.throws(() => extractBearerToken('Basic abc123'), (error) => {
+    assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+    return true;
+  });
+  assert.throws(() => extractBearerToken('Bearer'), (error) => {
+    assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+    return true;
+  });
+  assert.throws(() => extractBearerToken('Bearer '), (error) => {
+    assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+    return true;
+  });
+  assert.throws(() => extractBearerToken('Bearer abc def'), (error) => {
+    assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+    return true;
+  });
+  assert.throws(() => extractBearerToken('Bearer token extra segments'), (error) => {
+    assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+    return true;
+  });
 });

@@ -12,6 +12,7 @@
     "lint": "pnpm nx lint",
     "build": "pnpm nx build",
     "test": "pnpm nx test",
+    "check:route-permissions": "pnpm --dir apps/api run check:route-permissions",
     "smoke": "pnpm nx smoke",
     "migrate": "node apps/api/scripts/migrate-baseline.js",
     "migrate:down": "node apps/api/scripts/migrate-baseline.js --down"

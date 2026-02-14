@@ -1,4 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  resolveTenantMutationUiState,
+  resolveTenantRefreshUiState,
+  resolveTenantMutationPermissionContext,
+  resolveTenantMutationSessionState,
+  readSessionIdFromAccessToken,
+  isTenantRefreshResultBoundToCurrentSession
+} from './tenant-mutation.mjs';
+import { createLatestRequestExecutor } from './latest-request.mjs';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const OTP_RESEND_UNTIL_STORAGE_KEY_PREFIX = 'neweast.auth.otp.resend_until_ms';
@@ -55,7 +64,14 @@ const requestJson = async ({ path, method = 'POST', payload, accessToken }) => {
 
 const postJson = async (path, payload) => requestJson({ path, payload, method: 'POST' });
 
-const formatRetryMessage = (detail) => `${detail || '操作失败'}，请稍后重试`;
+const RETRY_SUFFIX = '请稍后重试';
+const formatRetryMessage = (detail) => {
+  const base = detail || '操作失败';
+  if (String(base).includes(RETRY_SUFFIX)) {
+    return base;
+  }
+  return `${base}，${RETRY_SUFFIX}`;
+};
 
 const normalizePhone = (value) => String(value || '').trim();
 const otpResendStorageKeyOf = (rawPhone) => {
@@ -77,6 +93,9 @@ const asTenantOptions = (options) => {
     }))
     .filter((item) => item.tenant_id.length > 0);
 };
+
+const normalizeTenantMutationPayload = (payload) =>
+  payload && typeof payload === 'object' ? payload : {};
 
 const readTenantPermissionState = (sessionState) => {
   const permission = sessionState?.tenant_permission_context;
@@ -109,6 +128,28 @@ const readTenantPermissionState = (sessionState) => {
   };
 };
 
+const selectPermissionUiState = (permissionState) => {
+  const canAccessMemberAdmin = Boolean(
+    permissionState?.can_view_member_admin
+    && permissionState?.can_operate_member_admin
+  );
+  const canAccessBilling = Boolean(
+    permissionState?.can_view_billing
+    && permissionState?.can_operate_billing
+  );
+
+  return {
+    menu: {
+      member_admin: canAccessMemberAdmin,
+      billing: canAccessBilling
+    },
+    action: {
+      member_admin: canAccessMemberAdmin,
+      billing: canAccessBilling
+    }
+  };
+};
+
 export default function App() {
   const [mode, setMode] = useState('password');
   const [entryDomain, setEntryDomain] = useState('platform');
@@ -132,11 +173,18 @@ export default function App() {
   const [tenantSelectionValue, setTenantSelectionValue] = useState('');
   const [tenantSwitchValue, setTenantSwitchValue] = useState('');
   const latestPhoneRef = useRef('');
+  const sessionStateRef = useRef(null);
+  const tenantContextRefreshExecutorRef = useRef(createLatestRequestExecutor());
   const permissionState = readTenantPermissionState(sessionState);
+  const permissionUiState = selectPermissionUiState(permissionState);
 
   useEffect(() => {
     latestPhoneRef.current = normalizePhone(phone);
   }, [phone]);
+
+  useEffect(() => {
+    sessionStateRef.current = sessionState;
+  }, [sessionState]);
 
   useEffect(() => {
     const storageKey = otpResendStorageKeyOf(phone);
@@ -315,27 +363,99 @@ export default function App() {
     };
   };
 
-  const refreshTenantContext = async (accessToken) => {
-    const payload = await requestJson({
-      path: '/auth/tenant/options',
-      method: 'GET',
-      accessToken
+  const refreshTenantContext = async (accessToken, options = {}) => {
+    const requestSessionId = readSessionIdFromAccessToken(accessToken);
+    const expectedSession = options.expectedSession || null;
+    return tenantContextRefreshExecutorRef.current.run(
+      () =>
+        requestJson({
+          path: '/auth/tenant/options',
+          method: 'GET',
+          accessToken
+        }),
+      (payload) => {
+        const nextTenantOptions = asTenantOptions(payload.tenant_options);
+        setSessionState((previous) => ({
+          ...(previous || {}),
+          session_id: payload.session_id || previous?.session_id || null,
+          entry_domain: payload.entry_domain,
+          active_tenant_id: payload.active_tenant_id,
+          tenant_selection_required: Boolean(payload.tenant_selection_required),
+          tenant_permission_context: payload.tenant_permission_context || null
+        }));
+        setTenantSelectionValue((previous) => {
+          const nextUiState = resolveTenantRefreshUiState({
+            tenantOptions: nextTenantOptions,
+            activeTenantId: payload.active_tenant_id,
+            previousTenantSelectionValue: previous
+          });
+          if (nextUiState.tenantOptionsUpdate !== undefined) {
+            setTenantOptions(nextUiState.tenantOptionsUpdate);
+          }
+          setTenantSwitchValue(nextUiState.tenantSwitchValue);
+          return nextUiState.tenantSelectionValue;
+        });
+      },
+      {
+        isResultCurrent: (payload) =>
+          isTenantRefreshResultBoundToCurrentSession({
+            currentSession: sessionStateRef.current,
+            expectedSession,
+            requestAccessToken: accessToken,
+            requestSessionId,
+            responsePayload: payload
+          })
+      }
+    );
+  };
+
+  const applyTenantMutationPayload = (payload, fallbackTenantId) => {
+    const normalizedPayload = normalizeTenantMutationPayload(payload);
+    const hasPermissionContext = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      'tenant_permission_context'
+    );
+    const normalizedActiveTenantId = String(
+      normalizedPayload.active_tenant_id || fallbackTenantId || ''
+    ).trim();
+    const nextActiveTenantId = normalizedActiveTenantId || null;
+    const hasTenantOptions = Array.isArray(normalizedPayload.tenant_options);
+    const nextTenantOptions = asTenantOptions(normalizedPayload.tenant_options);
+    const nextTenantPermissionContext = resolveTenantMutationPermissionContext({
+      hasTenantPermissionContext: hasPermissionContext,
+      nextTenantPermissionContext: normalizedPayload.tenant_permission_context
     });
-    const options = asTenantOptions(payload.tenant_options);
-    setTenantOptions(options);
-    setSessionState((previous) => ({
-      ...(previous || {}),
-      entry_domain: payload.entry_domain,
-      active_tenant_id: payload.active_tenant_id,
-      tenant_selection_required: Boolean(payload.tenant_selection_required),
-      tenant_permission_context: payload.tenant_permission_context || null
-    }));
-    if (options.length > 0) {
-      const firstTenant = options[0].tenant_id;
-      setTenantSelectionValue((previous) => previous || firstTenant);
-      setTenantSwitchValue(payload.active_tenant_id || firstTenant);
-    }
-    return payload;
+    const nextSessionState = resolveTenantMutationSessionState({
+      previousSessionState: sessionStateRef.current,
+      payload: normalizedPayload,
+      nextActiveTenantId,
+      nextTenantPermissionContext
+    });
+    const nextAccessToken = String(nextSessionState?.access_token || '').trim();
+
+    // Keep the session binding reference in sync before starting refresh.
+    sessionStateRef.current = nextSessionState;
+    setSessionState(nextSessionState);
+
+    setTenantSelectionValue((previous) => {
+      const nextUiState = resolveTenantMutationUiState({
+        nextTenantOptions,
+        nextActiveTenantId,
+        hasTenantOptions,
+        previousTenantSelectionValue: previous,
+        previousTenantOptions: tenantOptions
+      });
+      if (nextUiState.tenantOptionsUpdate !== undefined) {
+        setTenantOptions(nextUiState.tenantOptionsUpdate);
+      }
+      setTenantSwitchValue(nextUiState.tenantSwitchValue);
+      return nextUiState.tenantSelectionValue;
+    });
+
+    return {
+      nextAccessToken,
+      nextSessionState
+    };
   };
 
   const handleSubmit = async (event) => {
@@ -422,6 +542,7 @@ export default function App() {
     if (!sessionState?.access_token) {
       return;
     }
+    const accessToken = sessionState.access_token;
     const tenantId = String(tenantSelectionValue || '').trim();
     if (!tenantId) {
       setGlobalMessage({ type: 'error', text: '请选择组织后再继续' });
@@ -430,16 +551,25 @@ export default function App() {
 
     setIsTenantSubmitting(true);
     try {
-      await requestJson({
+      const payload = await requestJson({
         path: '/auth/tenant/select',
         method: 'POST',
         payload: { tenant_id: tenantId },
-        accessToken: sessionState.access_token
+        accessToken
       });
-      await refreshTenantContext(sessionState.access_token);
-      setTenantSwitchValue(tenantId);
+      const { nextAccessToken, nextSessionState } = applyTenantMutationPayload(payload, tenantId);
       setScreen('dashboard');
       setGlobalMessage({ type: 'success', text: '组织选择成功，已进入工作台' });
+      void refreshTenantContext(nextAccessToken || accessToken, {
+        expectedSession: nextSessionState
+      }).catch(() => {
+        setGlobalMessage((previous) => ({
+          type: 'error',
+          text: previous?.type === 'success'
+            ? `${previous.text}（注意：组织上下文刷新失败，权限视图可能过期）`
+            : '组织上下文刷新失败，当前权限视图可能过期'
+        }));
+      });
     } catch (error) {
       const payload = error.payload || {};
       setGlobalMessage({
@@ -455,6 +585,7 @@ export default function App() {
     if (!sessionState?.access_token) {
       return;
     }
+    const accessToken = sessionState.access_token;
     const tenantId = String(tenantSwitchValue || '').trim();
     if (!tenantId) {
       setGlobalMessage({ type: 'error', text: '请选择目标组织后再切换' });
@@ -463,14 +594,24 @@ export default function App() {
 
     setIsTenantSubmitting(true);
     try {
-      await requestJson({
+      const payload = await requestJson({
         path: '/auth/tenant/switch',
         method: 'POST',
         payload: { tenant_id: tenantId },
-        accessToken: sessionState.access_token
+        accessToken
       });
-      await refreshTenantContext(sessionState.access_token);
+      const { nextAccessToken, nextSessionState } = applyTenantMutationPayload(payload, tenantId);
       setGlobalMessage({ type: 'success', text: '组织切换成功，权限已即时生效' });
+      void refreshTenantContext(nextAccessToken || accessToken, {
+        expectedSession: nextSessionState
+      }).catch(() => {
+        setGlobalMessage((previous) => ({
+          type: 'error',
+          text: previous?.type === 'success'
+            ? `${previous.text}（注意：组织上下文刷新失败，权限视图可能过期）`
+            : '组织上下文刷新失败，当前权限视图可能过期'
+        }));
+      });
     } catch (error) {
       const payload = error.payload || {};
       setGlobalMessage({
@@ -751,34 +892,38 @@ export default function App() {
                 <p data-testid="permission-scope" style={{ margin: 0 }}>
                   权限上下文：{permissionState.scope_label}
                 </p>
-                {permissionState.can_view_member_admin ? (
+                <nav aria-label="tenant-permission-menu">
+                  <p style={{ margin: 0 }}>可见菜单</p>
+                  <ul style={{ margin: '4px 0 0 20px', padding: 0 }}>
+                    {permissionUiState.menu.member_admin ? (
+                      <li data-testid="menu-member-admin">成员管理</li>
+                    ) : null}
+                    {permissionUiState.menu.billing ? (
+                      <li data-testid="menu-billing">账单配置</li>
+                    ) : null}
+                    {!permissionUiState.menu.member_admin && !permissionUiState.menu.billing ? (
+                      <li data-testid="menu-empty">当前无可见菜单</li>
+                    ) : null}
+                  </ul>
+                </nav>
+                {permissionUiState.action.member_admin ? (
                   <button
                     data-testid="permission-member-admin-button"
                     type="button"
-                    disabled={!permissionState.can_operate_member_admin}
                     style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
                   >
                     成员管理
                   </button>
-                ) : (
-                  <p data-testid="permission-member-admin-hidden" style={{ margin: 0 }}>
-                    成员管理在当前组织不可见
-                  </p>
-                )}
-                {permissionState.can_view_billing ? (
+                ) : null}
+                {permissionUiState.action.billing ? (
                   <button
                     data-testid="permission-billing-button"
                     type="button"
-                    disabled={!permissionState.can_operate_billing}
                     style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
                   >
                     账单配置
                   </button>
-                ) : (
-                  <p data-testid="permission-billing-hidden" style={{ margin: 0 }}>
-                    账单配置在当前组织不可见
-                  </p>
-                )}
+                ) : null}
               </section>
             </>
           ) : null}

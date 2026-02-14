@@ -26,7 +26,7 @@ const buildOpenApiSpec = () => ({
   info: {
     title: 'Neweast API',
     version: '0.1.0',
-    description: 'Auth and session lifecycle contract with password login, refresh rotation, logout, and password change'
+    description: 'Auth and session lifecycle contract with permission-declared protected routes and fail-closed preflight'
   },
   paths: {
     '/health': {
@@ -470,7 +470,19 @@ const buildOpenApiSpec = () => ({
             description: 'No access to tenant domain',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
               }
             }
           }
@@ -587,6 +599,68 @@ const buildOpenApiSpec = () => ({
                       status: 403,
                       detail: '当前入口无可用访问域权限',
                       error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/tenant/member-admin/probe': {
+      get: {
+        summary: 'Probe tenant member-admin operate permission with unified authorization semantics',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Current session is authorized for member-admin operate capability',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['ok', 'request_id'],
+                  properties: {
+                    ok: { type: 'boolean' },
+                    request_id: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description:
+              'Tenant route blocked due to missing tenant domain context or insufficient tenant permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
                       request_id: 'request_id_unset'
                     }
                   }

@@ -4,8 +4,18 @@ const { buildOpenApiSpec } = require('./openapi');
 const createRouteHandlers = (config, options) => {
   const dependencyProbe = options.dependencyProbe;
   const auth = createAuthHandlers(options.authService);
+  const authorizeRouteHandler =
+    typeof auth.authorizeRoute === 'function'
+      ? async ({ requestId, authorization, permissionCode, scope }) =>
+        auth.authorizeRoute({
+          requestId,
+          authorization,
+          permissionCode,
+          scope
+        })
+      : undefined;
 
-  return {
+  const handlers = {
     health: async (requestId) => {
       const dependencies = await dependencyProbe(config, requestId);
       return {
@@ -46,25 +56,43 @@ const createRouteHandlers = (config, options) => {
         body: body || {}
       }),
 
-    authTenantOptions: async (requestId, authorization) =>
+    authTenantOptions: async (requestId, authorization, authorizationContext) =>
       auth.tenantOptions({
         requestId,
-        authorization
+        authorization,
+        authorizationContext
       }),
 
-    authTenantSelect: async (requestId, authorization, body) =>
+    authTenantSelect: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
       auth.tenantSelect({
         requestId,
         authorization,
-        body: body || {}
+        body: body || {},
+        authorizationContext
       }),
 
-    authTenantSwitch: async (requestId, authorization, body) =>
+    authTenantSwitch: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
       auth.tenantSwitch({
         requestId,
         authorization,
-        body: body || {}
+        body: body || {},
+        authorizationContext
       }),
+
+    authTenantMemberAdminProbe: async (requestId) => ({
+      ok: true,
+      request_id: requestId || 'request_id_unset'
+    }),
 
     authRefresh: async (requestId, body) =>
       auth.refresh({
@@ -72,21 +100,34 @@ const createRouteHandlers = (config, options) => {
         body: body || {}
       }),
 
-    authLogout: async (requestId, authorization) =>
+    authLogout: async (requestId, authorization, authorizationContext) =>
       auth.logout({
         requestId,
-        authorization
+        authorization,
+        authorizationContext
       }),
 
-    authChangePassword: async (requestId, authorization, body) =>
+    authChangePassword: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
       auth.changePassword({
         requestId,
         authorization,
-        body: body || {}
+        body: body || {},
+        authorizationContext
       }),
 
     openapi: () => buildOpenApiSpec()
   };
+
+  if (authorizeRouteHandler) {
+    handlers.authorizeRoute = authorizeRouteHandler;
+  }
+
+  return handlers;
 };
 
 module.exports = { createRouteHandlers };

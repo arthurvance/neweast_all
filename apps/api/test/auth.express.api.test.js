@@ -6,6 +6,7 @@ const { resolve } = require('node:path');
 const mysql = require('mysql2/promise');
 const { createApiApp } = require('../src/app');
 const { readConfig } = require('../src/config/env');
+const { ROUTE_DEFINITIONS } = require('../src/route-permissions');
 
 const MYSQL_HOST = process.env.AUTH_TEST_MYSQL_HOST || process.env.DB_HOST || '127.0.0.1';
 const MYSQL_PORT = Number(process.env.AUTH_TEST_MYSQL_PORT || process.env.DB_PORT || 3306);
@@ -52,6 +53,70 @@ const AUTH_SESSIONS_REQUIRED_COLUMN_ROWS_UPPER = AUTH_SESSIONS_REQUIRED_COLUMNS.
 const AUTH_SESSIONS_REQUIRED_COLUMN_ROWS_WITHOUT_ACTIVE_TENANT = AUTH_SESSIONS_REQUIRED_COLUMNS
   .filter((columnName) => columnName !== 'active_tenant_id')
   .map((columnName) => ({ column_name: columnName }));
+const ROUTE_DEFINITIONS_WITH_MISSING_PERMISSION = [
+  {
+    method: 'GET',
+    path: '/health',
+    access: 'public',
+    permission_code: '',
+    scope: 'public'
+  },
+  {
+    method: 'GET',
+    path: '/auth/missing-permission',
+    access: 'protected',
+    permission_code: '',
+    scope: 'tenant'
+  }
+];
+const ROUTE_DEFINITIONS_WITH_UNKNOWN_PERMISSION_CODE = [
+  {
+    method: 'GET',
+    path: '/health',
+    access: 'public',
+    permission_code: '',
+    scope: 'public'
+  },
+  {
+    method: 'GET',
+    path: '/auth/tenant/member-admin/probe',
+    access: 'protected',
+    permission_code: 'tenant.member_admin.operat',
+    scope: 'tenant'
+  }
+];
+const ROUTE_DEFINITIONS_WITH_DUPLICATE_ROUTE_KEY = [
+  {
+    method: 'GET',
+    path: '/health',
+    access: 'public',
+    permission_code: '',
+    scope: 'public'
+  },
+  {
+    method: 'GET',
+    path: '/health',
+    access: 'protected',
+    permission_code: 'auth.session.logout',
+    scope: 'session'
+  }
+];
+const ROUTE_DEFINITIONS_WITH_INCOMPATIBLE_PERMISSION_SCOPE = [
+  {
+    method: 'GET',
+    path: '/health',
+    access: 'public',
+    permission_code: '',
+    scope: 'public'
+  },
+  {
+    method: 'GET',
+    path: '/auth/tenant/member-admin/probe',
+    access: 'protected',
+    permission_code: 'tenant.member_admin.operate',
+    scope: 'session'
+  }
+];
 
 const PBKDF2_ITERATIONS = 150000;
 const PBKDF2_KEYLEN = 64;
@@ -625,6 +690,16 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       can_view_billing: true,
       can_operate_billing: false
     });
+    const memberAdminProbeAllowed = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/tenant/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    assert.equal(memberAdminProbeAllowed.status, 200);
+    assert.equal(memberAdminProbeAllowed.body.ok, true);
+    assert.equal(typeof memberAdminProbeAllowed.body.request_id, 'string');
 
     const switched = await invokeRoute(harness, {
       method: 'post',
@@ -644,6 +719,16 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       can_view_billing: true,
       can_operate_billing: true
     });
+    const memberAdminProbeDenied = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/tenant/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    assert.equal(memberAdminProbeDenied.status, 403);
+    assert.equal(memberAdminProbeDenied.body.error_code, 'AUTH-403-FORBIDDEN');
+    assert.equal(typeof memberAdminProbeDenied.body.request_id, 'string');
 
     const optionsAfterSwitch = await invokeRoute(harness, {
       method: 'get',
@@ -673,6 +758,30 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     });
     assert.equal(switchDenied.status, 403);
     assert.equal(switchDenied.body.error_code, 'AUTH-403-NO-DOMAIN');
+
+    const platformLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(platformLogin.status, 200);
+    assert.equal(platformLogin.body.entry_domain, 'platform');
+    assert.equal(typeof platformLogin.body.access_token, 'string');
+
+    const memberAdminProbeNoDomain = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/tenant/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${platformLogin.body.access_token}`
+      }
+    });
+    assert.equal(memberAdminProbeNoDomain.status, 403);
+    assert.equal(memberAdminProbeNoDomain.body.error_code, 'AUTH-403-NO-DOMAIN');
+    assert.equal(typeof memberAdminProbeNoDomain.body.request_id, 'string');
   } finally {
     await harness.close();
   }
@@ -925,6 +1034,317 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
   );
 
   assert.equal(dbCloseCalls, 1);
+});
+
+test('createApiApp parser and fallback error responses include access-control-allow-origin', async () => {
+  const mockConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    API_JSON_BODY_LIMIT_BYTES: '64',
+    API_CORS_ALLOWED_ORIGINS: 'https://web.example'
+  });
+  const app = await createApiApp(mockConfig, {
+    dependencyProbe
+  });
+
+  await app.init();
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+
+  try {
+    const malformedJson = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/problem+json',
+        'content-type': 'application/json',
+        'x-request-id': 'req-create-apiapp-bad-json',
+        origin: 'https://web.example'
+      },
+      body: '{"phone":"13910000000"'
+    });
+    const malformedPayload = await parseResponseBody(malformedJson);
+    assert.equal(malformedJson.status, 400);
+    assert.equal(malformedPayload.error_code, 'AUTH-400-INVALID-PAYLOAD');
+    assert.equal(
+      malformedJson.headers.get('access-control-allow-origin'),
+      'https://web.example'
+    );
+
+    const oversized = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/problem+json',
+        'content-type': 'application/json',
+        'x-request-id': 'req-create-apiapp-too-large',
+        origin: 'https://web.example'
+      },
+      body: JSON.stringify({ payload: 'x'.repeat(256) })
+    });
+    const oversizedPayload = await parseResponseBody(oversized);
+    assert.equal(oversized.status, 413);
+    assert.equal(oversizedPayload.error_code, 'AUTH-413-PAYLOAD-TOO-LARGE');
+    assert.equal(oversized.headers.get('access-control-allow-origin'), 'https://web.example');
+
+    const notFound = await fetch(`http://127.0.0.1:${port}/missing-path`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/problem+json',
+        'x-request-id': 'req-create-apiapp-not-found',
+        origin: 'https://web.example'
+      }
+    });
+    const notFoundPayload = await parseResponseBody(notFound);
+    assert.equal(notFound.status, 404);
+    assert.equal(notFoundPayload.status, 404);
+    assert.equal(notFound.headers.get('access-control-allow-origin'), 'https://web.example');
+  } finally {
+    await app.close();
+  }
+});
+
+test('createApiApp global error handler includes AUTH-500-INTERNAL error_code', async () => {
+  const mockConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    API_CORS_ALLOWED_ORIGINS: 'https://web.example'
+  });
+  const app = await createApiApp(mockConfig, {
+    dependencyProbe: async () => {
+      throw new Error('dependency probe exploded');
+    }
+  });
+
+  await app.init();
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const requestId = 'req-create-apiapp-internal';
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/problem+json',
+        'x-request-id': requestId,
+        origin: 'https://web.example'
+      }
+    });
+    const payload = await parseResponseBody(response);
+
+    assert.equal(response.status, 500);
+    assert.equal(payload.error_code, 'AUTH-500-INTERNAL');
+    assert.equal(payload.request_id, requestId);
+    assert.equal(response.headers.get('access-control-allow-origin'), 'https://web.example');
+  } finally {
+    await app.close();
+  }
+});
+
+test('createApiApp fails fast when protected route permission declaration is missing', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        routeDefinitions: ROUTE_DEFINITIONS_WITH_MISSING_PERMISSION
+      }),
+    /Route permission preflight failed: missing protected route declarations: GET \/auth\/missing-permission/
+  );
+});
+
+test('createApiApp fails fast when protected routes exist but authService lacks authorizeRoute capability', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        authService: {
+          logout: async () => ({ ok: true })
+        }
+      }),
+    /Route authorization preflight failed: missing authorizeRoute handler for protected routes:/
+  );
+});
+
+test('createApiApp fails fast when route declaration access/scope is invalid', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        routeDefinitions: [
+          {
+            method: 'GET',
+            path: '/health',
+            access: 'public',
+            permission_code: '',
+            scope: 'public'
+          },
+          {
+            method: 'POST',
+            path: '/auth/login',
+            access: 'publik',
+            permission_code: '',
+            scope: 'publick'
+          }
+        ]
+      }),
+    /Route permission preflight failed: invalid route declaration fields: POST \/auth\/login \(invalid access: publik\), POST \/auth\/login \(invalid scope: publick\)/
+  );
+});
+
+test('createApiApp enforces executable route alignment for custom routeDefinitions by default', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        routeDefinitions: [
+          {
+            method: 'GET',
+            path: '/health',
+            access: 'public',
+            permission_code: '',
+            scope: 'public'
+          }
+        ]
+      }),
+    /Route permission preflight failed: executable routes missing declarations:/
+  );
+});
+
+test('createApiApp fails fast when protected route permission code is unknown to evaluator', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        routeDefinitions: ROUTE_DEFINITIONS_WITH_UNKNOWN_PERMISSION_CODE
+      }),
+    /Route permission preflight failed: unknown permission codes: GET \/auth\/tenant\/member-admin\/probe \(unknown permission_code: tenant\.member_admin\.operat\)/
+  );
+});
+
+test('createApiApp accepts preflight permission capability overrides from options', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  const app = await createApiApp(mockConfig, {
+    dependencyProbe,
+    routeDefinitions: [
+      {
+        method: 'GET',
+        path: '/health',
+        access: 'public',
+        permission_code: '',
+        scope: 'public'
+      },
+      {
+        method: 'GET',
+        path: '/auth/tenant/member-admin/probe',
+        access: 'protected',
+        permission_code: 'tenant.custom.read',
+        scope: 'tenant'
+      }
+    ],
+    executableRouteKeys: ['GET /health', 'GET /auth/tenant/member-admin/probe'],
+    supportedPermissionCodes: ['tenant.custom.read'],
+    supportedPermissionScopes: {
+      'tenant.custom.read': ['tenant']
+    }
+  });
+
+  await app.close();
+});
+
+test('createApiApp fails fast when duplicate method+path route declarations exist', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        routeDefinitions: ROUTE_DEFINITIONS_WITH_DUPLICATE_ROUTE_KEY
+      }),
+    /Route permission preflight failed: duplicate route declarations: GET \/health/
+  );
+});
+
+test('createApiApp fails fast when protected route permission scope is incompatible', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        routeDefinitions: ROUTE_DEFINITIONS_WITH_INCOMPATIBLE_PERMISSION_SCOPE
+      }),
+    /Route permission preflight failed: incompatible permission scope declarations: GET \/auth\/tenant\/member-admin\/probe \(permission_code tenant\.member_admin\.operate incompatible with scope session; allowed scopes: tenant\)/
+  );
+});
+
+test('createApiApp accepts route method declarations with trailing whitespace', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  const app = await createApiApp(mockConfig, {
+    dependencyProbe,
+    routeDefinitions: [
+      {
+        method: 'GET ',
+        path: '/health',
+        access: 'public',
+        permission_code: '',
+        scope: 'public'
+      }
+    ],
+    executableRouteKeys: ['GET /health']
+  });
+
+  await app.close();
+});
+
+test('createApiApp uses immutable snapshot for custom routeDefinitions at startup', async () => {
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+  const customRouteDefinitions = ROUTE_DEFINITIONS.map((routeDefinition) => ({
+    ...routeDefinition
+  }));
+  const protectedProbeRoute = customRouteDefinitions.find(
+    (routeDefinition) =>
+      routeDefinition.method === 'GET'
+      && routeDefinition.path === '/auth/tenant/member-admin/probe'
+  );
+  assert.ok(protectedProbeRoute);
+
+  const app = await createApiApp(mockConfig, {
+    dependencyProbe,
+    routeDefinitions: customRouteDefinitions
+  });
+
+  await app.init();
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+
+  protectedProbeRoute.access = 'public';
+  protectedProbeRoute.permission_code = '';
+  protectedProbeRoute.scope = 'public';
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/auth/tenant/member-admin/probe`, {
+      headers: {
+        accept: 'application/problem+json'
+      }
+    });
+    const payload = await parseResponseBody(response);
+
+    assert.equal(response.status, 401);
+    assert.equal(payload.error_code, 'AUTH-401-INVALID-ACCESS');
+  } finally {
+    await app.close();
+  }
 });
 
 test('createApiApp fails fast when auth_user_tenants permission columns are missing', async () => {
