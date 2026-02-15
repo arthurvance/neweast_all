@@ -434,8 +434,15 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     },
 
     rotateRefreshToken: async ({ previousTokenHash, nextTokenHash, sessionId, userId, expiresAt }) => {
+      const normalizedSessionId = String(sessionId);
+      const normalizedUserId = String(userId);
       const previous = refreshTokensByHash.get(previousTokenHash);
-      if (!previous || previous.status !== 'active') {
+      if (
+        !previous
+        || previous.status !== 'active'
+        || String(previous.sessionId || '') !== normalizedSessionId
+        || String(previous.userId || '') !== normalizedUserId
+      ) {
         return { ok: false };
       }
 
@@ -445,8 +452,8 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
       refreshTokensByHash.set(nextTokenHash, {
         tokenHash: nextTokenHash,
-        sessionId,
-        userId: String(userId),
+        sessionId: normalizedSessionId,
+        userId: normalizedUserId,
         status: 'active',
         rotatedFrom: previousTokenHash,
         rotatedTo: null,

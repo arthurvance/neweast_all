@@ -215,14 +215,21 @@ const signJwt = ({ payload, privateKeyPem, ttlSeconds }) => {
   return `${signingInput}.${encodedSignature}`;
 };
 
-const verifyJwt = ({ token, publicKeyPem, expectedTyp }) => {
+const createJwtError = (message, code, extra = {}) => {
+  const error = new Error(message);
+  error.code = code;
+  Object.assign(error, extra);
+  return error;
+};
+
+const verifyJwt = ({ token, publicKeyPem, expectedTyp, allowExpired = false }) => {
   if (typeof token !== 'string' || token.trim().length === 0) {
-    throw new Error('jwt missing');
+    throw createJwtError('jwt missing', 'JWT_MISSING');
   }
 
   const sections = token.split('.');
   if (sections.length !== 3) {
-    throw new Error('jwt malformed');
+    throw createJwtError('jwt malformed', 'JWT_MALFORMED');
   }
 
   const [encodedHeader, encodedPayload, encodedSignature] = sections;
@@ -235,23 +242,23 @@ const verifyJwt = ({ token, publicKeyPem, expectedTyp }) => {
   const signature = fromBase64Url(encodedSignature);
   const validSignature = verifier.verify(publicKeyPem, signature);
   if (!validSignature) {
-    throw new Error('jwt signature mismatch');
+    throw createJwtError('jwt signature mismatch', 'JWT_SIGNATURE_MISMATCH');
   }
 
   const header = JSON.parse(fromBase64Url(encodedHeader).toString('utf8'));
   const payload = JSON.parse(fromBase64Url(encodedPayload).toString('utf8'));
 
   if (header.alg !== 'RS256') {
-    throw new Error('jwt alg mismatch');
+    throw createJwtError('jwt alg mismatch', 'JWT_ALG_MISMATCH');
   }
 
   if (expectedTyp && payload.typ !== expectedTyp) {
-    throw new Error('jwt typ mismatch');
+    throw createJwtError('jwt typ mismatch', 'JWT_TYP_MISMATCH');
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (typeof payload.exp !== 'number' || payload.exp <= nowSeconds) {
-    throw new Error('jwt expired');
+  if (!allowExpired && (typeof payload.exp !== 'number' || payload.exp <= nowSeconds)) {
+    throw createJwtError('jwt expired', 'JWT_EXPIRED', { payload });
   }
 
   return payload;
@@ -1620,7 +1627,9 @@ const createAuthService = (options = {}) => {
         requestId,
         detail: 'refresh payload missing',
         metadata: {
-          session_id_hint: 'unknown'
+          session_id_hint: 'unknown',
+          disposition_reason: 'refresh-payload-missing',
+          disposition_action: 'reject-only'
         }
       });
       throw errors.invalidPayload();
@@ -1633,13 +1642,25 @@ const createAuthService = (options = {}) => {
         publicKeyPem: jwtKeyPair.publicKey,
         expectedTyp: 'refresh'
       });
-    } catch (_error) {
+    } catch (error) {
+      const isExpiredRefreshToken = String(error?.code || '').trim().toUpperCase() === 'JWT_EXPIRED';
+      const expiredPayload = isExpiredRefreshToken && error?.payload && typeof error.payload === 'object'
+        ? error.payload
+        : null;
+      const expiredUserId = expiredPayload?.sub ? String(expiredPayload.sub) : 'unknown';
+      const expiredSessionId = expiredPayload?.sid ? String(expiredPayload.sid) : 'unknown';
       addAuditEvent({
         type: 'auth.refresh.replay_or_invalid',
         requestId,
-        detail: 'refresh token malformed',
+        userId: isExpiredRefreshToken ? expiredUserId : 'unknown',
+        sessionId: isExpiredRefreshToken ? expiredSessionId : 'unknown',
+        detail: isExpiredRefreshToken ? 'refresh token expired' : 'refresh token malformed',
         metadata: {
-          session_id_hint: 'unknown'
+          session_id_hint: isExpiredRefreshToken ? expiredSessionId : 'unknown',
+          disposition_reason: isExpiredRefreshToken
+            ? 'refresh-token-expired'
+            : 'refresh-token-malformed',
+          disposition_action: 'reject-only'
         }
       });
       throw errors.invalidRefresh();
@@ -1652,10 +1673,19 @@ const createAuthService = (options = {}) => {
       authStore.findUserById(payload.sub)
     ]);
 
+    const refreshStatus = refreshRecord ? String(refreshRecord.status).toLowerCase() : 'missing';
+    const refreshExpired = Boolean(refreshRecord) && refreshRecord.expiresAt <= now();
+    const refreshBelongsToClaim = Boolean(
+      refreshRecord
+      && String(refreshRecord.sessionId || '') === String(payload.sid || '')
+      && String(refreshRecord.userId || '') === String(payload.sub || '')
+    );
+
     const invalidState = (
       !refreshRecord ||
-      String(refreshRecord.status).toLowerCase() !== 'active' ||
-      refreshRecord.expiresAt <= now() ||
+      !refreshBelongsToClaim ||
+      refreshStatus !== 'active' ||
+      refreshExpired ||
       !session ||
       String(session.status).toLowerCase() !== 'active' ||
       !user ||
@@ -1665,10 +1695,21 @@ const createAuthService = (options = {}) => {
     );
 
     if (invalidState) {
-      const refreshStatus = refreshRecord ? String(refreshRecord.status).toLowerCase() : 'missing';
-      const replayDetected = refreshStatus === 'rotated' || refreshStatus === 'revoked';
+      const replayDetected = refreshBelongsToClaim
+        && (refreshStatus === 'rotated' || refreshStatus === 'revoked');
+      const dispositionReason = !refreshRecord
+          ? 'refresh-token-missing'
+          : !refreshBelongsToClaim
+            ? 'refresh-token-binding-mismatch'
+          : refreshExpired
+            ? 'refresh-token-expired'
+            : replayDetected
+              ? 'refresh-replay-detected'
+            : refreshStatus === 'active'
+              ? 'refresh-token-state-mismatch'
+              : `refresh-token-${refreshStatus}`;
 
-      if (refreshRecord && refreshRecord.status === 'active') {
+      if (refreshRecord && refreshStatus === 'active' && refreshBelongsToClaim) {
         await authStore.markRefreshTokenStatus({
           tokenHash: refreshHash,
           status: 'revoked'
@@ -1690,7 +1731,14 @@ const createAuthService = (options = {}) => {
         sessionId: payload.sid,
         detail: 'refresh token rejected',
         metadata: {
-          session_id_hint: String(payload.sid || 'unknown')
+          session_id_hint: String(payload.sid || 'unknown'),
+          refresh_status: refreshStatus,
+          disposition_reason: dispositionReason,
+          disposition_action: replayDetected
+            ? 'revoke-session-chain'
+            : refreshStatus === 'active' && refreshBelongsToClaim
+              ? 'revoke-current-token'
+              : 'reject-only'
         }
       });
       throw errors.invalidRefresh();
@@ -1723,7 +1771,9 @@ const createAuthService = (options = {}) => {
           sessionId,
           detail: 'refresh token rejected by rotation conflict',
           metadata: {
-            session_id_hint: String(sessionId || 'unknown')
+            session_id_hint: String(sessionId || 'unknown'),
+            disposition_reason: 'refresh-rotation-conflict',
+            disposition_action: 'revoke-session-chain'
           }
         });
         throw errors.invalidRefresh();

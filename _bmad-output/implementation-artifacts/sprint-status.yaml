@@ -47,7 +47,7 @@ development_status:
   1-4-双入口域识别与组织选择-切换: done
   1-5-菜单-按钮-api-访问控制与统一拒绝语义: done
   1-6-双域权限边界与服务端租户最终判定: done
-  1-7-refresh-rotation-重放识别与并发会话策略: backlog
+  1-7-refresh-rotation-重放识别与并发会话策略: done
   1-8-关键状态变更触发-session-version-会话收敛: backlog
   1-9-默认密码策略与用户创建一致性: backlog
   1-10-认证错误码与可重试语义统一映射: backlog

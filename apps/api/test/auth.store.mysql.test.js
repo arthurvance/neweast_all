@@ -1354,3 +1354,78 @@ test('replacePlatformRolesAndSyncSnapshot returns db-deadlock after retry exhaus
     }
   });
 });
+
+test('rotateRefreshToken refuses ownership mismatch before mutating refresh token chain', async () => {
+  const sqlCalls = [];
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    sqlCalls.push(normalizedSql);
+    if (normalizedSql.includes('SELECT token_hash, status, session_id, user_id')) {
+      return [
+        {
+          token_hash: 'token-prev',
+          status: 'active',
+          session_id: 'session-origin',
+          user_id: 'user-origin'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.rotateRefreshToken({
+    previousTokenHash: 'token-prev',
+    nextTokenHash: 'token-next',
+    sessionId: 'session-other',
+    userId: 'user-origin',
+    expiresAt: Date.now() + 60_000
+  });
+
+  assert.deepEqual(result, { ok: false });
+  assert.equal(sqlCalls.length, 1);
+});
+
+test('rotateRefreshToken updates previous token with session_id/user_id ownership guard', async () => {
+  let updateSql = '';
+  let updateParams = [];
+  const store = createStore(async (sql, params = []) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('SELECT token_hash, status, session_id, user_id')) {
+      return [
+        {
+          token_hash: 'token-prev',
+          status: 'active',
+          session_id: 'session-1',
+          user_id: 'user-1'
+        }
+      ];
+    }
+    if (normalizedSql.includes('UPDATE refresh_tokens') && normalizedSql.includes('SET status = \'rotated\'')) {
+      updateSql = normalizedSql;
+      updateParams = params;
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO refresh_tokens')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('SET rotated_to_token_hash')) {
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.rotateRefreshToken({
+    previousTokenHash: 'token-prev',
+    nextTokenHash: 'token-next',
+    sessionId: 'session-1',
+    userId: 'user-1',
+    expiresAt: Date.now() + 60_000
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.match(updateSql, /session_id\s*=\s*\?/i);
+  assert.match(updateSql, /user_id\s*=\s*\?/i);
+  assert.deepEqual(updateParams, ['token-prev', 'session-1', 'user-1']);
+});

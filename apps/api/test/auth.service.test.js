@@ -1,8 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { generateKeyPairSync } = require('node:crypto');
-const { createAuthService, AuthProblemError } = require('../src/modules/auth/auth.service');
-const { createInMemoryAuthStore } = require('../src/modules/auth/auth.store.memory');
+const { createHash, generateKeyPairSync } = require('node:crypto');
+const {
+  createAuthService,
+  AuthProblemError,
+  REFRESH_TTL_SECONDS
+} = require('../src/modules/auth/auth.service');
 
 const seedUsers = [
   {
@@ -43,6 +46,21 @@ const noOpOtpStore = {
 };
 const passRateLimitStore = {
   consume: async () => ({ allowed: true, count: 1, remainingSeconds: 60 })
+};
+
+const decodeJwtPayload = (token) => {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) {
+    return {};
+  }
+  return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+};
+
+const refreshTokenHash = (token) => {
+  const payload = decodeJwtPayload(token);
+  return createHash('sha256')
+    .update(String(payload.jti || ''))
+    .digest('hex');
 };
 
 test('default service does not allow legacy seeded credentials', async () => {
@@ -928,6 +946,314 @@ test('refresh rotation invalidates previous refresh token immediately', async ()
       return true;
     }
   );
+});
+
+test('refresh rotation writes traceable rotated_from/rotated_to chain and keeps response tracing fields', async () => {
+  const service = createService();
+  const login = await service.login({
+    requestId: 'req-rotation-chain-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+
+  const refreshed = await service.refresh({
+    requestId: 'req-rotation-chain-refresh',
+    refreshToken: login.refresh_token
+  });
+
+  assert.equal(refreshed.session_id, login.session_id);
+  assert.equal(refreshed.request_id, 'req-rotation-chain-refresh');
+
+  const previousHash = refreshTokenHash(login.refresh_token);
+  const nextHash = refreshTokenHash(refreshed.refresh_token);
+  const previousRecord = await service._internals.authStore.findRefreshTokenByHash(previousHash);
+  const nextRecord = await service._internals.authStore.findRefreshTokenByHash(nextHash);
+
+  assert.equal(previousRecord.status, 'rotated');
+  assert.equal(previousRecord.rotatedTo, nextHash);
+  assert.equal(nextRecord.status, 'active');
+  assert.equal(nextRecord.rotatedFrom, previousHash);
+});
+
+test('refresh rejects rotated/revoked/missing/expired/malformed with unified AUTH-401-INVALID-REFRESH', async () => {
+  const assertInvalidRefresh = async (executor) =>
+    assert.rejects(executor, (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    });
+
+  const rotatedService = createService();
+  const rotatedLogin = await rotatedService.login({
+    requestId: 'req-rotated-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  await rotatedService.refresh({
+    requestId: 'req-rotated-refresh-ok',
+    refreshToken: rotatedLogin.refresh_token
+  });
+  await assertInvalidRefresh(() =>
+    rotatedService.refresh({
+      requestId: 'req-rotated-refresh-replay',
+      refreshToken: rotatedLogin.refresh_token
+    })
+  );
+
+  const revokedService = createService();
+  const revokedLogin = await revokedService.login({
+    requestId: 'req-revoked-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  await revokedService._internals.authStore.markRefreshTokenStatus({
+    tokenHash: refreshTokenHash(revokedLogin.refresh_token),
+    status: 'revoked'
+  });
+  await assertInvalidRefresh(() =>
+    revokedService.refresh({
+      requestId: 'req-revoked-refresh',
+      refreshToken: revokedLogin.refresh_token
+    })
+  );
+
+  const missingService = createService();
+  const missingLogin = await missingService.login({
+    requestId: 'req-missing-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  const originalFindRefreshTokenByHash = missingService._internals.authStore.findRefreshTokenByHash;
+  missingService._internals.authStore.findRefreshTokenByHash = async () => null;
+  await assertInvalidRefresh(() =>
+    missingService.refresh({
+      requestId: 'req-missing-refresh',
+      refreshToken: missingLogin.refresh_token
+    })
+  );
+  missingService._internals.authStore.findRefreshTokenByHash = originalFindRefreshTokenByHash;
+
+  let nowMs = Date.now();
+  const expiredService = createAuthService({
+    seedUsers,
+    now: () => nowMs
+  });
+  const expiredLogin = await expiredService.login({
+    requestId: 'req-expired-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  nowMs += REFRESH_TTL_SECONDS * 1000 + 1;
+  await assertInvalidRefresh(() =>
+    expiredService.refresh({
+      requestId: 'req-expired-refresh',
+      refreshToken: expiredLogin.refresh_token
+    })
+  );
+  const expiredAudit = expiredService._internals.auditTrail
+    .slice()
+    .reverse()
+    .find((event) => event.request_id === 'req-expired-refresh');
+  assert.ok(expiredAudit);
+  assert.equal(expiredAudit.user_id, 'user-active');
+  assert.equal(expiredAudit.session_id, expiredLogin.session_id);
+  assert.equal(expiredAudit.disposition_reason, 'refresh-token-expired');
+
+  const malformedService = createService();
+  await assertInvalidRefresh(() =>
+    malformedService.refresh({
+      requestId: 'req-malformed-refresh',
+      refreshToken: 'malformed.refresh.token'
+    })
+  );
+});
+
+test('refresh rejects ownership mismatch and avoids revoking unrelated session chain', async () => {
+  const service = createService();
+  const sessionA = await service.login({
+    requestId: 'req-binding-mismatch-login-a',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  const sessionB = await service.login({
+    requestId: 'req-binding-mismatch-login-b',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+
+  const originalFindRefreshTokenByHash = service._internals.authStore.findRefreshTokenByHash;
+  service._internals.authStore.findRefreshTokenByHash = async (tokenHash) => {
+    const record = await originalFindRefreshTokenByHash(tokenHash);
+    if (!record) {
+      return null;
+    }
+    return {
+      ...record,
+      sessionId: sessionB.session_id
+    };
+  };
+
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-binding-mismatch-refresh-a',
+        refreshToken: sessionA.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+
+  const originalRecordA = await originalFindRefreshTokenByHash(refreshTokenHash(sessionA.refresh_token));
+  assert.ok(originalRecordA);
+  assert.equal(originalRecordA.status, 'active');
+
+  const mismatchAudit = service._internals.auditTrail
+    .slice()
+    .reverse()
+    .find((event) => event.request_id === 'req-binding-mismatch-refresh-a');
+  assert.ok(mismatchAudit);
+  assert.equal(mismatchAudit.disposition_reason, 'refresh-token-binding-mismatch');
+  assert.equal(mismatchAudit.disposition_action, 'reject-only');
+
+  service._internals.authStore.findRefreshTokenByHash = originalFindRefreshTokenByHash;
+
+  const sessionBRefreshed = await service.refresh({
+    requestId: 'req-binding-mismatch-refresh-b',
+    refreshToken: sessionB.refresh_token
+  });
+  assert.ok(sessionBRefreshed.refresh_token);
+});
+
+test('refresh audit marks expired jwt as refresh-token-expired instead of malformed', async () => {
+  const service = createService();
+  const login = await service.login({
+    requestId: 'req-jwt-expired-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+
+  const realDateNow = Date.now;
+  Date.now = () => realDateNow() + REFRESH_TTL_SECONDS * 1000 + 2000;
+  try {
+    await assert.rejects(
+      () =>
+        service.refresh({
+          requestId: 'req-jwt-expired-refresh',
+          refreshToken: login.refresh_token
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+        return true;
+      }
+    );
+  } finally {
+    Date.now = realDateNow;
+  }
+
+  const expiredJwtAudit = service._internals.auditTrail
+    .slice()
+    .reverse()
+    .find((event) => event.request_id === 'req-jwt-expired-refresh');
+  assert.ok(expiredJwtAudit);
+  assert.equal(expiredJwtAudit.user_id, 'user-active');
+  assert.equal(expiredJwtAudit.session_id, login.session_id);
+  assert.equal(expiredJwtAudit.detail, 'refresh token expired');
+  assert.equal(expiredJwtAudit.disposition_reason, 'refresh-token-expired');
+  assert.equal(expiredJwtAudit.disposition_action, 'reject-only');
+});
+
+test('refresh replay revokes only current session chain and keeps concurrent sessions valid', async () => {
+  const service = createService();
+  const sessionA = await service.login({
+    requestId: 'req-replay-isolation-login-a',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  const sessionB = await service.login({
+    requestId: 'req-replay-isolation-login-b',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+
+  const sessionARefreshed = await service.refresh({
+    requestId: 'req-replay-isolation-refresh-a-ok',
+    refreshToken: sessionA.refresh_token
+  });
+
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-replay-isolation-refresh-a-replay',
+        refreshToken: sessionA.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+
+  const sessionBRefreshed = await service.refresh({
+    requestId: 'req-replay-isolation-refresh-b-ok',
+    refreshToken: sessionB.refresh_token
+  });
+  assert.ok(sessionBRefreshed.access_token);
+
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-replay-isolation-refresh-a-chain-revoked',
+        refreshToken: sessionARefreshed.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+});
+
+test('refresh replay audit event contains user/session/request identifiers and disposal reason', async () => {
+  const service = createService();
+  const login = await service.login({
+    requestId: 'req-replay-audit-login',
+    phone: '13800000000',
+    password: 'Passw0rd!'
+  });
+  await service.refresh({
+    requestId: 'req-replay-audit-refresh-ok',
+    refreshToken: login.refresh_token
+  });
+
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-replay-audit-refresh-replay',
+        refreshToken: login.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+
+  const replayAuditEvent = service._internals.auditTrail
+    .slice()
+    .reverse()
+    .find((event) => event.type === 'auth.refresh.replay_or_invalid');
+
+  assert.ok(replayAuditEvent);
+  assert.equal(replayAuditEvent.request_id, 'req-replay-audit-refresh-replay');
+  assert.equal(replayAuditEvent.user_id, 'user-active');
+  assert.equal(replayAuditEvent.session_id, login.session_id);
+  assert.equal(replayAuditEvent.detail, 'refresh token rejected');
+  assert.equal(replayAuditEvent.disposition_reason, 'refresh-replay-detected');
 });
 
 test('refresh failure writes session metadata into audit trail', async () => {

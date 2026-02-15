@@ -1378,9 +1378,11 @@ const createMySqlAuthStore = ({
 
     rotateRefreshToken: async ({ previousTokenHash, nextTokenHash, sessionId, userId, expiresAt }) =>
       dbClient.inTransaction(async (tx) => {
+        const normalizedSessionId = String(sessionId);
+        const normalizedUserId = String(userId);
         const rows = await tx.query(
           `
-            SELECT token_hash, status
+            SELECT token_hash, status, session_id, user_id
             FROM refresh_tokens
             WHERE token_hash = ?
             LIMIT 1
@@ -1390,7 +1392,12 @@ const createMySqlAuthStore = ({
         );
         const previous = rows[0];
 
-        if (!previous || String(previous.status).toLowerCase() !== 'active') {
+        if (
+          !previous
+          || String(previous.status).toLowerCase() !== 'active'
+          || String(previous.session_id || '') !== normalizedSessionId
+          || String(previous.user_id || '') !== normalizedUserId
+        ) {
           return { ok: false };
         }
 
@@ -1399,9 +1406,9 @@ const createMySqlAuthStore = ({
             UPDATE refresh_tokens
             SET status = 'rotated',
                 updated_at = CURRENT_TIMESTAMP(3)
-            WHERE token_hash = ? AND status = 'active'
+            WHERE token_hash = ? AND status = 'active' AND session_id = ? AND user_id = ?
           `,
-          [previousTokenHash]
+          [previousTokenHash, normalizedSessionId, normalizedUserId]
         );
 
         if (!updated || Number(updated.affectedRows || 0) !== 1) {
@@ -1413,7 +1420,7 @@ const createMySqlAuthStore = ({
             INSERT INTO refresh_tokens (token_hash, session_id, user_id, status, expires_at, rotated_from_token_hash)
             VALUES (?, ?, ?, 'active', FROM_UNIXTIME(? / 1000.0), ?)
           `,
-          [nextTokenHash, sessionId, String(userId), Number(expiresAt), previousTokenHash]
+          [nextTokenHash, normalizedSessionId, normalizedUserId, Number(expiresAt), previousTokenHash]
         );
 
         await tx.query(

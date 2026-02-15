@@ -1,6 +1,6 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { pbkdf2Sync, randomBytes } = require('node:crypto');
+const { createHash, pbkdf2Sync, randomBytes } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const mysql = require('mysql2/promise');
@@ -27,6 +27,21 @@ const dependencyProbe = async () => ({
   db: { ok: true, detail: 'db ok' },
   redis: { ok: true, detail: 'redis ok' }
 });
+
+const decodeJwtPayload = (token) => {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) {
+    return {};
+  }
+  return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+};
+
+const refreshTokenHash = (token) => {
+  const payload = decodeJwtPayload(token);
+  return createHash('sha256')
+    .update(String(payload.jti || ''))
+    .digest('hex');
+};
 
 const TEST_USER = {
   id: 'it-user-active',
@@ -755,6 +770,83 @@ test('express auth flow supports rotation and replay rejection', async () => {
 
     assert.equal(chainRevoked.status, 401);
     assert.equal(chainRevoked.body.error_code, 'AUTH-401-INVALID-REFRESH');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express refresh persists rotation chain and keeps concurrent sessions isolated', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  const harness = await createExpressHarness();
+  try {
+    const loginA = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: { phone: TEST_USER.phone, password: TEST_USER.password }
+    });
+    const loginB = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: { phone: TEST_USER.phone, password: TEST_USER.password }
+    });
+
+    assert.equal(loginA.status, 200);
+    assert.equal(loginB.status, 200);
+
+    const refreshA = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/refresh',
+      body: { refresh_token: loginA.body.refresh_token }
+    });
+    assert.equal(refreshA.status, 200);
+    assert.equal(refreshA.body.session_id, loginA.body.session_id);
+    assert.equal(typeof refreshA.body.request_id, 'string');
+
+    const previousHash = refreshTokenHash(loginA.body.refresh_token);
+    const nextHash = refreshTokenHash(refreshA.body.refresh_token);
+    const [tokenRows] = await adminConnection.execute(
+      `
+        SELECT token_hash, session_id, status, rotated_from_token_hash, rotated_to_token_hash
+        FROM refresh_tokens
+        WHERE token_hash IN (?, ?)
+      `,
+      [previousHash, nextHash]
+    );
+    const previousRow = tokenRows.find((row) => row.token_hash === previousHash);
+    const nextRow = tokenRows.find((row) => row.token_hash === nextHash);
+
+    assert.ok(previousRow);
+    assert.ok(nextRow);
+    assert.equal(previousRow.session_id, loginA.body.session_id);
+    assert.equal(nextRow.session_id, loginA.body.session_id);
+    assert.equal(previousRow.status, 'rotated');
+    assert.equal(previousRow.rotated_to_token_hash, nextHash);
+    assert.equal(nextRow.status, 'active');
+    assert.equal(nextRow.rotated_from_token_hash, previousHash);
+
+    const replayA = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/refresh',
+      body: { refresh_token: loginA.body.refresh_token }
+    });
+    assert.equal(replayA.status, 401);
+    assert.equal(replayA.body.type, 'about:blank');
+    assert.equal(replayA.body.title, 'Unauthorized');
+    assert.equal(replayA.body.status, 401);
+    assert.equal(replayA.body.detail, '会话已失效，请重新登录');
+    assert.equal(replayA.body.error_code, 'AUTH-401-INVALID-REFRESH');
+    assert.equal(typeof replayA.body.request_id, 'string');
+
+    const refreshB = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/refresh',
+      body: { refresh_token: loginB.body.refresh_token }
+    });
+    assert.equal(refreshB.status, 200);
+    assert.equal(refreshB.body.session_id, loginB.body.session_id);
+    assert.equal(typeof refreshB.body.request_id, 'string');
   } finally {
     await harness.close();
   }
