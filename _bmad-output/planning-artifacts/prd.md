@@ -917,7 +917,7 @@ Phase 1（MVP）以“治理闭环 + 1 条真实外部集成”作为发布主�
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
 
 - FR61
-  - 需求陈述: 系统可以支持新建用户首次登录不强制改密，并通过配置开关控制该策略。
+  - 需求陈述: 系统可以支持新建用户首次登录不强制改密，且不提供管理员配置入口。
   - 验收口径: 采用统一模板 AC1/AC2/AC3，且三项全部通过。
   - 测量方法: 发布前执行自动化回归、权限负向回归与审计链路抽样。
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
