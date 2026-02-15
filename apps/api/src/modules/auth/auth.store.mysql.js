@@ -104,6 +104,17 @@ const isEmptyPlatformPermissionSnapshot = (permission = {}) =>
   && !Boolean(permission.canViewBilling)
   && !Boolean(permission.canOperateBilling);
 
+const isSamePlatformPermissionSnapshot = (left, right) => {
+  const normalizedLeft = left || toPlatformPermissionSnapshot();
+  const normalizedRight = right || toPlatformPermissionSnapshot();
+  return (
+    Boolean(normalizedLeft.canViewMemberAdmin) === Boolean(normalizedRight.canViewMemberAdmin)
+    && Boolean(normalizedLeft.canOperateMemberAdmin) === Boolean(normalizedRight.canOperateMemberAdmin)
+    && Boolean(normalizedLeft.canViewBilling) === Boolean(normalizedRight.canViewBilling)
+    && Boolean(normalizedLeft.canOperateBilling) === Boolean(normalizedRight.canOperateBilling)
+  );
+};
+
 const toEpochMilliseconds = (value) => {
   if (value === null || value === undefined) {
     return 0;
@@ -120,7 +131,16 @@ const toEpochMilliseconds = (value) => {
 };
 
 const normalizePlatformRoleStatus = (status) => {
-  const normalizedStatus = String(status || 'active').trim().toLowerCase();
+  if (status === null || status === undefined) {
+    return 'active';
+  }
+  if (typeof status !== 'string') {
+    throw new Error(`invalid platform role status: ${String(status)}`);
+  }
+  const normalizedStatus = status.trim().toLowerCase();
+  if (!normalizedStatus) {
+    throw new Error('invalid platform role status:');
+  }
   if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedStatus)) {
     throw new Error(`invalid platform role status: ${normalizedStatus}`);
   }
@@ -184,7 +204,11 @@ const dedupePlatformRoleFacts = (roles = []) => {
     if (!normalizedRole) {
       continue;
     }
-    dedupedByRoleId.set(normalizedRole.roleId, normalizedRole);
+    const dedupeKey = String(normalizedRole.roleId || '').trim().toLowerCase();
+    if (!dedupeKey) {
+      continue;
+    }
+    dedupedByRoleId.set(dedupeKey, normalizedRole);
   }
   return [...dedupedByRoleId.values()];
 };
@@ -409,6 +433,78 @@ const createMySqlAuthStore = ({
         };
       }
     }
+  };
+
+  const bumpSessionVersionAndConvergeSessionsTx = async ({
+    txClient,
+    userId,
+    passwordHash = null,
+    reason = 'critical-state-changed',
+    revokeRefreshTokens = true,
+    revokeAuthSessions = true
+  }) => {
+    const normalizedUserId = String(userId);
+    const shouldUpdatePassword = passwordHash !== null && passwordHash !== undefined;
+    const updateResult = shouldUpdatePassword
+      ? await txClient.query(
+        `
+          UPDATE users
+          SET password_hash = ?,
+              session_version = session_version + 1,
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE id = ?
+        `,
+        [passwordHash, normalizedUserId]
+      )
+      : await txClient.query(
+        `
+          UPDATE users
+          SET session_version = session_version + 1,
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE id = ?
+        `,
+        [normalizedUserId]
+      );
+
+    if (!updateResult || Number(updateResult.affectedRows || 0) !== 1) {
+      return null;
+    }
+
+    if (revokeAuthSessions) {
+      await txClient.query(
+        `
+          UPDATE auth_sessions
+          SET status = 'revoked',
+              revoked_reason = ?,
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE user_id = ? AND status = 'active'
+        `,
+        [reason || 'critical-state-changed', normalizedUserId]
+      );
+    }
+
+    if (revokeRefreshTokens) {
+      await txClient.query(
+        `
+          UPDATE refresh_tokens
+          SET status = 'revoked',
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE user_id = ? AND status = 'active'
+        `,
+        [normalizedUserId]
+      );
+    }
+
+    const rows = await txClient.query(
+      `
+        SELECT id, phone, password_hash, status, session_version
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [normalizedUserId]
+    );
+    return toUserRecord(rows[0]);
   };
 
   const readPlatformRoleFactsSummaryByUserId = async ({ txClient = dbClient, userId }) => {
@@ -789,6 +885,38 @@ const createMySqlAuthStore = ({
     const normalizedRoles = dedupePlatformRoleFacts(roles);
 
     return dbClient.inTransaction(async (tx) => {
+      const userRows = await tx.query(
+        `
+          SELECT id
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [normalizedUserId]
+      );
+      if (!userRows?.[0]) {
+        return {
+          synced: false,
+          reason: 'invalid-user-id',
+          permission: null
+        };
+      }
+
+      const previousRoleRows = await tx.query(
+        `
+          SELECT status,
+                 can_view_member_admin,
+                 can_operate_member_admin,
+                 can_view_billing,
+                 can_operate_billing
+          FROM auth_user_platform_roles
+          WHERE user_id = ?
+        `,
+        [normalizedUserId]
+      );
+      const previousPermission = aggregatePlatformPermissionFromRoleRows(previousRoleRows).permission;
+
       await tx.query(
         `
           DELETE FROM auth_user_platform_roles
@@ -828,10 +956,9 @@ const createMySqlAuthStore = ({
       const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
       const canViewBilling = Number(permission.canViewBilling);
       const canOperateBilling = Number(permission.canOperateBilling);
-      let snapshotResult = { affectedRows: 0 };
 
       if (normalizedRoles.length > 0) {
-        snapshotResult = await tx.query(
+        await tx.query(
           `
             INSERT INTO auth_user_domain_access (
               user_id,
@@ -859,7 +986,7 @@ const createMySqlAuthStore = ({
           ]
         );
       } else {
-        snapshotResult = await tx.query(
+        await tx.query(
           `
             UPDATE auth_user_domain_access
             SET can_view_member_admin = ?,
@@ -889,8 +1016,18 @@ const createMySqlAuthStore = ({
         );
       }
 
+      if (!isSamePlatformPermissionSnapshot(previousPermission, permission)) {
+        await bumpSessionVersionAndConvergeSessionsTx({
+          txClient: tx,
+          userId: normalizedUserId,
+          reason: 'platform-role-facts-changed',
+          revokeRefreshTokens: true,
+          revokeAuthSessions: true
+        });
+      }
+
       return {
-        synced: Number(snapshotResult?.affectedRows || 0) > 0,
+        synced: true,
         reason: 'ok',
         permission
       };
@@ -1436,80 +1573,27 @@ const createMySqlAuthStore = ({
         return { ok: true };
       }),
 
-    updateUserPasswordAndBumpSessionVersion: async ({ userId, passwordHash }) => {
-      await dbClient.query(
-        `
-          UPDATE users
-          SET password_hash = ?,
-              session_version = session_version + 1,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE id = ?
-        `,
-        [passwordHash, String(userId)]
-      );
-
-      const rows = await dbClient.query(
-        `
-          SELECT id, phone, password_hash, status, session_version
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-        `,
-        [String(userId)]
-      );
-      return toUserRecord(rows[0]);
-    },
+    updateUserPasswordAndBumpSessionVersion: async ({ userId, passwordHash }) =>
+      dbClient.inTransaction(async (tx) =>
+        bumpSessionVersionAndConvergeSessionsTx({
+          txClient: tx,
+          userId,
+          passwordHash,
+          reason: 'password-changed',
+          revokeRefreshTokens: false,
+          revokeAuthSessions: false
+        })),
 
     updateUserPasswordAndRevokeSessions: async ({ userId, passwordHash, reason }) =>
-      dbClient.inTransaction(async (tx) => {
-        const updated = await tx.query(
-          `
-            UPDATE users
-            SET password_hash = ?,
-                session_version = session_version + 1,
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE id = ?
-          `,
-          [passwordHash, String(userId)]
-        );
-
-        if (!updated || Number(updated.affectedRows || 0) !== 1) {
-          return null;
-        }
-
-        await tx.query(
-          `
-            UPDATE auth_sessions
-            SET status = 'revoked',
-                revoked_reason = ?,
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE user_id = ? AND status = 'active'
-          `,
-          [reason || 'password-changed', String(userId)]
-        );
-
-        await tx.query(
-          `
-            UPDATE refresh_tokens
-            SET status = 'revoked',
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE user_id = ? AND status = 'active'
-          `,
-          [String(userId)]
-        );
-
-        const rows = await tx.query(
-          `
-            SELECT id, phone, password_hash, status, session_version
-            FROM users
-            WHERE id = ?
-            LIMIT 1
-          `,
-          [String(userId)]
-        );
-
-        return toUserRecord(rows[0]);
-      })
+      dbClient.inTransaction(async (tx) =>
+        bumpSessionVersionAndConvergeSessionsTx({
+          txClient: tx,
+          userId,
+          passwordHash,
+          reason: reason || 'password-changed',
+          revokeRefreshTokens: true,
+          revokeAuthSessions: true
+        }))
   };
 };
 

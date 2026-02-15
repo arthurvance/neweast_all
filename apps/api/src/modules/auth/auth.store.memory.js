@@ -15,7 +15,16 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   };
 
   const normalizePlatformRoleStatus = (status) => {
-    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    if (status === null || status === undefined) {
+      return 'active';
+    }
+    if (typeof status !== 'string') {
+      throw new Error(`invalid platform role status: ${String(status)}`);
+    }
+    const normalizedStatus = status.trim().toLowerCase();
+    if (!normalizedStatus) {
+      throw new Error('invalid platform role status:');
+    }
     if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedStatus)) {
       throw new Error(`invalid platform role status: ${normalizedStatus}`);
     }
@@ -74,6 +83,17 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     canOperateBilling: false
   });
 
+  const isSamePlatformPermission = (left, right) => {
+    const normalizedLeft = left || buildEmptyPlatformPermission();
+    const normalizedRight = right || buildEmptyPlatformPermission();
+    return (
+      Boolean(normalizedLeft.canViewMemberAdmin) === Boolean(normalizedRight.canViewMemberAdmin)
+      && Boolean(normalizedLeft.canOperateMemberAdmin) === Boolean(normalizedRight.canOperateMemberAdmin)
+      && Boolean(normalizedLeft.canViewBilling) === Boolean(normalizedRight.canViewBilling)
+      && Boolean(normalizedLeft.canOperateBilling) === Boolean(normalizedRight.canOperateBilling)
+    );
+  };
+
   const normalizePlatformRole = (role) => {
     const roleId = String(role?.roleId || role?.role_id || '').trim();
     if (!roleId) {
@@ -90,10 +110,12 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const dedupePlatformRolesByRoleId = (roles = []) => {
     const dedupedByRoleId = new Map();
     for (const role of Array.isArray(roles) ? roles : []) {
-      if (!role?.roleId) {
+      const roleId = String(role?.roleId || '').trim();
+      const dedupeKey = roleId.toLowerCase();
+      if (!dedupeKey) {
         continue;
       }
-      dedupedByRoleId.set(role.roleId, role);
+      dedupedByRoleId.set(dedupeKey, role);
     }
     return [...dedupedByRoleId.values()];
   };
@@ -115,7 +137,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     forceWhenNoRoleFacts = false
   }) => {
     const normalizedUserId = String(userId || '').trim();
-    if (!normalizedUserId) {
+    if (!normalizedUserId || !usersById.has(normalizedUserId)) {
       return {
         synced: false,
         reason: 'invalid-user-id',
@@ -206,6 +228,47 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   }
 
   const clone = (value) => (value ? { ...value } : null);
+
+  const bumpSessionVersionAndConvergeSessions = ({
+    userId,
+    passwordHash = null,
+    reason = 'critical-state-changed',
+    revokeRefreshTokens = true,
+    revokeAuthSessions = true
+  }) => {
+    const user = usersById.get(String(userId));
+    if (!user) {
+      return null;
+    }
+
+    if (passwordHash !== null && passwordHash !== undefined) {
+      user.passwordHash = passwordHash;
+    }
+    user.sessionVersion += 1;
+    usersByPhone.set(user.phone, user);
+    usersById.set(user.id, user);
+
+    if (revokeAuthSessions) {
+      for (const session of sessionsById.values()) {
+        if (session.userId === String(userId) && session.status === 'active') {
+          session.status = 'revoked';
+          session.revokedReason = reason;
+          session.updatedAt = Date.now();
+        }
+      }
+    }
+
+    if (revokeRefreshTokens) {
+      for (const refreshRecord of refreshTokensByHash.values()) {
+        if (refreshRecord.userId === String(userId) && refreshRecord.status === 'active') {
+          refreshRecord.status = 'revoked';
+          refreshRecord.updatedAt = Date.now();
+        }
+      }
+    }
+
+    return clone(user);
+  };
 
   return {
     findUserByPhone: async (phone) => clone(usersByPhone.get(phone) || null),
@@ -340,7 +403,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     replacePlatformRolesAndSyncSnapshot: async ({ userId, roles = [] }) => {
       const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId) {
+      if (!normalizedUserId || !usersById.has(normalizedUserId)) {
         return {
           synced: false,
           reason: 'invalid-user-id',
@@ -348,16 +411,33 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         };
       }
 
+      const previousRoles = platformRolesByUserId.get(normalizedUserId) || [];
+      const previousPermission = platformPermissionsByUserId.get(normalizedUserId)
+        || mergePlatformPermissionFromRoles(previousRoles)
+        || buildEmptyPlatformPermission();
+
       const normalizedRoles = dedupePlatformRolesByRoleId(
         (Array.isArray(roles) ? roles : [])
           .map((role) => normalizePlatformRole(role))
           .filter(Boolean)
       );
       platformRolesByUserId.set(normalizedUserId, normalizedRoles);
-      return syncPlatformPermissionFromRoleFacts({
+      const syncResult = syncPlatformPermissionFromRoleFacts({
         userId: normalizedUserId,
         forceWhenNoRoleFacts: true
       });
+
+      const nextPermission = syncResult?.permission || buildEmptyPlatformPermission();
+      if (!isSamePlatformPermission(previousPermission, nextPermission)) {
+        bumpSessionVersionAndConvergeSessions({
+          userId: normalizedUserId,
+          reason: 'platform-role-facts-changed',
+          revokeRefreshTokens: true,
+          revokeAuthSessions: true
+        });
+      }
+
+      return syncResult;
     },
 
     revokeSession: async ({ sessionId, reason }) => {
@@ -466,44 +546,24 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     },
 
     updateUserPasswordAndBumpSessionVersion: async ({ userId, passwordHash }) => {
-      const user = usersById.get(String(userId));
-      if (!user) {
-        return null;
-      }
-
-      user.passwordHash = passwordHash;
-      user.sessionVersion += 1;
-      usersByPhone.set(user.phone, user);
-      usersById.set(user.id, user);
+      const user = bumpSessionVersionAndConvergeSessions({
+        userId,
+        passwordHash,
+        reason: 'password-changed',
+        revokeRefreshTokens: false,
+        revokeAuthSessions: false
+      });
       return clone(user);
     },
 
     updateUserPasswordAndRevokeSessions: async ({ userId, passwordHash, reason }) => {
-      const user = usersById.get(String(userId));
-      if (!user) {
-        return null;
-      }
-
-      user.passwordHash = passwordHash;
-      user.sessionVersion += 1;
-      usersByPhone.set(user.phone, user);
-      usersById.set(user.id, user);
-
-      for (const session of sessionsById.values()) {
-        if (session.userId === String(userId) && session.status === 'active') {
-          session.status = 'revoked';
-          session.revokedReason = reason || 'password-changed';
-          session.updatedAt = Date.now();
-        }
-      }
-
-      for (const refreshRecord of refreshTokensByHash.values()) {
-        if (refreshRecord.userId === String(userId) && refreshRecord.status === 'active') {
-          refreshRecord.status = 'revoked';
-          refreshRecord.updatedAt = Date.now();
-        }
-      }
-
+      const user = bumpSessionVersionAndConvergeSessions({
+        userId,
+        passwordHash,
+        reason: reason || 'password-changed',
+        revokeRefreshTokens: true,
+        revokeAuthSessions: true
+      });
       return clone(user);
     }
   };

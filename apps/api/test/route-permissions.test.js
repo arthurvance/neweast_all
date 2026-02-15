@@ -63,6 +63,18 @@ test('platform protected auth route exposes explicit permission declaration', ()
   assert.equal(platformMemberAdminProbe.permission_code, 'platform.member_admin.view');
 });
 
+test('platform role-facts replace route exposes explicit permission declaration', () => {
+  const replaceRoleFacts = findRouteDefinition({
+    method: 'POST',
+    path: '/auth/platform/role-facts/replace'
+  });
+
+  assert.ok(replaceRoleFacts);
+  assert.equal(replaceRoleFacts.access, 'protected');
+  assert.equal(replaceRoleFacts.scope, 'platform');
+  assert.equal(replaceRoleFacts.permission_code, 'platform.member_admin.operate');
+});
+
 test('protected routes are fail-closed when declaration is missing', () => {
   const result = validateRoutePermissionDeclarations([
     {

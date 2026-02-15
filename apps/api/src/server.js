@@ -472,6 +472,17 @@ const createRouteTable = ({
         ),
       requestId
     ),
+  'POST /auth/platform/role-facts/replace': async () =>
+    runAuthRoute(
+      () =>
+        handlers.authReplacePlatformRoleFacts(
+          requestId,
+          headers.authorization,
+          body || {},
+          getAuthorizationContext()
+        ),
+      requestId
+    ),
   'GET /smoke': async () => {
     const payload = await handlers.smoke(requestId);
     return responseJson(payload.ok ? 200 : 503, payload);

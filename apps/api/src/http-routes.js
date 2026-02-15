@@ -125,6 +125,19 @@ const createRouteHandlers = (config, options) => {
         authorizationContext
       }),
 
+    authReplacePlatformRoleFacts: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      auth.replacePlatformRoleFacts({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
     openapi: () => buildOpenApiSpec()
   };
 

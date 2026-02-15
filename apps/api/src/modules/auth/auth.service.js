@@ -14,6 +14,22 @@ const PBKDF2_ITERATIONS = 150000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
 const ACCESS_SESSION_CACHE_TTL_MS = 800;
+const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
+const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
+const MYSQL_DUP_ENTRY_ERRNO = 1062;
+const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
+const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
+  'canViewMemberAdmin',
+  'can_view_member_admin',
+  'canOperateMemberAdmin',
+  'can_operate_member_admin',
+  'canViewBilling',
+  'can_view_billing',
+  'canOperateBilling',
+  'can_operate_billing'
+]);
 
 const DEFAULT_SEED_USERS = [];
 const ROUTE_PERMISSION_EVALUATORS = Object.freeze({
@@ -58,6 +74,56 @@ const TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT = new Set([
   'tenant.context.read',
   'tenant.context.switch'
 ]);
+const hasOwnProperty = (target, key) =>
+  target !== null
+  && typeof target === 'object'
+  && Object.prototype.hasOwnProperty.call(target, key);
+const isPlainObject = (value) =>
+  value !== null
+  && typeof value === 'object'
+  && !Array.isArray(value);
+const normalizePlatformRoleIdKey = (roleId) =>
+  String(roleId || '').trim().toLowerCase();
+const normalizeRequiredStringField = (candidate, errorFactory) => {
+  if (typeof candidate !== 'string') {
+    throw errorFactory();
+  }
+  const normalized = candidate.trim();
+  if (!normalized) {
+    throw errorFactory();
+  }
+  return normalized;
+};
+const resolveRawRoleIdCandidate = (role) => {
+  if (!role || typeof role !== 'object') {
+    return undefined;
+  }
+  if (hasOwnProperty(role, 'roleId')) {
+    return role.roleId;
+  }
+  if (hasOwnProperty(role, 'role_id')) {
+    return role.role_id;
+  }
+  return undefined;
+};
+const isDuplicateRoleFactEntryError = (error) =>
+  String(error?.code || '').trim().toUpperCase() === 'ER_DUP_ENTRY'
+  || Number(error?.errno || 0) === MYSQL_DUP_ENTRY_ERRNO;
+const isDataTooLongRoleFactError = (error) =>
+  String(error?.code || '').trim().toUpperCase() === 'ER_DATA_TOO_LONG'
+  || Number(error?.errno || 0) === MYSQL_DATA_TOO_LONG_ERRNO;
+const assertOptionalBooleanRolePermission = (candidate, errorFactory) => {
+  if (candidate === undefined) {
+    return;
+  }
+  if (typeof candidate !== 'boolean') {
+    throw errorFactory();
+  }
+};
+const hasTopLevelPlatformRolePermissionField = (role) =>
+  PLATFORM_ROLE_PERMISSION_FIELD_KEYS.some((field) =>
+    hasOwnProperty(role, field)
+  );
 const listSupportedRoutePermissionScopes = () =>
   Object.fromEntries(
     Object.entries(ROUTE_PERMISSION_SCOPE_RULES).map(([permissionCode, scopes]) => [
@@ -582,6 +648,26 @@ const createAuthService = (options = {}) => {
     auditTrail.push(event);
     log('info', 'Auth audit event', event);
   };
+
+  const addAccessInvalidAuditEvent = ({
+    requestId,
+    payload = null,
+    userId = 'unknown',
+    sessionId = 'unknown',
+    dispositionReason = 'access-token-invalid'
+  }) =>
+    addAuditEvent({
+      type: 'auth.access.invalid',
+      requestId,
+      userId,
+      sessionId,
+      detail: 'access token rejected',
+      metadata: {
+        session_id_hint: String(payload?.sid || sessionId || 'unknown'),
+        disposition_reason: dispositionReason,
+        disposition_action: 'reject-only'
+      }
+    });
 
   const validatePasswordPolicy = (candidatePassword) => {
     if (typeof candidatePassword !== 'string' || candidatePassword.length < PASSWORD_MIN_LENGTH) {
@@ -1129,7 +1215,10 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const assertValidAccessSession = async (accessToken) => {
+  const assertValidAccessSession = async ({
+    accessToken,
+    requestId = 'request_id_unset'
+  }) => {
     let payload;
     try {
       payload = verifyJwt({
@@ -1138,6 +1227,10 @@ const createAuthService = (options = {}) => {
         expectedTyp: 'access'
       });
     } catch (_error) {
+      addAccessInvalidAuditEvent({
+        requestId,
+        dispositionReason: 'access-token-malformed'
+      });
       throw errors.invalidAccess();
     }
 
@@ -1151,15 +1244,51 @@ const createAuthService = (options = {}) => {
 
     const [session, user] = await Promise.all([authStore.findSessionById(payload.sid), authStore.findUserById(payload.sub)]);
 
-    if (!session || !user || String(session.status).toLowerCase() !== 'active') {
+    const normalizedSessionStatus = String(session?.status || '').toLowerCase();
+    const normalizedRevokedReason = String(
+      session?.revokedReason || session?.revoked_reason || ''
+    ).trim().toLowerCase();
+    const revokedByCriticalStateChange = normalizedSessionStatus === 'revoked'
+      && (
+        normalizedRevokedReason === 'password-changed'
+        || normalizedRevokedReason === 'platform-role-facts-changed'
+        || normalizedRevokedReason === 'critical-state-changed'
+      );
+    if (!session || !user || normalizedSessionStatus !== 'active') {
+      const dispositionReason = !session
+        ? 'access-session-missing'
+        : !user
+          ? 'access-user-missing'
+          : revokedByCriticalStateChange
+            ? 'session-version-mismatch'
+          : `access-session-${normalizedSessionStatus || 'invalid'}`;
+      addAccessInvalidAuditEvent({
+        requestId,
+        payload,
+        userId: payload?.sub || 'unknown',
+        sessionId: payload?.sid || 'unknown',
+        dispositionReason
+      });
       throw errors.invalidAccess();
     }
 
-    if (
-      String(session.userId) !== String(payload.sub) ||
-      Number(session.sessionVersion) !== Number(payload.sv) ||
-      Number(user.sessionVersion) !== Number(payload.sv)
-    ) {
+    const boundUserMismatch = String(session.userId) !== String(payload.sub);
+    const sessionVersionMismatch =
+      Number(session.sessionVersion) !== Number(payload.sv)
+      || Number(user.sessionVersion) !== Number(payload.sv);
+    if (boundUserMismatch || sessionVersionMismatch) {
+      const dispositionReason = boundUserMismatch
+        ? 'access-token-binding-mismatch'
+        : sessionVersionMismatch
+          ? 'session-version-mismatch'
+          : 'access-token-state-mismatch';
+      addAccessInvalidAuditEvent({
+        requestId,
+        payload,
+        userId: user.id || payload?.sub || 'unknown',
+        sessionId: session.sessionId || session.session_id || payload?.sid || 'unknown',
+        dispositionReason
+      });
       throw errors.invalidAccess();
     }
 
@@ -1173,8 +1302,15 @@ const createAuthService = (options = {}) => {
     return { payload, session, user };
   };
 
-  const resolveAuthorizedSession = async ({ accessToken, authorizationContext = null }) => {
-    const authorizedSession = await assertValidAccessSession(accessToken);
+  const resolveAuthorizedSession = async ({
+    requestId,
+    accessToken,
+    authorizationContext = null
+  }) => {
+    const authorizedSession = await assertValidAccessSession({
+      accessToken,
+      requestId
+    });
     if (!authorizationContext || typeof authorizationContext !== 'object') {
       return authorizedSession;
     }
@@ -1204,6 +1340,14 @@ const createAuthService = (options = {}) => {
       || resolvedSessionId !== contextSessionId
       || resolvedUserId !== contextUserId
     ) {
+      const auditUserId = contextUserId || resolvedUserId || 'unknown';
+      const auditSessionId = contextSessionId || resolvedSessionId || 'unknown';
+      addAccessInvalidAuditEvent({
+        requestId,
+        userId: auditUserId,
+        sessionId: auditSessionId,
+        dispositionReason: 'access-authorization-context-mismatch'
+      });
       throw errors.invalidAccess();
     }
 
@@ -1681,6 +1825,11 @@ const createAuthService = (options = {}) => {
       && String(refreshRecord.userId || '') === String(payload.sub || '')
     );
 
+    const sessionVersionMismatch = Boolean(session && user)
+      && (
+        Number(session.sessionVersion) !== Number(payload.sv)
+        || Number(user.sessionVersion) !== Number(payload.sv)
+      );
     const invalidState = (
       !refreshRecord ||
       !refreshBelongsToClaim ||
@@ -1690,8 +1839,7 @@ const createAuthService = (options = {}) => {
       String(session.status).toLowerCase() !== 'active' ||
       !user ||
       String(session.userId) !== String(user.id) ||
-      Number(session.sessionVersion) !== Number(payload.sv) ||
-      Number(user.sessionVersion) !== Number(payload.sv)
+      sessionVersionMismatch
     );
 
     if (invalidState) {
@@ -1703,6 +1851,8 @@ const createAuthService = (options = {}) => {
             ? 'refresh-token-binding-mismatch'
           : refreshExpired
             ? 'refresh-token-expired'
+            : sessionVersionMismatch
+              ? 'session-version-mismatch'
             : replayDetected
               ? 'refresh-replay-detected'
             : refreshStatus === 'active'
@@ -1855,6 +2005,7 @@ const createAuthService = (options = {}) => {
 
   const logout = async ({ requestId, accessToken, authorizationContext = null }) => {
     const { session, user } = await resolveAuthorizedSession({
+      requestId,
       accessToken,
       authorizationContext
     });
@@ -1913,6 +2064,7 @@ const createAuthService = (options = {}) => {
     }
 
     const { session, user } = await resolveAuthorizedSession({
+      requestId,
       accessToken,
       authorizationContext
     });
@@ -1967,12 +2119,185 @@ const createAuthService = (options = {}) => {
     };
   };
 
+  const replacePlatformRolesAndSyncSnapshot = async ({
+    requestId,
+    accessToken = null,
+    userId,
+    roles,
+    authorizationContext = null
+  }) => {
+    if (typeof authStore.replacePlatformRolesAndSyncSnapshot !== 'function') {
+      throw new Error('authStore.replacePlatformRolesAndSyncSnapshot is required');
+    }
+
+    const normalizedAccessToken = typeof accessToken === 'string'
+      ? accessToken.trim()
+      : '';
+    if (normalizedAccessToken.length === 0) {
+      throw errors.invalidAccess();
+    }
+    const authorizedRoute = await authorizeRoute({
+      requestId,
+      accessToken: normalizedAccessToken,
+      permissionCode: PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE,
+      scope: 'platform',
+      authorizationContext
+    });
+    const operatorUserId = String(
+      authorizedRoute?.user_id || authorizedRoute?.user?.id || ''
+    ).trim() || null;
+    const operatorSessionId = String(
+      authorizedRoute?.session_id || authorizedRoute?.session?.sessionId || ''
+    ).trim() || null;
+
+    const normalizedUserId = normalizeRequiredStringField(
+      userId,
+      errors.invalidPayload
+    );
+    if (!Array.isArray(roles)) {
+      throw errors.invalidPayload();
+    }
+    if (roles.length > MAX_PLATFORM_ROLE_FACTS_PER_USER) {
+      throw errors.invalidPayload();
+    }
+    const distinctRoleIds = new Set();
+    for (const role of roles) {
+      if (!isPlainObject(role)) {
+        throw errors.invalidPayload();
+      }
+      const hasPermissionField = hasOwnProperty(role, 'permission');
+      if (hasPermissionField && !isPlainObject(role.permission)) {
+        throw errors.invalidPayload();
+      }
+      if (hasTopLevelPlatformRolePermissionField(role)) {
+        throw errors.invalidPayload();
+      }
+      const rawRoleId = resolveRawRoleIdCandidate(role);
+      const normalizedRoleId = normalizeRequiredStringField(
+        rawRoleId,
+        errors.invalidPayload
+      );
+      const normalizedRoleIdKey = normalizePlatformRoleIdKey(normalizedRoleId);
+      if (normalizedRoleId.length > MAX_PLATFORM_ROLE_ID_LENGTH) {
+        throw errors.invalidPayload();
+      }
+      if (distinctRoleIds.has(normalizedRoleIdKey)) {
+        throw errors.invalidPayload();
+      }
+      distinctRoleIds.add(normalizedRoleIdKey);
+      let normalizedRoleStatus = 'active';
+      if (hasOwnProperty(role, 'status')) {
+        if (typeof role.status !== 'string') {
+          throw errors.invalidPayload();
+        }
+        normalizedRoleStatus = role.status.trim().toLowerCase();
+        if (!normalizedRoleStatus) {
+          throw errors.invalidPayload();
+        }
+      }
+      if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedRoleStatus)) {
+        throw errors.invalidPayload();
+      }
+      const rolePermissionSource = hasPermissionField ? role.permission : {};
+      assertOptionalBooleanRolePermission(
+        rolePermissionSource?.canViewMemberAdmin ?? rolePermissionSource?.can_view_member_admin,
+        errors.invalidPayload
+      );
+      assertOptionalBooleanRolePermission(
+        rolePermissionSource?.canOperateMemberAdmin ?? rolePermissionSource?.can_operate_member_admin,
+        errors.invalidPayload
+      );
+      assertOptionalBooleanRolePermission(
+        rolePermissionSource?.canViewBilling ?? rolePermissionSource?.can_view_billing,
+        errors.invalidPayload
+      );
+      assertOptionalBooleanRolePermission(
+        rolePermissionSource?.canOperateBilling ?? rolePermissionSource?.can_operate_billing,
+        errors.invalidPayload
+      );
+    }
+
+    const hasUserLookup = typeof authStore.findUserById === 'function';
+    const previousUser = hasUserLookup
+      ? await authStore.findUserById(normalizedUserId)
+      : null;
+    if (hasUserLookup && !previousUser) {
+      throw errors.invalidPayload();
+    }
+    let result;
+    try {
+      result = await authStore.replacePlatformRolesAndSyncSnapshot({
+        userId: normalizedUserId,
+        roles
+      });
+    } catch (error) {
+      if (
+        error instanceof Error
+        && String(error.message || '').includes('invalid platform role status')
+      ) {
+        throw errors.invalidPayload();
+      }
+      if (isDuplicateRoleFactEntryError(error)) {
+        throw errors.invalidPayload();
+      }
+      if (isDataTooLongRoleFactError(error)) {
+        throw errors.invalidPayload();
+      }
+      throw error;
+    }
+    const syncReason = String(result?.reason || 'unknown').trim().toLowerCase();
+    if (syncReason === 'invalid-user-id') {
+      throw errors.invalidPayload();
+    }
+    if (syncReason === 'db-deadlock' || syncReason === 'concurrent-role-facts-update') {
+      throw errors.platformSnapshotDegraded({
+        reason: syncReason
+      });
+    }
+    if (syncReason !== 'ok') {
+      throw errors.platformSnapshotDegraded({
+        reason: syncReason || 'unknown'
+      });
+    }
+
+    const nextUser = hasUserLookup
+      ? await authStore.findUserById(normalizedUserId)
+      : null;
+    const sessionVersionChanged = Boolean(
+      previousUser
+      && nextUser
+      && Number(nextUser.sessionVersion) !== Number(previousUser.sessionVersion)
+    );
+
+    if (sessionVersionChanged || !hasUserLookup) {
+      invalidateSessionCacheByUserId(normalizedUserId);
+    }
+
+    addAuditEvent({
+      type: 'auth.platform_role_facts.updated',
+      requestId,
+      userId: normalizedUserId,
+      sessionId: operatorSessionId || 'unknown',
+      detail: 'platform role facts replaced and snapshot synced',
+      metadata: {
+        actor_user_id: operatorUserId,
+        actor_session_id: operatorSessionId,
+        target_user_id: normalizedUserId,
+        session_version_changed: sessionVersionChanged,
+        sync_reason: syncReason || 'unknown'
+      }
+    });
+
+    return result;
+  };
+
   const tenantOptions = async ({
     requestId,
     accessToken,
     authorizationContext = null
   }) => {
     const { session, user } = await resolveAuthorizedSession({
+      requestId,
       accessToken,
       authorizationContext
     });
@@ -2023,14 +2348,23 @@ const createAuthService = (options = {}) => {
     requestId,
     accessToken,
     permissionCode,
-    scope = 'session'
+    scope = 'session',
+    authorizationContext = null,
+    authorizedSession = null
   }) => {
     const normalizedPermissionCode = String(permissionCode || '').trim();
     if (normalizedPermissionCode.length === 0) {
       throw errors.forbidden();
     }
 
-    const { session, user } = await resolveAuthorizedSession({ accessToken });
+    const resolvedSession = authorizedSession && typeof authorizedSession === 'object'
+      ? authorizedSession
+      : await resolveAuthorizedSession({
+        requestId,
+        accessToken,
+        authorizationContext
+      });
+    const { session, user } = resolvedSession;
     const sessionId = session.sessionId || session.session_id;
     const sessionContext = buildSessionContext(session);
     const normalizedScope = String(scope || 'session').trim().toLowerCase();
@@ -2175,6 +2509,7 @@ const createAuthService = (options = {}) => {
     }
 
     const { session, user } = await resolveAuthorizedSession({
+      requestId,
       accessToken,
       authorizationContext
     });
@@ -2300,6 +2635,7 @@ const createAuthService = (options = {}) => {
     refresh,
     logout,
     changePassword,
+    replacePlatformRolesAndSyncSnapshot,
     // Test support
     _internals: {
       auditTrail,

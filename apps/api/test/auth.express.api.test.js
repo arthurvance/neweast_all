@@ -532,6 +532,19 @@ const clearPlatformRoleFacts = async () => {
   );
 };
 
+const readUserSessionVersion = async (userId = TEST_USER.id) => {
+  const [rows] = await adminConnection.execute(
+    `
+      SELECT session_version
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [userId]
+  );
+  return Number(rows?.[0]?.session_version || 0);
+};
+
 const requireMySqlOrReady = () => {
   if (!mysqlReady) {
     assert.fail(
@@ -847,6 +860,741 @@ test('express refresh persists rotation chain and keeps concurrent sessions isol
     assert.equal(refreshB.status, 200);
     assert.equal(refreshB.body.session_id, loginB.body.session_id);
     assert.equal(typeof refreshB.body.request_id, 'string');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express critical password change bumps session_version and invalidates old access/refresh tokens', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-view-member-admin',
+    canViewMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const preChangeProbe = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/platform/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    });
+    assert.equal(preChangeProbe.status, 200);
+
+    const sessionVersionBefore = await readUserSessionVersion(TEST_USER.id);
+
+    const changed = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/change-password',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        current_password: TEST_USER.password,
+        new_password: 'Passw0rd!2026'
+      }
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.body.password_changed, true);
+    assert.equal(changed.body.relogin_required, true);
+
+    const sessionVersionAfter = await readUserSessionVersion(TEST_USER.id);
+    assert.ok(sessionVersionAfter > sessionVersionBefore);
+
+    const oldAccessProbe = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/platform/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    });
+    assert.equal(oldAccessProbe.status, 401);
+    assert.equal(oldAccessProbe.body.error_code, 'AUTH-401-INVALID-ACCESS');
+
+    const oldRefresh = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/refresh',
+      body: { refresh_token: login.body.refresh_token }
+    });
+    assert.equal(oldRefresh.status, 401);
+    assert.equal(oldRefresh.body.error_code, 'AUTH-401-INVALID-REFRESH');
+
+    const relogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: 'Passw0rd!2026',
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(relogin.status, 200);
+    const oldAccessPayload = decodeJwtPayload(login.body.access_token);
+    const newAccessPayload = decodeJwtPayload(relogin.body.access_token);
+    assert.ok(Number(newAccessPayload.sv) > Number(oldAccessPayload.sv));
+
+    const postChangeProbe = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/platform/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${relogin.body.access_token}`
+      }
+    });
+    assert.equal(postChangeProbe.status, 200);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace converges session and invalidates old access/refresh tokens', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+    const oldAccessPayload = decodeJwtPayload(login.body.access_token);
+    const sessionVersionBefore = await readUserSessionVersion(TEST_USER.id);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: []
+      }
+    });
+    assert.equal(replaceRoleFacts.status, 200);
+    assert.equal(replaceRoleFacts.body.synced, true);
+    assert.equal(replaceRoleFacts.body.reason, 'ok');
+    assert.deepEqual(replaceRoleFacts.body.platform_permission_context, {
+      scope_label: '平台权限（角色并集）',
+      can_view_member_admin: false,
+      can_operate_member_admin: false,
+      can_view_billing: false,
+      can_operate_billing: false
+    });
+
+    const sessionVersionAfter = await readUserSessionVersion(TEST_USER.id);
+    assert.ok(sessionVersionAfter > sessionVersionBefore);
+
+    const oldAccessProbe = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/platform/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    });
+    assert.equal(oldAccessProbe.status, 401);
+    assert.equal(oldAccessProbe.body.error_code, 'AUTH-401-INVALID-ACCESS');
+
+    const oldRefresh = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/refresh',
+      body: { refresh_token: login.body.refresh_token }
+    });
+    assert.equal(oldRefresh.status, 401);
+    assert.equal(oldRefresh.body.error_code, 'AUTH-401-INVALID-REFRESH');
+
+    const relogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(relogin.status, 200);
+    const newAccessPayload = decodeJwtPayload(relogin.body.access_token);
+    assert.ok(Number(newAccessPayload.sv) > Number(oldAccessPayload.sv));
+
+    const postReplaceProbe = await invokeRoute(harness, {
+      method: 'get',
+      path: '/auth/platform/member-admin/probe',
+      headers: {
+        authorization: `Bearer ${relogin.body.access_token}`
+      }
+    });
+    assert.equal(postReplaceProbe.status, 403);
+    assert.equal(postReplaceProbe.body.error_code, 'AUTH-403-FORBIDDEN');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects unknown user id with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: 'it-user-missing',
+        roles: []
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects missing roles field with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects role item missing role_id with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [{ status: 'active' }]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects unsupported role status with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          {
+            role_id: 'platform-operate-member-admin',
+            status: 'pending-approval'
+          }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects blank role status with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          {
+            role_id: 'platform-operate-member-admin',
+            status: '   '
+          }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects role_id longer than 64 chars', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [{ role_id: 'r'.repeat(65), status: 'active' }]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects non-boolean permission flags', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          {
+            role_id: 'platform-operate-member-admin',
+            status: 'active',
+            permission: {
+              can_operate_member_admin: 'true'
+            }
+          }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects non-object permission payload', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          {
+            role_id: 'platform-operate-member-admin',
+            permission: 'invalid'
+          }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects top-level permission fields', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          {
+            role_id: 'platform-operate-member-admin',
+            can_view_member_admin: true
+          }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects payload with more than 5 role facts', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          { role_id: 'r-1' },
+          { role_id: 'r-2' },
+          { role_id: 'r-3' },
+          { role_id: 'r-4' },
+          { role_id: 'r-5' },
+          { role_id: 'r-6' }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects duplicate role_id entries', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          { role_id: 'r-duplicate', status: 'active' },
+          { role_id: 'r-duplicate', status: 'disabled' }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform role-facts replace rejects duplicate role_id entries regardless of case', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-operate-member-admin',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const harness = await createExpressHarness();
+  try {
+    const login = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(login.status, 200);
+
+    const replaceRoleFacts = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/role-facts/replace',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      },
+      body: {
+        user_id: TEST_USER.id,
+        roles: [
+          { role_id: 'Role-Case', status: 'active' },
+          { role_id: 'role-case', status: 'disabled' }
+        ]
+      }
+    });
+
+    assert.equal(replaceRoleFacts.status, 400);
+    assert.equal(replaceRoleFacts.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
   } finally {
     await harness.close();
   }

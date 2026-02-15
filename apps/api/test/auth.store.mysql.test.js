@@ -2,17 +2,42 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createMySqlAuthStore } = require('../src/modules/auth/auth.store.mysql');
 
-const createStore = (queryImpl, options = {}) =>
-  createMySqlAuthStore({
+const createStore = (queryImpl, options = {}) => {
+  const {
+    userExists = true,
+    onUserLookupSql = null,
+    ...storeOptions
+  } = options;
+  const wrappedQuery = async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE id = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('phone')
+    ) {
+      if (typeof onUserLookupSql === 'function') {
+        onUserLookupSql(normalizedSql);
+      }
+      return userExists
+        ? [{ id: String(params?.[0] || 'u-existing') }]
+        : [];
+    }
+    return queryImpl(sql, params);
+  };
+
+  return createMySqlAuthStore({
     dbClient: {
-      query: queryImpl,
+      query: wrappedQuery,
       inTransaction: async (runner) =>
         runner({
-          query: queryImpl
+          query: wrappedQuery
         })
     },
-    ...options
+    ...storeOptions
   });
+};
 
 const createDeadlockError = (message = 'Deadlock found when trying to get lock') => {
   const error = new Error(message);
@@ -740,6 +765,20 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
     const normalizedSql = String(sql);
     statements.push(normalizedSql);
 
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_platform_roles')
+    ) {
+      return [
+        {
+          status: 'active',
+          can_view_member_admin: 1,
+          can_operate_member_admin: 1,
+          can_view_billing: 1,
+          can_operate_billing: 0
+        }
+      ];
+    }
     if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
       return { affectedRows: 1 };
     }
@@ -827,11 +866,25 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
   assert.equal(/ON DUPLICATE KEY UPDATE/i.test(insertRoleStatement), false);
 });
 
-test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id before writing', async () => {
+test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id before writing (case-insensitive)', async () => {
   const roleInsertParamsList = [];
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
 
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_platform_roles')
+    ) {
+      return [
+        {
+          status: 'active',
+          can_view_member_admin: 1,
+          can_operate_member_admin: 0,
+          can_view_billing: 1,
+          can_operate_billing: 0
+        }
+      ];
+    }
     if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
       return { affectedRows: 1 };
     }
@@ -860,7 +913,7 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
         }
       },
       {
-        roleId: 'platform-member-admin',
+        roleId: 'Platform-Member-Admin',
         status: 'active',
         permission: {
           canViewMemberAdmin: true,
@@ -875,7 +928,7 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
   assert.equal(roleInsertParamsList.length, 1);
   assert.deepEqual(roleInsertParamsList[0], [
     'u-sync-duplicate-role',
-    'platform-member-admin',
+    'Platform-Member-Admin',
     'active',
     1,
     0,
@@ -884,12 +937,54 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
   ]);
 });
 
+test('replacePlatformRolesAndSyncSnapshot locks target user row before mutating role facts', async () => {
+  let userLookupSql = '';
+  const store = createStore(
+    async (sql) => {
+      const normalizedSql = String(sql);
+      if (
+        normalizedSql.includes('SELECT status')
+        && normalizedSql.includes('FROM auth_user_platform_roles')
+      ) {
+        return [];
+      }
+      if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+        return { affectedRows: 1 };
+      }
+      if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
+        return { affectedRows: 0 };
+      }
+      assert.fail(`unexpected query: ${normalizedSql}`);
+      return [];
+    },
+    {
+      onUserLookupSql: (sql) => {
+        userLookupSql = String(sql);
+      }
+    }
+  );
+
+  const result = await store.replacePlatformRolesAndSyncSnapshot({
+    userId: 'u-sync-lock-check',
+    roles: []
+  });
+
+  assert.equal(result.reason, 'ok');
+  assert.equal(/FOR UPDATE/i.test(userLookupSql), true);
+});
+
 test('replacePlatformRolesAndSyncSnapshot with empty roles does not create new platform domain row', async () => {
   const statements = [];
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     statements.push(normalizedSql);
 
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_platform_roles')
+    ) {
+      return [];
+    }
     if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
       return { affectedRows: 1 };
     }
@@ -931,6 +1026,262 @@ test('replacePlatformRolesAndSyncSnapshot with empty roles does not create new p
   assert.equal(/can_view_member_admin\s*<>\s*\?/i.test(updateStatement), true);
 });
 
+test('replacePlatformRolesAndSyncSnapshot rejects unknown user id without mutating role facts', async () => {
+  let writeCount = 0;
+  const store = createStore(
+    async (sql) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+        writeCount += 1;
+        return { affectedRows: 1 };
+      }
+      if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+        writeCount += 1;
+        return { affectedRows: 1 };
+      }
+      if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+        writeCount += 1;
+        return { affectedRows: 1 };
+      }
+      if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
+        writeCount += 1;
+        return { affectedRows: 1 };
+      }
+      assert.fail(`unexpected query: ${normalizedSql}`);
+      return [];
+    },
+    { userExists: false }
+  );
+
+  const result = await store.replacePlatformRolesAndSyncSnapshot({
+    userId: 'u-missing',
+    roles: [
+      {
+        roleId: 'platform-view',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  assert.deepEqual(result, {
+    synced: false,
+    reason: 'invalid-user-id',
+    permission: null
+  });
+  assert.equal(writeCount, 0);
+});
+
+test('replacePlatformRolesAndSyncSnapshot bumps session version and converges sessions on effective permission change', async () => {
+  const statements = [];
+  let sessionVersion = 4;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    statements.push(normalizedSql);
+
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_platform_roles')
+    ) {
+      return [
+        {
+          status: 'disabled',
+          can_view_member_admin: 0,
+          can_operate_member_admin: 0,
+          can_view_billing: 0,
+          can_operate_billing: 0
+        }
+      ];
+    }
+    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('UPDATE users') && normalizedSql.includes('session_version = session_version + 1')) {
+      sessionVersion += 1;
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('UPDATE auth_sessions')) {
+      return { affectedRows: 2 };
+    }
+    if (normalizedSql.includes('UPDATE refresh_tokens')) {
+      return { affectedRows: 2 };
+    }
+    if (normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')) {
+      return [
+        {
+          id: 'u-sync-converge',
+          phone: '13810009999',
+          password_hash: 'hash',
+          status: 'active',
+          session_version: sessionVersion
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.replacePlatformRolesAndSyncSnapshot({
+    userId: 'u-sync-converge',
+    roles: [
+      {
+        roleId: 'platform-view',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  assert.equal(result.synced, true);
+  assert.equal(
+    statements.some((statement) =>
+      statement.includes('UPDATE users')
+      && statement.includes('session_version = session_version + 1')
+    ),
+    true
+  );
+  assert.equal(
+    statements.some((statement) => statement.includes('UPDATE auth_sessions')),
+    true
+  );
+  assert.equal(
+    statements.some((statement) => statement.includes('UPDATE refresh_tokens')),
+    true
+  );
+});
+
+test('replacePlatformRolesAndSyncSnapshot does not bump session version when effective permission is unchanged', async () => {
+  const statements = [];
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    statements.push(normalizedSql);
+
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_platform_roles')
+    ) {
+      return [
+        {
+          status: 'active',
+          can_view_member_admin: 1,
+          can_operate_member_admin: 0,
+          can_view_billing: 0,
+          can_operate_billing: 0
+        }
+      ];
+    }
+    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('UPDATE users') && normalizedSql.includes('session_version = session_version + 1')) {
+      assert.fail('session_version should not be bumped when effective permission is unchanged');
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.replacePlatformRolesAndSyncSnapshot({
+    userId: 'u-sync-no-bump',
+    roles: [
+      {
+        roleId: 'platform-view',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  assert.equal(result.synced, true);
+  assert.equal(
+    statements.some((statement) =>
+      statement.includes('UPDATE users')
+      && statement.includes('session_version = session_version + 1')
+    ),
+    false
+  );
+});
+
+test('replacePlatformRolesAndSyncSnapshot reports synced=true when snapshot write is a no-op', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_platform_roles')
+    ) {
+      return [
+        {
+          status: 'active',
+          can_view_member_admin: 1,
+          can_operate_member_admin: 0,
+          can_view_billing: 0,
+          can_operate_billing: 0
+        }
+      ];
+    }
+    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      return { affectedRows: 0 };
+    }
+    if (normalizedSql.includes('UPDATE users') && normalizedSql.includes('session_version = session_version + 1')) {
+      assert.fail('session_version should not be bumped when effective permission is unchanged');
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.replacePlatformRolesAndSyncSnapshot({
+    userId: 'u-sync-noop-snapshot',
+    roles: [
+      {
+        roleId: 'platform-view',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  assert.equal(result.reason, 'ok');
+  assert.equal(result.synced, true);
+});
+
 test('replacePlatformRolesAndSyncSnapshot rejects invalid platform role status', async () => {
   let queryCount = 0;
   const store = createStore(async () => {
@@ -953,6 +1304,32 @@ test('replacePlatformRolesAndSyncSnapshot rejects invalid platform role status',
         ]
       }),
     /invalid platform role status: archived/
+  );
+  assert.equal(queryCount, 0);
+});
+
+test('replacePlatformRolesAndSyncSnapshot rejects blank platform role status', async () => {
+  let queryCount = 0;
+  const store = createStore(async () => {
+    queryCount += 1;
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.replacePlatformRolesAndSyncSnapshot({
+        userId: 'u-invalid-blank-status',
+        roles: [
+          {
+            roleId: 'platform-role-x',
+            status: '   ',
+            permission: {
+              canViewMemberAdmin: true
+            }
+          }
+        ]
+      }),
+    /invalid platform role status:/
   );
   assert.equal(queryCount, 0);
 });
@@ -1210,6 +1587,20 @@ test('replacePlatformRolesAndSyncSnapshot retries deadlock with backoff+jitter a
   const store = createStore(
     async (sql) => {
       const normalizedSql = String(sql);
+      if (
+        normalizedSql.includes('SELECT status')
+        && normalizedSql.includes('FROM auth_user_platform_roles')
+      ) {
+        return [
+          {
+            status: 'active',
+            can_view_member_admin: 1,
+            can_operate_member_admin: 0,
+            can_view_billing: 0,
+            can_operate_billing: 0
+          }
+        ];
+      }
       if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
         deleteAttempts += 1;
         if (deleteAttempts === 1) {
@@ -1289,6 +1680,20 @@ test('replacePlatformRolesAndSyncSnapshot returns db-deadlock after retry exhaus
   const store = createStore(
     async (sql) => {
       const normalizedSql = String(sql);
+      if (
+        normalizedSql.includes('SELECT status')
+        && normalizedSql.includes('FROM auth_user_platform_roles')
+      ) {
+        return [
+          {
+            status: 'active',
+            can_view_member_admin: 1,
+            can_operate_member_admin: 0,
+            can_view_billing: 0,
+            can_operate_billing: 0
+          }
+        ];
+      }
       if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
         deleteAttempts += 1;
         throw createDeadlockError();

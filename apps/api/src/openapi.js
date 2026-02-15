@@ -937,6 +937,82 @@ const buildOpenApiSpec = () => ({
         }
       }
     },
+    '/auth/platform/role-facts/replace': {
+      post: {
+        summary: 'Replace platform role facts and sync permission snapshot',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ReplacePlatformRoleFactsRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Platform role facts replaced and permission snapshot synchronized',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ReplacePlatformRoleFactsResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Malformed payload or invalid role fact status',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform role-facts operate permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role-facts synchronization temporarily degraded',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
     '/smoke': {
       get: {
         summary: 'Smoke chain probe',
@@ -1013,6 +1089,80 @@ const buildOpenApiSpec = () => ({
         properties: {
           current_password: { type: 'string', format: 'password' },
           new_password: { type: 'string', format: 'password', minLength: 6 }
+        }
+      },
+      ReplacePlatformRoleFactsRequest: {
+        type: 'object',
+        required: ['user_id', 'roles'],
+        properties: {
+          user_id: {
+            type: 'string',
+            minLength: 1,
+            pattern: '.*\\S.*'
+          },
+          roles: {
+            type: 'array',
+            maxItems: 5,
+            uniqueItems: true,
+            description: '最多 5 条角色事实；服务端按 role_id（大小写不敏感）判重并拒绝重复',
+            items: { $ref: '#/components/schemas/PlatformRoleFact' }
+          }
+        }
+      },
+      PlatformRoleFact: {
+        type: 'object',
+        required: ['role_id'],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '.*\\S.*'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'enabled', 'disabled'],
+            default: 'active'
+          },
+          permission: { $ref: '#/components/schemas/PlatformRolePermission' }
+        }
+      },
+      PlatformRolePermission: {
+        type: 'object',
+        properties: {
+          can_view_member_admin: { type: 'boolean' },
+          can_operate_member_admin: { type: 'boolean' },
+          can_view_billing: { type: 'boolean' },
+          can_operate_billing: { type: 'boolean' }
+        }
+      },
+      PlatformPermissionContext: {
+        type: 'object',
+        required: [
+          'scope_label',
+          'can_view_member_admin',
+          'can_operate_member_admin',
+          'can_view_billing',
+          'can_operate_billing'
+        ],
+        properties: {
+          scope_label: { type: 'string' },
+          can_view_member_admin: { type: 'boolean' },
+          can_operate_member_admin: { type: 'boolean' },
+          can_view_billing: { type: 'boolean' },
+          can_operate_billing: { type: 'boolean' }
+        }
+      },
+      ReplacePlatformRoleFactsResponse: {
+        type: 'object',
+        required: ['synced', 'reason', 'platform_permission_context', 'request_id'],
+        properties: {
+          synced: { type: 'boolean' },
+          reason: { type: 'string' },
+          platform_permission_context: {
+            $ref: '#/components/schemas/PlatformPermissionContext'
+          },
+          request_id: { type: 'string' }
         }
       },
       AuthTokenResponse: {

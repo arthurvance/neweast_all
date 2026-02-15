@@ -66,6 +66,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/otp/login']);
   assert.ok(payload.paths['/auth/tenant/member-admin/probe']);
   assert.ok(payload.paths['/auth/platform/member-admin/probe']);
+  assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/auth/login'].post.responses['400']);
   assert.ok(payload.paths['/auth/login'].post.responses['413']);
   assert.ok(payload.paths['/auth/login'].post.responses['429']);
@@ -74,6 +75,47 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/refresh'].post.responses['400']);
   assert.ok(payload.paths['/auth/refresh'].post.responses['413']);
   assert.ok(payload.paths['/auth/change-password'].post.responses['413']);
+  assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['400']);
+  assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['413']);
+  assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['503']);
+  assert.equal(
+    payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.maxItems,
+    5
+  );
+  assert.equal(
+    payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.uniqueItems,
+    true
+  );
+  assert.ok(
+    String(
+      payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.description
+      || ''
+    ).includes('大小写不敏感')
+  );
+  assert.equal(
+    payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.user_id.minLength,
+    1
+  );
+  assert.equal(
+    payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.user_id.pattern,
+    '.*\\S.*'
+  );
+  assert.equal(
+    payload.components.schemas.PlatformRoleFact.properties.role_id.minLength,
+    1
+  );
+  assert.equal(
+    payload.components.schemas.PlatformRoleFact.properties.role_id.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.PlatformRoleFact.properties.role_id.pattern,
+    '.*\\S.*'
+  );
+  assert.deepEqual(
+    payload.components.schemas.PlatformRoleFact.properties.status.enum,
+    ['active', 'enabled', 'disabled']
+  );
   assert.ok(
     payload.paths['/auth/tenant/member-admin/probe'].get.responses['403'].content[
       'application/problem+json'

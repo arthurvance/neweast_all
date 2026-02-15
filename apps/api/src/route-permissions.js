@@ -192,6 +192,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     scope: 'session'
   },
   {
+    method: 'POST',
+    path: '/auth/platform/role-facts/replace',
+    access: 'protected',
+    permission_code: 'platform.member_admin.operate',
+    scope: 'platform'
+  },
+  {
     method: 'GET',
     path: '/smoke',
     access: 'public',

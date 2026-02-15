@@ -30,6 +30,25 @@ const extractBearerToken = (authorization) => {
   return match[2];
 };
 
+const toPlatformPermissionContextResponse = (permissionContext = null) => ({
+  scope_label:
+    permissionContext?.scopeLabel
+    || permissionContext?.scope_label
+    || '平台权限（角色并集）',
+  can_view_member_admin: Boolean(
+    permissionContext?.canViewMemberAdmin ?? permissionContext?.can_view_member_admin
+  ),
+  can_operate_member_admin: Boolean(
+    permissionContext?.canOperateMemberAdmin ?? permissionContext?.can_operate_member_admin
+  ),
+  can_view_billing: Boolean(
+    permissionContext?.canViewBilling ?? permissionContext?.can_view_billing
+  ),
+  can_operate_billing: Boolean(
+    permissionContext?.canOperateBilling ?? permissionContext?.can_operate_billing
+  )
+});
+
 const createAuthHandlers = (authService = createAuthService()) => {
   const handlers = {
     login: async ({ requestId, body }) =>
@@ -112,7 +131,28 @@ const createAuthHandlers = (authService = createAuthService()) => {
         currentPassword: body.current_password,
         newPassword: body.new_password,
         authorizationContext
-      })
+      }),
+
+    replacePlatformRoleFacts: async ({
+      requestId,
+      authorization,
+      body,
+      authorizationContext = null
+    }) => {
+      const result = await authService.replacePlatformRolesAndSyncSnapshot({
+        requestId,
+        accessToken: extractBearerToken(authorization),
+        userId: body.user_id,
+        roles: body.roles,
+        authorizationContext
+      });
+      return {
+        synced: Boolean(result?.synced),
+        reason: String(result?.reason || 'unknown'),
+        platform_permission_context: toPlatformPermissionContextResponse(result?.permission),
+        request_id: requestId || 'request_id_unset'
+      };
+    }
   };
 
   if (typeof authService.authorizeRoute === 'function') {

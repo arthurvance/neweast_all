@@ -47,6 +47,35 @@ const noOpOtpStore = {
 const passRateLimitStore = {
   consume: async () => ({ allowed: true, count: 1, remainingSeconds: 60 })
 };
+const PLATFORM_ROLE_FACTS_OPERATOR_PHONE = '13819990000';
+
+const buildPlatformRoleFactsOperatorSeed = () => ({
+  id: 'platform-role-facts-operator',
+  phone: PLATFORM_ROLE_FACTS_OPERATOR_PHONE,
+  password: 'Passw0rd!',
+  status: 'active',
+  domains: ['platform'],
+  platformRoles: [
+    {
+      roleId: 'platform-role-facts-operate',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: true,
+        canOperateMemberAdmin: true,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ]
+});
+
+const loginPlatformRoleFactsOperator = (service, requestId) =>
+  service.login({
+    requestId,
+    phone: PLATFORM_ROLE_FACTS_OPERATOR_PHONE,
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
 
 const decodeJwtPayload = (token) => {
   const parts = String(token || '').split('.');
@@ -1396,6 +1425,1137 @@ test('change password revokes current auth session and only new password is acce
 
   assert.ok(relogin.access_token);
   assert.ok(relogin.refresh_token);
+});
+
+test('platform role facts critical change bumps session version, rejects old access/refresh, and writes mismatch audit', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-converge-user',
+        phone: '13810000401',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-role-converge-login',
+    phone: '13810000401',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-converge-operator-login'
+  );
+  const originalAccessPayload = decodeJwtPayload(login.access_token);
+
+  // Warm access-session cache to verify critical-state change actively invalidates cache entries.
+  await service.authorizeRoute({
+    requestId: 'req-role-converge-cache-warm',
+    accessToken: login.access_token,
+    permissionCode: 'auth.session.logout',
+    scope: 'session'
+  });
+
+  await service.replacePlatformRolesAndSyncSnapshot({
+    requestId: 'req-role-converge-change',
+    accessToken: operatorLogin.access_token,
+    userId: 'platform-role-converge-user',
+    roles: [
+      {
+        roleId: 'platform-view-member-admin',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-role-converge-old-access',
+        accessToken: login.access_token,
+        permissionCode: 'auth.session.logout',
+        scope: 'session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-role-converge-old-refresh',
+        refreshToken: login.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+
+  const relogin = await service.login({
+    requestId: 'req-role-converge-relogin',
+    phone: '13810000401',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const reloginAccessPayload = decodeJwtPayload(relogin.access_token);
+  assert.ok(
+    Number(reloginAccessPayload.sv) > Number(originalAccessPayload.sv),
+    'relogin access token should carry incremented session version'
+  );
+
+  const accessMismatchAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === 'req-role-converge-old-access'
+  );
+  assert.ok(accessMismatchAudit);
+  assert.equal(accessMismatchAudit.type, 'auth.access.invalid');
+  assert.equal(accessMismatchAudit.user_id, 'platform-role-converge-user');
+  assert.equal(accessMismatchAudit.session_id, login.session_id);
+  assert.equal(accessMismatchAudit.disposition_reason, 'session-version-mismatch');
+
+  const refreshMismatchAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === 'req-role-converge-old-refresh'
+  );
+  assert.ok(refreshMismatchAudit);
+  assert.equal(refreshMismatchAudit.type, 'auth.refresh.replay_or_invalid');
+  assert.equal(refreshMismatchAudit.user_id, 'platform-role-converge-user');
+  assert.equal(refreshMismatchAudit.session_id, login.session_id);
+  assert.equal(refreshMismatchAudit.disposition_reason, 'session-version-mismatch');
+});
+
+test('platform role facts unchanged does not bump session version or invalidate existing token', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-noop-user',
+        phone: '13810000402',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-view-member-admin',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-role-noop-login',
+    phone: '13810000402',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-noop-operator-login'
+  );
+
+  const beforeUser = await service._internals.authStore.findUserById('platform-role-noop-user');
+  await service.replacePlatformRolesAndSyncSnapshot({
+    requestId: 'req-role-noop-change',
+    accessToken: operatorLogin.access_token,
+    userId: 'platform-role-noop-user',
+    roles: [
+      {
+        roleId: 'platform-view-member-admin',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+  const afterUser = await service._internals.authStore.findUserById('platform-role-noop-user');
+
+  assert.equal(Number(afterUser.sessionVersion), Number(beforeUser.sessionVersion));
+
+  const authorized = await service.authorizeRoute({
+    requestId: 'req-role-noop-old-access',
+    accessToken: login.access_token,
+    permissionCode: 'auth.session.logout',
+    scope: 'session'
+  });
+  assert.equal(authorized.user_id, 'platform-role-noop-user');
+});
+
+test('platform role facts replace rejects unknown user id with invalid payload', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-existing-user',
+        phone: '13810000403',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-missing-user-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-missing-user',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-missing-user',
+        roles: []
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects missing roles payload with invalid payload', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-missing-roles-user',
+        phone: '13810000405',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-missing-roles-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-missing-roles',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-missing-roles-user'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects role item without role_id', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-invalid-item-user',
+        phone: '13810000406',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-invalid-item-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-invalid-item',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-invalid-item-user',
+        roles: [{ status: 'active' }]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects non-string user_id', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: '123',
+        phone: '13810000427',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-non-string-user-id-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-non-string-user-id',
+        accessToken: operatorLogin.access_token,
+        userId: 123,
+        roles: []
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects non-string role_id', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-non-string-role-id-user',
+        phone: '13810000428',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-non-string-role-id-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-non-string-role-id',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-non-string-role-id-user',
+        roles: [
+          {
+            role_id: 123,
+            status: 'active'
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects unsupported role status', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-invalid-status-user',
+        phone: '13810000408',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-invalid-status-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-invalid-status',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-invalid-status-user',
+        roles: [
+          {
+            role_id: 'platform-member-admin',
+            status: 'pending-approval'
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects blank role status', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-blank-status-user',
+        phone: '13810000411',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-blank-status-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-blank-status',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-blank-status-user',
+        roles: [
+          {
+            role_id: 'platform-member-admin',
+            status: '   '
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects payload with more than 5 role facts', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-too-many-user',
+        phone: '13810000412',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-too-many-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-too-many',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-too-many-user',
+        roles: [
+          { role_id: 'r-1' },
+          { role_id: 'r-2' },
+          { role_id: 'r-3' },
+          { role_id: 'r-4' },
+          { role_id: 'r-5' },
+          { role_id: 'r-6' }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects role_id longer than 64 chars', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-too-long-user',
+        phone: '13810000417',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-too-long-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-too-long',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-too-long-user',
+        roles: [
+          {
+            role_id: 'r'.repeat(65),
+            status: 'active'
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects non-boolean permission flags', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-invalid-permission-user',
+        phone: '13810000423',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-invalid-permission-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-invalid-permission',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-invalid-permission-user',
+        roles: [
+          {
+            role_id: 'platform-member-admin',
+            status: 'active',
+            permission: {
+              can_operate_member_admin: 'true'
+            }
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects non-object permission payload', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-invalid-permission-shape-user',
+        phone: '13810000429',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-invalid-permission-shape-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-invalid-permission-shape',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-invalid-permission-shape-user',
+        roles: [
+          {
+            role_id: 'platform-member-admin',
+            status: 'active',
+            permission: 'invalid'
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects top-level permission fields outside permission object', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-top-level-permission-user',
+        phone: '13810000430',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-top-level-permission-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-top-level-permission',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-top-level-permission-user',
+        roles: [
+          {
+            role_id: 'platform-member-admin',
+            can_view_member_admin: true
+          }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects duplicate role_id entries', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-duplicate-accepted-user',
+        phone: '13810000413',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-duplicate-accepted-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-duplicate-accepted',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-duplicate-accepted-user',
+        roles: [
+          { role_id: 'r-1', status: 'active' },
+          { role_id: 'r-2', status: 'active' },
+          { role_id: 'r-3', status: 'active' },
+          { role_id: 'r-4', status: 'active' },
+          { role_id: 'r-5', status: 'active' },
+          { role_id: 'r-5', status: 'disabled' }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace rejects duplicate role_id entries regardless of case', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-duplicate-case-user',
+        phone: '13810000415',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-duplicate-case-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-duplicate-case',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-duplicate-case-user',
+        roles: [
+          { role_id: 'Role-Case', status: 'active' },
+          { role_id: 'role-case', status: 'disabled' }
+        ]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace resolves authorized session only once', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-single-auth-check-user',
+        phone: '13810000431',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-single-auth-check-operator-login'
+  );
+  const authStore = service._internals.authStore;
+  const originalFindSessionById = authStore.findSessionById;
+  let findSessionByIdCallCount = 0;
+  authStore.findSessionById = async (...args) => {
+    findSessionByIdCallCount += 1;
+    return originalFindSessionById(...args);
+  };
+
+  try {
+    await service.replacePlatformRolesAndSyncSnapshot({
+      requestId: 'req-role-single-auth-check',
+      accessToken: operatorLogin.access_token,
+      userId: 'platform-role-single-auth-check-user',
+      roles: []
+    });
+    assert.equal(findSessionByIdCallCount, 1);
+  } finally {
+    authStore.findSessionById = originalFindSessionById;
+  }
+});
+
+test('platform role facts replace audit includes actor and target identifiers', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-audit-actor-user',
+        phone: '13810000419',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-operate-member-admin',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'platform-role-audit-target-user',
+        phone: '13810000420',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-view-member-admin',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-role-audit-login',
+    phone: '13810000419',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await service.replacePlatformRolesAndSyncSnapshot({
+    requestId: 'req-role-audit-update',
+    accessToken: login.access_token,
+    userId: 'platform-role-audit-target-user',
+    roles: []
+  });
+
+  const roleFactsAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === 'req-role-audit-update'
+  );
+  assert.ok(roleFactsAudit);
+  assert.equal(roleFactsAudit.type, 'auth.platform_role_facts.updated');
+  assert.equal(roleFactsAudit.user_id, 'platform-role-audit-target-user');
+  assert.equal(roleFactsAudit.session_id, login.session_id);
+  assert.equal(roleFactsAudit.actor_user_id, 'platform-role-audit-actor-user');
+  assert.equal(roleFactsAudit.actor_session_id, login.session_id);
+  assert.equal(roleFactsAudit.target_user_id, 'platform-role-audit-target-user');
+});
+
+test('platform role facts replace rejects caller without platform.member_admin.operate', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-no-operate-actor',
+        phone: '13810000421',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      },
+      {
+        id: 'platform-role-no-operate-target',
+        phone: '13810000422',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-role-no-operate-login',
+    phone: '13810000421',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-no-operate-replace',
+        accessToken: login.access_token,
+        userId: 'platform-role-no-operate-target',
+        roles: []
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+
+  const forbiddenAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === 'req-role-no-operate-replace'
+  );
+  assert.ok(forbiddenAudit);
+  assert.equal(forbiddenAudit.type, 'auth.route.forbidden');
+  assert.equal(forbiddenAudit.permission_code, 'platform.member_admin.operate');
+});
+
+test('platform role facts replace rejects authorizationContext mismatch when accessToken is provided', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-context-mismatch-user',
+        phone: '13810000414',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-role-context-mismatch-login',
+    phone: '13810000414',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-context-mismatch',
+        accessToken: login.access_token,
+        userId: 'platform-role-context-mismatch-user',
+        roles: [],
+        authorizationContext: {
+          session: { sessionId: `${login.session_id}-tampered` },
+          user: { id: 'platform-role-context-mismatch-user' }
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+
+  const contextMismatchAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === 'req-role-context-mismatch'
+  );
+  assert.ok(contextMismatchAudit);
+  assert.equal(contextMismatchAudit.type, 'auth.access.invalid');
+  assert.equal(contextMismatchAudit.user_id, 'platform-role-context-mismatch-user');
+  assert.equal(contextMismatchAudit.session_id, `${login.session_id}-tampered`);
+  assert.equal(
+    contextMismatchAudit.disposition_reason,
+    'access-authorization-context-mismatch'
+  );
+});
+
+test('platform role facts replace maps db-deadlock reason to AUTH-503-PLATFORM-SNAPSHOT-DEGRADED', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-deadlock-user',
+        phone: '13810000404',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.replacePlatformRolesAndSyncSnapshot = async () => ({
+    synced: false,
+    reason: 'db-deadlock',
+    permission: null
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-deadlock-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-deadlock',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-deadlock-user',
+        roles: []
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions.degradation_reason, 'db-deadlock');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace maps mysql duplicate key error to AUTH-400-INVALID-PAYLOAD', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-duplicate-key-user',
+        phone: '13810000416',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.replacePlatformRolesAndSyncSnapshot = async () => {
+    const duplicateKeyError = new Error(
+      "Duplicate entry 'platform-role-duplicate-key-user-admin' for key 'uk_auth_user_platform_roles_user_role'"
+    );
+    duplicateKeyError.code = 'ER_DUP_ENTRY';
+    duplicateKeyError.errno = 1062;
+    throw duplicateKeyError;
+  };
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-duplicate-key-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-duplicate-key',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-duplicate-key-user',
+        roles: [{ role_id: 'admin', status: 'active' }]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace maps mysql data-too-long error to AUTH-400-INVALID-PAYLOAD', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-data-too-long-user',
+        phone: '13810000424',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.replacePlatformRolesAndSyncSnapshot = async () => {
+    const dataTooLongError = new Error("Data too long for column 'role_id' at row 1");
+    dataTooLongError.code = 'ER_DATA_TOO_LONG';
+    dataTooLongError.errno = 1406;
+    throw dataTooLongError;
+  };
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-data-too-long-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-data-too-long',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-data-too-long-user',
+        roles: [{ role_id: 'admin', status: 'active' }]
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace maps unknown sync reason to AUTH-503-PLATFORM-SNAPSHOT-DEGRADED', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-unknown-reason-user',
+        phone: '13810000407',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.replacePlatformRolesAndSyncSnapshot = async () => ({
+    synced: false,
+    reason: 'snapshot-write-missed',
+    permission: null
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-unknown-reason-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-unknown-reason',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-unknown-reason-user',
+        roles: []
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions.degradation_reason, 'snapshot-write-missed');
+      return true;
+    }
+  );
 });
 
 test('change password mismatch audit includes masked phone metadata', async () => {
