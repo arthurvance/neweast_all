@@ -21,6 +21,16 @@ const ROUTE_PERMISSION_EVALUATORS = Object.freeze({
   'tenant.context.switch': () => true,
   'auth.session.logout': () => true,
   'auth.session.change_password': () => true,
+  'platform.member_admin.view': ({ platformPermissionContext }) =>
+    Boolean(platformPermissionContext?.can_view_member_admin),
+  'platform.member_admin.operate': ({ platformPermissionContext }) =>
+    Boolean(platformPermissionContext?.can_view_member_admin)
+    && Boolean(platformPermissionContext?.can_operate_member_admin),
+  'platform.billing.view': ({ platformPermissionContext }) =>
+    Boolean(platformPermissionContext?.can_view_billing),
+  'platform.billing.operate': ({ platformPermissionContext }) =>
+    Boolean(platformPermissionContext?.can_view_billing)
+    && Boolean(platformPermissionContext?.can_operate_billing),
   'tenant.member_admin.view': ({ tenantPermissionContext }) =>
     Boolean(tenantPermissionContext?.can_view_member_admin),
   'tenant.member_admin.operate': ({ tenantPermissionContext }) =>
@@ -35,6 +45,10 @@ const ROUTE_PERMISSION_SCOPE_RULES = Object.freeze({
   'tenant.context.switch': Object.freeze(['tenant']),
   'auth.session.logout': Object.freeze(['session']),
   'auth.session.change_password': Object.freeze(['session']),
+  'platform.member_admin.view': Object.freeze(['platform']),
+  'platform.member_admin.operate': Object.freeze(['platform']),
+  'platform.billing.view': Object.freeze(['platform']),
+  'platform.billing.operate': Object.freeze(['platform']),
   'tenant.member_admin.view': Object.freeze(['tenant']),
   'tenant.member_admin.operate': Object.freeze(['tenant']),
   'tenant.billing.view': Object.freeze(['tenant']),
@@ -154,6 +168,17 @@ const errors = {
       title: 'Forbidden',
       detail: '当前操作无权限',
       errorCode: 'AUTH-403-FORBIDDEN'
+    }),
+
+  platformSnapshotDegraded: ({ reason = 'db-deadlock' } = {}) =>
+    authError({
+      status: 503,
+      title: 'Service Unavailable',
+      detail: '平台权限同步暂时不可用，请稍后重试',
+      errorCode: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+      extensions: {
+        degradation_reason: String(reason || 'unknown')
+      }
     })
 };
 
@@ -364,6 +389,28 @@ const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel)
       || permissionContext.scope_label
       || fallbackScopeLabel
       || '组织权限快照（默认）',
+    can_view_member_admin: Boolean(
+      permissionContext.canViewMemberAdmin ?? permissionContext.can_view_member_admin
+    ),
+    can_operate_member_admin: Boolean(
+      permissionContext.canOperateMemberAdmin ?? permissionContext.can_operate_member_admin
+    ),
+    can_view_billing: Boolean(permissionContext.canViewBilling ?? permissionContext.can_view_billing),
+    can_operate_billing: Boolean(
+      permissionContext.canOperateBilling ?? permissionContext.can_operate_billing
+    )
+  };
+};
+
+const normalizePlatformPermissionContext = (permissionContext, fallbackScopeLabel) => {
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return null;
+  }
+  return {
+    scope_label: permissionContext.scopeLabel
+      || permissionContext.scope_label
+      || fallbackScopeLabel
+      || '平台权限快照（默认）',
     can_view_member_admin: Boolean(
       permissionContext.canViewMemberAdmin ?? permissionContext.can_view_member_admin
     ),
@@ -625,13 +672,35 @@ const createAuthService = (options = {}) => {
       .filter((option) => option.tenant_id);
   };
 
+  const shouldProvisionDefaultPlatformDomainAccess = async ({ userId }) => {
+    const access = await getDomainAccessForUser(userId);
+    if (access.platform || access.tenant) {
+      return false;
+    }
+
+    if (typeof authStore.hasAnyTenantRelationshipByUserId !== 'function') {
+      return false;
+    }
+
+    const hasAnyTenantRelationship = await authStore.hasAnyTenantRelationshipByUserId(
+      String(userId)
+    );
+    if (hasAnyTenantRelationship) {
+      return false;
+    }
+
+    const tenantOptions = await getTenantOptionsForUser(userId);
+    return tenantOptions.length === 0;
+  };
+
   const rejectNoDomainAccess = ({
     requestId,
     userId,
     sessionId = 'unknown',
     entryDomain,
     tenantId,
-    detail
+    detail,
+    permissionCode = null
   }) => {
     addAuditEvent({
       type: 'auth.domain.rejected',
@@ -640,6 +709,7 @@ const createAuthService = (options = {}) => {
       sessionId,
       detail,
       metadata: {
+        permission_code: permissionCode,
         entry_domain: entryDomain,
         tenant_id: normalizeTenantId(tenantId)
       }
@@ -691,6 +761,149 @@ const createAuthService = (options = {}) => {
         tenantId: normalizedTenantId,
         detail: `tenant permission missing: ${normalizedTenantId}`
       });
+    }
+    return normalized;
+  };
+
+  const getPlatformPermissionContext = async ({
+    requestId,
+    userId,
+    sessionId,
+    entryDomain,
+    permissionCode = null
+  }) => {
+    if (entryDomain !== 'platform') {
+      return null;
+    }
+
+    const access = await getDomainAccessForUser(userId);
+    if (!access.platform) {
+      rejectNoDomainAccess({
+        requestId,
+        userId,
+        sessionId,
+        entryDomain,
+        tenantId: null,
+        detail: 'platform domain access denied',
+        permissionCode
+      });
+    }
+
+    if (typeof authStore.syncPlatformPermissionSnapshotByUserId === 'function') {
+      let syncResult = await authStore.syncPlatformPermissionSnapshotByUserId({
+        userId: String(userId),
+        forceWhenNoRoleFacts: true
+      });
+      if (syncResult?.reason === 'concurrent-role-facts-update') {
+        syncResult = await authStore.syncPlatformPermissionSnapshotByUserId({
+          userId: String(userId),
+          forceWhenNoRoleFacts: true
+        });
+      }
+      if (syncResult?.reason === 'concurrent-role-facts-update') {
+        addAuditEvent({
+          type: 'auth.platform.snapshot.degraded',
+          requestId,
+          userId,
+          sessionId,
+          detail: 'platform snapshot sync degraded: concurrent-role-facts-update',
+          metadata: {
+            permission_code: permissionCode,
+            entry_domain: entryDomain,
+            tenant_id: null,
+            degradation_reason: 'concurrent-role-facts-update'
+          }
+        });
+        throw errors.platformSnapshotDegraded({
+          reason: 'concurrent-role-facts-update'
+        });
+      }
+      if (syncResult?.reason === 'db-deadlock') {
+        addAuditEvent({
+          type: 'auth.platform.snapshot.degraded',
+          requestId,
+          userId,
+          sessionId,
+          detail: 'platform snapshot sync degraded: db-deadlock',
+          metadata: {
+            permission_code: permissionCode,
+            entry_domain: entryDomain,
+            tenant_id: null,
+            degradation_reason: 'db-deadlock'
+          }
+        });
+        throw errors.platformSnapshotDegraded({
+          reason: 'db-deadlock'
+        });
+      }
+      if (syncResult?.reason === 'role-facts-table-missing') {
+        rejectNoDomainAccess({
+          requestId,
+          userId,
+          sessionId,
+          entryDomain,
+          tenantId: null,
+          detail: 'platform role facts unavailable',
+          permissionCode
+        });
+      }
+
+      const normalizedSyncReason = String(syncResult?.reason || '').trim();
+      const acceptedSyncReasons = new Set([
+        'ok',
+        'up-to-date',
+        'already-empty'
+      ]);
+      if (!acceptedSyncReasons.has(normalizedSyncReason)) {
+        addAuditEvent({
+          type: 'auth.platform.snapshot.degraded',
+          requestId,
+          userId,
+          sessionId,
+          detail: `platform snapshot sync degraded: ${normalizedSyncReason || 'unknown'}`,
+          metadata: {
+            permission_code: permissionCode,
+            entry_domain: entryDomain,
+            tenant_id: null,
+            degradation_reason: normalizedSyncReason || 'unknown'
+          }
+        });
+        throw errors.platformSnapshotDegraded({
+          reason: normalizedSyncReason || 'unknown'
+        });
+      }
+    }
+
+    if (typeof authStore.findPlatformPermissionByUserId !== 'function') {
+      rejectNoDomainAccess({
+        requestId,
+        userId,
+        sessionId,
+        entryDomain,
+        tenantId: null,
+        detail: 'platform permission lookup unavailable',
+        permissionCode
+      });
+    }
+
+    const permissionContext = await authStore.findPlatformPermissionByUserId({
+      userId: String(userId)
+    });
+    const normalized = normalizePlatformPermissionContext(permissionContext);
+    if (!normalized) {
+      addAuditEvent({
+        type: 'auth.route.forbidden',
+        requestId,
+        userId,
+        sessionId,
+        detail: 'platform permission missing',
+        metadata: {
+          permission_code: permissionCode,
+          entry_domain: entryDomain,
+          tenant_id: null
+        }
+      });
+      throw errors.forbidden();
     }
     return normalized;
   };
@@ -767,6 +980,7 @@ const createAuthService = (options = {}) => {
         userId,
         detail: `domain access denied: ${entryDomain}`,
         metadata: {
+          permission_code: null,
           entry_domain: entryDomain,
           tenant_id: null
         }
@@ -1027,10 +1241,14 @@ const createAuthService = (options = {}) => {
     }
 
     if (normalizedEntryDomain === 'platform') {
-      await ensureDefaultDomainAccessForUser({
-        requestId,
-        userId: user.id
-      });
+      const shouldProvisionDefaultPlatformDomain =
+        await shouldProvisionDefaultPlatformDomainAccess({ userId: user.id });
+      if (shouldProvisionDefaultPlatformDomain) {
+        await ensureDefaultDomainAccessForUser({
+          requestId,
+          userId: user.id
+        });
+      }
     }
     if (normalizedEntryDomain === 'tenant') {
       await ensureTenantDomainAccessForUser({
@@ -1056,6 +1274,7 @@ const createAuthService = (options = {}) => {
         userId: user.id,
         detail: 'tenant entry without active tenant relationship',
         metadata: {
+          permission_code: null,
           entry_domain: normalizedEntryDomain,
           tenant_id: null
         }
@@ -1293,10 +1512,14 @@ const createAuthService = (options = {}) => {
     }
 
     if (normalizedEntryDomain === 'platform') {
-      await ensureDefaultDomainAccessForUser({
-        requestId,
-        userId: user.id
-      });
+      const shouldProvisionDefaultPlatformDomain =
+        await shouldProvisionDefaultPlatformDomainAccess({ userId: user.id });
+      if (shouldProvisionDefaultPlatformDomain) {
+        await ensureDefaultDomainAccessForUser({
+          requestId,
+          userId: user.id
+        });
+      }
     }
     if (normalizedEntryDomain === 'tenant') {
       await ensureTenantDomainAccessForUser({
@@ -1322,6 +1545,7 @@ const createAuthService = (options = {}) => {
         userId: user.id,
         detail: 'tenant entry without active tenant relationship',
         metadata: {
+          permission_code: null,
           entry_domain: normalizedEntryDomain,
           tenant_id: null
         }
@@ -1777,6 +2001,21 @@ const createAuthService = (options = {}) => {
       });
       throw errors.noDomainAccess();
     }
+    if (normalizedScope === 'platform' && sessionContext.entry_domain !== 'platform') {
+      addAuditEvent({
+        type: 'auth.route.forbidden',
+        requestId,
+        userId: user.id,
+        sessionId,
+        detail: `platform scoped route blocked in ${sessionContext.entry_domain} entry`,
+        metadata: {
+          permission_code: normalizedPermissionCode,
+          entry_domain: sessionContext.entry_domain,
+          tenant_id: sessionContext.active_tenant_id
+        }
+      });
+      throw errors.noDomainAccess();
+    }
     if (
       normalizedScope === 'tenant'
       && sessionContext.entry_domain === 'tenant'
@@ -1801,6 +2040,7 @@ const createAuthService = (options = {}) => {
     const shouldResolveTenantPermissionContext =
       normalizedScope === 'tenant'
       && !TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT.has(normalizedPermissionCode);
+    const shouldResolvePlatformPermissionContext = normalizedScope === 'platform';
 
     const tenantPermissionContext = shouldResolveTenantPermissionContext
       ? await getTenantPermissionContext({
@@ -1809,6 +2049,15 @@ const createAuthService = (options = {}) => {
         sessionId,
         entryDomain: sessionContext.entry_domain,
         activeTenantId: normalizedActiveTenantId
+      })
+      : null;
+    const platformPermissionContext = shouldResolvePlatformPermissionContext
+      ? await getPlatformPermissionContext({
+        requestId,
+        userId: user.id,
+        sessionId,
+        entryDomain: sessionContext.entry_domain,
+        permissionCode: normalizedPermissionCode
       })
       : null;
 
@@ -1830,6 +2079,7 @@ const createAuthService = (options = {}) => {
     }
 
     const allowed = evaluator({
+      platformPermissionContext,
       tenantPermissionContext,
       entryDomain: sessionContext.entry_domain,
       activeTenantId: normalizedActiveTenantId
@@ -1855,6 +2105,7 @@ const createAuthService = (options = {}) => {
       user_id: user.id,
       entry_domain: sessionContext.entry_domain,
       active_tenant_id: normalizedActiveTenantId || null,
+      platform_permission_context: platformPermissionContext,
       tenant_permission_context: tenantPermissionContext,
       session,
       user
@@ -1894,6 +2145,7 @@ const createAuthService = (options = {}) => {
         sessionId,
         detail: `tenant selection rejected for entry domain ${sessionContext.entry_domain}`,
         metadata: {
+          permission_code: null,
           entry_domain: sessionContext.entry_domain,
           tenant_id: normalizedTenantId
         }
@@ -1911,6 +2163,7 @@ const createAuthService = (options = {}) => {
         sessionId,
         detail: `tenant selection rejected: ${normalizedTenantId}`,
         metadata: {
+          permission_code: null,
           entry_domain: sessionContext.entry_domain,
           tenant_id: normalizedTenantId
         }

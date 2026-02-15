@@ -94,6 +94,11 @@ const createRouteHandlers = (config, options) => {
       request_id: requestId || 'request_id_unset'
     }),
 
+    authPlatformMemberAdminProbe: async (requestId) => ({
+      ok: true,
+      request_id: requestId || 'request_id_unset'
+    }),
+
     authRefresh: async (requestId, body) =>
       auth.refresh({
         requestId,

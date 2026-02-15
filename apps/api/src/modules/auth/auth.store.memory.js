@@ -5,6 +5,145 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const refreshTokensByHash = new Map();
   const domainsByUserId = new Map();
   const tenantsByUserId = new Map();
+  const platformRolesByUserId = new Map();
+  const platformPermissionsByUserId = new Map();
+  const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+
+  const isActiveLikeStatus = (status) => {
+    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    return normalizedStatus === 'active' || normalizedStatus === 'enabled';
+  };
+
+  const normalizePlatformRoleStatus = (status) => {
+    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedStatus)) {
+      throw new Error(`invalid platform role status: ${normalizedStatus}`);
+    }
+    return normalizedStatus;
+  };
+
+  const normalizePlatformPermission = (
+    permission,
+    fallbackScopeLabel = '平台权限快照（服务端）'
+  ) => {
+    if (!permission || typeof permission !== 'object') {
+      return null;
+    }
+    return {
+      scopeLabel: permission.scopeLabel || permission.scope_label || fallbackScopeLabel,
+      canViewMemberAdmin: Boolean(
+        permission.canViewMemberAdmin ?? permission.can_view_member_admin
+      ),
+      canOperateMemberAdmin: Boolean(
+        permission.canOperateMemberAdmin ?? permission.can_operate_member_admin
+      ),
+      canViewBilling: Boolean(permission.canViewBilling ?? permission.can_view_billing),
+      canOperateBilling: Boolean(
+        permission.canOperateBilling ?? permission.can_operate_billing
+      )
+    };
+  };
+
+  const mergePlatformPermission = (left, right) => {
+    if (!left && !right) {
+      return null;
+    }
+    if (!left) {
+      return { ...right };
+    }
+    if (!right) {
+      return { ...left };
+    }
+    return {
+      scopeLabel: left.scopeLabel || right.scopeLabel || '平台权限快照（服务端）',
+      canViewMemberAdmin:
+        Boolean(left.canViewMemberAdmin) || Boolean(right.canViewMemberAdmin),
+      canOperateMemberAdmin:
+        Boolean(left.canOperateMemberAdmin) || Boolean(right.canOperateMemberAdmin),
+      canViewBilling: Boolean(left.canViewBilling) || Boolean(right.canViewBilling),
+      canOperateBilling:
+        Boolean(left.canOperateBilling) || Boolean(right.canOperateBilling)
+    };
+  };
+
+  const buildEmptyPlatformPermission = (scopeLabel = '平台权限（角色并集）') => ({
+    scopeLabel,
+    canViewMemberAdmin: false,
+    canOperateMemberAdmin: false,
+    canViewBilling: false,
+    canOperateBilling: false
+  });
+
+  const normalizePlatformRole = (role) => {
+    const roleId = String(role?.roleId || role?.role_id || '').trim();
+    if (!roleId) {
+      return null;
+    }
+    const permissionSource = role?.permission || role;
+    return {
+      roleId,
+      status: normalizePlatformRoleStatus(role?.status),
+      permission: normalizePlatformPermission(permissionSource, '平台权限（角色并集）')
+    };
+  };
+
+  const dedupePlatformRolesByRoleId = (roles = []) => {
+    const dedupedByRoleId = new Map();
+    for (const role of Array.isArray(roles) ? roles : []) {
+      if (!role?.roleId) {
+        continue;
+      }
+      dedupedByRoleId.set(role.roleId, role);
+    }
+    return [...dedupedByRoleId.values()];
+  };
+
+  const mergePlatformPermissionFromRoles = (roles) => {
+    let merged = null;
+    const normalizedRoles = Array.isArray(roles) ? roles : [];
+    for (const role of normalizedRoles) {
+      if (!role || !isActiveLikeStatus(role.status)) {
+        continue;
+      }
+      merged = mergePlatformPermission(merged, role.permission);
+    }
+    return merged;
+  };
+
+  const syncPlatformPermissionFromRoleFacts = ({
+    userId,
+    forceWhenNoRoleFacts = false
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return {
+        synced: false,
+        reason: 'invalid-user-id',
+        permission: null
+      };
+    }
+
+    const roles = platformRolesByUserId.get(normalizedUserId) || [];
+    if (roles.length === 0 && !forceWhenNoRoleFacts) {
+      return {
+        synced: false,
+        reason: 'no-role-facts',
+        permission: null
+      };
+    }
+
+    let permission = mergePlatformPermissionFromRoles(roles);
+    if (!permission) {
+      permission = buildEmptyPlatformPermission();
+    }
+    platformPermissionsByUserId.set(normalizedUserId, { ...permission });
+
+    return {
+      synced: true,
+      reason: 'ok',
+      permission: { ...permission }
+    };
+  };
 
   for (const user of seedUsers) {
     const normalizedUser = {
@@ -19,14 +158,12 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     usersById.set(normalizedUser.id, normalizedUser);
 
     const rawDomains = Array.isArray(user.domains) ? user.domains : ['platform', 'tenant'];
-    domainsByUserId.set(
-      normalizedUser.id,
-      new Set(
-        rawDomains
-          .map((domain) => String(domain || '').trim().toLowerCase())
-          .filter((domain) => domain === 'platform' || domain === 'tenant')
-      )
+    const domainSet = new Set(
+      rawDomains
+        .map((domain) => String(domain || '').trim().toLowerCase())
+        .filter((domain) => domain === 'platform' || domain === 'tenant')
     );
+    domainsByUserId.set(normalizedUser.id, domainSet);
 
     const rawTenants = Array.isArray(user.tenants) ? user.tenants : [];
     tenantsByUserId.set(
@@ -48,6 +185,24 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
             : null
         }))
     );
+
+    const rawPlatformRoles = Array.isArray(user.platformRoles) ? user.platformRoles : [];
+    const normalizedPlatformRoles = dedupePlatformRolesByRoleId(
+      rawPlatformRoles
+        .map((role) => normalizePlatformRole(role))
+        .filter(Boolean)
+    );
+    platformRolesByUserId.set(normalizedUser.id, normalizedPlatformRoles);
+
+    let platformPermission = normalizePlatformPermission(user.platformPermission);
+    platformPermission = mergePlatformPermission(
+      platformPermission,
+      mergePlatformPermissionFromRoles(normalizedPlatformRoles)
+    );
+
+    if (platformPermission) {
+      platformPermissionsByUserId.set(normalizedUser.id, { ...platformPermission });
+    }
   }
 
   const clone = (value) => (value ? { ...value } : null);
@@ -119,7 +274,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       }
 
       const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
-        (tenant) => String(tenant?.status || 'active').toLowerCase() === 'active'
+        (tenant) => isActiveLikeStatus(tenant?.status)
       );
       if (!hasActiveTenantMembership) {
         domainsByUserId.set(normalizedUserId, userDomains);
@@ -133,8 +288,11 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     listTenantOptionsByUserId: async (userId) =>
       (tenantsByUserId.get(String(userId)) || [])
-        .filter((tenant) => String(tenant?.status || 'active').toLowerCase() === 'active')
+        .filter((tenant) => isActiveLikeStatus(tenant?.status))
         .map((tenant) => ({ ...tenant })),
+
+    hasAnyTenantRelationshipByUserId: async (userId) =>
+      (tenantsByUserId.get(String(userId)) || []).length > 0,
 
     findTenantPermissionByUserAndTenantId: async ({ userId, tenantId }) => {
       const normalizedTenantId = String(tenantId || '').trim();
@@ -145,7 +303,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       const tenant = (tenantsByUserId.get(String(userId)) || []).find(
         (item) =>
           String(item.tenantId) === normalizedTenantId &&
-          String(item?.status || 'active').toLowerCase() === 'active'
+          isActiveLikeStatus(item?.status)
       );
       if (!tenant) {
         return null;
@@ -160,6 +318,46 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         };
       }
       return null;
+    },
+
+    findPlatformPermissionByUserId: async ({ userId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return null;
+      }
+      const permission = platformPermissionsByUserId.get(normalizedUserId);
+      return permission ? { ...permission } : null;
+    },
+
+    syncPlatformPermissionSnapshotByUserId: async ({
+      userId,
+      forceWhenNoRoleFacts = false
+    }) =>
+      syncPlatformPermissionFromRoleFacts({
+        userId,
+        forceWhenNoRoleFacts
+      }),
+
+    replacePlatformRolesAndSyncSnapshot: async ({ userId, roles = [] }) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return {
+          synced: false,
+          reason: 'invalid-user-id',
+          permission: null
+        };
+      }
+
+      const normalizedRoles = dedupePlatformRolesByRoleId(
+        (Array.isArray(roles) ? roles : [])
+          .map((role) => normalizePlatformRole(role))
+          .filter(Boolean)
+      );
+      platformRolesByUserId.set(normalizedUserId, normalizedRoles);
+      return syncPlatformPermissionFromRoleFacts({
+        userId: normalizedUserId,
+        forceWhenNoRoleFacts: true
+      });
     },
 
     revokeSession: async ({ sessionId, reason }) => {

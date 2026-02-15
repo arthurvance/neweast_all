@@ -89,7 +89,7 @@ const normalizeRouteKey = (routeKey) => {
 };
 
 const VALID_ROUTE_ACCESS = new Set(['public', 'protected']);
-const VALID_ROUTE_SCOPE = new Set(['public', 'session', 'tenant']);
+const VALID_ROUTE_SCOPE = new Set(['public', 'session', 'tenant', 'platform']);
 const VALID_HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
 const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
@@ -162,6 +162,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: 'tenant.member_admin.operate',
     scope: 'tenant'
+  },
+  {
+    method: 'GET',
+    path: '/auth/platform/member-admin/probe',
+    access: 'protected',
+    permission_code: 'platform.member_admin.view',
+    scope: 'platform'
   },
   {
     method: 'POST',

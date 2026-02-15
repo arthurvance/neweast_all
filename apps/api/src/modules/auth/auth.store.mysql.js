@@ -1,3 +1,13 @@
+const { setTimeout: sleep } = require('node:timers/promises');
+const { log } = require('../../common/logger');
+
+const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
+  maxRetries: 2,
+  baseDelayMs: 20,
+  maxDelayMs: 200,
+  jitterMs: 20
+});
+
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
     return 'disabled';
@@ -58,13 +68,844 @@ const toUserRecord = (row) => {
 const toBoolean = (value) =>
   value === true || value === 1 || value === '1' || String(value || '').toLowerCase() === 'true';
 
-const createMySqlAuthStore = ({ dbClient }) => {
+const isActiveLikeStatus = (status) => {
+  const normalizedStatus = String(status || 'active').trim().toLowerCase();
+  return normalizedStatus === 'active' || normalizedStatus === 'enabled';
+};
+const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+
+const toPlatformPermissionSnapshot = ({
+  canViewMemberAdmin = false,
+  canOperateMemberAdmin = false,
+  canViewBilling = false,
+  canOperateBilling = false
+} = {}, scopeLabel = '平台权限（角色并集）') => ({
+  scopeLabel,
+  canViewMemberAdmin: Boolean(canViewMemberAdmin),
+  canOperateMemberAdmin: Boolean(canOperateMemberAdmin),
+  canViewBilling: Boolean(canViewBilling),
+  canOperateBilling: Boolean(canOperateBilling)
+});
+
+const toPlatformPermissionSnapshotFromRow = (row, scopeLabel = '平台权限（角色并集）') =>
+  toPlatformPermissionSnapshot(
+    {
+      canViewMemberAdmin: row?.can_view_member_admin ?? row?.canViewMemberAdmin,
+      canOperateMemberAdmin: row?.can_operate_member_admin ?? row?.canOperateMemberAdmin,
+      canViewBilling: row?.can_view_billing ?? row?.canViewBilling,
+      canOperateBilling: row?.can_operate_billing ?? row?.canOperateBilling
+    },
+    scopeLabel
+  );
+
+const isEmptyPlatformPermissionSnapshot = (permission = {}) =>
+  !Boolean(permission.canViewMemberAdmin)
+  && !Boolean(permission.canOperateMemberAdmin)
+  && !Boolean(permission.canViewBilling)
+  && !Boolean(permission.canOperateBilling);
+
+const toEpochMilliseconds = (value) => {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const normalizePlatformRoleStatus = (status) => {
+  const normalizedStatus = String(status || 'active').trim().toLowerCase();
+  if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedStatus)) {
+    throw new Error(`invalid platform role status: ${normalizedStatus}`);
+  }
+  return normalizedStatus;
+};
+
+const aggregatePlatformPermissionFromRoleRows = (rows) => {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const activeRows = normalizedRows.filter((row) =>
+    isActiveLikeStatus(row?.status)
+  );
+
+  return {
+    hasRoleFacts: normalizedRows.length > 0,
+    hasActiveRoleFacts: activeRows.length > 0,
+    permission: toPlatformPermissionSnapshot({
+      canViewMemberAdmin: activeRows.some((row) =>
+        toBoolean(row?.can_view_member_admin ?? row?.canViewMemberAdmin)
+      ),
+      canOperateMemberAdmin: activeRows.some((row) =>
+        toBoolean(row?.can_operate_member_admin ?? row?.canOperateMemberAdmin)
+      ),
+      canViewBilling: activeRows.some((row) =>
+        toBoolean(row?.can_view_billing ?? row?.canViewBilling)
+      ),
+      canOperateBilling: activeRows.some((row) =>
+        toBoolean(row?.can_operate_billing ?? row?.canOperateBilling)
+      )
+    })
+  };
+};
+
+const normalizePlatformRoleFactPayload = (role) => {
+  const roleId = String(role?.roleId || role?.role_id || '').trim();
+  if (!roleId) {
+    return null;
+  }
+  const permissionSource = role?.permission || role;
+  return {
+    roleId,
+    status: normalizePlatformRoleStatus(role?.status),
+    canViewMemberAdmin: toBoolean(
+      permissionSource?.canViewMemberAdmin ?? permissionSource?.can_view_member_admin
+    ),
+    canOperateMemberAdmin: toBoolean(
+      permissionSource?.canOperateMemberAdmin ?? permissionSource?.can_operate_member_admin
+    ),
+    canViewBilling: toBoolean(
+      permissionSource?.canViewBilling ?? permissionSource?.can_view_billing
+    ),
+    canOperateBilling: toBoolean(
+      permissionSource?.canOperateBilling ?? permissionSource?.can_operate_billing
+    )
+  };
+};
+
+const dedupePlatformRoleFacts = (roles = []) => {
+  const dedupedByRoleId = new Map();
+  for (const role of Array.isArray(roles) ? roles : []) {
+    const normalizedRole = normalizePlatformRoleFactPayload(role);
+    if (!normalizedRole) {
+      continue;
+    }
+    dedupedByRoleId.set(normalizedRole.roleId, normalizedRole);
+  }
+  return [...dedupedByRoleId.values()];
+};
+
+const isTableMissingError = (error) =>
+  String(error?.code || '').toUpperCase() === 'ER_NO_SUCH_TABLE'
+  || Number(error?.errno || 0) === 1146;
+
+const isDeadlockError = (error) =>
+  String(error?.code || '').toUpperCase() === 'ER_LOCK_DEADLOCK'
+  || Number(error?.errno || 0) === 1213
+  || String(error?.sqlState || '').trim() === '40001';
+
+const createMySqlAuthStore = ({
+  dbClient,
+  random = Math.random,
+  sleepFn = sleep,
+  deadlockRetryConfig = {},
+  onDeadlockMetric = null
+}) => {
   if (!dbClient || typeof dbClient.query !== 'function') {
     throw new Error('createMySqlAuthStore requires dbClient.query');
   }
   if (typeof dbClient.inTransaction !== 'function') {
     throw new Error('createMySqlAuthStore requires dbClient.inTransaction');
   }
+  if (typeof random !== 'function') {
+    throw new Error('createMySqlAuthStore requires random function when random is provided');
+  }
+  if (typeof sleepFn !== 'function') {
+    throw new Error('createMySqlAuthStore requires sleepFn function when sleepFn is provided');
+  }
+
+  const retryConfig = {
+    maxRetries: Math.max(
+      0,
+      Math.floor(
+        Number(
+          deadlockRetryConfig?.maxRetries
+            ?? DEFAULT_DEADLOCK_RETRY_CONFIG.maxRetries
+        )
+      )
+    ),
+    baseDelayMs: Math.max(
+      0,
+      Math.floor(
+        Number(
+          deadlockRetryConfig?.baseDelayMs
+            ?? DEFAULT_DEADLOCK_RETRY_CONFIG.baseDelayMs
+        )
+      )
+    ),
+    maxDelayMs: Math.max(
+      0,
+      Math.floor(
+        Number(
+          deadlockRetryConfig?.maxDelayMs
+            ?? DEFAULT_DEADLOCK_RETRY_CONFIG.maxDelayMs
+        )
+      )
+    ),
+    jitterMs: Math.max(
+      0,
+      Math.floor(
+        Number(
+          deadlockRetryConfig?.jitterMs
+            ?? DEFAULT_DEADLOCK_RETRY_CONFIG.jitterMs
+        )
+      )
+    )
+  };
+  if (retryConfig.maxDelayMs < retryConfig.baseDelayMs) {
+    retryConfig.maxDelayMs = retryConfig.baseDelayMs;
+  }
+
+  const deadlockMetricsByOperation = new Map();
+  const getDeadlockMetricsByOperation = (operation) => {
+    const normalizedOperation = String(operation || 'unknown');
+    if (!deadlockMetricsByOperation.has(normalizedOperation)) {
+      deadlockMetricsByOperation.set(normalizedOperation, {
+        deadlockCount: 0,
+        retrySuccessCount: 0,
+        finalFailureCount: 0
+      });
+    }
+    return deadlockMetricsByOperation.get(normalizedOperation);
+  };
+
+  const toDeadlockRates = (metrics) => {
+    const resolutionCount =
+      Number(metrics?.retrySuccessCount || 0) + Number(metrics?.finalFailureCount || 0);
+    if (resolutionCount <= 0) {
+      return {
+        retrySuccessRate: 0,
+        finalFailureRate: 0
+      };
+    }
+    return {
+      retrySuccessRate: Number((Number(metrics.retrySuccessCount) / resolutionCount).toFixed(6)),
+      finalFailureRate: Number((Number(metrics.finalFailureCount) / resolutionCount).toFixed(6))
+    };
+  };
+
+  const emitDeadlockMetric = ({
+    operation,
+    event,
+    attemptsUsed,
+    retriesUsed,
+    retryDelayMs = null,
+    error = null
+  }) => {
+    const metrics = getDeadlockMetricsByOperation(operation);
+    if (event === 'deadlock-detected') {
+      metrics.deadlockCount += 1;
+    } else if (event === 'retry-succeeded') {
+      metrics.retrySuccessCount += 1;
+    } else if (event === 'final-failure') {
+      metrics.finalFailureCount += 1;
+    }
+    const rates = toDeadlockRates(metrics);
+    const payload = {
+      operation: String(operation || 'unknown'),
+      event: String(event || 'unknown'),
+      deadlock_count: Number(metrics.deadlockCount),
+      retry_success_count: Number(metrics.retrySuccessCount),
+      final_failure_count: Number(metrics.finalFailureCount),
+      retry_success_rate: Number(rates.retrySuccessRate),
+      final_failure_rate: Number(rates.finalFailureRate),
+      attempts_used: Number(attemptsUsed || 0),
+      retries_used: Number(retriesUsed || 0),
+      max_retries: Number(retryConfig.maxRetries),
+      retry_delay_ms: retryDelayMs === null ? null : Number(retryDelayMs),
+      error_code: String(error?.code || ''),
+      error_errno: Number(error?.errno || 0),
+      error_sql_state: String(error?.sqlState || '')
+    };
+    if (typeof onDeadlockMetric === 'function') {
+      try {
+        onDeadlockMetric(payload);
+      } catch (_error) {}
+    }
+    return payload;
+  };
+
+  const computeRetryDelayMs = (retryNumber) => {
+    const exponent = Math.max(0, Number(retryNumber || 1) - 1);
+    const baseDelay = retryConfig.baseDelayMs * (2 ** exponent);
+    const boundedDelay = Math.min(retryConfig.maxDelayMs, baseDelay);
+    const randomValue = Number(random());
+    const normalizedRandom = Number.isFinite(randomValue)
+      ? Math.min(1, Math.max(0, randomValue))
+      : 0;
+    const jitter = retryConfig.jitterMs > 0
+      ? Math.floor(normalizedRandom * (retryConfig.jitterMs + 1))
+      : 0;
+    return Math.max(0, Math.floor(boundedDelay + jitter));
+  };
+
+  const executeWithDeadlockRetry = async ({
+    operation,
+    execute
+  }) => {
+    let retriesUsed = 0;
+    while (true) {
+      try {
+        const result = await execute();
+        if (retriesUsed > 0) {
+          const recoveredMetric = emitDeadlockMetric({
+            operation,
+            event: 'retry-succeeded',
+            attemptsUsed: retriesUsed + 1,
+            retriesUsed
+          });
+          log('info', 'MySQL deadlock recovered after retry', {
+            component: 'auth.store.mysql',
+            ...recoveredMetric
+          });
+        }
+        return result;
+      } catch (error) {
+        if (!isDeadlockError(error)) {
+          throw error;
+        }
+        const canRetry = retriesUsed < retryConfig.maxRetries;
+        const retryDelayMs = canRetry ? computeRetryDelayMs(retriesUsed + 1) : null;
+        const deadlockMetric = emitDeadlockMetric({
+          operation,
+          event: 'deadlock-detected',
+          attemptsUsed: retriesUsed + 1,
+          retriesUsed,
+          retryDelayMs,
+          error
+        });
+        if (canRetry) {
+          log('warn', 'MySQL deadlock detected, retrying auth store operation', {
+            component: 'auth.store.mysql',
+            ...deadlockMetric
+          });
+          retriesUsed += 1;
+          if (retryDelayMs > 0) {
+            await sleepFn(retryDelayMs);
+          }
+          continue;
+        }
+        const finalFailureMetric = emitDeadlockMetric({
+          operation,
+          event: 'final-failure',
+          attemptsUsed: retriesUsed + 1,
+          retriesUsed,
+          retryDelayMs: null,
+          error
+        });
+        log('error', 'MySQL deadlock retries exhausted in auth store', {
+          component: 'auth.store.mysql',
+          alert: true,
+          ...finalFailureMetric
+        });
+        return {
+          synced: false,
+          reason: 'db-deadlock',
+          permission: null
+        };
+      }
+    }
+  };
+
+  const readPlatformRoleFactsSummaryByUserId = async ({ txClient = dbClient, userId }) => {
+    const summaryRows = await txClient.query(
+      `
+        SELECT COUNT(*) AS role_count,
+               MAX(updated_at) AS latest_role_updated_at,
+               MAX(DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')) AS latest_role_updated_at_key,
+               COALESCE(
+                 SUM(
+                   CRC32(
+                     CONCAT_WS(
+                       '#',
+                       role_id,
+                       status,
+                       can_view_member_admin,
+                       can_operate_member_admin,
+                       can_view_billing,
+                       can_operate_billing,
+                       DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')
+                     )
+                   )
+                 ),
+                 0
+               ) AS role_facts_checksum
+        FROM auth_user_platform_roles
+        WHERE user_id = ?
+      `,
+      [userId]
+    );
+    const summaryRow = summaryRows?.[0] || null;
+    const rawLatestRoleUpdatedAt = summaryRow?.latest_role_updated_at;
+    let latestRoleUpdatedAtKey = '';
+    if (
+      typeof summaryRow?.latest_role_updated_at_key === 'string'
+      && summaryRow.latest_role_updated_at_key.trim().length > 0
+    ) {
+      latestRoleUpdatedAtKey = summaryRow.latest_role_updated_at_key.trim();
+    } else if (rawLatestRoleUpdatedAt instanceof Date) {
+      latestRoleUpdatedAtKey = rawLatestRoleUpdatedAt.toISOString();
+    } else if (rawLatestRoleUpdatedAt !== null && rawLatestRoleUpdatedAt !== undefined) {
+      latestRoleUpdatedAtKey = String(rawLatestRoleUpdatedAt).trim();
+    }
+    const rawRoleFactsChecksum = summaryRow?.role_facts_checksum;
+    let roleFactsChecksum = null;
+    if (rawRoleFactsChecksum !== null && rawRoleFactsChecksum !== undefined) {
+      const normalizedChecksum = String(rawRoleFactsChecksum).trim();
+      if (normalizedChecksum.length > 0) {
+        roleFactsChecksum = normalizedChecksum;
+      }
+    }
+    return {
+      roleFactCount: Number(summaryRow?.role_count || 0),
+      latestRoleUpdatedAtMs: toEpochMilliseconds(
+        summaryRow?.latest_role_updated_at
+      ),
+      latestRoleUpdatedAtKey,
+      roleFactsChecksum
+    };
+  };
+
+  const didPlatformRoleFactsSummaryChange = async ({
+    txClient = dbClient,
+    userId,
+    expectedRoleFactCount,
+    expectedLatestRoleUpdatedAtKey,
+    expectedRoleFactsChecksum = null
+  }) => {
+    const latestSummary = await readPlatformRoleFactsSummaryByUserId({
+      txClient,
+      userId
+    });
+    const normalizedExpectedChecksum =
+      expectedRoleFactsChecksum === null || expectedRoleFactsChecksum === undefined
+        ? null
+        : String(expectedRoleFactsChecksum).trim();
+    return (
+      latestSummary.roleFactCount !== Number(expectedRoleFactCount || 0)
+      || latestSummary.latestRoleUpdatedAtKey
+      !== String(expectedLatestRoleUpdatedAtKey || '')
+      || (
+        normalizedExpectedChecksum !== null
+        && latestSummary.roleFactsChecksum !== normalizedExpectedChecksum
+      )
+    );
+  };
+
+  const syncPlatformPermissionSnapshotByUserIdOnce = async ({
+    userId,
+    forceWhenNoRoleFacts = false,
+    txClient = dbClient
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return {
+        synced: false,
+        reason: 'invalid-user-id',
+        permission: null
+      };
+    }
+
+    const snapshotRows = await txClient.query(
+      `
+        SELECT can_view_member_admin,
+               can_operate_member_admin,
+               can_view_billing,
+               can_operate_billing,
+               updated_at
+        FROM auth_user_domain_access
+        WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
+        LIMIT 1
+      `,
+      [normalizedUserId]
+    );
+    const snapshotRow = snapshotRows?.[0] || null;
+    const snapshotPermission = toPlatformPermissionSnapshotFromRow(snapshotRow);
+    const snapshotUpdatedAtMs = toEpochMilliseconds(snapshotRow?.updated_at);
+
+    let roleFactsSummary = null;
+    try {
+      roleFactsSummary = await readPlatformRoleFactsSummaryByUserId({
+        txClient,
+        userId: normalizedUserId
+      });
+    } catch (error) {
+      if (isTableMissingError(error)) {
+        return {
+          synced: false,
+          reason: 'role-facts-table-missing',
+          permission: null
+        };
+      }
+      throw error;
+    }
+
+    const roleFactCount = Number(roleFactsSummary?.roleFactCount || 0);
+    const latestRoleUpdatedAtMs = Number(
+      roleFactsSummary?.latestRoleUpdatedAtMs || 0
+    );
+    const latestRoleUpdatedAtKey = String(
+      roleFactsSummary?.latestRoleUpdatedAtKey || ''
+    );
+    const roleFactsChecksum =
+      roleFactsSummary?.roleFactsChecksum === null
+      || roleFactsSummary?.roleFactsChecksum === undefined
+        ? null
+        : String(roleFactsSummary.roleFactsChecksum).trim();
+    if (roleFactCount <= 0) {
+      if (!forceWhenNoRoleFacts) {
+        return {
+          synced: false,
+          reason: 'no-role-facts',
+          permission: null
+        };
+      }
+
+      const emptyPermission = toPlatformPermissionSnapshot();
+      if (!snapshotRow || isEmptyPlatformPermissionSnapshot(snapshotPermission)) {
+        return {
+          synced: false,
+          reason: 'already-empty',
+          permission: emptyPermission
+        };
+      }
+
+      const zeroUpdateResult = await txClient.query(
+        `
+          UPDATE auth_user_domain_access
+          SET can_view_member_admin = 0,
+              can_operate_member_admin = 0,
+              can_view_billing = 0,
+              can_operate_billing = 0,
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
+            AND (
+              can_view_member_admin <> 0
+              OR can_operate_member_admin <> 0
+              OR can_view_billing <> 0
+              OR can_operate_billing <> 0
+            )
+            AND (
+              SELECT COUNT(*)
+              FROM auth_user_platform_roles
+              WHERE user_id = ?
+            ) = 0
+        `,
+        [normalizedUserId, normalizedUserId]
+      );
+
+      const zeroed = Number(zeroUpdateResult?.affectedRows || 0) > 0;
+      if (!zeroed) {
+        const roleFactsChanged = await didPlatformRoleFactsSummaryChange({
+          txClient,
+          userId: normalizedUserId,
+          expectedRoleFactCount: 0,
+          expectedLatestRoleUpdatedAtKey: '',
+          expectedRoleFactsChecksum: roleFactsChecksum
+        });
+        if (roleFactsChanged) {
+          return {
+            synced: false,
+            reason: 'concurrent-role-facts-update',
+            permission: null
+          };
+        }
+      }
+
+      return {
+        synced: zeroed,
+        reason: 'ok',
+        permission: emptyPermission
+      };
+    }
+
+    if (
+      snapshotRow
+      && latestRoleUpdatedAtMs > 0
+      && snapshotUpdatedAtMs > latestRoleUpdatedAtMs
+    ) {
+      return {
+        synced: false,
+        reason: 'up-to-date',
+        permission: snapshotPermission
+      };
+    }
+
+    const roleRows = await txClient.query(
+      `
+        SELECT role_id,
+               status,
+               can_view_member_admin,
+               can_operate_member_admin,
+               can_view_billing,
+               can_operate_billing
+        FROM auth_user_platform_roles
+        WHERE user_id = ?
+      `,
+      [normalizedUserId]
+    );
+
+    const aggregate = aggregatePlatformPermissionFromRoleRows(roleRows);
+    if (!aggregate.hasRoleFacts && !forceWhenNoRoleFacts) {
+      return {
+        synced: false,
+        reason: 'no-role-facts',
+        permission: null
+      };
+    }
+
+    const permission = aggregate.permission;
+    const canViewMemberAdmin = Number(permission.canViewMemberAdmin);
+    const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
+    const canViewBilling = Number(permission.canViewBilling);
+    const canOperateBilling = Number(permission.canOperateBilling);
+    const updateResult = await txClient.query(
+      `
+        UPDATE auth_user_domain_access
+        SET can_view_member_admin = ?,
+            can_operate_member_admin = ?,
+            can_view_billing = ?,
+            can_operate_billing = ?,
+            updated_at = CURRENT_TIMESTAMP(3)
+        WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
+          AND (
+            can_view_member_admin <> ?
+            OR can_operate_member_admin <> ?
+            OR can_view_billing <> ?
+            OR can_operate_billing <> ?
+          )
+          AND (
+            SELECT COUNT(*)
+            FROM auth_user_platform_roles
+            WHERE user_id = ?
+          ) = ?
+          AND COALESCE(
+            (
+              SELECT MAX(DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f'))
+              FROM auth_user_platform_roles
+              WHERE user_id = ?
+            ),
+            ''
+          ) = ?
+          AND (
+            ? IS NULL
+            OR (
+              SELECT COALESCE(
+                SUM(
+                  CRC32(
+                    CONCAT_WS(
+                      '#',
+                      role_id,
+                      status,
+                      can_view_member_admin,
+                      can_operate_member_admin,
+                      can_view_billing,
+                      can_operate_billing,
+                      DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')
+                    )
+                  )
+                ),
+                0
+              )
+              FROM auth_user_platform_roles
+              WHERE user_id = ?
+            ) = ?
+          )
+      `,
+      [
+        canViewMemberAdmin,
+        canOperateMemberAdmin,
+        canViewBilling,
+        canOperateBilling,
+        normalizedUserId,
+        canViewMemberAdmin,
+        canOperateMemberAdmin,
+        canViewBilling,
+        canOperateBilling,
+        normalizedUserId,
+        roleFactCount,
+        normalizedUserId,
+        latestRoleUpdatedAtKey,
+        roleFactsChecksum,
+        normalizedUserId,
+        roleFactsChecksum
+      ]
+    );
+
+    const synced = Number(updateResult?.affectedRows || 0) > 0;
+    if (!synced) {
+      const roleFactsChanged = await didPlatformRoleFactsSummaryChange({
+        txClient,
+        userId: normalizedUserId,
+        expectedRoleFactCount: roleFactCount,
+        expectedLatestRoleUpdatedAtKey: latestRoleUpdatedAtKey,
+        expectedRoleFactsChecksum: roleFactsChecksum
+      });
+      if (roleFactsChanged) {
+        return {
+          synced: false,
+          reason: 'concurrent-role-facts-update',
+          permission: null
+        };
+      }
+    }
+
+    return {
+      synced,
+      reason: 'ok',
+      permission
+    };
+  };
+
+  const syncPlatformPermissionSnapshotByUserId = async ({
+    userId,
+    forceWhenNoRoleFacts = false,
+    txClient = dbClient
+  }) =>
+    executeWithDeadlockRetry({
+      operation: 'syncPlatformPermissionSnapshotByUserId',
+      execute: () =>
+        syncPlatformPermissionSnapshotByUserIdOnce({
+          userId,
+          forceWhenNoRoleFacts,
+          txClient
+        })
+    });
+
+  const replacePlatformRolesAndSyncSnapshotOnce = async ({ userId, roles = [] }) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return {
+        synced: false,
+        reason: 'invalid-user-id',
+        permission: null
+      };
+    }
+
+    const normalizedRoles = dedupePlatformRoleFacts(roles);
+
+    return dbClient.inTransaction(async (tx) => {
+      await tx.query(
+        `
+          DELETE FROM auth_user_platform_roles
+          WHERE user_id = ?
+        `,
+        [normalizedUserId]
+      );
+
+      for (const role of normalizedRoles) {
+        await tx.query(
+          `
+            INSERT INTO auth_user_platform_roles (
+              user_id,
+              role_id,
+              status,
+              can_view_member_admin,
+              can_operate_member_admin,
+              can_view_billing,
+              can_operate_billing
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            normalizedUserId,
+            role.roleId,
+            role.status,
+            Number(role.canViewMemberAdmin),
+            Number(role.canOperateMemberAdmin),
+            Number(role.canViewBilling),
+            Number(role.canOperateBilling)
+          ]
+        );
+      }
+
+      const permission = aggregatePlatformPermissionFromRoleRows(normalizedRoles).permission;
+      const canViewMemberAdmin = Number(permission.canViewMemberAdmin);
+      const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
+      const canViewBilling = Number(permission.canViewBilling);
+      const canOperateBilling = Number(permission.canOperateBilling);
+      let snapshotResult = { affectedRows: 0 };
+
+      if (normalizedRoles.length > 0) {
+        snapshotResult = await tx.query(
+          `
+            INSERT INTO auth_user_domain_access (
+              user_id,
+              domain,
+              status,
+              can_view_member_admin,
+              can_operate_member_admin,
+              can_view_billing,
+              can_operate_billing
+            )
+            VALUES (?, 'platform', 'active', ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              can_view_member_admin = VALUES(can_view_member_admin),
+              can_operate_member_admin = VALUES(can_operate_member_admin),
+              can_view_billing = VALUES(can_view_billing),
+              can_operate_billing = VALUES(can_operate_billing),
+              updated_at = CURRENT_TIMESTAMP(3)
+          `,
+          [
+            normalizedUserId,
+            canViewMemberAdmin,
+            canOperateMemberAdmin,
+            canViewBilling,
+            canOperateBilling
+          ]
+        );
+      } else {
+        snapshotResult = await tx.query(
+          `
+            UPDATE auth_user_domain_access
+            SET can_view_member_admin = ?,
+                can_operate_member_admin = ?,
+                can_view_billing = ?,
+                can_operate_billing = ?,
+                updated_at = CURRENT_TIMESTAMP(3)
+            WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
+              AND (
+                can_view_member_admin <> ?
+                OR can_operate_member_admin <> ?
+                OR can_view_billing <> ?
+                OR can_operate_billing <> ?
+              )
+          `,
+          [
+            canViewMemberAdmin,
+            canOperateMemberAdmin,
+            canViewBilling,
+            canOperateBilling,
+            normalizedUserId,
+            canViewMemberAdmin,
+            canOperateMemberAdmin,
+            canViewBilling,
+            canOperateBilling
+          ]
+        );
+      }
+
+      return {
+        synced: Number(snapshotResult?.affectedRows || 0) > 0,
+        reason: 'ok',
+        permission
+      };
+    });
+  };
+
+  const replacePlatformRolesAndSyncSnapshot = async ({ userId, roles = [] }) =>
+    executeWithDeadlockRetry({
+      operation: 'replacePlatformRolesAndSyncSnapshot',
+      execute: () =>
+        replacePlatformRolesAndSyncSnapshotOnce({
+          userId,
+          roles
+        })
+    });
 
   return {
     findUserByPhone: async (phone) => {
@@ -169,8 +1010,8 @@ const createMySqlAuthStore = ({ dbClient }) => {
           if (domain === 'tenant') {
             hasAnyTenantDomainRecord = true;
           }
-          const status = String(row?.status || '').trim().toLowerCase();
-          if (!status || status === 'active') {
+          const status = row?.status;
+          if (isActiveLikeStatus(status)) {
             activeDomains.add(domain);
           }
         }
@@ -181,7 +1022,7 @@ const createMySqlAuthStore = ({ dbClient }) => {
             `
               SELECT COUNT(*) AS tenant_count
               FROM auth_user_tenants
-              WHERE user_id = ? AND status = 'active'
+              WHERE user_id = ? AND status IN ('active', 'enabled')
             `,
             [normalizedUserId]
           );
@@ -215,11 +1056,8 @@ const createMySqlAuthStore = ({ dbClient }) => {
 
       const result = await dbClient.query(
         `
-          INSERT INTO auth_user_domain_access (user_id, domain, status)
+          INSERT IGNORE INTO auth_user_domain_access (user_id, domain, status)
           VALUES (?, 'platform', 'active')
-          ON DUPLICATE KEY UPDATE
-            status = VALUES(status),
-            updated_at = CURRENT_TIMESTAMP(3)
         `,
         [normalizedUserId]
       );
@@ -247,7 +1085,7 @@ const createMySqlAuthStore = ({ dbClient }) => {
         `
           SELECT COUNT(*) AS tenant_count
           FROM auth_user_tenants
-          WHERE user_id = ? AND status = 'active'
+          WHERE user_id = ? AND status IN ('active', 'enabled')
         `,
         [normalizedUserId]
       );
@@ -283,7 +1121,7 @@ const createMySqlAuthStore = ({ dbClient }) => {
                    can_view_billing,
                    can_operate_billing
             FROM auth_user_tenants
-            WHERE user_id = ? AND tenant_id = ? AND status = 'active'
+            WHERE user_id = ? AND tenant_id = ? AND status IN ('active', 'enabled')
             LIMIT 1
           `,
           [normalizedUserId, normalizedTenantId]
@@ -311,7 +1149,7 @@ const createMySqlAuthStore = ({ dbClient }) => {
           `
             SELECT tenant_id, tenant_name
             FROM auth_user_tenants
-            WHERE user_id = ? AND status = 'active'
+            WHERE user_id = ? AND status IN ('active', 'enabled')
             ORDER BY tenant_id ASC
           `,
           [normalizedUserId]
@@ -327,6 +1165,107 @@ const createMySqlAuthStore = ({ dbClient }) => {
         throw error;
       }
     },
+
+    hasAnyTenantRelationshipByUserId: async (userId) => {
+      const normalizedUserId = String(userId);
+      const rows = await dbClient.query(
+        `
+          SELECT COUNT(*) AS tenant_count
+          FROM auth_user_tenants
+          WHERE user_id = ?
+        `,
+        [normalizedUserId]
+      );
+      return Number(rows?.[0]?.tenant_count || 0) > 0;
+    },
+
+    findPlatformPermissionByUserId: async ({ userId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return null;
+      }
+
+      try {
+        const rows = await dbClient.query(
+          `
+            SELECT status,
+                   can_view_member_admin,
+                   can_operate_member_admin,
+                   can_view_billing,
+                   can_operate_billing
+            FROM auth_user_domain_access
+            WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
+            LIMIT 1
+          `,
+          [normalizedUserId]
+        );
+        const row = rows?.[0];
+        if (!row) {
+          return null;
+        }
+
+        const hasPermissionSnapshot =
+          Object.prototype.hasOwnProperty.call(row, 'can_view_member_admin')
+          || Object.prototype.hasOwnProperty.call(row, 'can_operate_member_admin')
+          || Object.prototype.hasOwnProperty.call(row, 'can_view_billing')
+          || Object.prototype.hasOwnProperty.call(row, 'can_operate_billing')
+          || Object.prototype.hasOwnProperty.call(row, 'canViewMemberAdmin')
+          || Object.prototype.hasOwnProperty.call(row, 'canOperateMemberAdmin')
+          || Object.prototype.hasOwnProperty.call(row, 'canViewBilling')
+          || Object.prototype.hasOwnProperty.call(row, 'canOperateBilling');
+        if (!hasPermissionSnapshot) {
+          return null;
+        }
+
+        return {
+          scopeLabel: '平台权限（服务端快照）',
+          canViewMemberAdmin: toBoolean(
+            row.can_view_member_admin ?? row.canViewMemberAdmin
+          ),
+          canOperateMemberAdmin: toBoolean(
+            row.can_operate_member_admin ?? row.canOperateMemberAdmin
+          ),
+          canViewBilling: toBoolean(row.can_view_billing ?? row.canViewBilling),
+          canOperateBilling: toBoolean(
+            row.can_operate_billing ?? row.canOperateBilling
+          )
+        };
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    syncPlatformPermissionSnapshotByUserId: async ({
+      userId,
+      forceWhenNoRoleFacts = false
+    }) =>
+      syncPlatformPermissionSnapshotByUserId({
+        userId,
+        forceWhenNoRoleFacts
+      }),
+
+    replacePlatformRolesAndSyncSnapshot: async ({ userId, roles = [] }) =>
+      replacePlatformRolesAndSyncSnapshot({
+        userId,
+        roles
+      }),
+
+    getPlatformDeadlockMetrics: () =>
+      Object.fromEntries(
+        [...deadlockMetricsByOperation.entries()].map(([operation, metrics]) => {
+          const rates = toDeadlockRates(metrics);
+          return [
+            operation,
+            {
+              deadlockCount: Number(metrics.deadlockCount),
+              retrySuccessCount: Number(metrics.retrySuccessCount),
+              finalFailureCount: Number(metrics.finalFailureCount),
+              retrySuccessRate: Number(rates.retrySuccessRate),
+              finalFailureRate: Number(rates.finalFailureRate)
+            }
+          ];
+        })
+      ),
 
     revokeSession: async ({ sessionId, reason }) => {
       await dbClient.query(

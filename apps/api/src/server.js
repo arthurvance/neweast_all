@@ -320,7 +320,7 @@ const buildPayloadTooLargeProblem = (requestId, maxBytes) =>
     buildProblemDetails({
       status: 413,
       title: 'Payload Too Large',
-      detail: `JSON payload exceeds ${maxBytes} bytes`,
+      detail: 'JSON payload exceeds allowed size',
       requestId,
       extensions: { error_code: 'AUTH-413-PAYLOAD-TOO-LARGE' }
     }),
@@ -442,6 +442,11 @@ const createRouteTable = ({
   'GET /auth/tenant/member-admin/probe': async () =>
     runAuthRoute(
       () => handlers.authTenantMemberAdminProbe(requestId, headers.authorization),
+      requestId
+    ),
+  'GET /auth/platform/member-admin/probe': async () =>
+    runAuthRoute(
+      () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
       requestId
     ),
   'POST /auth/refresh': async () =>

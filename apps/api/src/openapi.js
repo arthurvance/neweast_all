@@ -671,6 +671,89 @@ const buildOpenApiSpec = () => ({
         }
       }
     },
+    '/auth/platform/member-admin/probe': {
+      get: {
+        summary: 'Probe platform member-admin view permission with unified authorization semantics',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Current session is authorized for platform member-admin view capability',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['ok', 'request_id'],
+                  properties: {
+                    ok: { type: 'boolean' },
+                    request_id: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description:
+              'Platform route blocked due to missing platform domain context or insufficient platform permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Platform permission snapshot sync temporarily degraded',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  snapshot_sync_degraded: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台权限同步暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+                      request_id: 'request_id_unset',
+                      degradation_reason: 'db-deadlock'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/auth/refresh': {
       post: {
         summary: 'Refresh session token pair with rotation',

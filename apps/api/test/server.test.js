@@ -65,6 +65,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/otp/send']);
   assert.ok(payload.paths['/auth/otp/login']);
   assert.ok(payload.paths['/auth/tenant/member-admin/probe']);
+  assert.ok(payload.paths['/auth/platform/member-admin/probe']);
   assert.ok(payload.paths['/auth/login'].post.responses['400']);
   assert.ok(payload.paths['/auth/login'].post.responses['413']);
   assert.ok(payload.paths['/auth/login'].post.responses['429']);
@@ -83,6 +84,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       'application/problem+json'
     ].examples.no_domain.value.error_code,
     'AUTH-403-NO-DOMAIN'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/member-admin/probe'].get.responses['503'].content[
+      'application/problem+json'
+    ].examples.snapshot_sync_degraded.value.error_code,
+    'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED'
   );
   assert.equal(
     payload.components.schemas.ProblemDetails.properties.error_code.type,
@@ -158,6 +165,7 @@ test('createServer enforces json payload limit with AUTH-413-PAYLOAD-TOO-LARGE',
     const payload = await response.json();
     assert.equal(response.status, 413);
     assert.equal(payload.error_code, 'AUTH-413-PAYLOAD-TOO-LARGE');
+    assert.equal(payload.detail, 'JSON payload exceeds allowed size');
     assert.equal(String(response.headers.get('connection') || '').toLowerCase(), 'close');
   } finally {
     await harness.close();

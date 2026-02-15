@@ -57,7 +57,16 @@ const REQUIRED_AUTH_SCHEMA = {
     'revoked_reason',
     'updated_at'
   ],
-  auth_user_domain_access: ['user_id', 'domain', 'status'],
+  auth_user_domain_access: [
+    'user_id',
+    'domain',
+    'status',
+    'can_view_member_admin',
+    'can_operate_member_admin',
+    'can_view_billing',
+    'can_operate_billing',
+    'updated_at'
+  ],
   auth_user_tenants: [
     'user_id',
     'tenant_id',
@@ -67,6 +76,16 @@ const REQUIRED_AUTH_SCHEMA = {
     'can_operate_member_admin',
     'can_view_billing',
     'can_operate_billing'
+  ],
+  auth_user_platform_roles: [
+    'user_id',
+    'role_id',
+    'status',
+    'can_view_member_admin',
+    'can_operate_member_admin',
+    'can_view_billing',
+    'can_operate_billing',
+    'updated_at'
   ]
 };
 
@@ -339,7 +358,7 @@ const createApiApp = async (config, options = {}) => {
       respondProblem({
         status: 413,
         title: 'Payload Too Large',
-        detail: `JSON payload exceeds ${jsonBodyLimitBytes} bytes`,
+        detail: 'JSON payload exceeds allowed size',
         errorCode: 'AUTH-413-PAYLOAD-TOO-LARGE',
         forceCloseConnection: true
       });
@@ -372,7 +391,7 @@ const createApiApp = async (config, options = {}) => {
         respondProblem({
           status: 413,
           title: 'Payload Too Large',
-          detail: `JSON payload exceeds ${jsonBodyLimitBytes} bytes`,
+          detail: 'JSON payload exceeds allowed size',
           errorCode: 'AUTH-413-PAYLOAD-TOO-LARGE',
           forceCloseConnection: true
         });

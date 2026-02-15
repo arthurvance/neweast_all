@@ -159,6 +159,42 @@ test('tenant login rejects users without tenant membership and domain access usi
   assert.equal(response.body.error_code, 'AUTH-403-NO-DOMAIN');
 });
 
+test('platform login rejects tenant-only identity with AUTH-403-NO-DOMAIN', async () => {
+  const context = {
+    dependencyProbe,
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'domain-user-platform-denied',
+          phone: '13820000008',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: [],
+          tenants: [
+            { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+          ]
+        }
+      ]
+    })
+  };
+
+  const response = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13820000008',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error_code, 'AUTH-403-NO-DOMAIN');
+});
+
 test('tenant switch updates active_tenant_id and rejects unknown tenant options', async () => {
   const context = {
     dependencyProbe,
@@ -375,4 +411,140 @@ test('tenant options in platform entry is blocked with AUTH-403-NO-DOMAIN', asyn
   assert.equal(options.status, 403);
   assert.equal(options.body.error_code, 'AUTH-403-NO-DOMAIN');
   assert.equal(typeof options.body.request_id, 'string');
+});
+
+test('platform scoped route is blocked with AUTH-403-NO-DOMAIN in tenant entry', async () => {
+  const context = {
+    dependencyProbe,
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'domain-user-6',
+          phone: '13820000006',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform', 'tenant'],
+          tenants: [
+            { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+          ],
+          platformPermission: {
+            scopeLabel: '平台权限快照',
+            canViewMemberAdmin: true,
+            canOperateMemberAdmin: true,
+            canViewBilling: true,
+            canOperateBilling: true
+          }
+        }
+      ]
+    })
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13820000006',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+  assert.equal(login.body.entry_domain, 'tenant');
+
+  const platformProbe = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/probe',
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    },
+    context
+  );
+
+  assert.equal(platformProbe.status, 403);
+  assert.equal(platformProbe.body.error_code, 'AUTH-403-NO-DOMAIN');
+  assert.equal(typeof platformProbe.body.request_id, 'string');
+});
+
+test('platform scoped route is authorized when active platform roles grant union capability', async () => {
+  const context = {
+    dependencyProbe,
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'domain-user-7',
+          phone: '13820000007',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-view',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            },
+            {
+              roleId: 'platform-operate',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: false,
+                canOperateMemberAdmin: true,
+                canViewBilling: true,
+                canOperateBilling: false
+              }
+            },
+            {
+              roleId: 'platform-disabled',
+              status: 'disabled',
+              permission: {
+                canViewMemberAdmin: false,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ]
+    })
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13820000007',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+  assert.equal(login.body.entry_domain, 'platform');
+
+  const platformProbe = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/probe',
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    },
+    context
+  );
+
+  assert.equal(platformProbe.status, 200);
+  assert.equal(platformProbe.body.ok, true);
+  assert.equal(typeof platformProbe.body.request_id, 'string');
 });

@@ -37,11 +37,13 @@ test('resolveRollbackVersion defaults to latest applied version', () => {
   const resolved = resolveRollbackVersion({
     existingRows: [
       { id: 1, version: '0004_auth_session_domain_tenant_context' },
-      { id: 2, version: '0005_auth_domain_tenant_membership' }
+      { id: 2, version: '0005_auth_domain_tenant_membership' },
+      { id: 3, version: '0006_auth_platform_permission_snapshot' },
+      { id: 4, version: '0007_auth_platform_role_facts' }
     ],
     targetVersion: null
   });
-  assert.equal(resolved, '0005_auth_domain_tenant_membership');
+  assert.equal(resolved, '0007_auth_platform_role_facts');
 });
 
 test('resolveRollbackVersion accepts explicit latest applied version', () => {
@@ -96,6 +98,72 @@ test('0005 migration defines tenant permission columns required by runtime prefl
   assert.match(sql, /can_operate_member_admin/i);
   assert.match(sql, /can_view_billing/i);
   assert.match(sql, /can_operate_billing/i);
+});
+
+test('0006 migration defines guarded platform permission snapshot DDL on auth_user_domain_access', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0006_auth_platform_permission_snapshot.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /table_name = 'auth_user_domain_access'/i);
+  assert.match(sql, /column_name = 'can_view_member_admin'/i);
+  assert.match(sql, /column_name = 'can_operate_member_admin'/i);
+  assert.match(sql, /column_name = 'can_view_billing'/i);
+  assert.match(sql, /column_name = 'can_operate_billing'/i);
+  assert.match(sql, /PREPARE migration_stmt FROM @ddl_sql/i);
+  assert.match(sql, /ADD COLUMN can_view_member_admin/i);
+  assert.match(sql, /ADD COLUMN can_operate_member_admin/i);
+  assert.match(sql, /ADD COLUMN can_view_billing/i);
+  assert.match(sql, /ADD COLUMN can_operate_billing/i);
+});
+
+test('0006 down migration defines guarded rollback DDL for platform permission snapshot', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0006_auth_platform_permission_snapshot.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /table_name = 'auth_user_domain_access'/i);
+  assert.match(sql, /column_name = 'can_operate_billing'/i);
+  assert.match(sql, /column_name = 'can_view_billing'/i);
+  assert.match(sql, /column_name = 'can_operate_member_admin'/i);
+  assert.match(sql, /column_name = 'can_view_member_admin'/i);
+  assert.match(sql, /PREPARE migration_stmt FROM @ddl_sql/i);
+  assert.match(sql, /DROP COLUMN can_operate_billing/i);
+  assert.match(sql, /DROP COLUMN can_view_billing/i);
+  assert.match(sql, /DROP COLUMN can_operate_member_admin/i);
+  assert.match(sql, /DROP COLUMN can_view_member_admin/i);
+});
+
+test('0007 migration defines platform role fact table and reserved legacy snapshot backfill', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0007_auth_platform_role_facts.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS auth_user_platform_roles/i);
+  assert.match(sql, /role_id/i);
+  assert.match(sql, /can_view_member_admin/i);
+  assert.match(sql, /can_operate_member_admin/i);
+  assert.match(sql, /can_view_billing/i);
+  assert.match(sql, /can_operate_billing/i);
+  assert.match(sql, /INSERT INTO auth_user_platform_roles/i);
+  assert.match(sql, /__migr_0007_legacy_snapshot__/i);
+  assert.match(sql, /FROM auth_user_domain_access/i);
+  assert.match(sql, /domain = 'platform'/i);
+  assert.match(sql, /status IN \('active', 'enabled'\)/i);
+  assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
+  assert.doesNotMatch(sql, /status\s*=\s*VALUES\s*\(\s*status\s*\)/i);
 });
 
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {

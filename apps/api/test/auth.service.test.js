@@ -231,6 +231,12 @@ test('tenant entry failure does not grant default platform-domain access on pass
     (event) => event.type === 'auth.domain.default_granted'
   );
   assert.equal(defaultGranted, undefined);
+
+  const rejected = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.rejected'
+  );
+  assert.ok(rejected);
+  assert.equal(rejected.permission_code, null);
 });
 
 test('tenant entry failure does not grant default platform-domain access on otp login', async () => {
@@ -358,6 +364,97 @@ test('login provisions default platform domain access when user has no domain ro
   assert.ok(defaultGranted);
 });
 
+test('platform entry rejects tenant-only identity and does not auto-grant platform domain', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-denied-tenant-only-user',
+        phone: '13810000023',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: [],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+        ]
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-login-platform-denied-tenant-only',
+        phone: '13810000023',
+        password: 'Passw0rd!',
+        entryDomain: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const access = await service._internals.authStore.findDomainAccessByUserId(
+    'platform-denied-tenant-only-user'
+  );
+  assert.equal(access.platform, false);
+
+  const defaultGranted = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.default_granted'
+  );
+  assert.equal(defaultGranted, undefined);
+});
+
+test('platform entry rejects users with only disabled tenant relationships and does not auto-grant platform domain', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-denied-disabled-tenant-user',
+        phone: '13810000024',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: [],
+        tenants: [
+          {
+            tenantId: 'tenant-disabled',
+            tenantName: 'Tenant Disabled',
+            status: 'disabled',
+            permission: tenantPermissionA
+          }
+        ]
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-login-platform-denied-disabled-tenant',
+        phone: '13810000024',
+        password: 'Passw0rd!',
+        entryDomain: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const access = await service._internals.authStore.findDomainAccessByUserId(
+    'platform-denied-disabled-tenant-user'
+  );
+  assert.equal(access.platform, false);
+
+  const defaultGranted = service._internals.auditTrail.find(
+    (event) => event.type === 'auth.domain.default_granted'
+  );
+  assert.equal(defaultGranted, undefined);
+});
+
 test('tenant entry with multiple options requires selection and persists active tenant in session', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -473,6 +570,51 @@ test('tenant entry with single option binds active tenant directly', async () =>
   assert.equal(login.entry_domain, 'tenant');
   assert.equal(login.tenant_selection_required, false);
   assert.equal(login.active_tenant_id, 'tenant-single');
+});
+
+test('tenant entry accepts enabled tenant membership in in-memory auth store', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-enabled-user',
+        phone: '13810000022',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        tenants: [{
+          tenantId: 'tenant-enabled',
+          tenantName: 'Enabled Tenant',
+          status: 'enabled',
+          permission: {
+            scopeLabel: '组织权限快照 Enabled',
+            canViewMemberAdmin: true,
+            canOperateMemberAdmin: false,
+            canViewBilling: false,
+            canOperateBilling: false
+          }
+        }]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-enabled',
+    phone: '13810000022',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  assert.equal(login.entry_domain, 'tenant');
+  assert.equal(login.tenant_selection_required, false);
+  assert.equal(login.active_tenant_id, 'tenant-enabled');
+  assert.equal(login.tenant_options.length, 1);
+  assert.deepEqual(login.tenant_permission_context, {
+    scope_label: '组织权限快照 Enabled',
+    can_view_member_admin: true,
+    can_operate_member_admin: false,
+    can_view_billing: false,
+    can_operate_billing: false
+  });
 });
 
 test('tenant entry is rejected when tenant permission context is missing', async () => {
@@ -1270,6 +1412,514 @@ test('authorizeRoute session-scope succeeds without loading tenant permission co
   assert.equal(result.session_id, login.session_id);
   assert.equal(result.user_id, 'session-scope-user');
   assert.equal(result.tenant_permission_context, null);
+});
+
+test('authorizeRoute returns AUTH-403-NO-DOMAIN for platform scoped route in tenant entry', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-tenant-entry-user',
+        phone: '13830000055',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+        ],
+        platformPermission: {
+          scopeLabel: '平台权限快照',
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: true,
+          canOperateBilling: true
+        }
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-tenant-entry-login',
+    phone: '13830000055',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-no-domain',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('authorizeRoute is fail-closed for platform scope when platform role facts are absent', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-missing-snapshot-user',
+        phone: '13830000057',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-missing-snapshot-login',
+    phone: '13830000057',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-missing-snapshot',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+
+  const forbidden = service._internals.auditTrail.find(
+    (event) =>
+      event.type === 'auth.route.forbidden'
+      && event.detail === 'permission denied: platform.member_admin.view'
+  );
+  assert.ok(forbidden);
+  assert.equal(forbidden.permission_code, 'platform.member_admin.view');
+});
+
+test('authorizeRoute clears stale platform snapshot when role facts are empty', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-stale-snapshot-user',
+        phone: '13830000058',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformPermission: {
+          scopeLabel: '平台权限快照（历史）',
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-stale-snapshot-login',
+    phone: '13830000058',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-stale-snapshot',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+
+  const forbidden = service._internals.auditTrail.find(
+    (event) =>
+      event.type === 'auth.route.forbidden'
+      && event.permission_code === 'platform.member_admin.view'
+      && event.detail === 'permission denied: platform.member_admin.view'
+  );
+  assert.ok(forbidden);
+});
+
+test('authorizeRoute fails closed with 503 when platform snapshot sync reports db-deadlock exhaustion', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-deadlock-user',
+        phone: '13830000060',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformPermission: {
+          scopeLabel: '平台权限快照',
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: true,
+          canOperateBilling: true
+        }
+      }
+    ]
+  });
+
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
+    synced: false,
+    reason: 'db-deadlock',
+    permission: null
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-deadlock-login',
+    phone: '13830000060',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-deadlock',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions?.degradation_reason, 'db-deadlock');
+      return true;
+    }
+  );
+
+  const degraded = service._internals.auditTrail.find(
+    (event) =>
+      event.type === 'auth.platform.snapshot.degraded'
+      && event.permission_code === 'platform.member_admin.view'
+      && event.degradation_reason === 'db-deadlock'
+  );
+  assert.ok(degraded);
+});
+
+test('authorizeRoute fails closed with 503 when platform snapshot sync remains concurrent after retry', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-concurrent-user',
+        phone: '13830000061',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformPermission: {
+          scopeLabel: '平台权限快照',
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      }
+    ]
+  });
+
+  let syncCallCount = 0;
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => {
+    syncCallCount += 1;
+    return {
+      synced: false,
+      reason: 'concurrent-role-facts-update',
+      permission: null
+    };
+  };
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-concurrent-login',
+    phone: '13830000061',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-concurrent',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions?.degradation_reason, 'concurrent-role-facts-update');
+      return true;
+    }
+  );
+  assert.equal(syncCallCount, 2);
+
+  const degraded = service._internals.auditTrail.find(
+    (event) =>
+      event.type === 'auth.platform.snapshot.degraded'
+      && event.permission_code === 'platform.member_admin.view'
+      && event.degradation_reason === 'concurrent-role-facts-update'
+  );
+  assert.ok(degraded);
+});
+
+test('authorizeRoute fails closed with 503 when platform snapshot sync returns unknown reason', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-unknown-sync-user',
+        phone: '13830000062',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformPermission: {
+          scopeLabel: '平台权限快照',
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: true,
+          canOperateBilling: true
+        }
+      }
+    ]
+  });
+
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
+    synced: false,
+    reason: 'unexpected-sync-state',
+    permission: null
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-unknown-sync-login',
+    phone: '13830000062',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-unknown-sync',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions?.degradation_reason, 'unexpected-sync-state');
+      return true;
+    }
+  );
+
+  const degraded = service._internals.auditTrail.find(
+    (event) =>
+      event.type === 'auth.platform.snapshot.degraded'
+      && event.permission_code === 'platform.member_admin.view'
+      && event.degradation_reason === 'unexpected-sync-state'
+  );
+  assert.ok(degraded);
+});
+
+test('authorizeRoute fails closed with 503 when platform snapshot sync reason is empty', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-empty-sync-user',
+        phone: '13830000063',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformPermission: {
+          scopeLabel: '平台权限快照',
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: true,
+          canOperateBilling: true
+        }
+      }
+    ]
+  });
+
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
+    synced: false,
+    reason: '   ',
+    permission: null
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-empty-sync-login',
+    phone: '13830000063',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-empty-sync',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions?.degradation_reason, 'unknown');
+      return true;
+    }
+  );
+
+  const degraded = service._internals.auditTrail.find(
+    (event) =>
+      event.type === 'auth.platform.snapshot.degraded'
+      && event.permission_code === 'platform.member_admin.view'
+      && event.degradation_reason === 'unknown'
+  );
+  assert.ok(degraded);
+});
+
+test('authorizeRoute uses platform role union and ignores explicit deny flags', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-union-user',
+        phone: '13830000056',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-view',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          },
+          {
+            roleId: 'platform-operate',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: true,
+              canViewBilling: true,
+              canOperateBilling: false,
+              denyMemberAdminOperate: true
+            }
+          },
+          {
+            roleId: 'platform-disabled',
+            status: 'disabled',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-union-login',
+    phone: '13830000056',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  const result = await service.authorizeRoute({
+    requestId: 'req-route-authz-platform-union',
+    accessToken: login.access_token,
+    permissionCode: 'platform.member_admin.operate',
+    scope: 'platform'
+  });
+
+  assert.equal(result.session_id, login.session_id);
+  assert.equal(result.user_id, 'route-authz-platform-union-user');
+});
+
+test('authorizeRoute deduplicates duplicate platform role_id facts using latest payload', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-platform-duplicate-role-user',
+        phone: '13830000059',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-dup',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          },
+          {
+            roleId: 'platform-dup',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-duplicate-role-login',
+    phone: '13830000059',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-platform-duplicate-role',
+        accessToken: login.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
 });
 
 test('extractBearerToken accepts case-insensitive Authorization scheme', () => {

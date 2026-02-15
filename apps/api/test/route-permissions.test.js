@@ -51,6 +51,18 @@ test('tenant protected auth routes expose explicit permission declarations', () 
   assert.equal(memberAdminProbe.permission_code, 'tenant.member_admin.operate');
 });
 
+test('platform protected auth route exposes explicit permission declaration', () => {
+  const platformMemberAdminProbe = findRouteDefinition({
+    method: 'GET',
+    path: '/auth/platform/member-admin/probe'
+  });
+
+  assert.ok(platformMemberAdminProbe);
+  assert.equal(platformMemberAdminProbe.access, 'protected');
+  assert.equal(platformMemberAdminProbe.scope, 'platform');
+  assert.equal(platformMemberAdminProbe.permission_code, 'platform.member_admin.view');
+});
+
 test('protected routes are fail-closed when declaration is missing', () => {
   const result = validateRoutePermissionDeclarations([
     {
