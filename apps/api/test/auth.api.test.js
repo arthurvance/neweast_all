@@ -70,6 +70,15 @@ const decodeJwtPayload = (token) => {
   return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
 };
 
+const assertSamePayloadWithFreshRequestId = (actualPayload, expectedPayload) => {
+  assert.ok(actualPayload.request_id);
+  assert.ok(expectedPayload.request_id);
+  assert.notEqual(actualPayload.request_id, expectedPayload.request_id);
+  const { request_id: _actualRequestId, ...actualWithoutRequestId } = actualPayload;
+  const { request_id: _expectedRequestId, ...expectedWithoutRequestId } = expectedPayload;
+  assert.deepEqual(actualWithoutRequestId, expectedWithoutRequestId);
+};
+
 const callRoute = async ({ pathname, method = 'GET', body = {}, headers = {} }, context) => {
   const route = await handleApiRoute(
     {
@@ -143,6 +152,7 @@ test('auth login failure returns standardized problem details', async () => {
   assert.equal(res.body.title, 'Unauthorized');
   assert.equal(res.body.error_code, 'AUTH-401-LOGIN-FAILED');
   assert.equal(res.body.detail, '手机号或密码错误');
+  assert.equal(res.body.retryable, false);
 });
 
 test('refresh rotation + replay handling via API', async () => {
@@ -436,6 +446,231 @@ test('platform role-facts replace converges session and invalidates previous acc
     Number(reloginPayload.sv) > Number(loginPayload.sv),
     'new access token should carry latest session version after role-facts convergence'
   );
+});
+
+test('platform role-facts replace replays the same Idempotency-Key without duplicating side effects', async () => {
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'user-platform-role-admin-idempotency-replay',
+          phone: '13800000041',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        },
+        {
+          id: 'user-platform-role-target-idempotency-replay',
+          phone: '13800000042',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: []
+        }
+      ]
+    }),
+    dependencyProbe
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13800000041',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+
+  const idempotencyKey = 'idem-platform-role-facts-001';
+  const requestBody = {
+    user_id: 'user-platform-role-target-idempotency-replay',
+    roles: [
+      {
+        role_id: 'platform-member-admin-target',
+        status: 'active',
+        permission: {
+          can_view_member_admin: true,
+          can_operate_member_admin: false,
+          can_view_billing: false,
+          can_operate_billing: false
+        }
+      }
+    ]
+  };
+
+  const first = await callRoute(
+    {
+      pathname: '/auth/platform/role-facts/replace',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: requestBody
+    },
+    context
+  );
+  assert.equal(first.status, 200);
+
+  const replay = await callRoute(
+    {
+      pathname: '/auth/platform/role-facts/replace',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: requestBody
+    },
+    context
+  );
+  assert.equal(replay.status, 200);
+  assertSamePayloadWithFreshRequestId(replay.body, first.body);
+
+  const updateEvents = context.authService._internals.auditTrail.filter(
+    (event) => event.type === 'auth.platform_role_facts.updated'
+  );
+  assert.equal(updateEvents.length, 1);
+  const idempotencyHitEvents = context.authService._internals.auditTrail.filter(
+    (event) => event.type === 'auth.idempotency.hit'
+  );
+  assert.ok(idempotencyHitEvents.length >= 1);
+});
+
+test('platform role-facts replace rejects payload drift for reused Idempotency-Key', async () => {
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'user-platform-role-admin-idempotency-conflict',
+          phone: '13800000043',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        },
+        {
+          id: 'user-platform-role-target-idempotency-conflict',
+          phone: '13800000044',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-target-old',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ]
+    }),
+    dependencyProbe
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13800000043',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+
+  const idempotencyKey = 'idem-platform-role-facts-002';
+  const first = await callRoute(
+    {
+      pathname: '/auth/platform/role-facts/replace',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        user_id: 'user-platform-role-target-idempotency-conflict',
+        roles: []
+      }
+    },
+    context
+  );
+  assert.equal(first.status, 200);
+
+  const payloadDrift = await callRoute(
+    {
+      pathname: '/auth/platform/role-facts/replace',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        user_id: 'user-platform-role-target-idempotency-conflict',
+        roles: [
+          {
+            role_id: 'platform-member-admin-target-new',
+            status: 'active',
+            permission: {
+              can_view_member_admin: true,
+              can_operate_member_admin: true,
+              can_view_billing: false,
+              can_operate_billing: false
+            }
+          }
+        ]
+      }
+    },
+    context
+  );
+  assert.equal(payloadDrift.status, 409);
+  assert.equal(payloadDrift.body.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(payloadDrift.body.retryable, false);
+
+  const updateEvents = context.authService._internals.auditTrail.filter(
+    (event) => event.type === 'auth.platform_role_facts.updated'
+  );
+  assert.equal(updateEvents.length, 1);
+  const conflictEvents = context.authService._internals.auditTrail.filter(
+    (event) => event.type === 'auth.idempotency.conflict'
+  );
+  assert.ok(conflictEvents.length >= 1);
 });
 
 test('platform role-facts replace rejects unknown user id with AUTH-400-INVALID-PAYLOAD', async () => {
@@ -1452,6 +1687,8 @@ test('platform role-facts replace maps degraded sync reason to AUTH-503-PLATFORM
 
   assert.equal(replaced.status, 503);
   assert.equal(replaced.body.error_code, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+  assert.equal(replaced.body.retryable, true);
+  assert.equal(replaced.body.degradation_reason, 'db-deadlock');
 });
 
 test('platform member-admin provision-user endpoint creates user and rejects duplicate relationship requests', async () => {
@@ -2528,4 +2765,653 @@ test('platform member-admin provision-user endpoint is fail-closed when default 
   );
   assert.equal(provisionFailed.status, 503);
   assert.equal(provisionFailed.body.error_code, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
+  assert.equal(provisionFailed.body.retryable, true);
+});
+
+test('platform member-admin provision-user replays the same Idempotency-Key with stable semantics', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-idempotency-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-idempotency',
+          phone: '13846660090',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660090',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const idempotencyKey = 'idem-platform-provision-001';
+  const firstProvision = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660091'
+      }
+    },
+    context
+  );
+  assert.equal(firstProvision.status, 200);
+  assert.equal(firstProvision.body.created_user, true);
+
+  const replayProvision = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660091'
+      }
+    },
+    context
+  );
+  assert.equal(replayProvision.status, 200);
+  assertSamePayloadWithFreshRequestId(replayProvision.body, firstProvision.body);
+
+  const idempotencyHitEvents = context.authService._internals.auditTrail.filter(
+    (event) => event.type === 'auth.idempotency.hit'
+  );
+  assert.ok(idempotencyHitEvents.length >= 1);
+});
+
+test('platform member-admin provision-user keeps idempotency semantics after refresh token rotation', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-idempotency-refresh';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-idempotency-refresh',
+          phone: '13846660097',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660097',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const idempotencyKey = 'idem-platform-provision-004';
+  const firstProvision = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660098'
+      }
+    },
+    context
+  );
+  assert.equal(firstProvision.status, 200);
+
+  const refreshed = await callRoute(
+    {
+      pathname: '/auth/refresh',
+      method: 'POST',
+      body: {
+        refresh_token: operatorLogin.body.refresh_token
+      }
+    },
+    context
+  );
+  assert.equal(refreshed.status, 200);
+
+  const replayAfterRefresh = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${refreshed.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660098'
+      }
+    },
+    context
+  );
+  assert.equal(replayAfterRefresh.status, 200);
+  assertSamePayloadWithFreshRequestId(replayAfterRefresh.body, firstProvision.body);
+});
+
+test('platform member-admin provision-user rejects payload drift when Idempotency-Key is reused', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-idempotency-conflict';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-idempotency-conflict',
+          phone: '13846660092',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660092',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const idempotencyKey = 'idem-platform-provision-002';
+  const firstProvision = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660093'
+      }
+    },
+    context
+  );
+  assert.equal(firstProvision.status, 200);
+
+  const mismatchedReplay = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660094'
+      }
+    },
+    context
+  );
+  assert.equal(mismatchedReplay.status, 409);
+  assert.equal(mismatchedReplay.body.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(mismatchedReplay.body.retryable, false);
+
+  const unexpectedUser = await context.authService._internals.authStore.findUserByPhone(
+    '13846660094'
+  );
+  assert.equal(unexpectedUser, null);
+
+  const idempotencyConflictEvents = context.authService._internals.auditTrail.filter(
+    (event) => event.type === 'auth.idempotency.conflict'
+  );
+  assert.ok(idempotencyConflictEvents.length >= 1);
+});
+
+test('platform member-admin provision-user deduplicates concurrent replays with the same Idempotency-Key', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-idempotency-concurrent';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-idempotency-concurrent',
+          phone: '13846660095',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660095',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const idempotencyKey = 'idem-platform-provision-003';
+  const request = () =>
+    callRoute(
+      {
+        pathname: '/auth/platform/member-admin/provision-user',
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${operatorLogin.body.access_token}`,
+          'idempotency-key': idempotencyKey
+        },
+        body: {
+          phone: '13846660096'
+        }
+      },
+      context
+    );
+
+  const [first, second] = await Promise.all([request(), request()]);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assertSamePayloadWithFreshRequestId(second.body, first.body);
+});
+
+test('tenant member-admin provision-user treats equivalent payloads with different JSON key order as the same idempotent request', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-idempotency-key-order';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-idempotency-order',
+          phone: '13846660110',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-idempotency-key-order',
+              tenantName: 'Tenant Idempotency Key Order',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660110',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const idempotencyKey = 'idem-tenant-provision-order-001';
+  const firstProvision = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660111',
+        tenant_name: 'Tenant Idempotency Key Order'
+      }
+    },
+    context
+  );
+  assert.equal(firstProvision.status, 200);
+
+  const replayWithReorderedPayload = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        tenant_name: 'Tenant Idempotency Key Order',
+        phone: '13846660111'
+      }
+    },
+    context
+  );
+  assert.equal(replayWithReorderedPayload.status, 200);
+  assertSamePayloadWithFreshRequestId(
+    replayWithReorderedPayload.body,
+    firstProvision.body
+  );
+});
+
+test('platform member-admin provision-user rejects invalid Idempotency-Key header values', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-idempotency-invalid';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-idempotency-invalid',
+          phone: '13846660120',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660120',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const invalidIdempotencyKey = 'x'.repeat(129);
+  const invalidHeaderResponse = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': invalidIdempotencyKey
+      },
+      body: {
+        phone: '13846660121'
+      }
+    },
+    context
+  );
+  assert.equal(invalidHeaderResponse.status, 400);
+  assert.equal(invalidHeaderResponse.body.error_code, 'AUTH-400-IDEMPOTENCY-KEY-INVALID');
+  assert.equal(invalidHeaderResponse.body.retryable, false);
+
+  const unexpectedUser = await context.authService._internals.authStore.findUserByPhone(
+    '13846660121'
+  );
+  assert.equal(unexpectedUser, null);
+});
+
+test('tenant member-admin provision-user applies idempotency replay and payload drift conflict semantics', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-idempotency';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-idempotency',
+          phone: '13846660100',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-idempotency-a',
+              tenantName: 'Tenant Idempotency A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660100',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+  assert.equal(operatorLogin.body.active_tenant_id, 'tenant-idempotency-a');
+
+  const idempotencyKey = 'idem-tenant-provision-001';
+  const firstProvision = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660101',
+        tenant_name: 'Tenant Idempotency A'
+      }
+    },
+    context
+  );
+  assert.equal(firstProvision.status, 200);
+
+  const replayProvision = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660101',
+        tenant_name: 'Tenant Idempotency A'
+      }
+    },
+    context
+  );
+  assert.equal(replayProvision.status, 200);
+  assertSamePayloadWithFreshRequestId(replayProvision.body, firstProvision.body);
+
+  const payloadDrift = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`,
+        'idempotency-key': idempotencyKey
+      },
+      body: {
+        phone: '13846660102',
+        tenant_name: 'Tenant Idempotency A'
+      }
+    },
+    context
+  );
+  assert.equal(payloadDrift.status, 409);
+  assert.equal(payloadDrift.body.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(payloadDrift.body.retryable, false);
+
+  const unexpectedUser = await context.authService._internals.authStore.findUserByPhone(
+    '13846660102'
+  );
+  assert.equal(unexpectedUser, null);
 });

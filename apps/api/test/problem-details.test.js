@@ -13,3 +13,24 @@ test('buildProblemDetails includes request_id placeholder', () => {
   assert.equal(problem.title, 'Bad Request');
   assert.equal(problem.request_id, 'request_id_unset');
 });
+
+test('buildProblemDetails includes retryable flag with default false and explicit override', () => {
+  const defaultProblem = buildProblemDetails({
+    title: 'Unauthorized',
+    status: 401,
+    detail: 'invalid access token'
+  });
+  assert.equal(defaultProblem.retryable, false);
+
+  const retryableProblem = buildProblemDetails({
+    title: 'Service Unavailable',
+    status: 503,
+    detail: 'temporary degraded',
+    extensions: {
+      retryable: true,
+      degradation_reason: 'db-deadlock'
+    }
+  });
+  assert.equal(retryableProblem.retryable, true);
+  assert.equal(retryableProblem.degradation_reason, 'db-deadlock');
+});

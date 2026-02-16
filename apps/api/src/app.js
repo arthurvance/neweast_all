@@ -26,6 +26,9 @@ const { createMySqlAuthStore } = require('./modules/auth/auth.store.mysql');
 const { createRedisOtpStore } = require('./modules/auth/auth.otp.store.redis');
 const { createRedisRateLimitStore } = require('./modules/auth/auth.rate-limit.redis');
 const {
+  createRedisAuthIdempotencyStore
+} = require('./modules/auth/auth.idempotency.redis');
+const {
   ROUTE_DEFINITIONS,
   toRouteDefinitionsSnapshot,
   ensureRoutePermissionDeclarationsOrThrow
@@ -199,6 +202,7 @@ const createApiApp = async (config, options = {}) => {
   const requirePersistentAuthStore = options.requirePersistentAuthStore === true;
   const connectDb = options.connectMySql || connectMySql;
   const createAuthServiceFactory = options.createAuthService || createAuthService;
+  let authIdempotencyStore = options.authIdempotencyStore || null;
   const sensitiveConfigProvider = createEnvSensitiveConfigProvider(config);
   const createRedisClient =
     options.createRedisClient ||
@@ -268,6 +272,11 @@ const createApiApp = async (config, options = {}) => {
           await redisClient.connect();
           otpStore = createRedisOtpStore({ redis: redisClient });
           rateLimitStore = createRedisRateLimitStore({ redis: redisClient });
+          if (!authIdempotencyStore) {
+            authIdempotencyStore = createRedisAuthIdempotencyStore({
+              redis: redisClient
+            });
+          }
         }
 
         authService = createAuthServiceFactory({
@@ -293,7 +302,8 @@ const createApiApp = async (config, options = {}) => {
 
   const handlers = createRouteHandlers(config, {
     dependencyProbe,
-    authService
+    authService,
+    authIdempotencyStore
   });
   ensureAuthorizeRouteCapabilityOrThrow({
     routeDefinitions,

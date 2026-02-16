@@ -210,6 +210,7 @@ const errors = {
       detail: '请求过于频繁，请稍后重试',
       errorCode: 'AUTH-429-RATE-LIMITED',
       extensions: {
+        retryable: true,
         retry_after_seconds: remainingSeconds,
         rate_limit_action: action,
         rate_limit_limit: limit,
@@ -248,6 +249,7 @@ const errors = {
       detail: '平台权限同步暂时不可用，请稍后重试',
       errorCode: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
       extensions: {
+        retryable: true,
         degradation_reason: String(reason || 'unknown')
       }
     }),
@@ -257,7 +259,11 @@ const errors = {
       status: 503,
       title: 'Service Unavailable',
       detail: '默认密码配置不可用，请稍后重试',
-      errorCode: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE'
+      errorCode: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+      extensions: {
+        retryable: true,
+        degradation_reason: 'default-password-config-unavailable'
+      }
     }),
 
   provisionConflict: () =>
@@ -815,6 +821,53 @@ const createAuthService = (options = {}) => {
 
     auditTrail.push(event);
     log('info', 'Auth audit event', event);
+  };
+
+  const recordIdempotencyEvent = async ({
+    requestId,
+    outcome = 'hit',
+    routeKey = '',
+    idempotencyKey = '',
+    authorizationContext = null,
+    metadata = {}
+  } = {}) => {
+    const normalizedOutcome = String(outcome || 'hit').trim().toLowerCase() === 'conflict'
+      ? 'conflict'
+      : 'hit';
+    const eventType = normalizedOutcome === 'conflict'
+      ? 'auth.idempotency.conflict'
+      : 'auth.idempotency.hit';
+    const resolvedUserId = String(
+      authorizationContext?.user_id
+      || authorizationContext?.user?.id
+      || 'unknown'
+    ).trim() || 'unknown';
+    const resolvedSessionId = String(
+      authorizationContext?.session_id
+      || authorizationContext?.session?.sessionId
+      || authorizationContext?.session?.session_id
+      || 'unknown'
+    ).trim() || 'unknown';
+    const idempotencyKeyFingerprint = createHash('sha256')
+      .update(String(idempotencyKey || '').trim())
+      .digest('hex');
+
+    addAuditEvent({
+      type: eventType,
+      requestId,
+      userId: resolvedUserId,
+      sessionId: resolvedSessionId,
+      detail:
+        normalizedOutcome === 'conflict'
+          ? 'idempotency key reused with different request payload'
+          : 'idempotency replay served from prior result',
+      metadata: {
+        route_key: String(routeKey || ''),
+        idempotency_key_fingerprint: idempotencyKeyFingerprint,
+        idempotency_outcome: normalizedOutcome,
+        ...metadata
+      }
+    });
   };
 
   const addAccessInvalidAuditEvent = ({
@@ -3344,6 +3397,7 @@ const createAuthService = (options = {}) => {
     provisionPlatformUserByPhone,
     provisionTenantUserByPhone,
     replacePlatformRolesAndSyncSnapshot,
+    recordIdempotencyEvent,
     // Test support
     _internals: {
       auditTrail,

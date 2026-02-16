@@ -1,5 +1,5 @@
 const http = require('node:http');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const { readConfig } = require('./config/env');
 const { createRouteHandlers } = require('./http-routes');
 const { checkDependencies } = require('./infrastructure/connectivity');
@@ -49,6 +49,17 @@ const parseRequestPath = (inputPath) => {
 };
 
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+const DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 30 * 1000;
+const DEFAULT_IDEMPOTENCY_WAIT_TIMEOUT_MS = 5000;
+const DEFAULT_IDEMPOTENCY_WAIT_POLL_INTERVAL_MS = 40;
+const DEFAULT_IN_MEMORY_IDEMPOTENCY_MAX_ENTRIES = 5000;
+const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
+  'POST /auth/tenant/member-admin/provision-user',
+  'POST /auth/platform/member-admin/provision-user',
+  'POST /auth/platform/role-facts/replace'
+]);
 
 const resolveJsonBodyLimitBytes = (value) => {
   const parsed = Number(value);
@@ -59,7 +70,7 @@ const resolveJsonBodyLimitBytes = (value) => {
 };
 
 const CORS_WILDCARD_ORIGIN = '*';
-const CORS_ALLOW_HEADERS = 'Authorization, Content-Type, X-Request-Id';
+const CORS_ALLOW_HEADERS = 'Authorization, Content-Type, X-Request-Id, Idempotency-Key';
 const CORS_MAX_AGE_SECONDS = '600';
 const DEFAULT_CORS_ALLOWED_ORIGINS = Object.freeze([
   'http://localhost:4173',
@@ -242,6 +253,397 @@ const asPositiveInteger = (value) => {
   return Math.ceil(parsed);
 };
 
+const readHeaderValue = (headers = {}, headerName) => {
+  const normalizedHeaderName = String(headerName || '').trim().toLowerCase();
+  if (!normalizedHeaderName) {
+    return { present: false, value: '', values: [] };
+  }
+  const collectedValues = [];
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (String(key || '').trim().toLowerCase() !== normalizedHeaderName) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectedValues.push(String(item ?? ''));
+      }
+    } else {
+      collectedValues.push(String(value ?? ''));
+    }
+  }
+  if (collectedValues.length === 0) {
+    return { present: false, value: '', values: [] };
+  }
+  return { present: true, value: collectedValues[0], values: collectedValues };
+};
+
+const normalizeIdempotencyKey = (headers = {}) => {
+  const rawIdempotencyKey = readHeaderValue(headers, 'idempotency-key');
+  const normalizedValues = rawIdempotencyKey.values
+    .map((value) => String(value || '').trim())
+    .filter((value) => value.length > 0);
+  const hasAmbiguousMultiValueHeader = rawIdempotencyKey.values.length > 1;
+  const hasAmbiguousCommaSeparatedValue = normalizedValues.some((value) =>
+    value.includes(',')
+  );
+  return {
+    present: rawIdempotencyKey.present,
+    invalid: hasAmbiguousMultiValueHeader || hasAmbiguousCommaSeparatedValue,
+    value: normalizedValues.length === 1 ? normalizedValues[0] : ''
+  };
+};
+
+const hashFingerprint = (value) =>
+  createHash('sha256').update(String(value || '')).digest('hex');
+
+const canonicalizeForHash = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForHash(item));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const normalized = {};
+  for (const key of Object.keys(value).sort()) {
+    const normalizedValue = canonicalizeForHash(value[key]);
+    if (normalizedValue === undefined) {
+      continue;
+    }
+    normalized[key] = normalizedValue;
+  }
+  return normalized;
+};
+
+const toIdempotencyRequestHash = (body = {}) =>
+  hashFingerprint(JSON.stringify(canonicalizeForHash(body || {})));
+
+const resolveIdempotencyActorScope = ({
+  authorizationContext = null,
+  authorization = ''
+} = {}) => {
+  const resolvedSessionId = String(
+    authorizationContext?.session_id
+    || authorizationContext?.session?.sessionId
+    || authorizationContext?.session?.session_id
+    || ''
+  ).trim();
+  const resolvedUserId = String(
+    authorizationContext?.user_id
+    || authorizationContext?.user?.id
+    || ''
+  ).trim();
+  const resolvedTenantId = String(
+    authorizationContext?.active_tenant_id
+    || authorizationContext?.session_context?.active_tenant_id
+    || ''
+  ).trim();
+  if (resolvedSessionId) {
+    return `session:${resolvedSessionId}:tenant:${resolvedTenantId || '-'}`;
+  }
+  if (resolvedUserId) {
+    return `user:${resolvedUserId}:tenant:${resolvedTenantId || '-'}`;
+  }
+  return `authorization:${String(authorization || '').trim()}`;
+};
+
+const toIdempotencyScopeKey = ({
+  routeKey,
+  idempotencyKey,
+  actorScope
+}) =>
+  `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}:${hashFingerprint(idempotencyKey || '')}`;
+
+const toIdempotencyScopeWindowKey = ({
+  routeKey,
+  actorScope
+}) =>
+  `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}`;
+
+const cloneIdempotencyEntryResponse = (response = {}) => ({
+  status: Number(response.status),
+  headers:
+    response.headers && typeof response.headers === 'object' && !Array.isArray(response.headers)
+      ? { ...response.headers }
+      : {},
+  body: String(response.body ?? '')
+});
+
+const cloneIdempotencyEntry = (entry = null) => {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null;
+  }
+  if (entry.state === 'pending') {
+    return {
+      state: 'pending',
+      requestHash: String(entry.requestHash || ''),
+      pendingToken: String(entry.pendingToken || '')
+    };
+  }
+  if (entry.state === 'resolved') {
+    return {
+      state: 'resolved',
+      requestHash: String(entry.requestHash || ''),
+      response: cloneIdempotencyEntryResponse(entry.response)
+    };
+  }
+  return null;
+};
+
+const createInMemoryAuthIdempotencyStore = ({
+  replayTtlMs = DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS,
+  pendingTtlMs = DEFAULT_IDEMPOTENCY_PENDING_TTL_MS,
+  maxEntries = DEFAULT_IN_MEMORY_IDEMPOTENCY_MAX_ENTRIES
+} = {}) => {
+  const resolvedReplayTtlMs = Math.max(1000, Number(replayTtlMs) || DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS);
+  const resolvedPendingTtlMs = Math.max(
+    1000,
+    Math.min(resolvedReplayTtlMs, Number(pendingTtlMs) || DEFAULT_IDEMPOTENCY_PENDING_TTL_MS)
+  );
+  const resolvedMaxEntries = Math.max(1, Number(maxEntries) || DEFAULT_IN_MEMORY_IDEMPOTENCY_MAX_ENTRIES);
+  const entries = new Map();
+
+  const pruneExpiredEntries = (nowMs) => {
+    for (const [scopeKey, entry] of entries.entries()) {
+      if (Number(entry?.expiresAt || 0) <= nowMs) {
+        entries.delete(scopeKey);
+      }
+    }
+  };
+
+  const evictOldestEntries = () => {
+    if (entries.size < resolvedMaxEntries) {
+      return;
+    }
+    const overBy = entries.size - resolvedMaxEntries + 1;
+    const victims = [...entries.entries()]
+      .sort((left, right) => Number(left[1]?.updatedAt || 0) - Number(right[1]?.updatedAt || 0))
+      .slice(0, Math.max(1, overBy));
+    for (const [victimScopeKey] of victims) {
+      entries.delete(victimScopeKey);
+    }
+  };
+
+  return {
+    claimOrRead: async ({
+      scopeKey,
+      requestHash,
+      pendingToken,
+      nowMs = Date.now()
+    }) => {
+      pruneExpiredEntries(nowMs);
+      const existing = entries.get(scopeKey);
+      if (existing) {
+        existing.updatedAt = nowMs;
+        return { action: 'existing', entry: cloneIdempotencyEntry(existing) };
+      }
+
+      evictOldestEntries();
+      entries.set(scopeKey, {
+        state: 'pending',
+        requestHash: String(requestHash || ''),
+        pendingToken: String(pendingToken || ''),
+        expiresAt: nowMs + resolvedPendingTtlMs,
+        updatedAt: nowMs
+      });
+      return { action: 'claimed' };
+    },
+
+    read: async ({ scopeKey, nowMs = Date.now() }) => {
+      pruneExpiredEntries(nowMs);
+      const existing = entries.get(scopeKey);
+      if (!existing) {
+        return null;
+      }
+      existing.updatedAt = nowMs;
+      return cloneIdempotencyEntry(existing);
+    },
+
+    resolve: async ({
+      scopeKey,
+      pendingToken,
+      requestHash,
+      response,
+      nowMs = Date.now()
+    }) => {
+      pruneExpiredEntries(nowMs);
+      const existing = entries.get(scopeKey);
+      if (!existing) {
+        return false;
+      }
+      if (
+        existing.state !== 'pending'
+        || existing.pendingToken !== String(pendingToken || '')
+        || existing.requestHash !== String(requestHash || '')
+      ) {
+        return false;
+      }
+      entries.set(scopeKey, {
+        state: 'resolved',
+        requestHash: String(requestHash || ''),
+        response: cloneIdempotencyEntryResponse(response),
+        expiresAt: nowMs + resolvedReplayTtlMs,
+        updatedAt: nowMs
+      });
+      return true;
+    },
+
+    releasePending: async ({
+      scopeKey,
+      pendingToken,
+      requestHash
+    }) => {
+      const existing = entries.get(scopeKey);
+      if (!existing) {
+        return true;
+      }
+      if (
+        existing.state === 'pending'
+        && existing.pendingToken === String(pendingToken || '')
+        && existing.requestHash === String(requestHash || '')
+      ) {
+        entries.delete(scopeKey);
+        return true;
+      }
+      return false;
+    }
+  };
+};
+
+const DEFAULT_AUTH_IDEMPOTENCY_STORE = createInMemoryAuthIdempotencyStore();
+
+const cloneRouteResponse = (routeResponse = {}) => ({
+  status: Number(routeResponse.status),
+  headers: {
+    ...(routeResponse.headers || {})
+  },
+  body: String(routeResponse.body ?? '')
+});
+
+const withPatchedResponseRequestId = (routeResponse = {}, requestId = '') => {
+  const normalizedRequestId = String(requestId || '').trim();
+  const clonedResponse = cloneRouteResponse(routeResponse);
+  if (!normalizedRequestId || !clonedResponse.body) {
+    return clonedResponse;
+  }
+  const contentType = String(
+    clonedResponse.headers?.['content-type']
+    || clonedResponse.headers?.['Content-Type']
+    || ''
+  ).toLowerCase();
+  if (!contentType.includes('json')) {
+    return clonedResponse;
+  }
+  try {
+    const parsedBody = JSON.parse(clonedResponse.body);
+    if (
+      parsedBody
+      && typeof parsedBody === 'object'
+      && !Array.isArray(parsedBody)
+      && Object.prototype.hasOwnProperty.call(parsedBody, 'request_id')
+    ) {
+      parsedBody.request_id = normalizedRequestId;
+      clonedResponse.body = JSON.stringify(parsedBody);
+    }
+  } catch (_error) {
+  }
+  return clonedResponse;
+};
+
+const createIdempotencyConflictProblem = () =>
+  new AuthProblemError({
+    status: 409,
+    title: 'Conflict',
+    detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+    errorCode: 'AUTH-409-IDEMPOTENCY-CONFLICT'
+  });
+
+const createInvalidIdempotencyKeyProblem = () =>
+  new AuthProblemError({
+    status: 400,
+    title: 'Bad Request',
+    detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+    errorCode: 'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  });
+
+const createIdempotencyStoreUnavailableProblem = () =>
+  new AuthProblemError({
+    status: 503,
+    title: 'Service Unavailable',
+    detail: '幂等服务暂时不可用，请稍后重试',
+    errorCode: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+    extensions: {
+      retryable: true,
+      degradation_reason: 'idempotency-store-unavailable'
+    }
+  });
+
+const createIdempotencyPendingTimeoutProblem = () =>
+  new AuthProblemError({
+    status: 503,
+    title: 'Service Unavailable',
+    detail: '幂等请求处理中，请稍后重试',
+    errorCode: 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT',
+    extensions: {
+      retryable: true,
+      degradation_reason: 'idempotency-pending-timeout'
+    }
+  });
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForResolvedIdempotencyEntry = async ({
+  idempotencyStore,
+  scopeKey,
+  requestHash,
+  timeoutMs = DEFAULT_IDEMPOTENCY_WAIT_TIMEOUT_MS,
+  pollIntervalMs = DEFAULT_IDEMPOTENCY_WAIT_POLL_INTERVAL_MS
+}) => {
+  const resolvedTimeoutMs = Math.max(1, Number(timeoutMs) || DEFAULT_IDEMPOTENCY_WAIT_TIMEOUT_MS);
+  const resolvedPollIntervalMs = Math.max(
+    1,
+    Number(pollIntervalMs) || DEFAULT_IDEMPOTENCY_WAIT_POLL_INTERVAL_MS
+  );
+  const deadline = Date.now() + resolvedTimeoutMs;
+
+  while (Date.now() <= deadline) {
+    const existing = await idempotencyStore.read({ scopeKey });
+    if (!existing) {
+      return { state: 'missing' };
+    }
+    if (String(existing.requestHash || '') !== String(requestHash || '')) {
+      return { state: 'conflict' };
+    }
+    if (existing.state === 'resolved') {
+      return { state: 'resolved', entry: existing };
+    }
+    await sleep(resolvedPollIntervalMs);
+  }
+  return { state: 'timeout' };
+};
+
+const emitAuthIdempotencyAuditEvent = async ({
+  handlers,
+  requestId,
+  routeKey,
+  idempotencyKey,
+  outcome,
+  authorizationContext = null
+}) => {
+  if (typeof handlers?.recordAuthIdempotencyEvent !== 'function') {
+    return;
+  }
+  try {
+    await handlers.recordAuthIdempotencyEvent({
+      requestId,
+      routeKey,
+      idempotencyKey,
+      outcome,
+      authorizationContext
+    });
+  } catch (_error) {
+  }
+};
+
 const summarizeErrorForLog = (error) => {
   if (error instanceof Error) {
     return `${error.name}: ${error.message}`;
@@ -394,122 +796,318 @@ const createRouteTable = ({
   headers,
   body,
   getAuthorizationContext = () => null
-}) => ({
-  'GET /health': async () => {
-    const payload = await handlers.health(requestId);
-    return responseJson(payload.ok ? 200 : 503, payload);
-  },
-  'GET /openapi.json': async () => responseJson(200, handlers.openapi(requestId)),
-  'GET /auth/ping': async () => responseJson(200, handlers.authPing(requestId)),
-  'POST /auth/login': async () =>
-    runAuthRoute(() => handlers.authLogin(requestId, body || {}), requestId),
-  'POST /auth/otp/send': async () =>
-    runAuthRoute(() => handlers.authOtpSend(requestId, body || {}), requestId),
-  'POST /auth/otp/login': async () =>
-    runAuthRoute(() => handlers.authOtpLogin(requestId, body || {}), requestId),
-  'GET /auth/tenant/options': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authTenantOptions(
+}) => {
+  const idempotencyStore =
+    handlers?.authIdempotencyStore
+    && typeof handlers.authIdempotencyStore.claimOrRead === 'function'
+    && typeof handlers.authIdempotencyStore.read === 'function'
+    && typeof handlers.authIdempotencyStore.resolve === 'function'
+    && typeof handlers.authIdempotencyStore.releasePending === 'function'
+      ? handlers.authIdempotencyStore
+      : DEFAULT_AUTH_IDEMPOTENCY_STORE;
+
+  const executeIdempotentAuthRoute = async ({
+    routeKey,
+    execute
+  }) => {
+    if (!IDEMPOTENCY_PROTECTED_ROUTE_KEYS.has(routeKey)) {
+      return execute();
+    }
+    const normalizedIdempotencyKey = normalizeIdempotencyKey(headers);
+    if (normalizedIdempotencyKey.invalid) {
+      return authProblemResponse(createInvalidIdempotencyKeyProblem(), requestId);
+    }
+    if (!normalizedIdempotencyKey.present) {
+      return execute();
+    }
+    const idempotencyKey = normalizedIdempotencyKey.value;
+    if (
+      !idempotencyKey
+      || idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH
+    ) {
+      return authProblemResponse(createInvalidIdempotencyKeyProblem(), requestId);
+    }
+
+    const authorizationContext = getAuthorizationContext() || null;
+    const actorScope = resolveIdempotencyActorScope({
+      authorizationContext,
+      authorization: headers.authorization
+    });
+    const requestHash = toIdempotencyRequestHash(body || {});
+    const scopeKey = toIdempotencyScopeKey({
+      routeKey,
+      idempotencyKey,
+      actorScope
+    });
+    const scopeWindowKey = toIdempotencyScopeWindowKey({
+      routeKey,
+      actorScope
+    });
+    const maxAcquireAttempts = 2;
+
+    for (let attempt = 0; attempt < maxAcquireAttempts; attempt += 1) {
+      const pendingToken = randomUUID();
+      let claimResult;
+      try {
+        claimResult = await idempotencyStore.claimOrRead({
+          scopeKey,
+          scopeWindowKey,
+          requestHash,
+          pendingToken
+        });
+      } catch (_error) {
+        return authProblemResponse(createIdempotencyStoreUnavailableProblem(), requestId);
+      }
+
+      if (claimResult?.action === 'claimed') {
+        try {
+          const executedResponse = await execute();
+          const responseSnapshot = cloneRouteResponse(executedResponse);
+          const resolvedStatus = Number(responseSnapshot.status);
+          if (Number.isFinite(resolvedStatus) && resolvedStatus < 500) {
+            try {
+              await idempotencyStore.resolve({
+                scopeKey,
+                scopeWindowKey,
+                pendingToken,
+                requestHash,
+                response: responseSnapshot
+              });
+            } catch (_error) {
+            }
+          } else {
+            try {
+              await idempotencyStore.releasePending({
+                scopeKey,
+                scopeWindowKey,
+                pendingToken,
+                requestHash
+              });
+            } catch (_error) {
+            }
+          }
+          return cloneRouteResponse(responseSnapshot);
+        } catch (error) {
+          try {
+            await idempotencyStore.releasePending({
+              scopeKey,
+              scopeWindowKey,
+              pendingToken,
+              requestHash
+            });
+          } catch (_error) {
+          }
+          throw error;
+        }
+      }
+
+      if (claimResult?.action === 'retry') {
+        continue;
+      }
+
+      const existingEntry = claimResult?.entry;
+      if (!existingEntry) {
+        continue;
+      }
+
+      if (String(existingEntry.requestHash || '') !== String(requestHash || '')) {
+        await emitAuthIdempotencyAuditEvent({
+          handlers,
           requestId,
-          headers.authorization,
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'POST /auth/tenant/select': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authTenantSelect(
+          routeKey,
+          idempotencyKey,
+          outcome: 'conflict',
+          authorizationContext
+        });
+        return authProblemResponse(createIdempotencyConflictProblem(), requestId);
+      }
+
+      if (existingEntry.state === 'resolved') {
+        await emitAuthIdempotencyAuditEvent({
+          handlers,
           requestId,
-          headers.authorization,
-          body || {},
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'POST /auth/tenant/switch': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authTenantSwitch(
+          routeKey,
+          idempotencyKey,
+          outcome: 'hit',
+          authorizationContext
+        });
+        return withPatchedResponseRequestId(existingEntry.response, requestId);
+      }
+
+      if (existingEntry.state !== 'pending') {
+        continue;
+      }
+
+      let waitResult;
+      try {
+        waitResult = await waitForResolvedIdempotencyEntry({
+          idempotencyStore,
+          scopeKey,
+          requestHash
+        });
+      } catch (_error) {
+        return authProblemResponse(createIdempotencyStoreUnavailableProblem(), requestId);
+      }
+
+      if (waitResult.state === 'conflict') {
+        await emitAuthIdempotencyAuditEvent({
+          handlers,
           requestId,
-          headers.authorization,
-          body || {},
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'GET /auth/tenant/member-admin/probe': async () =>
-    runAuthRoute(
-      () => handlers.authTenantMemberAdminProbe(requestId, headers.authorization),
-      requestId
-    ),
-  'POST /auth/tenant/member-admin/provision-user': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authTenantMemberAdminProvisionUser(
+          routeKey,
+          idempotencyKey,
+          outcome: 'conflict',
+          authorizationContext
+        });
+        return authProblemResponse(createIdempotencyConflictProblem(), requestId);
+      }
+      if (waitResult.state === 'resolved') {
+        await emitAuthIdempotencyAuditEvent({
+          handlers,
           requestId,
-          headers.authorization,
-          body || {},
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'GET /auth/platform/member-admin/probe': async () =>
-    runAuthRoute(
-      () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
-      requestId
-    ),
-  'POST /auth/platform/member-admin/provision-user': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authPlatformMemberAdminProvisionUser(
-          requestId,
-          headers.authorization,
-          body || {},
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'POST /auth/refresh': async () =>
-    runAuthRoute(() => handlers.authRefresh(requestId, body || {}), requestId),
-  'POST /auth/logout': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authLogout(
-          requestId,
-          headers.authorization,
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'POST /auth/change-password': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authChangePassword(
-          requestId,
-          headers.authorization,
-          body || {},
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'POST /auth/platform/role-facts/replace': async () =>
-    runAuthRoute(
-      () =>
-        handlers.authReplacePlatformRoleFacts(
-          requestId,
-          headers.authorization,
-          body || {},
-          getAuthorizationContext()
-        ),
-      requestId
-    ),
-  'GET /smoke': async () => {
-    const payload = await handlers.smoke(requestId);
-    return responseJson(payload.ok ? 200 : 503, payload);
-  }
-});
+          routeKey,
+          idempotencyKey,
+          outcome: 'hit',
+          authorizationContext
+        });
+        return withPatchedResponseRequestId(waitResult.entry.response, requestId);
+      }
+      if (waitResult.state === 'timeout') {
+        return authProblemResponse(createIdempotencyPendingTimeoutProblem(), requestId);
+      }
+    }
+
+    return authProblemResponse(createIdempotencyPendingTimeoutProblem(), requestId);
+  };
+
+  return {
+    'GET /health': async () => {
+      const payload = await handlers.health(requestId);
+      return responseJson(payload.ok ? 200 : 503, payload);
+    },
+    'GET /openapi.json': async () => responseJson(200, handlers.openapi(requestId)),
+    'GET /auth/ping': async () => responseJson(200, handlers.authPing(requestId)),
+    'POST /auth/login': async () =>
+      runAuthRoute(() => handlers.authLogin(requestId, body || {}), requestId),
+    'POST /auth/otp/send': async () =>
+      runAuthRoute(() => handlers.authOtpSend(requestId, body || {}), requestId),
+    'POST /auth/otp/login': async () =>
+      runAuthRoute(() => handlers.authOtpLogin(requestId, body || {}), requestId),
+    'GET /auth/tenant/options': async () =>
+      runAuthRoute(
+        () =>
+          handlers.authTenantOptions(
+            requestId,
+            headers.authorization,
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    'POST /auth/tenant/select': async () =>
+      runAuthRoute(
+        () =>
+          handlers.authTenantSelect(
+            requestId,
+            headers.authorization,
+            body || {},
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    'POST /auth/tenant/switch': async () =>
+      runAuthRoute(
+        () =>
+          handlers.authTenantSwitch(
+            requestId,
+            headers.authorization,
+            body || {},
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    'GET /auth/tenant/member-admin/probe': async () =>
+      runAuthRoute(
+        () => handlers.authTenantMemberAdminProbe(requestId, headers.authorization),
+        requestId
+      ),
+    'POST /auth/tenant/member-admin/provision-user': async () =>
+      executeIdempotentAuthRoute({
+        routeKey: 'POST /auth/tenant/member-admin/provision-user',
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.authTenantMemberAdminProvisionUser(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    'GET /auth/platform/member-admin/probe': async () =>
+      runAuthRoute(
+        () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
+        requestId
+      ),
+    'POST /auth/platform/member-admin/provision-user': async () =>
+      executeIdempotentAuthRoute({
+        routeKey: 'POST /auth/platform/member-admin/provision-user',
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.authPlatformMemberAdminProvisionUser(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    'POST /auth/refresh': async () =>
+      runAuthRoute(() => handlers.authRefresh(requestId, body || {}), requestId),
+    'POST /auth/logout': async () =>
+      runAuthRoute(
+        () =>
+          handlers.authLogout(
+            requestId,
+            headers.authorization,
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    'POST /auth/change-password': async () =>
+      runAuthRoute(
+        () =>
+          handlers.authChangePassword(
+            requestId,
+            headers.authorization,
+            body || {},
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    'POST /auth/platform/role-facts/replace': async () =>
+      executeIdempotentAuthRoute({
+        routeKey: 'POST /auth/platform/role-facts/replace',
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.authReplacePlatformRoleFacts(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    'GET /smoke': async () => {
+      const payload = await handlers.smoke(requestId);
+      return responseJson(payload.ok ? 200 : 503, payload);
+    }
+  };
+};
 
 const authorizeProtectedRoute = async ({
   routeDefinition,
@@ -711,7 +1309,12 @@ const dispatchApiRoute = async ({
     routeDefinitions: routeDefinitionSnapshot,
     routeDeclarationLookup
   });
-  const resolvedRequestId = requestId || headers['x-request-id'] || randomUUID();
+  const xRequestIdHeader = readHeaderValue(headers, 'x-request-id');
+  const resolvedRequestId = String(
+    requestId
+    || xRequestIdHeader.value
+    || ''
+  ).trim() || randomUUID();
   const corsOptions = {
     corsPolicy,
     requestOrigin: headers.origin
@@ -828,10 +1431,12 @@ const handleApiRoute = async (
         options.supportedPermissionScopes || listSupportedRoutePermissionScopes()
     });
   }
-  const requestId = headers['x-request-id'] || randomUUID();
+  const xRequestIdHeader = readHeaderValue(headers, 'x-request-id');
+  const requestId = String(xRequestIdHeader.value || '').trim() || randomUUID();
   const handlers = options.handlers || createRouteHandlers(config, {
     dependencyProbe,
-    authService
+    authService,
+    authIdempotencyStore: options.authIdempotencyStore || null
   });
   ensureAuthorizeRouteCapabilityWithCache({
     routeDefinitions,
@@ -872,7 +1477,8 @@ const createServer = (config, options = {}) => {
   });
   const handlers = createRouteHandlers(config, {
     dependencyProbe,
-    authService
+    authService,
+    authIdempotencyStore: options.authIdempotencyStore || null
   });
   ensureAuthorizeRouteCapabilityOrThrow({
     routeDefinitions,

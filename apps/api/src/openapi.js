@@ -21,7 +21,42 @@ const RATE_LIMIT_RESPONSE_HEADERS = {
   }
 };
 
-const buildOpenApiSpec = () => ({
+const IDEMPOTENCY_KEY_SCHEMA = {
+  type: 'string',
+  minLength: 1,
+  maxLength: 128,
+  pattern: '^(?=.*\\S)[^,]{1,128}$'
+};
+
+const ensureProblemDetailsRetryableExamples = (spec = {}) => {
+  for (const pathItem of Object.values(spec.paths || {})) {
+    for (const operation of Object.values(pathItem || {})) {
+      for (const response of Object.values(operation?.responses || {})) {
+        const problemContent = response?.content?.['application/problem+json'];
+        const examples = problemContent?.examples;
+        if (!examples || typeof examples !== 'object') {
+          continue;
+        }
+        for (const example of Object.values(examples)) {
+          const value = example?.value;
+          if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            continue;
+          }
+          if (
+            Object.prototype.hasOwnProperty.call(value, 'error_code')
+            && typeof value.retryable !== 'boolean'
+          ) {
+            value.retryable = false;
+          }
+        }
+      }
+    }
+  }
+  return spec;
+};
+
+const buildOpenApiSpec = () => {
+  const spec = {
   openapi: '3.1.0',
   info: {
     title: 'Neweast API',
@@ -195,7 +230,10 @@ const buildOpenApiSpec = () => ({
                       status: 429,
                       detail: '请求过于频繁，请稍后重试',
                       error_code: 'AUTH-429-RATE-LIMITED',
+                      retryable: true,
                       rate_limit_action: 'password_login',
+                      rate_limit_limit: 10,
+                      rate_limit_window_seconds: 60,
                       retry_after_seconds: 32,
                       request_id: 'request_id_unset'
                     }
@@ -298,7 +336,10 @@ const buildOpenApiSpec = () => ({
                       status: 429,
                       detail: '请求过于频繁，请稍后重试',
                       error_code: 'AUTH-429-RATE-LIMITED',
+                      retryable: true,
                       rate_limit_action: 'otp_send',
+                      rate_limit_limit: 10,
+                      rate_limit_window_seconds: 60,
                       retry_after_seconds: 41,
                       request_id: 'request_id_unset'
                     }
@@ -433,7 +474,10 @@ const buildOpenApiSpec = () => ({
                       status: 429,
                       detail: '请求过于频繁，请稍后重试',
                       error_code: 'AUTH-429-RATE-LIMITED',
+                      retryable: true,
                       rate_limit_action: 'otp_login',
+                      rate_limit_limit: 10,
+                      rate_limit_window_seconds: 60,
                       retry_after_seconds: 27,
                       request_id: 'request_id_unset'
                     }
@@ -675,6 +719,15 @@ const buildOpenApiSpec = () => ({
       post: {
         summary: 'Provision tenant member user by phone with default password policy',
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
         requestBody: {
           required: true,
           content: {
@@ -713,6 +766,16 @@ const buildOpenApiSpec = () => ({
                       status: 400,
                       detail: '请求参数不完整或格式错误',
                       error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
                       request_id: 'request_id_unset'
                     }
                   }
@@ -791,6 +854,18 @@ const buildOpenApiSpec = () => ({
                       status: 409,
                       detail: '用户关系已存在，请勿重复提交',
                       error_code: 'AUTH-409-PROVISION-CONFLICT',
+                      retryable: false,
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      retryable: false,
                       request_id: 'request_id_unset'
                     }
                   }
@@ -811,6 +886,8 @@ const buildOpenApiSpec = () => ({
                       status: 503,
                       detail: '默认密码配置不可用，请稍后重试',
                       error_code: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+                      retryable: true,
+                      degradation_reason: 'default-password-config-unavailable',
                       request_id: 'request_id_unset'
                     }
                   }
@@ -893,6 +970,7 @@ const buildOpenApiSpec = () => ({
                       status: 503,
                       detail: '平台权限同步暂时不可用，请稍后重试',
                       error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+                      retryable: true,
                       request_id: 'request_id_unset',
                       degradation_reason: 'db-deadlock'
                     }
@@ -908,6 +986,15 @@ const buildOpenApiSpec = () => ({
       post: {
         summary: 'Provision platform member user by phone with default password policy',
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
         requestBody: {
           required: true,
           content: {
@@ -945,6 +1032,16 @@ const buildOpenApiSpec = () => ({
                       status: 400,
                       detail: '请求参数不完整或格式错误',
                       error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
                       request_id: 'request_id_unset'
                     }
                   }
@@ -1023,6 +1120,18 @@ const buildOpenApiSpec = () => ({
                       status: 409,
                       detail: '用户关系已存在，请勿重复提交',
                       error_code: 'AUTH-409-PROVISION-CONFLICT',
+                      retryable: false,
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      retryable: false,
                       request_id: 'request_id_unset'
                     }
                   }
@@ -1043,6 +1152,8 @@ const buildOpenApiSpec = () => ({
                       status: 503,
                       detail: '默认密码配置不可用，请稍后重试',
                       error_code: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+                      retryable: true,
+                      degradation_reason: 'default-password-config-unavailable',
                       request_id: 'request_id_unset'
                     }
                   }
@@ -1240,6 +1351,15 @@ const buildOpenApiSpec = () => ({
       post: {
         summary: 'Replace platform role facts and sync permission snapshot',
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
         requestBody: {
           required: true,
           content: {
@@ -1258,10 +1378,32 @@ const buildOpenApiSpec = () => ({
             }
           },
           400: {
-            description: 'Malformed payload or invalid role fact status',
+            description: 'Malformed payload, invalid role fact status, or invalid Idempotency-Key',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
               }
             }
           },
@@ -1298,6 +1440,27 @@ const buildOpenApiSpec = () => ({
             content: {
               'application/problem+json': {
                 schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency-Key payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
               }
             }
           },
@@ -1639,7 +1802,7 @@ const buildOpenApiSpec = () => ({
       },
       ProblemDetails: {
         type: 'object',
-        required: ['title', 'status', 'request_id'],
+        required: ['title', 'status', 'request_id', 'retryable'],
         properties: {
           type: { type: 'string' },
           title: { type: 'string' },
@@ -1647,6 +1810,8 @@ const buildOpenApiSpec = () => ({
           detail: { type: 'string' },
           request_id: { type: 'string' },
           error_code: { type: 'string' },
+          retryable: { type: 'boolean' },
+          degradation_reason: { type: 'string' },
           retry_after_seconds: { type: 'integer', minimum: 1 },
           rate_limit_action: {
             type: 'string',
@@ -1658,6 +1823,8 @@ const buildOpenApiSpec = () => ({
       }
     }
   }
-});
+  };
+  return ensureProblemDetailsRetryableExamples(spec);
+};
 
 module.exports = { buildOpenApiSpec };

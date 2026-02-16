@@ -5,14 +5,23 @@ const buildProblemDetails = ({
   detail,
   requestId,
   extensions = {}
-}) => ({
-  type,
-  title,
-  status,
-  detail,
-  request_id: requestId || 'request_id_unset',
-  ...extensions
-});
+}) => {
+  const normalizedExtensions = {
+    ...extensions
+  };
+  if (typeof normalizedExtensions.retryable !== 'boolean') {
+    normalizedExtensions.retryable = false;
+  }
+
+  return {
+    type,
+    title,
+    status,
+    detail,
+    request_id: requestId || 'request_id_unset',
+    ...normalizedExtensions
+  };
+};
 
 const sendProblemDetails = (res, payload) => {
   const body = JSON.stringify(buildProblemDetails(payload));

@@ -21,6 +21,33 @@ const cloneRouteDefinitions = (routeDefinitions = []) =>
     ...routeDefinition
   }));
 
+const listProblemExamplesMissingRetryable = (openapiPayload = {}) => {
+  const missing = [];
+  for (const [path, pathItem] of Object.entries(openapiPayload.paths || {})) {
+    for (const [method, operation] of Object.entries(pathItem || {})) {
+      for (const [statusCode, response] of Object.entries(operation?.responses || {})) {
+        const examples = response?.content?.['application/problem+json']?.examples;
+        if (!examples || typeof examples !== 'object') {
+          continue;
+        }
+        for (const [exampleName, example] of Object.entries(examples)) {
+          const value = example?.value;
+          if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            continue;
+          }
+          if (
+            Object.prototype.hasOwnProperty.call(value, 'error_code')
+            && typeof value.retryable !== 'boolean'
+          ) {
+            missing.push(`${method.toUpperCase()} ${path} ${statusCode}#${exampleName}`);
+          }
+        }
+      }
+    }
+  }
+  return missing;
+};
+
 const startServer = async (overrides = {}, serverOptions = {}) => {
   const server = createServer(readConfig(overrides), {
     dependencyProbe,
@@ -69,6 +96,39 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
+  assert.ok(
+    payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/auth/platform/member-admin/provision-user'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/auth/platform/role-facts/replace'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.equal(
+    payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/member-admin/provision-user'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/role-facts/replace'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
   assert.ok(payload.paths['/auth/login'].post.responses['400']);
   assert.ok(payload.paths['/auth/login'].post.responses['413']);
   assert.ok(payload.paths['/auth/login'].post.responses['429']);
@@ -169,8 +229,85 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED'
   );
   assert.equal(
+    payload.paths['/auth/platform/member-admin/probe'].get.responses['503'].content[
+      'application/problem+json'
+    ].examples.snapshot_sync_degraded.value.retryable,
+    true
+  );
+  assert.equal(
+    payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['409'].content[
+      'application/problem+json'
+    ].examples.idempotency_conflict.value.error_code,
+    'AUTH-409-IDEMPOTENCY-CONFLICT'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409'].content[
+      'application/problem+json'
+    ].examples.idempotency_conflict.value.error_code,
+    'AUTH-409-IDEMPOTENCY-CONFLICT'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.default_password_config_unavailable.value.retryable,
+    true
+  );
+  assert.equal(
+    payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.default_password_config_unavailable.value.degradation_reason,
+    'default-password-config-unavailable'
+  );
+  assert.equal(
+    payload.paths['/auth/login'].post.responses['429'].content['application/problem+json'].examples
+      .rate_limited.value.retryable,
+    true
+  );
+  assert.equal(
+    payload.paths['/auth/login'].post.responses['429'].content['application/problem+json'].examples
+      .rate_limited.value.rate_limit_limit,
+    10
+  );
+  assert.equal(
+    payload.paths['/auth/login'].post.responses['429'].content['application/problem+json'].examples
+      .rate_limited.value.rate_limit_window_seconds,
+    60
+  );
+  assert.equal(
+    payload.paths['/auth/otp/send'].post.responses['429'].content['application/problem+json']
+      .examples.otp_send_rate_limited.value.rate_limit_limit,
+    10
+  );
+  assert.equal(
+    payload.paths['/auth/otp/login'].post.responses['429'].content['application/problem+json']
+      .examples.otp_login_rate_limited.value.rate_limit_window_seconds,
+    60
+  );
+  assert.equal(
+    payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_idempotency_key.value.error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/member-admin/provision-user'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_idempotency_key.value.error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+  assert.equal(
+    payload.paths['/auth/platform/role-facts/replace'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_idempotency_key.value.error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+  assert.equal(
     payload.components.schemas.ProblemDetails.properties.error_code.type,
     'string'
+  );
+  assert.equal(
+    payload.components.schemas.ProblemDetails.properties.retryable.type,
+    'boolean'
   );
   assert.equal(
     payload.components.schemas.ProblemDetails.properties.retry_after_seconds.type,
@@ -190,6 +327,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       .payload_too_large.value.error_code,
     'AUTH-413-PAYLOAD-TOO-LARGE'
   );
+  assert.deepEqual(listProblemExamplesMissingRetryable(payload), []);
   assert.equal('extensions' in payload.components.schemas.ProblemDetails.properties, false);
 });
 
@@ -303,6 +441,11 @@ test('createServer supports CORS preflight for API routes', async () => {
         'Content-Type'
       )
     );
+    assert.ok(
+      String(response.headers.get('access-control-allow-headers') || '').includes(
+        'Idempotency-Key'
+      )
+    );
   } finally {
     await harness.close();
   }
@@ -386,6 +529,161 @@ test('dispatchApiRoute returns empty body for HEAD not-found responses', async (
 
   assert.equal(route.status, 404);
   assert.equal(route.body, '');
+});
+
+test('dispatchApiRoute resolves request_id from case-insensitive x-request-id header', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/ping',
+    method: 'GET',
+    headers: {
+      'X-Request-Id': 'req-header-upper-case'
+    },
+    handlers: {
+      authPing: (requestId) => ({
+        ok: true,
+        request_id: requestId
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  assert.equal(JSON.parse(route.body).request_id, 'req-header-upper-case');
+});
+
+test('handleApiRoute resolves request_id from case-insensitive x-request-id header', async () => {
+  const routeDefinitions = [
+    {
+      method: 'GET',
+      path: '/auth/ping',
+      access: 'public'
+    }
+  ];
+  const routeDeclarationLookup = resolveRouteDeclarationLookup({
+    routeDefinitions
+  });
+
+  const route = await handleApiRoute(
+    {
+      pathname: '/auth/ping',
+      method: 'GET',
+      headers: {
+        'X-Request-Id': 'req-header-upper-case-handle'
+      }
+    },
+    config,
+    {
+      routeDefinitions,
+      routeDeclarationLookup,
+      validateRouteDefinitions: false,
+      handlers: {
+        authPing: (requestId) => ({
+          ok: true,
+          request_id: requestId
+        })
+      }
+    }
+  );
+
+  assert.equal(route.status, 200);
+  assert.equal(JSON.parse(route.body).request_id, 'req-header-upper-case-handle');
+});
+
+test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async () => {
+  const calls = [];
+  const dispatchProvisionRequest = (idempotencyHeaderValue) =>
+    dispatchApiRoute({
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      requestId: 'req-ambiguous-idempotency',
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': idempotencyHeaderValue
+      },
+      body: {
+        phone: '13800000000'
+      },
+      handlers: {
+        authPlatformMemberAdminProvisionUser: async (requestId) => {
+          calls.push(requestId);
+          return {
+            ok: true,
+            request_id: requestId
+          };
+        },
+        authorizeRoute: async () => ({
+          user_id: 'operator-user',
+          session_id: 'operator-session'
+        })
+      }
+    });
+
+  const arrayHeaderResponse = await dispatchProvisionRequest([
+    'idem-platform-001',
+    'idem-platform-002'
+  ]);
+  assert.equal(arrayHeaderResponse.status, 400);
+  assert.equal(
+    JSON.parse(arrayHeaderResponse.body).error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+
+  const commaHeaderResponse = await dispatchProvisionRequest('idem-platform-001,idem-platform-002');
+  assert.equal(commaHeaderResponse.status, 400);
+  assert.equal(
+    JSON.parse(commaHeaderResponse.body).error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test('dispatchApiRoute does not persist idempotency replay cache for retryable 5xx responses', async () => {
+  let calls = 0;
+  const dispatchProvisionRequest = () =>
+    dispatchApiRoute({
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      requestId: `req-idempotency-5xx-${calls + 1}`,
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': 'idem-platform-retryable-5xx'
+      },
+      body: {
+        phone: '13800000001'
+      },
+      handlers: {
+        authPlatformMemberAdminProvisionUser: async (requestId) => {
+          calls += 1;
+          if (calls === 1) {
+            throw new AuthProblemError({
+              status: 503,
+              title: 'Service Unavailable',
+              detail: 'temporary dependency outage',
+              errorCode: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+              extensions: {
+                retryable: true,
+                degradation_reason: 'default-password-config-unavailable'
+              }
+            });
+          }
+          return {
+            ok: true,
+            request_id: requestId
+          };
+        },
+        authorizeRoute: async () => ({
+          user_id: 'operator-user',
+          session_id: 'operator-session'
+        })
+      }
+    });
+
+  const first = await dispatchProvisionRequest();
+  assert.equal(first.status, 503);
+
+  const second = await dispatchProvisionRequest();
+  assert.equal(second.status, 200);
+  assert.equal(calls, 2);
 });
 
 test('dispatchApiRoute returns empty body for HEAD authorization failures', async () => {

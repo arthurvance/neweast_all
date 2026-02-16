@@ -3,7 +3,9 @@ const { buildOpenApiSpec } = require('./openapi');
 
 const createRouteHandlers = (config, options) => {
   const dependencyProbe = options.dependencyProbe;
-  const auth = createAuthHandlers(options.authService);
+  const authService = options.authService;
+  const authIdempotencyStore = options.authIdempotencyStore;
+  const auth = createAuthHandlers(authService);
   const authorizeRouteHandler =
     typeof auth.authorizeRoute === 'function'
       ? async ({ requestId, authorization, permissionCode, scope }) =>
@@ -166,6 +168,21 @@ const createRouteHandlers = (config, options) => {
 
     openapi: () => buildOpenApiSpec()
   };
+
+  if (typeof authService?.recordIdempotencyEvent === 'function') {
+    handlers.recordAuthIdempotencyEvent = async (payload = {}) =>
+      authService.recordIdempotencyEvent(payload);
+  }
+
+  if (
+    authIdempotencyStore
+    && typeof authIdempotencyStore.claimOrRead === 'function'
+    && typeof authIdempotencyStore.read === 'function'
+    && typeof authIdempotencyStore.resolve === 'function'
+    && typeof authIdempotencyStore.releasePending === 'function'
+  ) {
+    handlers.authIdempotencyStore = authIdempotencyStore;
+  }
 
   if (authorizeRouteHandler) {
     handlers.authorizeRoute = authorizeRouteHandler;
