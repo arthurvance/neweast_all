@@ -671,6 +671,156 @@ const buildOpenApiSpec = () => ({
         }
       }
     },
+    '/auth/tenant/member-admin/provision-user': {
+      post: {
+        summary: 'Provision tenant member user by phone with default password policy',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ProvisionUserRequest' },
+              examples: {
+                create_or_reuse_tenant_user: {
+                  value: {
+                    phone: '13800000002',
+                    tenant_name: 'Tenant A'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'User provisioned and tenant relationship created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ProvisionUserResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Duplicate relationship request conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  duplicate_relationship_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '用户关系已存在，请勿重复提交',
+                      error_code: 'AUTH-409-PROVISION-CONFLICT',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Default password secure config unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  default_password_config_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '默认密码配置不可用，请稍后重试',
+                      error_code: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/auth/platform/member-admin/probe': {
       get: {
         summary: 'Probe platform member-admin view permission with unified authorization semantics',
@@ -745,6 +895,155 @@ const buildOpenApiSpec = () => ({
                       error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
                       request_id: 'request_id_unset',
                       degradation_reason: 'db-deadlock'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/auth/platform/member-admin/provision-user': {
+      post: {
+        summary: 'Provision platform member user by phone with default password policy',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ProvisionPlatformUserRequest' },
+              examples: {
+                create_or_reuse_platform_user: {
+                  value: {
+                    phone: '13800000003'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'User provisioned and platform relationship created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ProvisionUserResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Platform route blocked due to missing platform context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Duplicate relationship request conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  duplicate_relationship_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '用户关系已存在，请勿重复提交',
+                      error_code: 'AUTH-409-PROVISION-CONFLICT',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Default password secure config unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  default_password_config_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '默认密码配置不可用，请稍后重试',
+                      error_code: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+                      request_id: 'request_id_unset'
                     }
                   }
                 }
@@ -1089,6 +1388,66 @@ const buildOpenApiSpec = () => ({
         properties: {
           current_password: { type: 'string', format: 'password' },
           new_password: { type: 'string', format: 'password', minLength: 6 }
+        }
+      },
+      ProvisionPlatformUserRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['phone'],
+        properties: {
+          phone: {
+            type: 'string',
+            minLength: 11,
+            maxLength: 11,
+            pattern: '^1\\d{10}$',
+            description: '手机号（11位）'
+          }
+        }
+      },
+      ProvisionUserRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['phone'],
+        properties: {
+          phone: {
+            type: 'string',
+            minLength: 11,
+            maxLength: 11,
+            pattern: '^1\\d{10}$',
+            description: '手机号（11位）'
+          },
+          tenant_name: {
+            type: 'string',
+            nullable: true,
+            maxLength: 128,
+            pattern: '.*\\S.*',
+            description: '可选，仅 tenant provision 接口使用'
+          }
+        }
+      },
+      ProvisionUserResponse: {
+        type: 'object',
+        required: [
+          'user_id',
+          'phone',
+          'created_user',
+          'reused_existing_user',
+          'credential_initialized',
+          'first_login_force_password_change',
+          'entry_domain',
+          'active_tenant_id',
+          'request_id'
+        ],
+        properties: {
+          user_id: { type: 'string' },
+          phone: { type: 'string' },
+          created_user: { type: 'boolean' },
+          reused_existing_user: { type: 'boolean' },
+          credential_initialized: { type: 'boolean' },
+          first_login_force_password_change: { type: 'boolean', enum: [false] },
+          entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
+          active_tenant_id: { type: 'string', nullable: true },
+          request_id: { type: 'string' }
         }
       },
       ReplacePlatformRoleFactsRequest: {

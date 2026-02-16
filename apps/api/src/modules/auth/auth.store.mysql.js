@@ -1,4 +1,5 @@
 const { setTimeout: sleep } = require('node:timers/promises');
+const { randomUUID } = require('node:crypto');
 const { log } = require('../../common/logger');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
@@ -7,6 +8,7 @@ const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxDelayMs: 200,
   jitterMs: 20
 });
+const MYSQL_DUP_ENTRY_ERRNO = 1062;
 
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
@@ -221,6 +223,9 @@ const isDeadlockError = (error) =>
   String(error?.code || '').toUpperCase() === 'ER_LOCK_DEADLOCK'
   || Number(error?.errno || 0) === 1213
   || String(error?.sqlState || '').trim() === '40001';
+const isDuplicateEntryError = (error) =>
+  String(error?.code || '').toUpperCase() === 'ER_DUP_ENTRY'
+  || Number(error?.errno || 0) === MYSQL_DUP_ENTRY_ERRNO;
 
 const createMySqlAuthStore = ({
   dbClient,
@@ -1071,6 +1076,171 @@ const createMySqlAuthStore = ({
       return toUserRecord(rows[0]);
     },
 
+    createUserByPhone: async ({ phone, passwordHash, status = 'active' }) => {
+      const normalizedPhone = String(phone || '').trim();
+      const normalizedPasswordHash = String(passwordHash || '').trim();
+      if (!normalizedPhone || !normalizedPasswordHash) {
+        throw new Error('createUserByPhone requires phone and passwordHash');
+      }
+      const normalizedStatus = String(status || 'active').trim().toLowerCase() || 'active';
+      const userId = randomUUID();
+      try {
+        await dbClient.query(
+          `
+            INSERT INTO users (id, phone, password_hash, status, session_version)
+            VALUES (?, ?, ?, ?, 1)
+          `,
+          [userId, normalizedPhone, normalizedPasswordHash, normalizedStatus]
+        );
+      } catch (error) {
+        if (isDuplicateEntryError(error)) {
+          return null;
+        }
+        throw error;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT id, phone, password_hash, status, session_version
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+        `,
+        [userId]
+      );
+      return toUserRecord(rows[0]);
+    },
+
+    deleteUserById: async (userId) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return { deleted: false };
+      }
+      return executeWithDeadlockRetry({
+        operation: 'deleteUserById',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            await tx.query(
+              `
+                DELETE FROM refresh_tokens
+                WHERE user_id = ?
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                DELETE FROM auth_sessions
+                WHERE user_id = ?
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                DELETE FROM auth_user_platform_roles
+                WHERE user_id = ?
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                DELETE FROM auth_user_domain_access
+                WHERE user_id = ?
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                DELETE FROM auth_user_tenants
+                WHERE user_id = ?
+              `,
+              [normalizedUserId]
+            );
+            const result = await tx.query(
+              `
+                DELETE FROM users
+                WHERE id = ?
+              `,
+              [normalizedUserId]
+            );
+            return { deleted: Number(result?.affectedRows || 0) > 0 };
+          })
+      });
+    },
+
+    createTenantMembershipForUser: async ({ userId, tenantId, tenantName = null }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedUserId || !normalizedTenantId) {
+        throw new Error('createTenantMembershipForUser requires userId and tenantId');
+      }
+      const userRows = await dbClient.query(
+        `
+          SELECT id
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+        `,
+        [normalizedUserId]
+      );
+      if (!Array.isArray(userRows) || userRows.length === 0) {
+        return { created: false };
+      }
+      const normalizedTenantName = tenantName === null || tenantName === undefined
+        ? null
+        : String(tenantName).trim() || null;
+      try {
+        const result = await dbClient.query(
+          `
+            INSERT INTO auth_user_tenants (user_id, tenant_id, tenant_name, status)
+            VALUES (?, ?, ?, 'active')
+          `,
+          [normalizedUserId, normalizedTenantId, normalizedTenantName]
+        );
+        return { created: Number(result?.affectedRows || 0) > 0 };
+      } catch (error) {
+        if (isDuplicateEntryError(error)) {
+          return { created: false };
+        }
+        throw error;
+      }
+    },
+
+    removeTenantMembershipForUser: async ({ userId, tenantId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedUserId || !normalizedTenantId) {
+        throw new Error('removeTenantMembershipForUser requires userId and tenantId');
+      }
+      const result = await dbClient.query(
+        `
+          DELETE FROM auth_user_tenants
+          WHERE user_id = ? AND tenant_id = ?
+        `,
+        [normalizedUserId, normalizedTenantId]
+      );
+      return { removed: Number(result?.affectedRows || 0) > 0 };
+    },
+
+    removeTenantDomainAccessForUser: async (userId) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return { removed: false };
+      }
+      const result = await dbClient.query(
+        `
+          DELETE FROM auth_user_domain_access
+          WHERE user_id = ?
+            AND domain = 'tenant'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM auth_user_tenants
+              WHERE user_id = ? AND status IN ('active', 'enabled')
+            )
+        `,
+        [normalizedUserId, normalizedUserId]
+      );
+      return { removed: Number(result?.affectedRows || 0) > 0 };
+    },
+
     createSession: async ({
       sessionId,
       userId,
@@ -1178,23 +1348,19 @@ const createMySqlAuthStore = ({
 
     ensureDefaultDomainAccessForUser: async (userId) => {
       const normalizedUserId = String(userId);
-      const countRows = await dbClient.query(
-        `
-          SELECT COUNT(*) AS domain_count
-          FROM auth_user_domain_access
-          WHERE user_id = ?
-        `,
-        [normalizedUserId]
-      );
-      const domainCount = Number(countRows?.[0]?.domain_count || 0);
-      if (domainCount > 0) {
-        return { inserted: false };
-      }
-
       const result = await dbClient.query(
         `
-          INSERT IGNORE INTO auth_user_domain_access (user_id, domain, status)
+          INSERT INTO auth_user_domain_access (user_id, domain, status)
           VALUES (?, 'platform', 'active')
+          ON DUPLICATE KEY UPDATE
+            status = CASE
+              WHEN status IN ('active', 'enabled') THEN status
+              ELSE 'active'
+            END,
+            updated_at = CASE
+              WHEN status IN ('active', 'enabled') THEN updated_at
+              ELSE CURRENT_TIMESTAMP(3)
+            END
         `,
         [normalizedUserId]
       );
@@ -1204,20 +1370,6 @@ const createMySqlAuthStore = ({
 
     ensureTenantDomainAccessForUser: async (userId) => {
       const normalizedUserId = String(userId);
-
-      const tenantDomainRows = await dbClient.query(
-        `
-          SELECT status
-          FROM auth_user_domain_access
-          WHERE user_id = ? AND domain = 'tenant'
-          LIMIT 1
-        `,
-        [normalizedUserId]
-      );
-      if (Array.isArray(tenantDomainRows) && tenantDomainRows.length > 0) {
-        return { inserted: false };
-      }
-
       const tenantCountRows = await dbClient.query(
         `
           SELECT COUNT(*) AS tenant_count
@@ -1233,8 +1385,17 @@ const createMySqlAuthStore = ({
 
       const result = await dbClient.query(
         `
-          INSERT IGNORE INTO auth_user_domain_access (user_id, domain, status)
+          INSERT INTO auth_user_domain_access (user_id, domain, status)
           VALUES (?, 'tenant', 'active')
+          ON DUPLICATE KEY UPDATE
+            status = CASE
+              WHEN status IN ('active', 'enabled') THEN status
+              ELSE 'active'
+            END,
+            updated_at = CASE
+              WHEN status IN ('active', 'enabled') THEN updated_at
+              ELSE CURRENT_TIMESTAMP(3)
+            END
         `,
         [normalizedUserId]
       );

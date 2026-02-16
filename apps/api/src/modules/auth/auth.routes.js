@@ -106,6 +106,32 @@ const createAuthHandlers = (authService = createAuthService()) => {
         authorizationContext
       }),
 
+    platformProvisionUser: async ({
+      requestId,
+      authorization,
+      body,
+      authorizationContext = null
+    }) =>
+      authService.provisionPlatformUserByPhone({
+        requestId,
+        accessToken: extractBearerToken(authorization),
+        payload: body,
+        authorizationContext
+      }),
+
+    tenantProvisionUser: async ({
+      requestId,
+      authorization,
+      body,
+      authorizationContext = null
+    }) =>
+      authService.provisionTenantUserByPhone({
+        requestId,
+        accessToken: extractBearerToken(authorization),
+        payload: body,
+        authorizationContext
+      }),
+
     refresh: async ({ requestId, body }) =>
       authService.refresh({
         requestId,

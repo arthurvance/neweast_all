@@ -99,6 +99,32 @@ const createRouteHandlers = (config, options) => {
       request_id: requestId || 'request_id_unset'
     }),
 
+    authPlatformMemberAdminProvisionUser: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      auth.platformProvisionUser({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
+    authTenantMemberAdminProvisionUser: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      auth.tenantProvisionUser({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
     authRefresh: async (requestId, body) =>
       auth.refresh({
         requestId,

@@ -1,3 +1,5 @@
+const { randomUUID } = require('node:crypto');
+
 const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const usersByPhone = new Map();
   const usersById = new Map();
@@ -275,6 +277,144 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     findUserById: async (userId) => clone(usersById.get(String(userId)) || null),
 
+    createUserByPhone: async ({ phone, passwordHash, status = 'active' }) => {
+      const normalizedPhone = String(phone || '').trim();
+      const normalizedPasswordHash = String(passwordHash || '').trim();
+      if (!normalizedPhone || !normalizedPasswordHash) {
+        throw new Error('createUserByPhone requires phone and passwordHash');
+      }
+      if (usersByPhone.has(normalizedPhone)) {
+        return null;
+      }
+      const normalizedStatus = String(status || 'active').trim().toLowerCase() || 'active';
+      const user = {
+        id: randomUUID(),
+        phone: normalizedPhone,
+        passwordHash: normalizedPasswordHash,
+        status: normalizedStatus,
+        sessionVersion: 1
+      };
+      usersByPhone.set(normalizedPhone, user);
+      usersById.set(user.id, user);
+      if (!domainsByUserId.has(user.id)) {
+        domainsByUserId.set(user.id, new Set());
+      }
+      if (!tenantsByUserId.has(user.id)) {
+        tenantsByUserId.set(user.id, []);
+      }
+      return clone(user);
+    },
+
+    deleteUserById: async (userId) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return { deleted: false };
+      }
+      const existingUser = usersById.get(normalizedUserId);
+      if (!existingUser) {
+        return { deleted: false };
+      }
+
+      usersById.delete(normalizedUserId);
+      usersByPhone.delete(String(existingUser.phone || ''));
+      domainsByUserId.delete(normalizedUserId);
+      tenantsByUserId.delete(normalizedUserId);
+      platformRolesByUserId.delete(normalizedUserId);
+      platformPermissionsByUserId.delete(normalizedUserId);
+
+      for (const [sessionId, session] of sessionsById.entries()) {
+        if (session.userId === normalizedUserId) {
+          sessionsById.delete(sessionId);
+        }
+      }
+      for (const [tokenHash, refreshToken] of refreshTokensByHash.entries()) {
+        if (refreshToken.userId === normalizedUserId) {
+          refreshTokensByHash.delete(tokenHash);
+        }
+      }
+
+      return { deleted: true };
+    },
+
+    createTenantMembershipForUser: async ({ userId, tenantId, tenantName = null }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedUserId || !normalizedTenantId) {
+        throw new Error('createTenantMembershipForUser requires userId and tenantId');
+      }
+      if (!usersById.has(normalizedUserId)) {
+        return { created: false };
+      }
+
+      const tenantMemberships = tenantsByUserId.get(normalizedUserId) || [];
+      const relationshipExists = tenantMemberships.some(
+        (tenant) => String(tenant?.tenantId || '').trim() === normalizedTenantId
+      );
+      if (relationshipExists) {
+        return { created: false };
+      }
+      const normalizedTenantName = tenantName === null || tenantName === undefined
+        ? null
+        : String(tenantName).trim() || null;
+
+      tenantMemberships.push({
+        tenantId: normalizedTenantId,
+        tenantName: normalizedTenantName,
+        status: 'active',
+        permission: {
+          scopeLabel: `组织权限（${normalizedTenantName || normalizedTenantId}）`,
+          canViewMemberAdmin: false,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      });
+      tenantsByUserId.set(normalizedUserId, tenantMemberships);
+      return { created: true };
+    },
+
+    removeTenantMembershipForUser: async ({ userId, tenantId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedUserId || !normalizedTenantId) {
+        throw new Error('removeTenantMembershipForUser requires userId and tenantId');
+      }
+      const tenantMemberships = tenantsByUserId.get(normalizedUserId);
+      if (!Array.isArray(tenantMemberships) || tenantMemberships.length === 0) {
+        return { removed: false };
+      }
+      const retainedMemberships = tenantMemberships.filter(
+        (tenant) => String(tenant?.tenantId || '').trim() !== normalizedTenantId
+      );
+      const removed = retainedMemberships.length !== tenantMemberships.length;
+      if (removed) {
+        tenantsByUserId.set(normalizedUserId, retainedMemberships);
+      }
+      return { removed };
+    },
+
+    removeTenantDomainAccessForUser: async (userId) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return { removed: false };
+      }
+      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+      if (!userDomains.has('tenant')) {
+        domainsByUserId.set(normalizedUserId, userDomains);
+        return { removed: false };
+      }
+      const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
+        (tenant) => isActiveLikeStatus(tenant?.status)
+      );
+      if (hasActiveTenantMembership) {
+        domainsByUserId.set(normalizedUserId, userDomains);
+        return { removed: false };
+      }
+      userDomains.delete('tenant');
+      domainsByUserId.set(normalizedUserId, userDomains);
+      return { removed: true };
+    },
+
     createSession: async ({ sessionId, userId, sessionVersion, entryDomain = 'platform', activeTenantId = null }) => {
       sessionsById.set(sessionId, {
         sessionId,
@@ -319,7 +459,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     ensureDefaultDomainAccessForUser: async (userId) => {
       const normalizedUserId = String(userId);
       const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
-      if (userDomains.size > 0 || userDomains.has('platform')) {
+      if (userDomains.has('platform')) {
         domainsByUserId.set(normalizedUserId, userDomains);
         return { inserted: false };
       }

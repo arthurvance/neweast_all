@@ -164,10 +164,24 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     scope: 'tenant'
   },
   {
+    method: 'POST',
+    path: '/auth/tenant/member-admin/provision-user',
+    access: 'protected',
+    permission_code: 'tenant.member_admin.operate',
+    scope: 'tenant'
+  },
+  {
     method: 'GET',
     path: '/auth/platform/member-admin/probe',
     access: 'protected',
     permission_code: 'platform.member_admin.view',
+    scope: 'platform'
+  },
+  {
+    method: 'POST',
+    path: '/auth/platform/member-admin/provision-user',
+    access: 'protected',
+    permission_code: 'platform.member_admin.operate',
     scope: 'platform'
   },
   {

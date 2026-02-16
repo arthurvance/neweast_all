@@ -66,6 +66,8 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/otp/login']);
   assert.ok(payload.paths['/auth/tenant/member-admin/probe']);
   assert.ok(payload.paths['/auth/platform/member-admin/probe']);
+  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
+  assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/auth/login'].post.responses['400']);
   assert.ok(payload.paths['/auth/login'].post.responses['413']);
@@ -78,6 +80,39 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['400']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['413']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['503']);
+  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['413']);
+  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['409']);
+  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['413']);
+  assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409']);
+  assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503']);
+  assert.equal(
+    payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.minLength,
+    11
+  );
+  assert.equal(
+    payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.maxLength,
+    11
+  );
+  assert.equal(
+    payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.pattern,
+    '^1\\d{10}$'
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      payload.components.schemas.ProvisionPlatformUserRequest.properties,
+      'tenant_name'
+    ),
+    false
+  );
+  assert.equal(
+    payload.components.schemas.ProvisionUserRequest.properties.tenant_name.maxLength,
+    128
+  );
+  assert.equal(
+    payload.components.schemas.ProvisionUserRequest.properties.tenant_name.pattern,
+    '.*\\S.*'
+  );
   assert.equal(
     payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.maxItems,
     5

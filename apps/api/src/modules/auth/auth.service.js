@@ -1,4 +1,4 @@
-const { createHash, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, randomInt, timingSafeEqual, createSign, createVerify } = require('node:crypto');
+const { createHash, createDecipheriv, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, randomInt, timingSafeEqual, createSign, createVerify } = require('node:crypto');
 const { log } = require('../../common/logger');
 const { createInMemoryAuthStore } = require('./auth.store.memory');
 
@@ -17,8 +17,13 @@ const ACCESS_SESSION_CACHE_TTL_MS = 800;
 const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
 const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
+const MAX_TENANT_NAME_LENGTH = 128;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
+const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
+const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
+const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
+const SENSITIVE_CONFIG_KEY_DERIVATION_SALT = DEFAULT_PASSWORD_CONFIG_KEY;
 const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = 'platform.member_admin.operate';
 const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
   'canViewMemberAdmin',
@@ -245,6 +250,22 @@ const errors = {
       extensions: {
         degradation_reason: String(reason || 'unknown')
       }
+    }),
+
+  provisioningConfigUnavailable: () =>
+    authError({
+      status: 503,
+      title: 'Service Unavailable',
+      detail: '默认密码配置不可用，请稍后重试',
+      errorCode: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE'
+    }),
+
+  provisionConflict: () =>
+    authError({
+      status: 409,
+      title: 'Conflict',
+      detail: '用户关系已存在，请勿重复提交',
+      errorCode: 'AUTH-409-PROVISION-CONFLICT'
     })
 };
 
@@ -254,6 +275,110 @@ const toBase64Url = (input) => {
 };
 
 const fromBase64Url = (input) => Buffer.from(input, 'base64url');
+const deriveLegacySensitiveConfigKey = (rawKey) => {
+  const normalizedRawKey = typeof rawKey === 'string' ? rawKey.trim() : '';
+  if (!normalizedRawKey) {
+    return null;
+  }
+  if (/^[0-9a-f]{64}$/i.test(normalizedRawKey)) {
+    return Buffer.from(normalizedRawKey, 'hex');
+  }
+  return createHash('sha256').update(normalizedRawKey).digest();
+};
+const derivePrimarySensitiveConfigKey = (rawKey) => {
+  const normalizedRawKey = typeof rawKey === 'string' ? rawKey.trim() : '';
+  if (!normalizedRawKey) {
+    return null;
+  }
+  if (/^[0-9a-f]{64}$/i.test(normalizedRawKey)) {
+    return Buffer.from(normalizedRawKey, 'hex');
+  }
+  return pbkdf2Sync(
+    normalizedRawKey,
+    SENSITIVE_CONFIG_KEY_DERIVATION_SALT,
+    SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS,
+    32,
+    'sha256'
+  );
+};
+const deriveSensitiveConfigKeys = (rawKey) => {
+  const derivedKeys = [];
+  const primaryKey = derivePrimarySensitiveConfigKey(rawKey);
+  const legacyKey = deriveLegacySensitiveConfigKey(rawKey);
+  if (primaryKey) {
+    derivedKeys.push(primaryKey);
+  }
+  if (
+    legacyKey
+    && !derivedKeys.some((candidate) => Buffer.compare(candidate, legacyKey) === 0)
+  ) {
+    derivedKeys.push(legacyKey);
+  }
+  return derivedKeys;
+};
+const decryptSensitiveConfigValue = ({
+  encryptedValue,
+  decryptionKey,
+  decryptionKeys = null
+}) => {
+  const envelope = String(encryptedValue || '').trim();
+  const keys = Array.isArray(decryptionKeys)
+    ? decryptionKeys.filter((key) => Buffer.isBuffer(key))
+    : deriveSensitiveConfigKeys(decryptionKey);
+  if (!envelope || keys.length === 0) {
+    throw new Error('sensitive-config-unavailable');
+  }
+  const envelopeSections = envelope.split(':');
+  if (
+    envelopeSections.length !== 5
+    || `${envelopeSections[0]}:${envelopeSections[1]}` !== SENSITIVE_CONFIG_ENVELOPE_VERSION
+  ) {
+    throw new Error('sensitive-config-format-invalid');
+  }
+  const iv = Buffer.from(envelopeSections[2], 'base64url');
+  const authTag = Buffer.from(envelopeSections[3], 'base64url');
+  const ciphertext = Buffer.from(envelopeSections[4], 'base64url');
+  if (iv.length !== 12 || authTag.length !== 16 || ciphertext.length === 0) {
+    throw new Error('sensitive-config-envelope-invalid');
+  }
+  let decryptError = null;
+  for (const key of keys) {
+    try {
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+      const plainText = Buffer.concat([
+        decipher.update(ciphertext),
+        decipher.final()
+      ]).toString('utf8');
+      if (!plainText) {
+        throw new Error('sensitive-config-plaintext-empty');
+      }
+      return plainText;
+    } catch (error) {
+      decryptError = error;
+    }
+  }
+  if (decryptError?.message === 'sensitive-config-plaintext-empty') {
+    throw decryptError;
+  }
+  throw new Error('sensitive-config-decrypt-failed');
+};
+const resolveProvisioningConfigFailureReason = (error) => {
+  if (error instanceof AuthProblemError && error.errorCode === 'AUTH-400-WEAK-PASSWORD') {
+    return 'decrypted-password-policy-violation';
+  }
+  const message = String(error?.message || '').trim();
+  if (message === 'sensitive-config-unavailable') {
+    return 'encrypted-config-missing-or-key-missing';
+  }
+  if (message === 'sensitive-config-format-invalid' || message === 'sensitive-config-envelope-invalid') {
+    return 'encrypted-config-format-invalid';
+  }
+  if (message === 'sensitive-config-plaintext-empty') {
+    return 'decrypted-password-empty';
+  }
+  return 'encrypted-config-decrypt-failed';
+};
 
 const signJwt = ({ payload, privateKeyPem, ttlSeconds }) => {
   const header = {
@@ -436,6 +561,25 @@ const normalizeTenantId = (tenantId) => {
   const normalized = String(tenantId).trim();
   return normalized.length > 0 ? normalized : null;
 };
+const parseOptionalTenantName = (tenantName) => {
+  if (tenantName === null || tenantName === undefined) {
+    return { valid: true, value: null };
+  }
+  if (typeof tenantName !== 'string') {
+    return { valid: false, value: null };
+  }
+  if (tenantName.length > MAX_TENANT_NAME_LENGTH) {
+    return { valid: false, value: null };
+  }
+  const normalized = tenantName.trim();
+  if (!normalized) {
+    return { valid: false, value: null };
+  }
+  if (normalized.length > MAX_TENANT_NAME_LENGTH) {
+    return { valid: false, value: null };
+  }
+  return { valid: true, value: normalized };
+};
 
 const buildPlatformPermissionContext = () => ({
   scope_label: '平台入口（无组织侧权限上下文）',
@@ -494,6 +638,27 @@ const normalizePlatformPermissionContext = (permissionContext, fallbackScopeLabe
     can_operate_billing: Boolean(
       permissionContext.canOperateBilling ?? permissionContext.can_operate_billing
     )
+  };
+};
+const parseProvisionPayload = ({ payload, scope }) => {
+  if (!isPlainObject(payload)) {
+    return { valid: false, phone: undefined, tenantName: undefined, tenantNameProvided: false };
+  }
+  const normalizedScope = String(scope || '').trim().toLowerCase();
+  const allowedKeys = normalizedScope === 'tenant'
+    ? new Set(['phone', 'tenant_name'])
+    : new Set(['phone']);
+  for (const key of Object.keys(payload)) {
+    if (!allowedKeys.has(key)) {
+      return { valid: false, phone: undefined, tenantName: undefined, tenantNameProvided: false };
+    }
+  }
+  const tenantNameProvided = hasOwnProperty(payload, 'tenant_name');
+  return {
+    valid: true,
+    phone: payload.phone,
+    tenantName: tenantNameProvided ? payload.tenant_name : undefined,
+    tenantNameProvided
   };
 };
 
@@ -608,6 +773,9 @@ const createAuthService = (options = {}) => {
   );
   const accessSessionCacheTtlMs = isMultiInstance ? 0 : configuredAccessSessionCacheTtlMs;
   const accessSessionCache = new Map();
+  const sensitiveConfigProvider = options.sensitiveConfigProvider || null;
+  const sensitiveConfigDecryptionKey = options.sensitiveConfigDecryptionKey || '';
+  const sensitiveConfigDecryptionKeys = deriveSensitiveConfigKeys(sensitiveConfigDecryptionKey);
 
   const jwtKeyPair = (() => {
     if (options.jwtKeyPair?.privateKey && options.jwtKeyPair?.publicKey) {
@@ -710,7 +878,7 @@ const createAuthService = (options = {}) => {
 
   const ensureDefaultDomainAccessForUser = async ({ requestId, userId }) => {
     if (typeof authStore.ensureDefaultDomainAccessForUser !== 'function') {
-      return;
+      return { inserted: false };
     }
     const result = await authStore.ensureDefaultDomainAccessForUser(String(userId));
     if (result?.inserted === true) {
@@ -725,6 +893,9 @@ const createAuthService = (options = {}) => {
         }
       });
     }
+    return {
+      inserted: result?.inserted === true
+    };
   };
 
   const ensureTenantDomainAccessForUser = async ({ requestId, userId, entryDomain }) => {
@@ -2496,6 +2667,541 @@ const createAuthService = (options = {}) => {
     };
   };
 
+  const resolveDefaultProvisioningPassword = async ({
+    requestId,
+    operatorUserId,
+    operatorSessionId
+  }) => {
+    if (
+      !sensitiveConfigProvider
+      || typeof sensitiveConfigProvider.getEncryptedConfig !== 'function'
+    ) {
+      addAuditEvent({
+        type: 'auth.user.provision.config_failed',
+        requestId,
+        userId: operatorUserId || 'unknown',
+        sessionId: operatorSessionId || 'unknown',
+        detail: 'default password config provider unavailable',
+        metadata: {
+          config_key: DEFAULT_PASSWORD_CONFIG_KEY,
+          failure_reason: 'config-provider-unavailable'
+        }
+      });
+      throw errors.provisioningConfigUnavailable();
+    }
+
+    let encryptedDefaultPassword;
+    try {
+      encryptedDefaultPassword = await sensitiveConfigProvider.getEncryptedConfig(
+        DEFAULT_PASSWORD_CONFIG_KEY
+      );
+      const plainTextDefaultPassword = decryptSensitiveConfigValue({
+        encryptedValue: encryptedDefaultPassword,
+        decryptionKeys: sensitiveConfigDecryptionKeys,
+        decryptionKey: sensitiveConfigDecryptionKey
+      });
+      validatePasswordPolicy(plainTextDefaultPassword);
+      return plainTextDefaultPassword;
+    } catch (error) {
+      const failureReason = resolveProvisioningConfigFailureReason(error);
+      addAuditEvent({
+        type: 'auth.user.provision.config_failed',
+        requestId,
+        userId: operatorUserId || 'unknown',
+        sessionId: operatorSessionId || 'unknown',
+        detail: 'default password resolution failed',
+        metadata: {
+          config_key: DEFAULT_PASSWORD_CONFIG_KEY,
+          failure_reason: failureReason
+        }
+      });
+      throw errors.provisioningConfigUnavailable();
+    }
+  };
+
+  const getOrCreateProvisionUserByPhone = async ({
+    requestId,
+    phone,
+    operatorUserId,
+    operatorSessionId
+  }) => {
+    const existingUser = await authStore.findUserByPhone(phone);
+    if (existingUser) {
+      return {
+        user: existingUser,
+        createdUser: false
+      };
+    }
+
+    assertStoreMethod(authStore, 'createUserByPhone', 'authStore');
+    const defaultPassword = await resolveDefaultProvisioningPassword({
+      requestId,
+      operatorUserId,
+      operatorSessionId
+    });
+    let createdUser = null;
+    try {
+      createdUser = await authStore.createUserByPhone({
+        phone,
+        passwordHash: hashPassword(defaultPassword),
+        status: 'active'
+      });
+    } catch (error) {
+      if (isDataTooLongRoleFactError(error)) {
+        throw errors.invalidPayload();
+      }
+      throw error;
+    }
+    if (createdUser) {
+      return {
+        user: createdUser,
+        createdUser: true
+      };
+    }
+
+    const reusedUser = await authStore.findUserByPhone(phone);
+    if (reusedUser) {
+      return {
+        user: reusedUser,
+        createdUser: false
+      };
+    }
+
+    throw errors.provisionConflict();
+  };
+
+  const rollbackProvisionedUser = async ({ requestId, userId }) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId || typeof authStore.deleteUserById !== 'function') {
+      return;
+    }
+    try {
+      const domainAccess = await getDomainAccessForUser(normalizedUserId);
+      if (domainAccess.platform || domainAccess.tenant) {
+        return;
+      }
+      const tenantOptions = await getTenantOptionsForUser(normalizedUserId);
+      if (tenantOptions.length > 0) {
+        return;
+      }
+      if (typeof authStore.hasAnyTenantRelationshipByUserId === 'function') {
+        const hasAnyTenantRelationship = await authStore.hasAnyTenantRelationshipByUserId(
+          normalizedUserId
+        );
+        if (hasAnyTenantRelationship) {
+          return;
+        }
+      }
+    } catch (rollbackGuardError) {
+      log.warn(
+        {
+          request_id: requestId || 'request_id_unset',
+          user_id: normalizedUserId,
+          reason: String(rollbackGuardError?.message || 'unknown')
+        },
+        'Skipped rollback for provisioned user after conflict due to guard check failure'
+      );
+      return;
+    }
+    try {
+      await authStore.deleteUserById(normalizedUserId);
+    } catch (rollbackError) {
+      log.warn(
+        {
+          request_id: requestId || 'request_id_unset',
+          user_id: normalizedUserId,
+          reason: String(rollbackError?.message || 'unknown')
+        },
+        'Failed to rollback provisioned user after conflict'
+      );
+    }
+  };
+
+  const rollbackProvisionedTenantMembership = async ({
+    requestId,
+    userId,
+    tenantId
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    if (
+      !normalizedUserId
+      || !normalizedTenantId
+      || typeof authStore.removeTenantMembershipForUser !== 'function'
+    ) {
+      return;
+    }
+    try {
+      await authStore.removeTenantMembershipForUser({
+        userId: normalizedUserId,
+        tenantId: normalizedTenantId
+      });
+    } catch (rollbackError) {
+      log.warn(
+        {
+          request_id: requestId || 'request_id_unset',
+          user_id: normalizedUserId,
+          tenant_id: normalizedTenantId,
+          reason: String(rollbackError?.message || 'unknown')
+        },
+        'Failed to rollback provisioned tenant membership after conflict'
+      );
+    }
+    if (typeof authStore.removeTenantDomainAccessForUser !== 'function') {
+      return;
+    }
+    try {
+      await authStore.removeTenantDomainAccessForUser(normalizedUserId);
+    } catch (rollbackError) {
+      log.warn(
+        {
+          request_id: requestId || 'request_id_unset',
+          user_id: normalizedUserId,
+          reason: String(rollbackError?.message || 'unknown')
+        },
+        'Failed to rollback provisioned tenant domain access after conflict'
+      );
+    }
+  };
+
+  const ensureProvisioningRelationship = async ({
+    requestId,
+    entryDomain,
+    activeTenantId,
+    userId,
+    tenantName
+  }) => {
+    if (entryDomain === 'platform') {
+      const domainAccess = await getDomainAccessForUser(userId);
+      if (domainAccess.platform) {
+        throw errors.provisionConflict();
+      }
+      const provisionedDomainAccess = await ensureDefaultDomainAccessForUser({
+        requestId,
+        userId
+      });
+      if (!provisionedDomainAccess || provisionedDomainAccess.inserted !== true) {
+        throw errors.provisionConflict();
+      }
+      const updatedDomainAccess = await getDomainAccessForUser(userId);
+      if (!updatedDomainAccess.platform) {
+        throw errors.provisionConflict();
+      }
+      return null;
+    }
+
+    const normalizedTenantId = normalizeTenantId(activeTenantId);
+    if (!normalizedTenantId) {
+      throw errors.noDomainAccess();
+    }
+
+    const existingTenantOptions = await getTenantOptionsForUser(userId);
+    if (existingTenantOptions.some((option) => option.tenant_id === normalizedTenantId)) {
+      const domainAccessBefore = await getDomainAccessForUser(userId);
+      if (domainAccessBefore.tenant) {
+        throw errors.provisionConflict();
+      }
+
+      await ensureTenantDomainAccessForUser({
+        requestId,
+        userId,
+        entryDomain: 'tenant'
+      });
+      const domainAccessAfter = await getDomainAccessForUser(userId);
+      if (!domainAccessAfter.tenant) {
+        throw errors.provisionConflict();
+      }
+      return normalizedTenantId;
+    }
+
+    assertStoreMethod(authStore, 'createTenantMembershipForUser', 'authStore');
+    let createdMembership = null;
+    try {
+      createdMembership = await authStore.createTenantMembershipForUser({
+        userId: String(userId),
+        tenantId: normalizedTenantId,
+        tenantName
+      });
+    } catch (error) {
+      if (isDataTooLongRoleFactError(error)) {
+        throw errors.invalidPayload();
+      }
+      throw error;
+    }
+    if (!createdMembership || createdMembership.created !== true) {
+      throw errors.provisionConflict();
+    }
+
+    try {
+      await ensureTenantDomainAccessForUser({
+        requestId,
+        userId,
+        entryDomain: 'tenant'
+      });
+      const updatedDomainAccess = await getDomainAccessForUser(userId);
+      if (!updatedDomainAccess.tenant) {
+        throw errors.provisionConflict();
+      }
+    } catch (error) {
+      await rollbackProvisionedTenantMembership({
+        requestId,
+        userId,
+        tenantId: normalizedTenantId
+      });
+      throw error;
+    }
+    return normalizedTenantId;
+  };
+
+  const resolveProvisionTenantName = async ({
+    scope,
+    operatorUserId,
+    activeTenantId,
+    requestedTenantName
+  }) => {
+    if (scope !== 'tenant') {
+      return null;
+    }
+    const normalizedActiveTenantId = normalizeTenantId(activeTenantId);
+    if (!normalizedActiveTenantId) {
+      return null;
+    }
+    const operatorTenantOptions = await getTenantOptionsForUser(operatorUserId);
+    const activeTenantOption = operatorTenantOptions.find(
+      (option) => option.tenant_id === normalizedActiveTenantId
+    );
+    const canonicalTenantName = activeTenantOption?.tenant_name
+      ? String(activeTenantOption.tenant_name).trim() || null
+      : null;
+    if (!canonicalTenantName) {
+      throw errors.invalidPayload();
+    }
+    if (
+      requestedTenantName
+      && canonicalTenantName !== requestedTenantName
+    ) {
+      throw errors.invalidPayload();
+    }
+    return canonicalTenantName;
+  };
+
+  const recoverProvisioningOutcomeAfterConflict = async ({
+    error,
+    createdUser,
+    userId,
+    entryDomain,
+    activeTenantId
+  }) => {
+    if (
+      !(error instanceof AuthProblemError)
+      || error.errorCode !== 'AUTH-409-PROVISION-CONFLICT'
+      || !createdUser
+    ) {
+      return null;
+    }
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+    const domainAccess = await getDomainAccessForUser(normalizedUserId);
+    if (entryDomain === 'platform') {
+      if (!domainAccess.platform) {
+        return null;
+      }
+      return { active_tenant_id: null };
+    }
+
+    const normalizedTenantId = normalizeTenantId(activeTenantId);
+    if (!normalizedTenantId || !domainAccess.tenant) {
+      return null;
+    }
+    const tenantOptions = await getTenantOptionsForUser(normalizedUserId);
+    if (!tenantOptions.some((option) => option.tenant_id === normalizedTenantId)) {
+      return null;
+    }
+    return { active_tenant_id: normalizedTenantId };
+  };
+
+  const provisionUserByPhone = async ({
+    requestId,
+    accessToken,
+    phone,
+    scope,
+    tenantName = undefined,
+    payload = undefined,
+    authorizationContext = null
+  }) => {
+    const normalizedScope = String(scope || '').trim().toLowerCase();
+    if (normalizedScope !== 'platform' && normalizedScope !== 'tenant') {
+      throw errors.invalidPayload();
+    }
+    const payloadCandidate = payload === undefined
+      ? {
+        phone,
+        ...(tenantName !== undefined ? { tenant_name: tenantName } : {})
+      }
+      : payload;
+    const parsedPayload = parseProvisionPayload({
+      payload: payloadCandidate,
+      scope: normalizedScope
+    });
+    if (!parsedPayload.valid) {
+      throw errors.invalidPayload();
+    }
+    const normalizedPhone = normalizePhone(parsedPayload.phone);
+    if (normalizedScope === 'platform' && parsedPayload.tenantNameProvided) {
+      throw errors.invalidPayload();
+    }
+    const parsedTenantName = normalizedScope === 'tenant'
+      ? parseOptionalTenantName(parsedPayload.tenantName)
+      : { valid: true, value: null };
+    if (!normalizedPhone) {
+      throw errors.invalidPayload();
+    }
+    if (!parsedTenantName.valid) {
+      throw errors.invalidPayload();
+    }
+
+    const permissionCode = normalizedScope === 'platform'
+      ? 'platform.member_admin.operate'
+      : 'tenant.member_admin.operate';
+    const authorizedRoute = await authorizeRoute({
+      requestId,
+      accessToken,
+      permissionCode,
+      scope: normalizedScope,
+      authorizationContext
+    });
+    const operatorUserId = String(authorizedRoute?.user_id || '').trim() || 'unknown';
+    const operatorSessionId = String(authorizedRoute?.session_id || '').trim() || 'unknown';
+    const sessionEntryDomain = String(authorizedRoute?.entry_domain || '').trim().toLowerCase();
+    const activeTenantId = normalizeTenantId(authorizedRoute?.active_tenant_id);
+    const resolvedTenantName = await resolveProvisionTenantName({
+      scope: normalizedScope,
+      operatorUserId,
+      activeTenantId,
+      requestedTenantName: parsedTenantName.value
+    });
+
+    let provisionedUser = null;
+    let createdUser = false;
+    let relationTenantId = null;
+    try {
+      const provisionedResult = await getOrCreateProvisionUserByPhone({
+        requestId,
+        phone: normalizedPhone,
+        operatorUserId,
+        operatorSessionId
+      });
+      provisionedUser = provisionedResult.user;
+      createdUser = provisionedResult.createdUser;
+      relationTenantId = await ensureProvisioningRelationship({
+        requestId,
+        entryDomain: sessionEntryDomain,
+        activeTenantId,
+        userId: provisionedUser.id,
+        tenantName: resolvedTenantName
+      });
+    } catch (error) {
+      let recoveredOutcome = null;
+      try {
+        recoveredOutcome = await recoverProvisioningOutcomeAfterConflict({
+          error,
+          createdUser,
+          userId: provisionedUser?.id,
+          entryDomain: sessionEntryDomain,
+          activeTenantId
+        });
+      } catch (recoveryError) {
+        log.warn(
+          {
+            request_id: requestId || 'request_id_unset',
+            user_id: String(provisionedUser?.id || 'unknown'),
+            reason: String(recoveryError?.message || 'unknown')
+          },
+          'Post-conflict provisioning recovery check failed'
+        );
+      }
+      if (recoveredOutcome) {
+        relationTenantId = recoveredOutcome.active_tenant_id;
+      } else if (createdUser && provisionedUser?.id) {
+        await rollbackProvisionedUser({
+          requestId,
+          userId: provisionedUser.id
+        });
+        throw error;
+      } else {
+        throw error;
+      }
+    }
+
+    addAuditEvent({
+      type: createdUser ? 'auth.user.provision.created' : 'auth.user.provision.reused',
+      requestId,
+      userId: provisionedUser.id,
+      sessionId: operatorSessionId,
+      detail: createdUser
+        ? 'user provisioned with default password policy'
+        : 'existing user reused without credential mutation',
+      metadata: {
+        operator_user_id: operatorUserId,
+        phone_masked: maskPhone(normalizedPhone),
+        entry_domain: sessionEntryDomain,
+        tenant_id: relationTenantId,
+        credential_initialized: createdUser,
+        first_login_force_password_change: false
+      }
+    });
+
+    return {
+      user_id: provisionedUser.id,
+      phone: provisionedUser.phone,
+      created_user: createdUser,
+      reused_existing_user: !createdUser,
+      credential_initialized: createdUser,
+      first_login_force_password_change: false,
+      entry_domain: sessionEntryDomain,
+      active_tenant_id: relationTenantId,
+      request_id: requestId || 'request_id_unset'
+    };
+  };
+
+  const provisionPlatformUserByPhone = async ({
+    requestId,
+    accessToken,
+    phone,
+    tenantName = undefined,
+    payload = undefined,
+    authorizationContext = null
+  }) =>
+    provisionUserByPhone({
+      requestId,
+      accessToken,
+      phone,
+      scope: 'platform',
+      tenantName,
+      payload,
+      authorizationContext
+    });
+
+  const provisionTenantUserByPhone = async ({
+    requestId,
+    accessToken,
+    phone,
+    tenantName = undefined,
+    payload = undefined,
+    authorizationContext = null
+  }) =>
+    provisionUserByPhone({
+      requestId,
+      accessToken,
+      phone,
+      scope: 'tenant',
+      tenantName,
+      payload,
+      authorizationContext
+    });
+
   const selectOrSwitchTenant = async ({
     requestId,
     accessToken,
@@ -2635,6 +3341,8 @@ const createAuthService = (options = {}) => {
     refresh,
     logout,
     changePassword,
+    provisionPlatformUserByPhone,
+    provisionTenantUserByPhone,
     replacePlatformRolesAndSyncSnapshot,
     // Test support
     _internals: {

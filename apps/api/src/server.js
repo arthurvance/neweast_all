@@ -444,9 +444,31 @@ const createRouteTable = ({
       () => handlers.authTenantMemberAdminProbe(requestId, headers.authorization),
       requestId
     ),
+  'POST /auth/tenant/member-admin/provision-user': async () =>
+    runAuthRoute(
+      () =>
+        handlers.authTenantMemberAdminProvisionUser(
+          requestId,
+          headers.authorization,
+          body || {},
+          getAuthorizationContext()
+        ),
+      requestId
+    ),
   'GET /auth/platform/member-admin/probe': async () =>
     runAuthRoute(
       () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
+      requestId
+    ),
+  'POST /auth/platform/member-admin/provision-user': async () =>
+    runAuthRoute(
+      () =>
+        handlers.authPlatformMemberAdminProvisionUser(
+          requestId,
+          headers.authorization,
+          body || {},
+          getAuthorizationContext()
+        ),
       requestId
     ),
   'POST /auth/refresh': async () =>

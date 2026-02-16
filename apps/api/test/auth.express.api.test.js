@@ -1,6 +1,6 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { createHash, pbkdf2Sync, randomBytes } = require('node:crypto');
+const { createCipheriv, createHash, pbkdf2Sync, randomBytes } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const mysql = require('mysql2/promise');
@@ -188,6 +188,30 @@ const hashPassword = (plainTextPassword) => {
   ).toString('hex');
 
   return `pbkdf2$${PBKDF2_DIGEST}$${PBKDF2_ITERATIONS}$${salt}$${derived}`;
+};
+const deriveSensitiveConfigKey = (decryptionKey) => {
+  const normalizedRawKey = String(decryptionKey || '').trim();
+  if (!normalizedRawKey) {
+    return Buffer.alloc(0);
+  }
+  if (/^[0-9a-f]{64}$/i.test(normalizedRawKey)) {
+    return Buffer.from(normalizedRawKey, 'hex');
+  }
+  return pbkdf2Sync(normalizedRawKey, 'auth.default_password', 210000, 32, 'sha256');
+};
+const buildEncryptedSensitiveConfigValue = ({
+  plainText,
+  decryptionKey
+}) => {
+  const key = deriveSensitiveConfigKey(decryptionKey);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipherText = Buffer.concat([
+    cipher.update(String(plainText || ''), 'utf8'),
+    cipher.final()
+  ]);
+  const authTag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString('base64url')}:${authTag.toString('base64url')}:${cipherText.toString('base64url')}`;
 };
 
 const executeSqlStatements = async (connection, sqlContent) => {
@@ -641,8 +665,8 @@ const prepareMySqlState = async () => {
   return true;
 };
 
-const createExpressHarness = async () => {
-  const app = await createApiApp(config, {
+const createExpressHarness = async (effectiveConfig = config) => {
+  const app = await createApiApp(effectiveConfig, {
     dependencyProbe,
     requirePersistentAuthStore: true
   });
@@ -737,6 +761,479 @@ test('express refresh rejects invalid payload with AUTH-400-INVALID-PAYLOAD', as
     assert.equal(response.status, 400);
     assert.equal(response.headers['content-type'].includes('application/problem+json'), true);
     assert.equal(response.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform provision-user creates user with hashed default credential and rejects duplicate relationship requests', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-member-admin-provision',
+    status: 'active',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'express-provision-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const provisionConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    DB_HOST: MYSQL_HOST,
+    DB_PORT: String(MYSQL_PORT),
+    DB_USER: MYSQL_USER,
+    DB_PASSWORD: MYSQL_PASSWORD,
+    DB_NAME: MYSQL_DATABASE,
+    AUTH_DEFAULT_PASSWORD_ENCRYPTED: encryptedDefaultPassword,
+    AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY: decryptionKey
+  });
+
+  const provisionPhone = '13910000088';
+  const harness = await createExpressHarness(provisionConfig);
+  try {
+    const operatorLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(operatorLogin.status, 200);
+
+    const provisioned = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: provisionPhone
+      }
+    });
+    assert.equal(provisioned.status, 200);
+    assert.equal(provisioned.body.created_user, true);
+    assert.equal(provisioned.body.credential_initialized, true);
+    assert.equal(provisioned.body.first_login_force_password_change, false);
+
+    const [createdRows] = await adminConnection.execute(
+      `
+        SELECT id, password_hash
+        FROM users
+        WHERE phone = ?
+        LIMIT 1
+      `,
+      [provisionPhone]
+    );
+    const createdRow = createdRows?.[0] || null;
+    assert.ok(createdRow);
+    assert.equal(String(createdRow.password_hash).startsWith('pbkdf2$'), true);
+    assert.notEqual(createdRow.password_hash, defaultPassword);
+
+    const firstLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: provisionPhone,
+        password: defaultPassword,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(firstLogin.status, 200);
+
+    const duplicateProvision = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: provisionPhone
+      }
+    });
+    assert.equal(duplicateProvision.status, 409);
+    assert.equal(duplicateProvision.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
+  } finally {
+    await harness.close();
+    const [createdRows] = await adminConnection.execute(
+      `
+        SELECT id
+        FROM users
+        WHERE phone = ?
+        LIMIT 1
+      `,
+      [provisionPhone]
+    );
+    const createdUserId = String(createdRows?.[0]?.id || '').trim();
+    if (createdUserId) {
+      await adminConnection.execute('DELETE FROM auth_user_platform_roles WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM auth_user_tenants WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM auth_user_domain_access WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM refresh_tokens WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM users WHERE id = ?', [createdUserId]);
+    }
+  }
+});
+
+test('express platform provision-user rejects tenant_name payload with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-member-admin-provision-tenant-name-invalid',
+    status: 'active',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'express-provision-platform-tenant-name-invalid-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const provisionConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    DB_HOST: MYSQL_HOST,
+    DB_PORT: String(MYSQL_PORT),
+    DB_USER: MYSQL_USER,
+    DB_PASSWORD: MYSQL_PASSWORD,
+    DB_NAME: MYSQL_DATABASE,
+    AUTH_DEFAULT_PASSWORD_ENCRYPTED: encryptedDefaultPassword,
+    AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY: decryptionKey
+  });
+
+  const harness = await createExpressHarness(provisionConfig);
+  try {
+    const operatorLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(operatorLogin.status, 200);
+
+    const provisioned = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13910000098',
+        tenant_name: 'Tenant Should Not Be Accepted'
+      }
+    });
+    assert.equal(provisioned.status, 400);
+    assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express tenant provision-user reuses existing user without mutating password hash and rejects duplicate relationship requests', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedTenantDomainAccess();
+  await adminConnection.execute(
+    `
+      INSERT INTO auth_user_tenants (
+        user_id,
+        tenant_id,
+        tenant_name,
+        status,
+        can_view_member_admin,
+        can_operate_member_admin,
+        can_view_billing,
+        can_operate_billing
+      )
+      VALUES (?, 'tenant-provision-a', 'Tenant Provision A', 'active', 1, 1, 0, 0)
+      ON DUPLICATE KEY UPDATE
+        tenant_name = VALUES(tenant_name),
+        status = VALUES(status),
+        can_view_member_admin = VALUES(can_view_member_admin),
+        can_operate_member_admin = VALUES(can_operate_member_admin),
+        can_view_billing = VALUES(can_view_billing),
+        can_operate_billing = VALUES(can_operate_billing),
+        updated_at = CURRENT_TIMESTAMP(3)
+    `,
+    [TEST_USER.id]
+  );
+
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'express-tenant-provision-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const provisionConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    DB_HOST: MYSQL_HOST,
+    DB_PORT: String(MYSQL_PORT),
+    DB_USER: MYSQL_USER,
+    DB_PASSWORD: MYSQL_PASSWORD,
+    DB_NAME: MYSQL_DATABASE,
+    AUTH_DEFAULT_PASSWORD_ENCRYPTED: encryptedDefaultPassword,
+    AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY: decryptionKey
+  });
+
+  const existingPhone = '13910000090';
+  const existingPassword = 'LegacyPass!2026';
+  await adminConnection.execute(
+    `
+      INSERT INTO users (id, phone, password_hash, status, session_version)
+      VALUES (?, ?, ?, 'active', 1)
+    `,
+    ['tenant-provision-reuse-target', existingPhone, hashPassword(existingPassword)]
+  );
+
+  const harness = await createExpressHarness(provisionConfig);
+  try {
+    const operatorLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'tenant'
+      }
+    });
+    assert.equal(operatorLogin.status, 200);
+    assert.equal(operatorLogin.body.active_tenant_id, 'tenant-provision-a');
+
+    const [beforeRows] = await adminConnection.execute(
+      `
+        SELECT id, password_hash
+        FROM users
+        WHERE phone = ?
+        LIMIT 1
+      `,
+      [existingPhone]
+    );
+    const beforeRow = beforeRows?.[0] || null;
+    assert.ok(beforeRow);
+
+    const provisioned = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/tenant/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: existingPhone,
+        tenant_name: 'Tenant Provision A'
+      }
+    });
+    assert.equal(provisioned.status, 200);
+    assert.equal(provisioned.body.created_user, false);
+    assert.equal(provisioned.body.reused_existing_user, true);
+    assert.equal(provisioned.body.active_tenant_id, 'tenant-provision-a');
+
+    const [afterRows] = await adminConnection.execute(
+      `
+        SELECT password_hash
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [beforeRow.id]
+    );
+    const afterRow = afterRows?.[0] || null;
+    assert.ok(afterRow);
+    assert.equal(afterRow.password_hash, beforeRow.password_hash);
+
+    const duplicateProvision = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/tenant/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: existingPhone,
+        tenant_name: 'Tenant Provision A'
+      }
+    });
+    assert.equal(duplicateProvision.status, 409);
+    assert.equal(duplicateProvision.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
+
+    const existingUserLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: existingPhone,
+        password: existingPassword,
+        entry_domain: 'tenant'
+      }
+    });
+    assert.equal(existingUserLogin.status, 200);
+    assert.equal(existingUserLogin.body.active_tenant_id, 'tenant-provision-a');
+  } finally {
+    await harness.close();
+    await adminConnection.execute('DELETE FROM auth_user_tenants WHERE user_id = ?', [
+      'tenant-provision-reuse-target'
+    ]);
+    await adminConnection.execute('DELETE FROM auth_user_domain_access WHERE user_id = ?', [
+      'tenant-provision-reuse-target'
+    ]);
+    await adminConnection.execute('DELETE FROM refresh_tokens WHERE user_id = ?', [
+      'tenant-provision-reuse-target'
+    ]);
+    await adminConnection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [
+      'tenant-provision-reuse-target'
+    ]);
+    await adminConnection.execute('DELETE FROM users WHERE id = ?', ['tenant-provision-reuse-target']);
+  }
+});
+
+test('express tenant provision-user rejects oversized tenant_name with AUTH-400-INVALID-PAYLOAD', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedTenantDomainAccess();
+  await adminConnection.execute(
+    `
+      INSERT INTO auth_user_tenants (
+        user_id,
+        tenant_id,
+        tenant_name,
+        status,
+        can_view_member_admin,
+        can_operate_member_admin,
+        can_view_billing,
+        can_operate_billing
+      )
+      VALUES (?, 'tenant-provision-b', 'Tenant Provision B', 'active', 1, 1, 0, 0)
+      ON DUPLICATE KEY UPDATE
+        tenant_name = VALUES(tenant_name),
+        status = VALUES(status),
+        can_view_member_admin = VALUES(can_view_member_admin),
+        can_operate_member_admin = VALUES(can_operate_member_admin),
+        can_view_billing = VALUES(can_view_billing),
+        can_operate_billing = VALUES(can_operate_billing),
+        updated_at = CURRENT_TIMESTAMP(3)
+    `,
+    [TEST_USER.id]
+  );
+
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'express-tenant-provision-name-validation-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const provisionConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    DB_HOST: MYSQL_HOST,
+    DB_PORT: String(MYSQL_PORT),
+    DB_USER: MYSQL_USER,
+    DB_PASSWORD: MYSQL_PASSWORD,
+    DB_NAME: MYSQL_DATABASE,
+    AUTH_DEFAULT_PASSWORD_ENCRYPTED: encryptedDefaultPassword,
+    AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY: decryptionKey
+  });
+
+  const invalidPhone = '13910000091';
+  const harness = await createExpressHarness(provisionConfig);
+  try {
+    const operatorLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'tenant'
+      }
+    });
+    assert.equal(operatorLogin.status, 200);
+    assert.equal(operatorLogin.body.active_tenant_id, 'tenant-provision-b');
+
+    const provisioned = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/tenant/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: invalidPhone,
+        tenant_name: 'X'.repeat(129)
+      }
+    });
+    assert.equal(provisioned.status, 400);
+    assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+
+    const [createdRows] = await adminConnection.execute(
+      `
+        SELECT id
+        FROM users
+        WHERE phone = ?
+        LIMIT 1
+      `,
+      [invalidPhone]
+    );
+    assert.equal(createdRows.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('express platform provision-user is fail-closed when default password secure config is unavailable', async () => {
+  if (!(await prepareMySqlState())) {
+    return;
+  }
+  await seedPlatformRoleFacts({
+    roleId: 'platform-member-admin-provision-config-fail',
+    status: 'active',
+    canViewMemberAdmin: 1,
+    canOperateMemberAdmin: 1
+  });
+
+  const invalidProvisionConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    DB_HOST: MYSQL_HOST,
+    DB_PORT: String(MYSQL_PORT),
+    DB_USER: MYSQL_USER,
+    DB_PASSWORD: MYSQL_PASSWORD,
+    DB_NAME: MYSQL_DATABASE,
+    AUTH_DEFAULT_PASSWORD_ENCRYPTED: '',
+    AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY: ''
+  });
+  const harness = await createExpressHarness(invalidProvisionConfig);
+  try {
+    const operatorLogin = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/login',
+      body: {
+        phone: TEST_USER.phone,
+        password: TEST_USER.password,
+        entry_domain: 'platform'
+      }
+    });
+    assert.equal(operatorLogin.status, 200);
+
+    const provisionFailed = await invokeRoute(harness, {
+      method: 'post',
+      path: '/auth/platform/member-admin/provision-user',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13910000089'
+      }
+    });
+    assert.equal(provisionFailed.status, 503);
+    assert.equal(provisionFailed.body.error_code, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
   } finally {
     await harness.close();
   }

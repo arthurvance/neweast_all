@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createHash, generateKeyPairSync } = require('node:crypto');
+const {
+  createCipheriv,
+  createHash,
+  generateKeyPairSync,
+  pbkdf2Sync,
+  randomBytes
+} = require('node:crypto');
 const {
   createAuthService,
   AuthProblemError,
@@ -91,6 +97,50 @@ const refreshTokenHash = (token) => {
     .update(String(payload.jti || ''))
     .digest('hex');
 };
+const deriveSensitiveConfigKey = (decryptionKey) => {
+  const normalizedRawKey = String(decryptionKey || '').trim();
+  if (!normalizedRawKey) {
+    return Buffer.alloc(0);
+  }
+  if (/^[0-9a-f]{64}$/i.test(normalizedRawKey)) {
+    return Buffer.from(normalizedRawKey, 'hex');
+  }
+  return pbkdf2Sync(normalizedRawKey, 'auth.default_password', 210000, 32, 'sha256');
+};
+const buildEncryptedSensitiveConfigValue = ({
+  plainText,
+  decryptionKey
+}) => {
+  const key = deriveSensitiveConfigKey(decryptionKey);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipherText = Buffer.concat([
+    cipher.update(String(plainText || ''), 'utf8'),
+    cipher.final()
+  ]);
+  const authTag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString('base64url')}:${authTag.toString('base64url')}:${cipherText.toString('base64url')}`;
+};
+const buildEncryptedSensitiveConfigValueLegacy = ({
+  plainText,
+  decryptionKey
+}) => {
+  const key = createHash('sha256').update(String(decryptionKey || '')).digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipherText = Buffer.concat([
+    cipher.update(String(plainText || ''), 'utf8'),
+    cipher.final()
+  ]);
+  const authTag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString('base64url')}:${authTag.toString('base64url')}:${cipherText.toString('base64url')}`;
+};
+const createSensitiveConfigProvider = ({ encryptedDefaultPassword = '' } = {}) => ({
+  getEncryptedConfig: async (configKey) =>
+    String(configKey || '').trim() === 'auth.default_password'
+      ? String(encryptedDefaultPassword || '')
+      : ''
+});
 
 test('default service does not allow legacy seeded credentials', async () => {
   const service = createAuthService();
@@ -3406,6 +3456,1480 @@ test('authorizeRoute deduplicates duplicate platform role_id facts using latest 
       return true;
     }
   );
+});
+
+test('provisionPlatformUserByPhone creates user with hashed default credential and allows first login without forced password change', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-operator-login'
+  );
+  const provisionResult = await service.provisionPlatformUserByPhone({
+    requestId: 'req-provision-platform-new-user',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550000'
+  });
+  assert.equal(provisionResult.created_user, true);
+  assert.equal(provisionResult.reused_existing_user, false);
+  assert.equal(provisionResult.credential_initialized, true);
+  assert.equal(provisionResult.first_login_force_password_change, false);
+  assert.equal(provisionResult.entry_domain, 'platform');
+
+  const provisionedUser = await service._internals.authStore.findUserByPhone('13835550000');
+  assert.ok(provisionedUser);
+  assert.ok(String(provisionedUser.passwordHash || '').startsWith('pbkdf2$'));
+  assert.notEqual(provisionedUser.passwordHash, defaultPassword);
+
+  const loginResult = await service.login({
+    requestId: 'req-provision-platform-login',
+    phone: '13835550000',
+    password: defaultPassword,
+    entryDomain: 'platform'
+  });
+  assert.equal(loginResult.request_id, 'req-provision-platform-login');
+  assert.equal(Object.prototype.hasOwnProperty.call(loginResult, 'force_password_change_required'), false);
+});
+
+test('provisionPlatformUserByPhone rejects tenantName payload with AUTH-400-INVALID-PAYLOAD', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-platform-tenant-name-invalid-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-tenant-name-invalid-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.provisionPlatformUserByPhone({
+        requestId: 'req-provision-platform-tenant-name-invalid',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550044',
+        tenantName: 'Tenant Should Not Be Accepted'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('provisionPlatformUserByPhone rejects unknown payload fields with AUTH-400-INVALID-PAYLOAD', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-platform-unknown-field-invalid-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-unknown-field-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.provisionPlatformUserByPhone({
+        requestId: 'req-provision-platform-unknown-field-invalid',
+        accessToken: operatorLogin.access_token,
+        payload: {
+          phone: '13835550043',
+          extra_flag: true
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('provisionPlatformUserByPhone reuses existing user without mutating password hash and rejects duplicate relationship requests', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-reuse-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'provision-reuse-target',
+        phone: '13835550001',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: []
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-reuse-operator-login'
+  );
+  const previousUser = await service._internals.authStore.findUserByPhone('13835550001');
+  const previousPasswordHash = previousUser.passwordHash;
+
+  const firstProvision = await service.provisionPlatformUserByPhone({
+    requestId: 'req-provision-platform-reuse-first',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550001'
+  });
+  assert.equal(firstProvision.created_user, false);
+  assert.equal(firstProvision.reused_existing_user, true);
+
+  const currentUser = await service._internals.authStore.findUserByPhone('13835550001');
+  assert.equal(currentUser.passwordHash, previousPasswordHash);
+
+  await assert.rejects(
+    () =>
+      service.provisionPlatformUserByPhone({
+        requestId: 'req-provision-platform-reuse-duplicate',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550001'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+});
+
+test('provisionPlatformUserByPhone returns conflict when platform relationship is concurrently provisioned', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-platform-race-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'provision-platform-race-target',
+        phone: '13835550012',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: []
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const authStore = service._internals.authStore;
+  const originalFindDomainAccessByUserId = authStore.findDomainAccessByUserId.bind(authStore);
+  const originalEnsureDefaultDomainAccessForUser = authStore.ensureDefaultDomainAccessForUser
+    .bind(authStore);
+  let targetDomainAccessLookupCount = 0;
+
+  authStore.findDomainAccessByUserId = async (userId) => {
+    if (String(userId) === 'provision-platform-race-target') {
+      targetDomainAccessLookupCount += 1;
+      if (targetDomainAccessLookupCount === 1) {
+        return { platform: false, tenant: false };
+      }
+      return { platform: true, tenant: false };
+    }
+    return originalFindDomainAccessByUserId(userId);
+  };
+  authStore.ensureDefaultDomainAccessForUser = async (userId) => {
+    if (String(userId) === 'provision-platform-race-target') {
+      return { inserted: false };
+    }
+    return originalEnsureDefaultDomainAccessForUser(userId);
+  };
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-race-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.provisionPlatformUserByPhone({
+        requestId: 'req-provision-platform-race',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550012'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+});
+
+test('provisionPlatformUserByPhone returns success when concurrent provisioning already committed relationship for newly created user', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-platform-race-preserve-user-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const authStore = service._internals.authStore;
+  const originalEnsureDefaultDomainAccessForUser = authStore.ensureDefaultDomainAccessForUser
+    .bind(authStore);
+  const originalDeleteUserById = authStore.deleteUserById.bind(authStore);
+  const racePhone = '13835550092';
+  let preservedUserId = null;
+  let deleteAttempts = 0;
+
+  authStore.ensureDefaultDomainAccessForUser = async (userId) => {
+    const foundUser = await authStore.findUserById(userId);
+    if (foundUser?.phone === racePhone) {
+      preservedUserId = String(userId);
+      await originalEnsureDefaultDomainAccessForUser(userId);
+      return { inserted: false };
+    }
+    return originalEnsureDefaultDomainAccessForUser(userId);
+  };
+  authStore.deleteUserById = async (userId) => {
+    deleteAttempts += 1;
+    return originalDeleteUserById(userId);
+  };
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-race-preserve-operator-login'
+  );
+
+  const provisioned = await service.provisionPlatformUserByPhone({
+    requestId: 'req-provision-platform-race-preserve',
+    accessToken: operatorLogin.access_token,
+    phone: racePhone
+  });
+
+  assert.ok(preservedUserId);
+  assert.equal(provisioned.created_user, true);
+  assert.equal(provisioned.reused_existing_user, false);
+  assert.equal(provisioned.active_tenant_id, null);
+  assert.equal(deleteAttempts, 0);
+  const preservedUser = await authStore.findUserByPhone(racePhone);
+  assert.ok(preservedUser);
+  const preservedDomainAccess = await authStore.findDomainAccessByUserId(preservedUserId);
+  assert.deepEqual(preservedDomainAccess, { platform: true, tenant: false });
+});
+
+test('provisionPlatformUserByPhone rolls back newly created user when relationship provisioning fails', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-platform-rollback-user-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const authStore = service._internals.authStore;
+  const originalEnsureDefaultDomainAccessForUser = authStore.ensureDefaultDomainAccessForUser
+    .bind(authStore);
+  const rollbackPhone = '13835550090';
+  let rollbackUserId = null;
+
+  authStore.ensureDefaultDomainAccessForUser = async (userId) => {
+    const foundUser = await authStore.findUserById(userId);
+    if (foundUser?.phone === rollbackPhone) {
+      rollbackUserId = String(userId);
+      return { inserted: false };
+    }
+    return originalEnsureDefaultDomainAccessForUser(userId);
+  };
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-rollback-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.provisionPlatformUserByPhone({
+        requestId: 'req-provision-platform-rollback',
+        accessToken: operatorLogin.access_token,
+        phone: rollbackPhone
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+
+  assert.ok(rollbackUserId);
+  const rolledBackUser = await authStore.findUserByPhone(rollbackPhone);
+  assert.equal(rolledBackUser, null);
+});
+
+test('provisionTenantUserByPhone creates tenant relationship and rejects duplicate relationship requests', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator',
+        phone: '13835550003',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-a',
+            tenantName: 'Tenant Provision A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-operator-login',
+    phone: '13835550003',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  const provisioned = await service.provisionTenantUserByPhone({
+    requestId: 'req-provision-tenant-first',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550004',
+    tenantName: 'Tenant Provision A'
+  });
+  assert.equal(provisioned.created_user, true);
+  assert.equal(provisioned.entry_domain, 'tenant');
+  assert.equal(provisioned.active_tenant_id, 'tenant-provision-a');
+
+  const tenantLogin = await service.login({
+    requestId: 'req-provision-tenant-login',
+    phone: '13835550004',
+    password: defaultPassword,
+    entryDomain: 'tenant'
+  });
+  assert.equal(tenantLogin.entry_domain, 'tenant');
+  assert.equal(tenantLogin.active_tenant_id, 'tenant-provision-a');
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-duplicate',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550004',
+        tenantName: 'Tenant Provision A'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+});
+
+test('provisionTenantUserByPhone returns conflict when tenant domain access remains unavailable after relationship provisioning', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-domain-disabled-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-domain-disabled-operator',
+        phone: '13835550030',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-domain-disabled-a',
+            tenantName: 'Tenant Provision Domain Disabled A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-domain-disabled-target',
+        phone: '13835550031',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: []
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const authStore = service._internals.authStore;
+  const originalFindDomainAccessByUserId = authStore.findDomainAccessByUserId.bind(authStore);
+  const originalEnsureTenantDomainAccessForUser = authStore.ensureTenantDomainAccessForUser
+    .bind(authStore);
+
+  authStore.findDomainAccessByUserId = async (userId) => {
+    if (String(userId) === 'tenant-provision-domain-disabled-target') {
+      return { platform: false, tenant: false };
+    }
+    return originalFindDomainAccessByUserId(userId);
+  };
+  authStore.ensureTenantDomainAccessForUser = async (userId) => {
+    if (String(userId) === 'tenant-provision-domain-disabled-target') {
+      return { inserted: false };
+    }
+    return originalEnsureTenantDomainAccessForUser(userId);
+  };
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-domain-disabled-operator-login',
+    phone: '13835550030',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-domain-disabled',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550031',
+        tenantName: 'Tenant Provision Domain Disabled A'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+  const tenantOptions = await authStore.listTenantOptionsByUserId(
+    'tenant-provision-domain-disabled-target'
+  );
+  assert.equal(
+    tenantOptions.some((option) => option.tenantId === 'tenant-provision-domain-disabled-a'),
+    false
+  );
+});
+
+test('provisionTenantUserByPhone rolls back membership when tenant domain access grant throws unexpectedly', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-domain-throw-rollback-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-domain-throw-operator',
+        phone: '13835550093',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-domain-throw-a',
+            tenantName: 'Tenant Provision Domain Throw A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-domain-throw-target',
+        phone: '13835550094',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: []
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const authStore = service._internals.authStore;
+  const originalEnsureTenantDomainAccessForUser = authStore.ensureTenantDomainAccessForUser
+    .bind(authStore);
+
+  authStore.ensureTenantDomainAccessForUser = async (userId) => {
+    if (String(userId) === 'tenant-provision-domain-throw-target') {
+      throw new Error('tenant-domain-access-write-failed');
+    }
+    return originalEnsureTenantDomainAccessForUser(userId);
+  };
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-domain-throw-operator-login',
+    phone: '13835550093',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-domain-throw',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550094',
+        tenantName: 'Tenant Provision Domain Throw A'
+      }),
+    (error) => {
+      assert.equal(error instanceof AuthProblemError, false);
+      assert.equal(error?.message, 'tenant-domain-access-write-failed');
+      return true;
+    }
+  );
+  const tenantOptions = await authStore.listTenantOptionsByUserId(
+    'tenant-provision-domain-throw-target'
+  );
+  assert.equal(
+    tenantOptions.some((option) => option.tenantId === 'tenant-provision-domain-throw-a'),
+    false
+  );
+});
+
+test('provisionTenantUserByPhone rolls back tenant membership and tenant domain access when post-grant verification reports conflict', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-domain-verify-rollback-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-domain-verify-operator',
+        phone: '13835550110',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-domain-verify-a',
+            tenantName: 'Tenant Provision Domain Verify A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-domain-verify-target',
+        phone: '13835550111',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: []
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const authStore = service._internals.authStore;
+  const originalFindDomainAccessByUserId = authStore.findDomainAccessByUserId
+    .bind(authStore);
+  let staleReadInjected = false;
+  authStore.findDomainAccessByUserId = async (userId) => {
+    if (String(userId) !== 'tenant-provision-domain-verify-target') {
+      return originalFindDomainAccessByUserId(userId);
+    }
+    const actualAccess = await originalFindDomainAccessByUserId(userId);
+    if (!staleReadInjected && actualAccess.tenant) {
+      staleReadInjected = true;
+      return { platform: false, tenant: false };
+    }
+    return actualAccess;
+  };
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-domain-verify-operator-login',
+    phone: '13835550110',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-domain-verify',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550111',
+        tenantName: 'Tenant Provision Domain Verify A'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+
+  const tenantOptions = await authStore.listTenantOptionsByUserId(
+    'tenant-provision-domain-verify-target'
+  );
+  assert.equal(
+    tenantOptions.some((option) => option.tenantId === 'tenant-provision-domain-verify-a'),
+    false
+  );
+  const recoveredDomainAccess = await originalFindDomainAccessByUserId(
+    'tenant-provision-domain-verify-target'
+  );
+  assert.deepEqual(recoveredDomainAccess, { platform: false, tenant: false });
+});
+
+test('provisionTenantUserByPhone reuses existing user without mutating password hash', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-reuse-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-reuse',
+        phone: '13835550013',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-reuse-a',
+            tenantName: 'Tenant Provision Reuse A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-reuse-target',
+        phone: '13835550014',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: []
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-reuse-operator-login',
+    phone: '13835550013',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  const previousUser = await service._internals.authStore.findUserByPhone('13835550014');
+  const previousPasswordHash = previousUser.passwordHash;
+
+  const provisioned = await service.provisionTenantUserByPhone({
+    requestId: 'req-provision-tenant-reuse-first',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550014',
+    tenantName: 'Tenant Provision Reuse A'
+  });
+  assert.equal(provisioned.created_user, false);
+  assert.equal(provisioned.reused_existing_user, true);
+  assert.equal(provisioned.active_tenant_id, 'tenant-provision-reuse-a');
+
+  const currentUser = await service._internals.authStore.findUserByPhone('13835550014');
+  assert.equal(currentUser.passwordHash, previousPasswordHash);
+});
+
+test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even when existing membership is inactive', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-inactive-relationship-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-inactive-relationship',
+        phone: '13835550017',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-inactive-a',
+            tenantName: 'Tenant Provision Inactive A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-inactive-target',
+        phone: '13835550018',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: [],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-inactive-a',
+            tenantName: 'Tenant Provision Inactive A',
+            status: 'disabled',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-inactive-relationship-operator-login',
+    phone: '13835550017',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-inactive-relationship',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550018',
+        tenantName: 'Tenant Provision Inactive A'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-PROVISION-CONFLICT');
+      return true;
+    }
+  );
+});
+
+test('provisionTenantUserByPhone heals tenant domain access when active relationship already exists', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-domain-heal-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-domain-heal',
+        phone: '13835550040',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-domain-heal-a',
+            tenantName: 'Tenant Provision Domain Heal A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-domain-heal-target',
+        phone: '13835550041',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: [],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-domain-heal-a',
+            tenantName: 'Tenant Provision Domain Heal A',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-domain-heal-operator-login',
+    phone: '13835550040',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  const provisioned = await service.provisionTenantUserByPhone({
+    requestId: 'req-provision-tenant-domain-heal',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550041',
+    tenantName: 'Tenant Provision Domain Heal A'
+  });
+  assert.equal(provisioned.created_user, false);
+  assert.equal(provisioned.reused_existing_user, true);
+  assert.equal(provisioned.active_tenant_id, 'tenant-provision-domain-heal-a');
+
+  const domainAccess = await service._internals.authStore.findDomainAccessByUserId(
+    'tenant-provision-domain-heal-target'
+  );
+  assert.deepEqual(domainAccess, { platform: false, tenant: true });
+});
+
+test('provisionTenantUserByPhone rejects oversized tenant_name with AUTH-400-INVALID-PAYLOAD', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-name-validation-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-name-validation',
+        phone: '13835550015',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-name-validation-a',
+            tenantName: 'Tenant Provision Name Validation A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-name-validation-operator-login',
+    phone: '13835550015',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-name-validation-invalid',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550016',
+        tenantName: 'X'.repeat(129)
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('provisionTenantUserByPhone rejects tenant_name whose raw payload length exceeds max length', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-raw-length-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-raw-length',
+        phone: '13835550029',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-raw-length-a',
+            tenantName: 'Tenant Provision Raw Length A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-raw-length-operator-login',
+    phone: '13835550029',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  const paddedTenantName = ` ${'X'.repeat(128)} `;
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-raw-length-invalid',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550030',
+        tenantName: paddedTenantName
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('provisionTenantUserByPhone rejects blank tenant_name with AUTH-400-INVALID-PAYLOAD', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-name-blank-validation-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-name-blank-validation',
+        phone: '13835550095',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-name-blank-validation-a',
+            tenantName: 'Tenant Provision Name Blank Validation A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-name-blank-validation-operator-login',
+    phone: '13835550095',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-name-blank-validation-invalid',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550096',
+        tenantName: '   '
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('provisionTenantUserByPhone rejects unknown payload fields with AUTH-400-INVALID-PAYLOAD', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-unknown-field-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-unknown-field',
+        phone: '13835550032',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-unknown-field-a',
+            tenantName: 'Tenant Provision Unknown Field A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-unknown-field-operator-login',
+    phone: '13835550032',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-unknown-field-invalid',
+        accessToken: operatorLogin.access_token,
+        payload: {
+          phone: '13835550033',
+          tenant_name: 'Tenant Provision Unknown Field A',
+          extra_flag: true
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('provisionTenantUserByPhone rejects tenant_name that mismatches active tenant canonical name', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-name-canonical-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-name-canonical',
+        phone: '13835550019',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-name-canonical-a',
+            tenantName: 'Tenant Provision Name Canonical A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-name-canonical-operator-login',
+    phone: '13835550019',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-name-canonical-invalid',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550020',
+        tenantName: 'Tenant Name Spoofed By Caller'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+  const unexpectedUser = await service._internals.authStore.findUserByPhone('13835550020');
+  assert.equal(unexpectedUser, null);
+});
+
+test('provisionTenantUserByPhone rejects caller tenant_name when active tenant canonical name is unavailable', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-name-missing-canonical-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-name-missing-canonical',
+        phone: '13835550042',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-name-missing-canonical-a',
+            tenantName: null,
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-name-missing-canonical-operator-login',
+    phone: '13835550042',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-name-missing-canonical',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550043',
+        tenantName: 'Tenant Name Spoofed By Caller'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+  const unexpectedUser = await service._internals.authStore.findUserByPhone('13835550043');
+  assert.equal(unexpectedUser, null);
+});
+
+test('provisionTenantUserByPhone rejects request when active tenant canonical name is unavailable even without tenant_name payload', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-name-missing-canonical-implicit-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-name-missing-canonical-implicit',
+        phone: '13835550044',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-name-missing-canonical-implicit-a',
+            tenantName: null,
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-name-missing-canonical-implicit-operator-login',
+    phone: '13835550044',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  await assert.rejects(
+    () =>
+      service.provisionTenantUserByPhone({
+        requestId: 'req-provision-tenant-name-missing-canonical-implicit',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550045'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+  const unexpectedUser = await service._internals.authStore.findUserByPhone('13835550045');
+  assert.equal(unexpectedUser, null);
+});
+
+test('provisioning supports legacy v1 key derivation for encrypted default password', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'legacy-provisioning-key-compatibility';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValueLegacy({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-legacy-key-operator-login'
+  );
+
+  const provisioned = await service.provisionPlatformUserByPhone({
+    requestId: 'req-provision-legacy-key',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550112'
+  });
+  assert.equal(provisioned.created_user, true);
+  assert.equal(provisioned.credential_initialized, true);
+
+  const login = await service.login({
+    requestId: 'req-provision-legacy-key-login',
+    phone: '13835550112',
+    password: defaultPassword,
+    entryDomain: 'platform'
+  });
+  assert.equal(login.entry_domain, 'platform');
+});
+
+test('provisioning is fail-closed when auth.default_password secure config is unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: {
+      getEncryptedConfig: async () => ''
+    },
+    sensitiveConfigDecryptionKey: ''
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-config-missing-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.provisionPlatformUserByPhone({
+        requestId: 'req-provision-config-missing',
+        accessToken: operatorLogin.access_token,
+        phone: '13835550002'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
+      return true;
+    }
+  );
+
+  const configFailedAudit = service._internals.auditTrail
+    .filter((event) => event.type === 'auth.user.provision.config_failed')
+    .at(-1);
+  assert.ok(configFailedAudit);
+  assert.equal(configFailedAudit.detail, 'default password resolution failed');
+  assert.equal(
+    configFailedAudit.failure_reason,
+    'encrypted-config-missing-or-key-missing'
+  );
+});
+
+test('in-memory auth store createTenantMembershipForUser returns created=false when user does not exist', async () => {
+  const service = createAuthService();
+  const result = await service._internals.authStore.createTenantMembershipForUser({
+    userId: 'missing-user-id',
+    tenantId: 'tenant-a'
+  });
+  assert.deepEqual(result, { created: false });
+});
+
+test('in-memory auth store deleteUserById clears platform role facts and snapshot caches', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'in-memory-delete-cleanup-user',
+        phone: '13835550100',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-member-admin-cleanup',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+  const store = service._internals.authStore;
+
+  const beforeDelete = await store.findPlatformPermissionByUserId({
+    userId: 'in-memory-delete-cleanup-user'
+  });
+  assert.ok(beforeDelete);
+
+  const deleteResult = await store.deleteUserById('in-memory-delete-cleanup-user');
+  assert.deepEqual(deleteResult, { deleted: true });
+
+  const afterDelete = await store.findPlatformPermissionByUserId({
+    userId: 'in-memory-delete-cleanup-user'
+  });
+  assert.equal(afterDelete, null);
+
+  const syncAfterDelete = await store.syncPlatformPermissionSnapshotByUserId({
+    userId: 'in-memory-delete-cleanup-user',
+    forceWhenNoRoleFacts: true
+  });
+  assert.equal(syncAfterDelete.synced, false);
+  assert.equal(syncAfterDelete.reason, 'invalid-user-id');
 });
 
 test('extractBearerToken accepts case-insensitive Authorization scheme', () => {

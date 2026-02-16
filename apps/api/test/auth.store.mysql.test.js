@@ -134,10 +134,7 @@ test('ensureDefaultDomainAccessForUser inserts platform domain access when user 
   let insertStatement = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('COUNT(*) AS domain_count')) {
-      return [{ domain_count: 0 }];
-    }
-    if (normalizedSql.includes('auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
       insertCalled = true;
       insertStatement = normalizedSql;
       return { affectedRows: 1 };
@@ -148,51 +145,301 @@ test('ensureDefaultDomainAccessForUser inserts platform domain access when user 
 
   const result = await store.ensureDefaultDomainAccessForUser('u-new');
   assert.equal(insertCalled, true);
-  assert.equal(/INSERT\s+IGNORE\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
-  assert.equal(/status\s*=\s*VALUES\(status\)/i.test(insertStatement), false);
+  assert.equal(/INSERT\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
+  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), true);
+  assert.equal(/VALUES\s*\(\?,\s*'platform',\s*'active'\)/i.test(insertStatement), true);
   assert.deepEqual(result, { inserted: true });
 });
 
-test('ensureDefaultDomainAccessForUser does nothing when domain rows already exist', async () => {
-  let insertCalled = false;
+test('ensureDefaultDomainAccessForUser returns inserted=false when platform domain is already active', async () => {
+  let upsertCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('COUNT(*) AS domain_count')) {
-      return [{ domain_count: 1 }];
-    }
     if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
-      insertCalled = true;
-      return { affectedRows: 1 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const result = await store.ensureDefaultDomainAccessForUser('u-existing');
-  assert.equal(insertCalled, false);
-  assert.deepEqual(result, { inserted: false });
-});
-
-test('ensureDefaultDomainAccessForUser does not re-enable status in duplicate-key race path', async () => {
-  let insertStatement = '';
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (normalizedSql.includes('COUNT(*) AS domain_count')) {
-      return [{ domain_count: 0 }];
-    }
-    if (normalizedSql.includes('auth_user_domain_access')) {
-      insertStatement = normalizedSql;
-      // Simulate duplicate-key ignored insert from concurrent writer.
+      upsertCalled = true;
       return { affectedRows: 0 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
-  const result = await store.ensureDefaultDomainAccessForUser('u-race');
-  assert.equal(/INSERT\s+IGNORE\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
-  assert.equal(/status\s*=\s*VALUES\(status\)/i.test(insertStatement), false);
+  const result = await store.ensureDefaultDomainAccessForUser('u-existing');
+  assert.equal(upsertCalled, true);
   assert.deepEqual(result, { inserted: false });
+});
+
+test('ensureDefaultDomainAccessForUser re-enables disabled platform domain row', async () => {
+  let insertStatement = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      insertStatement = normalizedSql;
+      // Simulate ON DUPLICATE KEY UPDATE re-activating a disabled row.
+      return { affectedRows: 2 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.ensureDefaultDomainAccessForUser('u-race');
+  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), true);
+  assert.equal(/status\s*=\s*CASE/i.test(insertStatement), true);
+  assert.deepEqual(result, { inserted: true });
+});
+
+test('ensureDefaultDomainAccessForUser upsert targets platform domain only', async () => {
+  let upsertSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      upsertSql = normalizedSql;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.ensureDefaultDomainAccessForUser('u-platform-only-check');
+  assert.equal(/VALUES\s*\(\?,\s*'platform',\s*'active'\)/i.test(upsertSql), true);
+  assert.deepEqual(result, { inserted: true });
+});
+
+test('ensureTenantDomainAccessForUser re-enables disabled tenant domain row when active memberships exist', async () => {
+  let upsertSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
+      return [{ tenant_count: 1 }];
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      upsertSql = normalizedSql;
+      return { affectedRows: 2 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.ensureTenantDomainAccessForUser('u-tenant-reactivate');
+  assert.equal(/VALUES\s*\(\?,\s*'tenant',\s*'active'\)/i.test(upsertSql), true);
+  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(upsertSql), true);
+  assert.deepEqual(result, { inserted: true });
+});
+
+test('createUserByPhone inserts new user and returns normalized record', async () => {
+  let insertedUserId = '';
+  let insertedPhone = '';
+  let insertedPasswordHash = '';
+  let insertedStatus = '';
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO users')) {
+      insertedUserId = String(params?.[0] || '');
+      insertedPhone = String(params?.[1] || '');
+      insertedPasswordHash = String(params?.[2] || '');
+      insertedStatus = String(params?.[3] || '');
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')
+      && normalizedSql.includes('WHERE id = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('WHERE phone = ?')
+    ) {
+      return [
+        {
+          id: params?.[0],
+          phone: insertedPhone,
+          password_hash: insertedPasswordHash,
+          status: insertedStatus,
+          session_version: 1
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: false });
+
+  const createdUser = await store.createUserByPhone({
+    phone: '13846660000',
+    passwordHash: 'pbkdf2$sha512$150000$salt$hash',
+    status: 'active'
+  });
+  assert.ok(insertedUserId.length > 0);
+  assert.equal(insertedPhone, '13846660000');
+  assert.equal(insertedStatus, 'active');
+  assert.deepEqual(createdUser, {
+    id: insertedUserId,
+    phone: '13846660000',
+    passwordHash: 'pbkdf2$sha512$150000$salt$hash',
+    status: 'active',
+    sessionVersion: 1
+  });
+});
+
+test('createUserByPhone returns null on duplicate phone insert race', async () => {
+  const duplicateError = new Error('Duplicate entry for users.phone');
+  duplicateError.code = 'ER_DUP_ENTRY';
+  duplicateError.errno = 1062;
+
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO users')) {
+      throw duplicateError;
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: false });
+
+  const createdUser = await store.createUserByPhone({
+    phone: '13846660001',
+    passwordHash: 'hash'
+  });
+  assert.equal(createdUser, null);
+});
+
+test('deleteUserById executes delete sequence inside a single transaction', async () => {
+  const txStatements = [];
+  let inTransactionCallCount = 0;
+  let outsideQueryCallCount = 0;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        outsideQueryCallCount += 1;
+        assert.fail(`deleteUserById should execute in transaction only: ${String(sql)}`);
+        return [];
+      },
+      inTransaction: async (runner) => {
+        inTransactionCallCount += 1;
+        return runner({
+          query: async (sql) => {
+            const statement = String(sql).replace(/\s+/g, ' ').trim();
+            txStatements.push(statement);
+            if (statement.includes('DELETE FROM users')) {
+              return { affectedRows: 1 };
+            }
+            return { affectedRows: 0 };
+          }
+        });
+      }
+    }
+  });
+
+  const result = await store.deleteUserById('u-delete-tx');
+  assert.deepEqual(result, { deleted: true });
+  assert.equal(inTransactionCallCount, 1);
+  assert.equal(outsideQueryCallCount, 0);
+  assert.equal(txStatements.length, 6);
+  assert.equal(txStatements[0].includes('DELETE FROM refresh_tokens'), true);
+  assert.equal(txStatements[1].includes('DELETE FROM auth_sessions'), true);
+  assert.equal(txStatements[2].includes('DELETE FROM auth_user_platform_roles'), true);
+  assert.equal(txStatements[3].includes('DELETE FROM auth_user_domain_access'), true);
+  assert.equal(txStatements[4].includes('DELETE FROM auth_user_tenants'), true);
+  assert.equal(txStatements[5].includes('DELETE FROM users'), true);
+});
+
+test('createTenantMembershipForUser inserts tenant relationship and returns created=true', async () => {
+  let insertSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+      insertSql = normalizedSql;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: true });
+
+  const result = await store.createTenantMembershipForUser({
+    userId: 'u-tenant-create',
+    tenantId: 'tenant-1',
+    tenantName: 'Tenant 1'
+  });
+  assert.equal(/INSERT INTO auth_user_tenants/i.test(insertSql), true);
+  assert.deepEqual(result, { created: true });
+});
+
+test('createTenantMembershipForUser normalizes blank tenant name to null', async () => {
+  let insertedTenantName = 'unset';
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+      insertedTenantName = params?.[2];
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: true });
+
+  const result = await store.createTenantMembershipForUser({
+    userId: 'u-tenant-name-normalize',
+    tenantId: 'tenant-name-normalize',
+    tenantName: '   '
+  });
+  assert.equal(insertedTenantName, null);
+  assert.deepEqual(result, { created: true });
+});
+
+test('createTenantMembershipForUser returns created=false on duplicate relationship', async () => {
+  const duplicateError = new Error('Duplicate entry for auth_user_tenants');
+  duplicateError.code = 'ER_DUP_ENTRY';
+  duplicateError.errno = 1062;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+      throw duplicateError;
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: true });
+
+  const result = await store.createTenantMembershipForUser({
+    userId: 'u-tenant-duplicate',
+    tenantId: 'tenant-2'
+  });
+  assert.deepEqual(result, { created: false });
+});
+
+test('createTenantMembershipForUser returns created=false when user does not exist', async () => {
+  let insertCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+      insertCalled = true;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: false });
+
+  const result = await store.createTenantMembershipForUser({
+    userId: 'u-tenant-missing-user',
+    tenantId: 'tenant-missing-user'
+  });
+  assert.equal(insertCalled, false);
+  assert.deepEqual(result, { created: false });
+});
+
+test('removeTenantDomainAccessForUser removes tenant domain only when active memberships are absent', async () => {
+  let deleteSql = '';
+  let deleteParams = [];
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('DELETE FROM auth_user_domain_access')
+      && normalizedSql.includes("domain = 'tenant'")
+    ) {
+      deleteSql = normalizedSql;
+      deleteParams = params;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.removeTenantDomainAccessForUser('u-tenant-domain-cleanup');
+  assert.equal(/NOT EXISTS/i.test(deleteSql), true);
+  assert.deepEqual(deleteParams, ['u-tenant-domain-cleanup', 'u-tenant-domain-cleanup']);
+  assert.deepEqual(result, { removed: true });
 });
 
 test('findDomainAccessByUserId surfaces schema errors for missing domain access table', async () => {

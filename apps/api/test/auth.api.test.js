@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createCipheriv, createHash, pbkdf2Sync, randomBytes } = require('node:crypto');
 const { handleApiRoute } = require('../src/server');
 const { readConfig } = require('../src/config/env');
 const { createAuthService } = require('../src/modules/auth/auth.service');
@@ -29,6 +30,36 @@ const seedUsers = [
 const createApiContext = () => ({
   authService: createAuthService({ seedUsers }),
   dependencyProbe
+});
+const deriveSensitiveConfigKey = (decryptionKey) => {
+  const normalizedRawKey = String(decryptionKey || '').trim();
+  if (!normalizedRawKey) {
+    return Buffer.alloc(0);
+  }
+  if (/^[0-9a-f]{64}$/i.test(normalizedRawKey)) {
+    return Buffer.from(normalizedRawKey, 'hex');
+  }
+  return pbkdf2Sync(normalizedRawKey, 'auth.default_password', 210000, 32, 'sha256');
+};
+const buildEncryptedSensitiveConfigValue = ({
+  plainText,
+  decryptionKey
+}) => {
+  const key = deriveSensitiveConfigKey(decryptionKey);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipherText = Buffer.concat([
+    cipher.update(String(plainText || ''), 'utf8'),
+    cipher.final()
+  ]);
+  const authTag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString('base64url')}:${authTag.toString('base64url')}:${cipherText.toString('base64url')}`;
+};
+const createSensitiveConfigProvider = ({ encryptedDefaultPassword = '' } = {}) => ({
+  getEncryptedConfig: async (configKey) =>
+    String(configKey || '').trim() === 'auth.default_password'
+      ? String(encryptedDefaultPassword || '')
+      : ''
 });
 
 const decodeJwtPayload = (token) => {
@@ -1421,4 +1452,1080 @@ test('platform role-facts replace maps degraded sync reason to AUTH-503-PLATFORM
 
   assert.equal(replaced.status, 503);
   assert.equal(replaced.body.error_code, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+});
+
+test('platform member-admin provision-user endpoint creates user and rejects duplicate relationship requests', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator',
+          phone: '13846660010',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660010',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660011'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 200);
+  assert.equal(provisioned.body.created_user, true);
+  assert.equal(provisioned.body.credential_initialized, true);
+  assert.equal(provisioned.body.first_login_force_password_change, false);
+
+  const firstLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660011',
+        password: defaultPassword,
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(firstLogin.status, 200);
+
+  const duplicateProvision = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660011'
+      }
+    },
+    context
+  );
+  assert.equal(duplicateProvision.status, 409);
+  assert.equal(duplicateProvision.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
+});
+
+test('platform member-admin provision-user endpoint rejects tenant_name payload', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-tenant-name-invalid-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-tenant-name-invalid',
+          phone: '13846660012',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660012',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660013',
+        tenant_name: 'Tenant Should Not Be Accepted'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+});
+
+test('platform member-admin provision-user endpoint rejects unknown payload property', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-platform-provision-unknown-field-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-unknown-field',
+          phone: '13846660014',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660014',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660015',
+        extra_flag: true
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+});
+
+test('tenant member-admin provision-user endpoint creates tenant relationship and rejects duplicate relationship requests', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator',
+          phone: '13846660020',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-a',
+              tenantName: 'Tenant API A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660020',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+  assert.equal(operatorLogin.body.active_tenant_id, 'tenant-api-a');
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660021',
+        tenant_name: 'Tenant API A'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 200);
+  assert.equal(provisioned.body.entry_domain, 'tenant');
+  assert.equal(provisioned.body.active_tenant_id, 'tenant-api-a');
+
+  const duplicateProvision = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660021',
+        tenant_name: 'Tenant API A'
+      }
+    },
+    context
+  );
+  assert.equal(duplicateProvision.status, 409);
+  assert.equal(duplicateProvision.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
+});
+
+test('tenant member-admin provision-user endpoint reuses existing user without mutating password hash', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-reuse-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-reuse',
+          phone: '13846660040',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-reuse-a',
+              tenantName: 'Tenant API Reuse A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        },
+        {
+          id: 'tenant-provision-reuse-target',
+          phone: '13846660041',
+          password: 'LegacyPass!2026',
+          status: 'active',
+          domains: []
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660040',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const previousUser = await context.authService._internals.authStore.findUserByPhone('13846660041');
+  const previousPasswordHash = previousUser.passwordHash;
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660041',
+        tenant_name: 'Tenant API Reuse A'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 200);
+  assert.equal(provisioned.body.created_user, false);
+  assert.equal(provisioned.body.reused_existing_user, true);
+  assert.equal(provisioned.body.active_tenant_id, 'tenant-api-reuse-a');
+
+  const currentUser = await context.authService._internals.authStore.findUserByPhone('13846660041');
+  assert.equal(currentUser.passwordHash, previousPasswordHash);
+});
+
+test('tenant member-admin provision-user endpoint returns conflict when tenant domain remains unavailable after relationship provisioning', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-domain-disabled-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-domain-disabled-operator',
+          phone: '13846660060',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-domain-disabled-a',
+              tenantName: 'Tenant API Domain Disabled A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        },
+        {
+          id: 'tenant-provision-domain-disabled-target',
+          phone: '13846660061',
+          password: 'LegacyPass!2026',
+          status: 'active',
+          domains: []
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660060',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const authStore = context.authService._internals.authStore;
+  const originalFindDomainAccessByUserId = authStore.findDomainAccessByUserId.bind(authStore);
+  const originalEnsureTenantDomainAccessForUser = authStore.ensureTenantDomainAccessForUser
+    .bind(authStore);
+  authStore.findDomainAccessByUserId = async (userId) => {
+    if (String(userId) === 'tenant-provision-domain-disabled-target') {
+      return { platform: false, tenant: false };
+    }
+    return originalFindDomainAccessByUserId(userId);
+  };
+  authStore.ensureTenantDomainAccessForUser = async (userId) => {
+    if (String(userId) === 'tenant-provision-domain-disabled-target') {
+      return { inserted: false };
+    }
+    return originalEnsureTenantDomainAccessForUser(userId);
+  };
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660061',
+        tenant_name: 'Tenant API Domain Disabled A'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 409);
+  assert.equal(provisioned.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
+  const tenantOptions = await authStore.listTenantOptionsByUserId(
+    'tenant-provision-domain-disabled-target'
+  );
+  assert.equal(
+    tenantOptions.some((option) => option.tenantId === 'tenant-api-domain-disabled-a'),
+    false
+  );
+});
+
+test('tenant member-admin provision-user endpoint rejects oversized tenant_name', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-name-validation-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-name-validation',
+          phone: '13846660050',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-name-validation-a',
+              tenantName: 'Tenant API Name Validation A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660050',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660051',
+        tenant_name: 'X'.repeat(129)
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+});
+
+test('tenant member-admin provision-user endpoint rejects tenant_name with oversized raw payload length', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-raw-length-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-raw-length',
+          phone: '13846660024',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-raw-length-a',
+              tenantName: 'Tenant API Raw Length A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660024',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const paddedTenantName = ` ${'X'.repeat(128)} `;
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660025',
+        tenant_name: paddedTenantName
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+});
+
+test('tenant member-admin provision-user endpoint rejects blank tenant_name', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-name-blank-validation-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-name-blank-validation',
+          phone: '13846660052',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-name-blank-validation-a',
+              tenantName: 'Tenant API Name Blank Validation A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660052',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660053',
+        tenant_name: '   '
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+});
+
+test('tenant member-admin provision-user endpoint rejects unknown payload property', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-unknown-field-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-unknown-field',
+          phone: '13846660026',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-unknown-field-a',
+              tenantName: 'Tenant API Unknown Field A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660026',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660027',
+        tenant_name: 'Tenant API Unknown Field A',
+        extra_flag: true
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+});
+
+test('tenant member-admin provision-user endpoint rejects tenant_name that mismatches active tenant canonical name', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-name-canonical-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-name-canonical',
+          phone: '13846660070',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-name-canonical-a',
+              tenantName: 'Tenant API Name Canonical A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660070',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660071',
+        tenant_name: 'Tenant Name Spoofed By Caller'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  const unexpectedUser = await context.authService._internals.authStore.findUserByPhone('13846660071');
+  assert.equal(unexpectedUser, null);
+});
+
+test('tenant member-admin provision-user endpoint rejects caller tenant_name when active tenant canonical name is unavailable', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-name-missing-canonical-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-name-missing-canonical',
+          phone: '13846660072',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-name-missing-canonical-a',
+              tenantName: null,
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660072',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660073',
+        tenant_name: 'Tenant Name Spoofed By Caller'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  const unexpectedUser = await context.authService._internals.authStore.findUserByPhone('13846660073');
+  assert.equal(unexpectedUser, null);
+});
+
+test('tenant member-admin provision-user endpoint rejects request when active tenant canonical name is unavailable even without tenant_name payload', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'api-tenant-provision-name-missing-canonical-implicit-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-name-missing-canonical-implicit',
+          phone: '13846660074',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-api-name-missing-canonical-implicit-a',
+              tenantName: null,
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword
+      }),
+      sensitiveConfigDecryptionKey: decryptionKey
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660074',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisioned = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660075'
+      }
+    },
+    context
+  );
+  assert.equal(provisioned.status, 400);
+  assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  const unexpectedUser = await context.authService._internals.authStore.findUserByPhone('13846660075');
+  assert.equal(unexpectedUser, null);
+});
+
+test('platform member-admin provision-user endpoint is fail-closed when default password secure config is unavailable', async () => {
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-config-fail',
+          phone: '13846660030',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ],
+      sensitiveConfigProvider: createSensitiveConfigProvider({
+        encryptedDefaultPassword: ''
+      }),
+      sensitiveConfigDecryptionKey: ''
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660030',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  const provisionFailed = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660031'
+      }
+    },
+    context
+  );
+  assert.equal(provisionFailed.status, 503);
+  assert.equal(provisionFailed.body.error_code, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
 });

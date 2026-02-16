@@ -31,6 +31,10 @@ test('tenant protected auth routes expose explicit permission declarations', () 
     method: 'GET',
     path: '/auth/tenant/member-admin/probe'
   });
+  const memberAdminProvisionUser = findRouteDefinition({
+    method: 'POST',
+    path: '/auth/tenant/member-admin/provision-user'
+  });
 
   assert.ok(tenantOptions);
   assert.equal(tenantOptions.access, 'protected');
@@ -49,6 +53,11 @@ test('tenant protected auth routes expose explicit permission declarations', () 
   assert.equal(memberAdminProbe.access, 'protected');
   assert.equal(memberAdminProbe.scope, 'tenant');
   assert.equal(memberAdminProbe.permission_code, 'tenant.member_admin.operate');
+
+  assert.ok(memberAdminProvisionUser);
+  assert.equal(memberAdminProvisionUser.access, 'protected');
+  assert.equal(memberAdminProvisionUser.scope, 'tenant');
+  assert.equal(memberAdminProvisionUser.permission_code, 'tenant.member_admin.operate');
 });
 
 test('platform protected auth route exposes explicit permission declaration', () => {
@@ -56,11 +65,20 @@ test('platform protected auth route exposes explicit permission declaration', ()
     method: 'GET',
     path: '/auth/platform/member-admin/probe'
   });
+  const platformMemberAdminProvisionUser = findRouteDefinition({
+    method: 'POST',
+    path: '/auth/platform/member-admin/provision-user'
+  });
 
   assert.ok(platformMemberAdminProbe);
   assert.equal(platformMemberAdminProbe.access, 'protected');
   assert.equal(platformMemberAdminProbe.scope, 'platform');
   assert.equal(platformMemberAdminProbe.permission_code, 'platform.member_admin.view');
+
+  assert.ok(platformMemberAdminProvisionUser);
+  assert.equal(platformMemberAdminProvisionUser.access, 'protected');
+  assert.equal(platformMemberAdminProvisionUser.scope, 'platform');
+  assert.equal(platformMemberAdminProvisionUser.permission_code, 'platform.member_admin.operate');
 });
 
 test('platform role-facts replace route exposes explicit permission declaration', () => {

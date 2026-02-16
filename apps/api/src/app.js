@@ -45,6 +45,16 @@ const parseJsonBody = (rawBody) => {
   return JSON.parse(rawBody);
 };
 
+const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
+const createEnvSensitiveConfigProvider = (config = {}) => ({
+  getEncryptedConfig: async (configKey) => {
+    if (String(configKey || '').trim() !== DEFAULT_PASSWORD_CONFIG_KEY) {
+      return '';
+    }
+    return String(config.AUTH_DEFAULT_PASSWORD_ENCRYPTED || '').trim();
+  }
+});
+
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 const REQUIRED_AUTH_SCHEMA = {
   auth_sessions: [
@@ -189,6 +199,7 @@ const createApiApp = async (config, options = {}) => {
   const requirePersistentAuthStore = options.requirePersistentAuthStore === true;
   const connectDb = options.connectMySql || connectMySql;
   const createAuthServiceFactory = options.createAuthService || createAuthService;
+  const sensitiveConfigProvider = createEnvSensitiveConfigProvider(config);
   const createRedisClient =
     options.createRedisClient ||
     ((redisConfig) =>
@@ -206,7 +217,9 @@ const createApiApp = async (config, options = {}) => {
     if (config.ALLOW_MOCK_BACKENDS && !requirePersistentAuthStore) {
       authService = createAuthServiceFactory({
         allowInMemoryOtpStores: true,
-        requireSecureOtpStores: false
+        requireSecureOtpStores: false,
+        sensitiveConfigProvider,
+        sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY
       });
     } else {
       let dbClient = null;
@@ -265,7 +278,9 @@ const createApiApp = async (config, options = {}) => {
           multiInstance: Boolean(config.AUTH_MULTI_INSTANCE),
           enforceExternalJwtKeys: Boolean(config.AUTH_MULTI_INSTANCE),
           requireSecureOtpStores: !config.ALLOW_MOCK_BACKENDS,
-          allowInMemoryOtpStores: Boolean(config.ALLOW_MOCK_BACKENDS)
+          allowInMemoryOtpStores: Boolean(config.ALLOW_MOCK_BACKENDS),
+          sensitiveConfigProvider,
+          sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY
         });
 
         closeAuthResources = closeInfrastructureResources;
