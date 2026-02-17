@@ -20,6 +20,17 @@ const normalizeUserStatus = (status) => {
   }
   return value;
 };
+const normalizeOrgName = (orgName) => {
+  if (typeof orgName !== 'string') {
+    return '';
+  }
+  return orgName.trim();
+};
+const DEFAULT_DEADLOCK_FALLBACK_RESULT = Object.freeze({
+  synced: false,
+  reason: 'db-deadlock',
+  permission: null
+});
 
 const toSessionRecord = (row) => {
   if (!row) {
@@ -374,7 +385,9 @@ const createMySqlAuthStore = ({
 
   const executeWithDeadlockRetry = async ({
     operation,
-    execute
+    execute,
+    onExhausted = 'return-fallback',
+    fallbackResult = DEFAULT_DEADLOCK_FALLBACK_RESULT
   }) => {
     let retriesUsed = 0;
     while (true) {
@@ -431,11 +444,20 @@ const createMySqlAuthStore = ({
           alert: true,
           ...finalFailureMetric
         });
-        return {
-          synced: false,
-          reason: 'db-deadlock',
-          permission: null
-        };
+        if (onExhausted === 'throw') {
+          throw error;
+        }
+        if (typeof fallbackResult === 'function') {
+          return fallbackResult(error);
+        }
+        if (
+          fallbackResult
+          && typeof fallbackResult === 'object'
+          && !Array.isArray(fallbackResult)
+        ) {
+          return { ...fallbackResult };
+        }
+        return DEFAULT_DEADLOCK_FALLBACK_RESULT;
       }
     }
   };
@@ -1110,6 +1132,65 @@ const createMySqlAuthStore = ({
       return toUserRecord(rows[0]);
     },
 
+    createOrganizationWithOwner: async ({
+      orgId = randomUUID(),
+      orgName,
+      ownerUserId,
+      operatorUserId
+    }) =>
+      executeWithDeadlockRetry({
+        operation: 'createOrganizationWithOwner',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedOrgId = String(orgId || '').trim() || randomUUID();
+            const normalizedOrgName = normalizeOrgName(orgName);
+            const normalizedOwnerUserId = String(ownerUserId || '').trim();
+            const normalizedOperatorUserId = String(operatorUserId || '').trim();
+            if (
+              !normalizedOrgName
+              || !normalizedOwnerUserId
+              || !normalizedOperatorUserId
+            ) {
+              throw new Error(
+                'createOrganizationWithOwner requires orgName, ownerUserId, and operatorUserId'
+              );
+            }
+
+            const insertOrgResult = await tx.query(
+              `
+                INSERT INTO orgs (id, name, owner_user_id, status, created_by_user_id)
+                VALUES (?, ?, ?, 'active', ?)
+              `,
+              [
+                normalizedOrgId,
+                normalizedOrgName,
+                normalizedOwnerUserId,
+                normalizedOperatorUserId
+              ]
+            );
+            if (Number(insertOrgResult?.affectedRows || 0) !== 1) {
+              throw new Error('org-create-write-not-applied');
+            }
+
+            const insertMembershipResult = await tx.query(
+              `
+                INSERT INTO memberships (org_id, user_id, membership_role, status)
+                VALUES (?, ?, 'owner', 'active')
+              `,
+              [normalizedOrgId, normalizedOwnerUserId]
+            );
+            if (Number(insertMembershipResult?.affectedRows || 0) !== 1) {
+              throw new Error('org-membership-write-not-applied');
+            }
+
+            return {
+              org_id: normalizedOrgId,
+              owner_user_id: normalizedOwnerUserId
+            };
+          })
+      }),
+
     deleteUserById: async (userId) => {
       const normalizedUserId = String(userId || '').trim();
       if (!normalizedUserId) {
@@ -1117,6 +1198,8 @@ const createMySqlAuthStore = ({
       }
       return executeWithDeadlockRetry({
         operation: 'deleteUserById',
+        onExhausted: 'return-fallback',
+        fallbackResult: { deleted: false },
         execute: () =>
           dbClient.inTransaction(async (tx) => {
             await tx.query(

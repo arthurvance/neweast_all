@@ -9,7 +9,11 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const tenantsByUserId = new Map();
   const platformRolesByUserId = new Map();
   const platformPermissionsByUserId = new Map();
+  const orgsById = new Map();
+  const orgIdByName = new Map();
+  const membershipsByOrgId = new Map();
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+  const MAX_ORG_NAME_LENGTH = 128;
 
   const isActiveLikeStatus = (status) => {
     const normalizedStatus = String(status || 'active').trim().toLowerCase();
@@ -272,6 +276,49 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     return clone(user);
   };
 
+  const createForeignKeyConstraintError = () => {
+    const error = new Error('Cannot delete or update a parent row: a foreign key constraint fails');
+    error.code = 'ER_ROW_IS_REFERENCED_2';
+    error.errno = 1451;
+    return error;
+  };
+
+  const createDataTooLongError = () => {
+    const error = new Error('Data too long for column');
+    error.code = 'ER_DATA_TOO_LONG';
+    error.errno = 1406;
+    return error;
+  };
+
+  const hasOrgReferenceForUser = (userId) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return false;
+    }
+
+    for (const org of orgsById.values()) {
+      if (
+        String(org?.ownerUserId || '').trim() === normalizedUserId
+        || String(org?.createdByUserId || '').trim() === normalizedUserId
+      ) {
+        return true;
+      }
+    }
+    for (const memberships of membershipsByOrgId.values()) {
+      if (!Array.isArray(memberships)) {
+        continue;
+      }
+      if (
+        memberships.some(
+          (membership) => String(membership?.userId || '').trim() === normalizedUserId
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   return {
     findUserByPhone: async (phone) => clone(usersByPhone.get(phone) || null),
 
@@ -305,6 +352,69 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       return clone(user);
     },
 
+    createOrganizationWithOwner: async ({
+      orgId = randomUUID(),
+      orgName,
+      ownerUserId,
+      operatorUserId
+    }) => {
+      const normalizedOrgId = String(orgId || '').trim() || randomUUID();
+      const normalizedOrgName = String(orgName || '').trim();
+      const normalizedOwnerUserId = String(ownerUserId || '').trim();
+      const normalizedOperatorUserId = String(operatorUserId || '').trim();
+      if (
+        !normalizedOrgName
+        || !normalizedOwnerUserId
+        || !normalizedOperatorUserId
+      ) {
+        throw new Error(
+          'createOrganizationWithOwner requires orgName, ownerUserId, and operatorUserId'
+        );
+      }
+      if (!usersById.has(normalizedOwnerUserId) || !usersById.has(normalizedOperatorUserId)) {
+        throw new Error('createOrganizationWithOwner requires existing owner and operator users');
+      }
+      if (normalizedOrgName.length > MAX_ORG_NAME_LENGTH) {
+        throw createDataTooLongError();
+      }
+
+      const orgNameDedupeKey = normalizedOrgName.toLowerCase();
+      if (orgIdByName.has(orgNameDedupeKey)) {
+        const duplicateError = new Error('duplicate org name');
+        duplicateError.code = 'ER_DUP_ENTRY';
+        duplicateError.errno = 1062;
+        throw duplicateError;
+      }
+      if (orgsById.has(normalizedOrgId)) {
+        const duplicateError = new Error('duplicate org id');
+        duplicateError.code = 'ER_DUP_ENTRY';
+        duplicateError.errno = 1062;
+        throw duplicateError;
+      }
+
+      orgsById.set(normalizedOrgId, {
+        id: normalizedOrgId,
+        name: normalizedOrgName,
+        ownerUserId: normalizedOwnerUserId,
+        createdByUserId: normalizedOperatorUserId,
+        status: 'active'
+      });
+      orgIdByName.set(orgNameDedupeKey, normalizedOrgId);
+      membershipsByOrgId.set(normalizedOrgId, [
+        {
+          orgId: normalizedOrgId,
+          userId: normalizedOwnerUserId,
+          membershipRole: 'owner',
+          status: 'active'
+        }
+      ]);
+
+      return {
+        org_id: normalizedOrgId,
+        owner_user_id: normalizedOwnerUserId
+      };
+    },
+
     deleteUserById: async (userId) => {
       const normalizedUserId = String(userId || '').trim();
       if (!normalizedUserId) {
@@ -313,6 +423,9 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       const existingUser = usersById.get(normalizedUserId);
       if (!existingUser) {
         return { deleted: false };
+      }
+      if (hasOrgReferenceForUser(normalizedUserId)) {
+        throw createForeignKeyConstraintError();
       }
 
       usersById.delete(normalizedUserId);

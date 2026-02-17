@@ -1,12 +1,12 @@
 require('reflect-metadata');
 
-const { randomUUID } = require('node:crypto');
 const Redis = require('ioredis');
 const { NestFactory } = require('@nestjs/core');
 const { AppModule } = require('./app.module');
 const { createRouteHandlers } = require('./http-routes');
 const {
   dispatchApiRoute,
+  requestIdFrom,
   listExecutableRouteKeys,
   resolveRouteDeclarationLookup,
   ensureAuthorizeRouteCapabilityOrThrow,
@@ -319,7 +319,8 @@ const createApiApp = async (config, options = {}) => {
   expressApp.disable('x-powered-by');
 
   expressApp.use((req, _res, next) => {
-    req.request_id = req.headers['x-request-id'] || randomUUID();
+    req.request_id = requestIdFrom(req);
+    req.headers['x-request-id'] = req.request_id;
     next();
   });
 
@@ -526,14 +527,8 @@ const createApiApp = async (config, options = {}) => {
     dispatchRegisteredRoute(req, res, next);
   });
 
-  expressApp.use((req, res) => {
-    const payload = buildProblemDetails({
-      status: 404,
-      title: 'Not Found',
-      detail: `No route for ${req.path}`,
-      requestId: req.request_id
-    });
-    res.status(404).type('application/problem+json').json(payload);
+  expressApp.use((req, res, next) => {
+    dispatchRegisteredRoute(req, res, next);
   });
 
   expressApp.use((error, req, res, _next) => {

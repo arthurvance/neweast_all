@@ -28,6 +28,50 @@ const IDEMPOTENCY_KEY_SCHEMA = {
   pattern: '^(?=.*\\S)[^,]{1,128}$'
 };
 
+const DEPENDENCY_PROBE_STATUS_SCHEMA = {
+  type: 'object',
+  required: ['ok', 'mode', 'detail'],
+  properties: {
+    ok: { type: 'boolean' },
+    mode: { type: 'string' },
+    detail: { type: 'string' },
+    latency_ms: { type: 'number' }
+  },
+  additionalProperties: true
+};
+
+const DEPENDENCY_PROBE_SNAPSHOT_SCHEMA = {
+  type: 'object',
+  required: ['db', 'redis'],
+  properties: {
+    db: DEPENDENCY_PROBE_STATUS_SCHEMA,
+    redis: DEPENDENCY_PROBE_STATUS_SCHEMA
+  },
+  additionalProperties: false
+};
+
+const HEALTH_RESPONSE_SCHEMA = {
+  type: 'object',
+  required: ['ok', 'service', 'request_id', 'dependencies'],
+  properties: {
+    ok: { type: 'boolean' },
+    service: { type: 'string' },
+    request_id: { type: 'string' },
+    dependencies: DEPENDENCY_PROBE_SNAPSHOT_SCHEMA
+  }
+};
+
+const SMOKE_RESPONSE_SCHEMA = {
+  type: 'object',
+  required: ['ok', 'chain', 'request_id', 'dependencies'],
+  properties: {
+    ok: { type: 'boolean' },
+    chain: { type: 'string' },
+    request_id: { type: 'string' },
+    dependencies: DEPENDENCY_PROBE_SNAPSHOT_SCHEMA
+  }
+};
+
 const ensureProblemDetailsRetryableExamples = (spec = {}) => {
   for (const pathItem of Object.values(spec.paths || {})) {
     for (const operation of Object.values(pathItem || {})) {
@@ -68,29 +112,19 @@ const buildOpenApiSpec = () => {
       get: {
         summary: 'Health check',
         responses: {
-          200: { description: 'Service is healthy' },
+          200: {
+            description: 'Service is healthy',
+            content: {
+              'application/json': {
+                schema: HEALTH_RESPONSE_SCHEMA
+              }
+            }
+          },
           503: {
             description: 'Dependency degraded',
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  required: ['ok', 'dependencies', 'request_id'],
-                  properties: {
-                    ok: { type: 'boolean' },
-                    request_id: { type: 'string' },
-                    dependencies: {
-                      type: 'object',
-                      additionalProperties: {
-                        type: 'object',
-                        properties: {
-                          ok: { type: 'boolean' },
-                          latency_ms: { type: 'number' }
-                        }
-                      }
-                    }
-                  }
-                }
+                schema: HEALTH_RESPONSE_SCHEMA
               }
             }
           }
@@ -1164,6 +1198,230 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/orgs': {
+      post: {
+        summary: 'Create organization with required initial owner phone',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CreatePlatformOrgRequest' },
+              examples: {
+                create_org: {
+                  value: {
+                    org_name: '华东测试组织',
+                    initial_owner_phone: '13800000011'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Organization and initial owner governance relationship created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/CreatePlatformOrgResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Missing required field or invalid payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  initial_owner_phone_required: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '创建组织必须提供 initial_owner_phone',
+                      error_code: 'ORG-400-INITIAL-OWNER-PHONE-REQUIRED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'ORG-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Organization conflict or idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  org_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '组织已存在或负责人关系已建立，请勿重复提交',
+                      error_code: 'ORG-409-ORG-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Organization governance dependency or idempotency storage is unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织治理依赖暂不可用，请稍后重试',
+                      error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  },
+                  idempotency_pending_timeout: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等请求处理中，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-pending-timeout'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/auth/refresh': {
       post: {
         summary: 'Refresh session token pair with rotation',
@@ -1479,8 +1737,22 @@ const buildOpenApiSpec = () => {
       get: {
         summary: 'Smoke chain probe',
         responses: {
-          200: { description: 'db and redis are both connected' },
-          503: { description: 'at least one dependency is degraded' }
+          200: {
+            description: 'db and redis are both connected',
+            content: {
+              'application/json': {
+                schema: SMOKE_RESPONSE_SCHEMA
+              }
+            }
+          },
+          503: {
+            description: 'at least one dependency is degraded',
+            content: {
+              'application/json': {
+                schema: SMOKE_RESPONSE_SCHEMA
+              }
+            }
+          }
         }
       }
     }
@@ -1610,6 +1882,45 @@ const buildOpenApiSpec = () => {
           first_login_force_password_change: { type: 'boolean', enum: [false] },
           entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
           active_tenant_id: { type: 'string', nullable: true },
+          request_id: { type: 'string' }
+        }
+      },
+      CreatePlatformOrgRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['org_name', 'initial_owner_phone'],
+        properties: {
+          org_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
+            description: '组织名称'
+          },
+          initial_owner_phone: {
+            type: 'string',
+            minLength: 11,
+            maxLength: 11,
+            pattern: '^1\\d{10}$',
+            description: '初始负责人手机号（11位）'
+          }
+        }
+      },
+      CreatePlatformOrgResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'org_id',
+          'owner_user_id',
+          'created_owner_user',
+          'reused_existing_user',
+          'request_id'
+        ],
+        properties: {
+          org_id: { type: 'string' },
+          owner_user_id: { type: 'string' },
+          created_owner_user: { type: 'boolean' },
+          reused_existing_user: { type: 'boolean' },
           request_id: { type: 'string' }
         }
       },
@@ -1802,7 +2113,7 @@ const buildOpenApiSpec = () => {
       },
       ProblemDetails: {
         type: 'object',
-        required: ['title', 'status', 'request_id', 'retryable'],
+        required: ['title', 'status', 'request_id', 'error_code', 'retryable'],
         properties: {
           type: { type: 'string' },
           title: { type: 'string' },

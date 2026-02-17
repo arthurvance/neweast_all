@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createRouteHandlers } = require('../src/http-routes');
+const { createPlatformOrgService } = require('../src/modules/platform/org.service');
 const { AuthProblemError } = require('../src/modules/auth/auth.routes');
 const { readConfig } = require('../src/config/env');
 const {
@@ -10,12 +11,17 @@ const {
   resolveRouteDeclarationLookup
 } = require('../src/server');
 const { ROUTE_DEFINITIONS } = require('../src/route-permissions');
+const {
+  markRoutePreauthorizedContext
+} = require('../src/modules/auth/route-preauthorization');
 
 const config = readConfig({ ALLOW_MOCK_BACKENDS: 'false' });
 const dependencyProbe = async () => ({
   db: { ok: true },
   redis: { ok: true }
 });
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const cloneRouteDefinitions = (routeDefinitions = []) =>
   routeDefinitions.map((routeDefinition) => ({
     ...routeDefinition
@@ -96,6 +102,28 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
+  assert.ok(payload.paths['/platform/orgs']);
+  assert.ok(payload.paths['/smoke']);
+  assert.equal(
+    payload.paths['/health'].get.responses['200'].content['application/json'].schema.properties
+      .dependencies.properties.db.properties.mode.type,
+    'string'
+  );
+  assert.equal(
+    payload.paths['/health'].get.responses['503'].content['application/json'].schema.properties
+      .dependencies.properties.redis.properties.detail.type,
+    'string'
+  );
+  assert.equal(
+    payload.paths['/smoke'].get.responses['200'].content['application/json'].schema.properties
+      .dependencies.properties.db.properties.ok.type,
+    'boolean'
+  );
+  assert.equal(
+    payload.paths['/smoke'].get.responses['503'].content['application/json'].schema.properties
+      .dependencies.properties.redis.properties.mode.type,
+    'string'
+  );
   assert.ok(
     payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
@@ -108,6 +136,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(
     payload.paths['/auth/platform/role-facts/replace'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/orgs'].post.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -129,6 +162,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
   );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
   assert.ok(payload.paths['/auth/login'].post.responses['400']);
   assert.ok(payload.paths['/auth/login'].post.responses['413']);
   assert.ok(payload.paths['/auth/login'].post.responses['429']);
@@ -146,6 +191,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['413']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/platform/orgs'].post.responses['400']);
+  assert.ok(payload.paths['/platform/orgs'].post.responses['413']);
+  assert.ok(payload.paths['/platform/orgs'].post.responses['403']);
+  assert.ok(payload.paths['/platform/orgs'].post.responses['409']);
+  assert.ok(payload.paths['/platform/orgs'].post.responses['503']);
   assert.equal(
     payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.minLength,
     11
@@ -172,6 +222,93 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.equal(
     payload.components.schemas.ProvisionUserRequest.properties.tenant_name.pattern,
     '.*\\S.*'
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgRequest.required.includes('org_name'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgRequest.required.includes('initial_owner_phone'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgRequest.properties.org_name.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgRequest.properties.initial_owner_phone.pattern,
+    '^1\\d{10}$'
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgRequest.additionalProperties,
+    false
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgResponse.required.includes('org_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgResponse.required.includes('owner_user_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformOrgResponse.additionalProperties,
+    false
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['400'].content['application/problem+json']
+      .examples.initial_owner_phone_required.value.error_code,
+    'ORG-400-INITIAL-OWNER-PHONE-REQUIRED'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['400'].content['application/problem+json']
+      .examples.invalid_idempotency_key.value.error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['409'].content['application/problem+json']
+      .examples.idempotency_conflict.value.error_code,
+    'AUTH-409-IDEMPOTENCY-CONFLICT'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['503'].content['application/problem+json']
+      .examples.dependency_unavailable.value.error_code,
+    'ORG-503-DEPENDENCY-UNAVAILABLE'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['503'].content['application/problem+json']
+      .examples.idempotency_store_unavailable.value.detail,
+    '幂等服务暂时不可用，请稍后重试'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['503'].content['application/problem+json']
+      .examples.idempotency_store_unavailable.value.degradation_reason,
+    'idempotency-store-unavailable'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['503'].content['application/problem+json']
+      .examples.idempotency_pending_timeout.value.degradation_reason,
+    'idempotency-pending-timeout'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['413'].content['application/problem+json']
+      .examples.payload_too_large.value.error_code,
+    'AUTH-413-PAYLOAD-TOO-LARGE'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['401'].content['application/problem+json']
+      .examples.invalid_access_token.value.error_code,
+    'AUTH-401-INVALID-ACCESS'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['401'].content['application/problem+json']
+      .examples.invalid_access_token.value.detail,
+    '当前会话无效，请重新登录'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs'].post.responses['403'].content['application/problem+json']
+      .examples.forbidden.value.error_code,
+    'AUTH-403-FORBIDDEN'
   );
   assert.equal(
     payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.maxItems,
@@ -306,6 +443,10 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     'string'
   );
   assert.equal(
+    payload.components.schemas.ProblemDetails.required.includes('error_code'),
+    true
+  );
+  assert.equal(
     payload.components.schemas.ProblemDetails.properties.retryable.type,
     'boolean'
   );
@@ -329,6 +470,103 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.deepEqual(listProblemExamplesMissingRetryable(payload), []);
   assert.equal('extensions' in payload.components.schemas.ProblemDetails.properties, false);
+});
+
+test('createRouteHandlers wires shared default auth service for platform org and idempotency audit', async () => {
+  const handlers = createRouteHandlers(config, {
+    dependencyProbe
+  });
+  assert.equal(typeof handlers.recordAuthIdempotencyEvent, 'function');
+  assert.equal(typeof handlers._internals?.authService?.getOrCreateUserIdentityByPhone, 'function');
+  assert.equal(typeof handlers._internals?.platformOrgService?.createOrg, 'function');
+
+  await assert.rejects(
+    () =>
+      handlers.platformCreateOrg(
+        'req-default-handler-platform-org',
+        undefined,
+        {
+          org_name: '组织 default-handler',
+          initial_owner_phone: '13800000071'
+        },
+        {
+          ...markRoutePreauthorizedContext({
+            authorizationContext: {
+              entry_domain: 'platform',
+              user_id: 'platform-operator',
+              session_id: 'platform-session'
+            },
+            permissionCode: 'platform.member_admin.operate',
+            scope: 'platform'
+          })
+        }
+      ),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+  const lastAuditEvent =
+    handlers._internals.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.create.rejected');
+  assert.equal(lastAuditEvent.upstream_error_code, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
+});
+
+test('createRouteHandlers reuses platformOrgService authService when authService option is omitted', () => {
+  const sharedAuthService = {
+    authorizeRoute: async () => ({
+      user_id: 'platform-operator',
+      session_id: 'platform-session',
+      entry_domain: 'platform'
+    }),
+    getOrCreateUserIdentityByPhone: async ({ phone }) => ({
+      user_id: 'owner-user-existing',
+      phone,
+      created_user: false,
+      reused_existing_user: true
+    }),
+    createOrganizationWithOwner: async ({ orgId, ownerUserId }) => ({
+      org_id: orgId,
+      owner_user_id: ownerUserId
+    }),
+    rollbackProvisionedUserIdentity: async () => {},
+    recordIdempotencyEvent: async () => {}
+  };
+  const platformOrgService = createPlatformOrgService({
+    authService: sharedAuthService
+  });
+
+  const handlers = createRouteHandlers(config, {
+    dependencyProbe,
+    platformOrgService
+  });
+
+  assert.equal(handlers._internals.authService, sharedAuthService);
+  assert.equal(handlers._internals.platformOrgService, platformOrgService);
+});
+
+test('createRouteHandlers fails fast when injected authService mismatches platformOrgService authService', () => {
+  const platformOrgAuthService = {
+    authorizeRoute: async () => ({})
+  };
+  const platformOrgService = createPlatformOrgService({
+    authService: platformOrgAuthService
+  });
+  const differentAuthService = {
+    authorizeRoute: async () => ({})
+  };
+
+  assert.throws(
+    () =>
+      createRouteHandlers(config, {
+        dependencyProbe,
+        authService: differentAuthService,
+        platformOrgService
+      }),
+    /share the same authService instance/
+  );
 });
 
 test('health returns degraded when backend connectivity fails', async () => {
@@ -375,6 +613,36 @@ test('createServer enforces json payload limit with AUTH-413-PAYLOAD-TOO-LARGE',
       body: JSON.stringify({
         phone: '13800000000',
         password: 'x'.repeat(1024)
+      })
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 413);
+    assert.equal(payload.error_code, 'AUTH-413-PAYLOAD-TOO-LARGE');
+    assert.equal(payload.detail, 'JSON payload exceeds allowed size');
+    assert.equal(String(response.headers.get('connection') || '').toLowerCase(), 'close');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('createServer enforces json payload limit on /platform/orgs with AUTH-413-PAYLOAD-TOO-LARGE', async () => {
+  const harness = await startServer({
+    ALLOW_MOCK_BACKENDS: 'true',
+    API_JSON_BODY_LIMIT_BYTES: '256'
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/platform/orgs`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, application/problem+json',
+        authorization: 'Bearer fake-access-token'
+      },
+      body: JSON.stringify({
+        org_name: '组织 payload-too-large',
+        initial_owner_phone: '13800000000',
+        padding: 'x'.repeat(1024)
       })
     });
     const payload = await response.json();
@@ -531,6 +799,37 @@ test('dispatchApiRoute returns empty body for HEAD not-found responses', async (
   assert.equal(route.body, '');
 });
 
+test('dispatchApiRoute returns AUTH-404-NOT-FOUND for unknown routes', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/not-found',
+    method: 'GET',
+    requestId: 'req-get-not-found',
+    handlers: {}
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-404-NOT-FOUND');
+  assert.equal(payload.request_id, 'req-get-not-found');
+});
+
+test('dispatchApiRoute returns 405 with allow header for declared paths that disallow method', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/health',
+    method: 'POST',
+    requestId: 'req-method-not-allowed',
+    handlers: {
+      health: async () => ({ ok: true })
+    }
+  });
+
+  assert.equal(route.status, 405);
+  assert.equal(route.headers.allow, 'GET,HEAD,OPTIONS');
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-405-METHOD-NOT-ALLOWED');
+  assert.equal(payload.request_id, 'req-method-not-allowed');
+});
+
 test('dispatchApiRoute resolves request_id from case-insensitive x-request-id header', async () => {
   const route = await dispatchApiRoute({
     pathname: '/auth/ping',
@@ -588,6 +887,130 @@ test('handleApiRoute resolves request_id from case-insensitive x-request-id head
   assert.equal(JSON.parse(route.body).request_id, 'req-header-upper-case-handle');
 });
 
+test('dispatchApiRoute falls back to generated request_id for ambiguous x-request-id header values', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/ping',
+    method: 'GET',
+    headers: {
+      'x-request-id': ['req-a', 'req-b']
+    },
+    handlers: {
+      authPing: (requestId) => ({
+        ok: true,
+        request_id: requestId
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.match(payload.request_id, UUID_PATTERN);
+  assert.notEqual(payload.request_id, 'req-a');
+  assert.notEqual(payload.request_id, 'req-b');
+});
+
+test('handleApiRoute falls back to generated request_id for comma-separated x-request-id header', async () => {
+  const routeDefinitions = [
+    {
+      method: 'GET',
+      path: '/auth/ping',
+      access: 'public'
+    }
+  ];
+  const routeDeclarationLookup = resolveRouteDeclarationLookup({
+    routeDefinitions
+  });
+
+  const route = await handleApiRoute(
+    {
+      pathname: '/auth/ping',
+      method: 'GET',
+      headers: {
+        'x-request-id': 'req-a,req-b'
+      }
+    },
+    config,
+    {
+      routeDefinitions,
+      routeDeclarationLookup,
+      validateRouteDefinitions: false,
+      handlers: {
+        authPing: (requestId) => ({
+          ok: true,
+          request_id: requestId
+        })
+      }
+    }
+  );
+
+  assert.equal(route.status, 200);
+  assert.match(JSON.parse(route.body).request_id, UUID_PATTERN);
+});
+
+test('dispatchApiRoute falls back to generated request_id for non-header-safe x-request-id header values', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/ping',
+    method: 'GET',
+    headers: {
+      'x-request-id': '中文请求ID'
+    },
+    handlers: {
+      authPing: (requestId) => ({
+        ok: true,
+        request_id: requestId
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.match(payload.request_id, UUID_PATTERN);
+  assert.notEqual(payload.request_id, '中文请求ID');
+});
+
+test('dispatchApiRoute falls back to generated request_id when explicit requestId is comma-separated', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/ping',
+    method: 'GET',
+    requestId: 'req-a,req-b',
+    handlers: {
+      authPing: (requestId) => ({
+        ok: true,
+        request_id: requestId
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.match(payload.request_id, UUID_PATTERN);
+  assert.notEqual(payload.request_id, 'req-a,req-b');
+});
+
+test('dispatchApiRoute sanitizes and bounds request_id from headers', async () => {
+  const rawRequestId = `\nreq-sanitize-${'a'.repeat(240)}\r`;
+  const route = await dispatchApiRoute({
+    pathname: '/auth/ping',
+    method: 'GET',
+    headers: {
+      'x-request-id': rawRequestId
+    },
+    handlers: {
+      authPing: (requestId) => ({
+        ok: true,
+        request_id: requestId
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.request_id.includes('\n'), false);
+  assert.equal(payload.request_id.includes('\r'), false);
+  assert.ok(payload.request_id.startsWith('req-sanitize-'));
+  assert.equal(payload.request_id.length, 128);
+});
+
 test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async () => {
   const calls = [];
   const dispatchProvisionRequest = (idempotencyHeaderValue) =>
@@ -637,6 +1060,802 @@ test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async (
   assert.equal(calls.length, 0);
 });
 
+test('dispatchApiRoute rejects non-header-safe Idempotency-Key header values', async () => {
+  const calls = [];
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-invalid-idempotency-header-char',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-中文'
+    },
+    body: {
+      phone: '13800000000'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async (requestId) => {
+        calls.push(requestId);
+        return {
+          ok: true,
+          request_id: requestId
+        };
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      })
+    }
+  });
+
+  assert.equal(route.status, 400);
+  assert.equal(
+    JSON.parse(route.body).error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('dispatchApiRoute rejects ambiguous Authorization header values on protected routes', async () => {
+  let authorizeCalls = 0;
+  let createOrgCalls = 0;
+  const dispatchCreateOrgRequest = (authorizationHeaderValue) =>
+    dispatchApiRoute({
+      pathname: '/platform/orgs',
+      method: 'POST',
+      requestId: 'req-ambiguous-authorization',
+      headers: {
+        authorization: authorizationHeaderValue
+      },
+      body: {
+        org_name: '组织 Ambiguous Authorization',
+        initial_owner_phone: '13800000066'
+      },
+      handlers: {
+        platformCreateOrg: async () => {
+          createOrgCalls += 1;
+          return {
+            ok: true
+          };
+        },
+        authorizeRoute: async () => {
+          authorizeCalls += 1;
+          return {
+            user_id: 'platform-operator',
+            session_id: 'platform-session',
+            entry_domain: 'platform'
+          };
+        }
+      }
+    });
+
+  const arrayHeaderResponse = await dispatchCreateOrgRequest([
+    'Bearer fake-access-token-a',
+    'Bearer fake-access-token-b'
+  ]);
+  assert.equal(arrayHeaderResponse.status, 401);
+  assert.equal(
+    JSON.parse(arrayHeaderResponse.body).error_code,
+    'AUTH-401-INVALID-ACCESS'
+  );
+
+  const commaHeaderResponse = await dispatchCreateOrgRequest(
+    'Bearer fake-access-token-a, Bearer fake-access-token-b'
+  );
+  assert.equal(commaHeaderResponse.status, 401);
+  assert.equal(
+    JSON.parse(commaHeaderResponse.body).error_code,
+    'AUTH-401-INVALID-ACCESS'
+  );
+
+  assert.equal(authorizeCalls, 0);
+  assert.equal(createOrgCalls, 0);
+});
+
+test('dispatchApiRoute rejects non-header-safe Authorization header values on protected routes', async () => {
+  let authorizeCalls = 0;
+  let createOrgCalls = 0;
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs',
+    method: 'POST',
+    requestId: 'req-invalid-authorization-header-char',
+    headers: {
+      authorization: 'Bearer 中文'
+    },
+    body: {
+      org_name: '组织 Invalid Authorization Header',
+      initial_owner_phone: '13800000066'
+    },
+    handlers: {
+      platformCreateOrg: async () => {
+        createOrgCalls += 1;
+        return { ok: true };
+      },
+      authorizeRoute: async () => {
+        authorizeCalls += 1;
+        return {
+          user_id: 'platform-operator',
+          session_id: 'platform-session',
+          entry_domain: 'platform'
+        };
+      }
+    }
+  });
+
+  assert.equal(route.status, 401);
+  assert.equal(
+    JSON.parse(route.body).error_code,
+    'AUTH-401-INVALID-ACCESS'
+  );
+  assert.equal(authorizeCalls, 0);
+  assert.equal(createOrgCalls, 0);
+});
+
+test('dispatchApiRoute keeps default idempotency store isolated per handlers instance', async () => {
+  let firstHandlersCalls = 0;
+  let secondHandlersCalls = 0;
+  const buildHandlers = (counterRef) => ({
+    authPlatformMemberAdminProvisionUser: async (requestId) => {
+      if (counterRef === 'first') {
+        firstHandlersCalls += 1;
+      } else {
+        secondHandlersCalls += 1;
+      }
+      return {
+        ok: true,
+        request_id: requestId
+      };
+    },
+    authorizeRoute: async () => ({
+      user_id: 'operator-user',
+      session_id: 'operator-session'
+    })
+  });
+  const firstHandlers = buildHandlers('first');
+  const secondHandlers = buildHandlers('second');
+
+  const first = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-default-store-isolation-1',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-default-store-isolation-001'
+    },
+    body: {
+      phone: '13800000067'
+    },
+    handlers: firstHandlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-default-store-isolation-2',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-default-store-isolation-001'
+    },
+    body: {
+      phone: '13800000067'
+    },
+    handlers: secondHandlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(firstHandlersCalls, 1);
+  assert.equal(secondHandlersCalls, 1);
+});
+
+test('dispatchApiRoute emits idempotency degradation audit when idempotency store is unavailable', async () => {
+  const idempotencyEvents = [];
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-store-unavailable',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-store-unavailable-001'
+    },
+    body: {
+      phone: '13800000051'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when idempotency store is unavailable');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async () => {
+          throw new Error('idempotency-store-down');
+        },
+        read: async () => null,
+        resolve: async () => {},
+        releasePending: async () => {}
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-unavailable'
+  );
+  assert.equal(
+    idempotencyEvents[0].routeKey,
+    'POST /auth/platform/member-admin/provision-user'
+  );
+  assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-store-unavailable');
+  assert.equal(idempotencyEvents[0].authorizationContext.user_id, 'operator-user');
+});
+
+test('dispatchApiRoute emits idempotency degradation audit when pending replay entry disappears unexpectedly', async () => {
+  const idempotencyEvents = [];
+  let claimCalls = 0;
+  let readCalls = 0;
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-pending-missing',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-pending-missing-001'
+    },
+    body: {
+      phone: '13800000052'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when replay remains pending');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async ({ requestHash }) => {
+          claimCalls += 1;
+          return {
+            action: 'existing',
+            entry: {
+              state: 'pending',
+              requestHash
+            }
+          };
+        },
+        read: async () => {
+          readCalls += 1;
+          return null;
+        },
+        resolve: async () => {},
+        releasePending: async () => {}
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(payload.degradation_reason, 'idempotency-store-unavailable');
+  assert.equal(claimCalls, 1);
+  assert.equal(readCalls, 1);
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-entry-missing'
+  );
+  assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'wait-for-resolved');
+  assert.equal(
+    idempotencyEvents[0].routeKey,
+    'POST /auth/platform/member-admin/provision-user'
+  );
+  assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-pending-missing');
+});
+
+test('dispatchApiRoute emits idempotency degradation audit when replay remains pending until timeout', async () => {
+  const idempotencyEvents = [];
+  let claimCalls = 0;
+  let readCalls = 0;
+  let pendingRequestHash = '';
+  const originalDateNow = Date.now;
+  let dateNowCalls = 0;
+
+  try {
+    Date.now = () => {
+      dateNowCalls += 1;
+      if (dateNowCalls <= 2) {
+        return 0;
+      }
+      return 6001;
+    };
+
+    const route = await dispatchApiRoute({
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      requestId: 'req-idempotency-pending-timeout',
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': 'idem-pending-timeout-001'
+      },
+      body: {
+        phone: '13800000052'
+      },
+      handlers: {
+        authPlatformMemberAdminProvisionUser: async () => {
+          assert.fail('should not execute when replay remains pending');
+        },
+        authorizeRoute: async () => ({
+          user_id: 'operator-user',
+          session_id: 'operator-session'
+        }),
+        recordAuthIdempotencyEvent: async (payload) => {
+          idempotencyEvents.push(payload);
+        },
+        authIdempotencyStore: {
+          claimOrRead: async ({ requestHash }) => {
+            claimCalls += 1;
+            pendingRequestHash = requestHash;
+            return {
+              action: 'existing',
+              entry: {
+                state: 'pending',
+                requestHash
+              }
+            };
+          },
+          read: async ({ scopeKey }) => {
+            readCalls += 1;
+            return {
+              state: 'pending',
+              requestHash: pendingRequestHash
+            };
+          },
+          resolve: async () => {},
+          releasePending: async () => {}
+        }
+      }
+    });
+
+    assert.equal(route.status, 503);
+    const payload = JSON.parse(route.body);
+    assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT');
+    assert.equal(payload.degradation_reason, 'idempotency-pending-timeout');
+    assert.equal(claimCalls, 1);
+    assert.equal(readCalls, 1);
+    assert.equal(idempotencyEvents.length, 1);
+    assert.equal(idempotencyEvents[0].outcome, 'pending_timeout');
+    assert.equal(
+      idempotencyEvents[0].metadata?.degradation_reason,
+      'idempotency-pending-timeout'
+    );
+    assert.equal(
+      idempotencyEvents[0].routeKey,
+      'POST /auth/platform/member-admin/provision-user'
+    );
+    assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-pending-timeout');
+  } finally {
+    Date.now = originalDateNow;
+  }
+});
+
+test('dispatchApiRoute emits idempotency degradation audit when resolved entry persistence fails after execution', async () => {
+  const idempotencyEvents = [];
+  let releaseCalls = 0;
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-resolve-failed',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-resolve-failed-001'
+    },
+    body: {
+      phone: '13800000053'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async (requestId) => ({
+        ok: true,
+        request_id: requestId
+      }),
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async () => ({ action: 'claimed' }),
+        read: async () => null,
+        resolve: async () => {
+          throw new Error('resolve-failed');
+        },
+        releasePending: async () => {
+          releaseCalls += 1;
+          return true;
+        }
+      }
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.ok, true);
+  assert.equal(releaseCalls, 1);
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-unavailable'
+  );
+  assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'resolve');
+});
+
+test('dispatchApiRoute emits idempotency degradation audit when releasePending fails for non-cacheable response', async () => {
+  const idempotencyEvents = [];
+  let resolveCalls = 0;
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs',
+    method: 'POST',
+    requestId: 'req-idempotency-release-failed',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-release-failed-001'
+    },
+    body: {
+      org_name: 'Neweast',
+      initial_owner_phone: '13800000054'
+    },
+    handlers: {
+      platformCreateOrg: async () => {
+        throw new AuthProblemError({
+          status: 400,
+          title: 'Bad Request',
+          detail: 'payload invalid',
+          errorCode: 'ORG-400-INVALID-PAYLOAD'
+        });
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session',
+        entry_domain: 'platform'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async () => ({ action: 'claimed' }),
+        read: async () => null,
+        resolve: async () => {
+          resolveCalls += 1;
+          return true;
+        },
+        releasePending: async () => {
+          throw new Error('release-failed');
+        }
+      }
+    }
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.equal(resolveCalls, 0);
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-unavailable'
+  );
+  assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'release-pending');
+});
+
+test('dispatchApiRoute fails closed when resolved idempotency replay entry is corrupted', async () => {
+  const idempotencyEvents = [];
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-corrupted-replay',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-corrupted-replay-001'
+    },
+    body: {
+      phone: '13800000055'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when resolved replay entry exists');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async ({ requestHash }) => ({
+          action: 'existing',
+          entry: {
+            state: 'resolved',
+            requestHash,
+            response: {
+              status: 'nan',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ ok: true })
+            }
+          }
+        }),
+        read: async () => null,
+        resolve: async () => true,
+        releasePending: async () => true
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-corrupted-response'
+  );
+  assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'replay');
+});
+
+test('dispatchApiRoute fails closed when existing idempotency entry is corrupted', async () => {
+  const idempotencyEvents = [];
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-corrupted-existing-entry',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-corrupted-existing-entry-001'
+    },
+    body: {
+      phone: '13800000056'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when existing replay entry is corrupted');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async () => ({
+          action: 'existing',
+          entry: null
+        }),
+        read: async () => null,
+        resolve: async () => true,
+        releasePending: async () => true
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(payload.degradation_reason, 'idempotency-store-unavailable');
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-corrupted-entry'
+  );
+  assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'claim-or-read');
+});
+
+test('dispatchApiRoute fails closed when existing idempotency entry has invalid request hash', async () => {
+  const idempotencyEvents = [];
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-corrupted-existing-entry-request-hash',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-corrupted-existing-entry-request-hash-001'
+    },
+    body: {
+      phone: '13800000076'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when existing replay entry request hash is corrupted');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async () => ({
+          action: 'existing',
+          entry: {
+            state: 'pending',
+            requestHash: ''
+          }
+        }),
+        read: async () => null,
+        resolve: async () => true,
+        releasePending: async () => true
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(payload.degradation_reason, 'idempotency-store-unavailable');
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-corrupted-entry'
+  );
+  assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'claim-or-read');
+});
+
+test('dispatchApiRoute fails closed when pending replay entry mutates to corrupted state during wait', async () => {
+  const idempotencyEvents = [];
+  let pendingRequestHash = '';
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-corrupted-entry-after-wait',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-corrupted-entry-after-wait-001'
+    },
+    body: {
+      phone: '13800000057'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when pending replay entry becomes corrupted');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async ({ requestHash }) => {
+          pendingRequestHash = requestHash;
+          return {
+            action: 'existing',
+            entry: {
+              state: 'pending',
+              requestHash
+            }
+          };
+        },
+        read: async () => ({
+          state: 'corrupted-state',
+          requestHash: pendingRequestHash
+        }),
+        resolve: async () => true,
+        releasePending: async () => true
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(payload.degradation_reason, 'idempotency-store-unavailable');
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-corrupted-entry'
+  );
+  assert.equal(
+    idempotencyEvents[0].metadata?.idempotency_stage,
+    'wait-for-resolved'
+  );
+});
+
+test('dispatchApiRoute fails closed when pending replay entry request hash is corrupted during wait', async () => {
+  const idempotencyEvents = [];
+  let pendingRequestHash = '';
+
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    requestId: 'req-idempotency-corrupted-entry-request-hash-after-wait',
+    headers: {
+      authorization: 'Bearer fake-token',
+      'idempotency-key': 'idem-corrupted-entry-request-hash-after-wait-001'
+    },
+    body: {
+      phone: '13800000077'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async () => {
+        assert.fail('should not execute when pending replay request hash becomes corrupted');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      }),
+      recordAuthIdempotencyEvent: async (payload) => {
+        idempotencyEvents.push(payload);
+      },
+      authIdempotencyStore: {
+        claimOrRead: async ({ requestHash }) => {
+          pendingRequestHash = requestHash;
+          return {
+            action: 'existing',
+            entry: {
+              state: 'pending',
+              requestHash
+            }
+          };
+        },
+        read: async () => ({
+          state: 'pending',
+          requestHash: ''
+        }),
+        resolve: async () => true,
+        releasePending: async () => true
+      }
+    }
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE');
+  assert.equal(payload.degradation_reason, 'idempotency-store-unavailable');
+  assert.equal(idempotencyEvents.length, 1);
+  assert.equal(idempotencyEvents[0].outcome, 'store_unavailable');
+  assert.equal(
+    idempotencyEvents[0].metadata?.degradation_reason,
+    'idempotency-store-corrupted-entry'
+  );
+  assert.equal(
+    idempotencyEvents[0].metadata?.idempotency_stage,
+    'wait-for-resolved'
+  );
+  assert.equal(pendingRequestHash.length > 0, true);
+});
+
 test('dispatchApiRoute does not persist idempotency replay cache for retryable 5xx responses', async () => {
   let calls = 0;
   const dispatchProvisionRequest = () =>
@@ -684,6 +1903,106 @@ test('dispatchApiRoute does not persist idempotency replay cache for retryable 5
   const second = await dispatchProvisionRequest();
   assert.equal(second.status, 200);
   assert.equal(calls, 2);
+});
+
+test('dispatchApiRoute keeps legacy auth idempotency scope at session level', async () => {
+  let executionCalls = 0;
+  let authorizeCalls = 0;
+  const dispatchProvisionRequest = () =>
+    dispatchApiRoute({
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      requestId: `req-idempotency-session-scope-${authorizeCalls + 1}`,
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': 'idem-platform-session-scope-001'
+      },
+      body: {
+        phone: '13800000009'
+      },
+      handlers: {
+        authPlatformMemberAdminProvisionUser: async (requestId) => {
+          executionCalls += 1;
+          return {
+            ok: true,
+            call_no: executionCalls,
+            request_id: requestId
+          };
+        },
+        authorizeRoute: async () => {
+          authorizeCalls += 1;
+          return {
+            user_id: 'operator-user',
+            session_id: `operator-session-${authorizeCalls}`
+          };
+        }
+      }
+    });
+
+  const first = await dispatchProvisionRequest();
+  const second = await dispatchProvisionRequest();
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(executionCalls, 2);
+  assert.equal(authorizeCalls, 2);
+
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(firstPayload.call_no, 1);
+  assert.equal(secondPayload.call_no, 2);
+});
+
+test('dispatchApiRoute preserves legacy auth idempotency reservation for non-5xx responses', async () => {
+  let executionCalls = 0;
+  const handlers = {
+    authReplacePlatformRoleFacts: async () => {
+      executionCalls += 1;
+      throw new AuthProblemError({
+        status: 400,
+        title: 'Bad Request',
+        detail: 'legacy payload rejected',
+        errorCode: 'AUTH-400-INVALID-PAYLOAD'
+      });
+    },
+    authorizeRoute: async () => ({
+      user_id: 'operator-user',
+      session_id: 'operator-session',
+      entry_domain: 'platform'
+    })
+  };
+  const dispatchReplaceRoleFacts = ({ body, requestId }) =>
+    dispatchApiRoute({
+      pathname: '/auth/platform/role-facts/replace',
+      method: 'POST',
+      requestId,
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': 'idem-legacy-reservation-400'
+      },
+      body,
+      handlers
+    });
+
+  const first = await dispatchReplaceRoleFacts({
+    requestId: 'req-legacy-idem-reservation-1',
+    body: {
+      user_id: 'target-user-a',
+      roles: []
+    }
+  });
+  const second = await dispatchReplaceRoleFacts({
+    requestId: 'req-legacy-idem-reservation-2',
+    body: {
+      user_id: 'target-user-b',
+      roles: [{ role_id: 'platform.member_admin' }]
+    }
+  });
+
+  assert.equal(first.status, 400);
+  assert.equal(second.status, 409);
+  assert.equal(JSON.parse(second.body).error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(executionCalls, 1);
 });
 
 test('dispatchApiRoute returns empty body for HEAD authorization failures', async () => {
@@ -1266,17 +2585,23 @@ test('createServer wraps unexpected route errors as Problem Details 500', async 
   const harness = await startServer(
     { ALLOW_MOCK_BACKENDS: 'true' },
     {
-      dependencyProbe: async () => {
-        throw new Error('db probe exploded');
+      authService: {
+        authorizeRoute: async () => ({})
       }
     }
   );
 
   try {
-    const response = await fetch(`${harness.baseUrl}/health`, {
+    const response = await fetch(`${harness.baseUrl}/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({
+        phone: '13800000000',
+        password: 'password'
+      }),
       signal: AbortSignal.timeout(3000),
       headers: {
         accept: 'application/problem+json',
+        'content-type': 'application/json',
         'x-request-id': 'req-create-server-internal'
       }
     });
@@ -1290,7 +2615,9 @@ test('createServer wraps unexpected route errors as Problem Details 500', async 
         ([message, details]) =>
           message === '[api] unhandled route error'
           && details?.request_id === 'req-create-server-internal'
-          && String(details?.error_summary || '').includes('db probe exploded')
+          && String(details?.error_summary || '').includes(
+            'authService.login is not a function'
+          )
       )
     );
   } finally {
@@ -1306,34 +2633,37 @@ test('createServer keeps request_id stable when unexpected route errors occur wi
     capturedConsoleErrors.push(args);
   };
 
-  let dependencyProbeRequestId = null;
   const harness = await startServer(
     { ALLOW_MOCK_BACKENDS: 'true' },
     {
-      dependencyProbe: async (_config, requestId) => {
-        dependencyProbeRequestId = requestId;
-        throw new Error('db probe exploded');
+      authService: {
+        authorizeRoute: async () => ({})
       }
     }
   );
 
   try {
-    const response = await fetch(`${harness.baseUrl}/health`, {
+    const response = await fetch(`${harness.baseUrl}/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({
+        phone: '13800000000',
+        password: 'password'
+      }),
       signal: AbortSignal.timeout(3000),
       headers: {
-        accept: 'application/problem+json'
+        accept: 'application/problem+json',
+        'content-type': 'application/json'
       }
     });
     const payload = await response.json();
 
     assert.equal(response.status, 500);
-    assert.ok(dependencyProbeRequestId);
-    assert.equal(payload.request_id, dependencyProbeRequestId);
+    assert.ok(payload.request_id);
     assert.ok(
       capturedConsoleErrors.some(
         ([message, details]) =>
           message === '[api] unhandled route error'
-          && details?.request_id === dependencyProbeRequestId
+          && details?.request_id === payload.request_id
       )
     );
   } finally {

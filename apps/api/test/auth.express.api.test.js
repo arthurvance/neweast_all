@@ -27,6 +27,8 @@ const dependencyProbe = async () => ({
   db: { ok: true, detail: 'db ok' },
   redis: { ok: true, detail: 'redis ok' }
 });
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const decodeJwtPayload = (token) => {
   const parts = String(token || '').split('.');
@@ -2858,13 +2860,73 @@ test('createApiApp parser and fallback error responses include access-control-al
     const notFoundPayload = await parseResponseBody(notFound);
     assert.equal(notFound.status, 404);
     assert.equal(notFoundPayload.status, 404);
+    assert.equal(notFoundPayload.error_code, 'AUTH-404-NOT-FOUND');
+    assert.equal(notFoundPayload.request_id, 'req-create-apiapp-not-found');
     assert.equal(notFound.headers.get('access-control-allow-origin'), 'https://web.example');
+
+    const methodNotAllowed = await fetch(`http://127.0.0.1:${port}/health`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/problem+json',
+        'content-type': 'application/json',
+        'x-request-id': 'req-create-apiapp-method-not-allowed',
+        origin: 'https://web.example'
+      },
+      body: JSON.stringify({ ping: true })
+    });
+    const methodNotAllowedPayload = await parseResponseBody(methodNotAllowed);
+    assert.equal(methodNotAllowed.status, 405);
+    assert.equal(
+      methodNotAllowedPayload.error_code,
+      'AUTH-405-METHOD-NOT-ALLOWED'
+    );
+    assert.equal(
+      methodNotAllowedPayload.request_id,
+      'req-create-apiapp-method-not-allowed'
+    );
+    assert.equal(methodNotAllowed.headers.get('allow'), 'GET,HEAD,OPTIONS');
+    assert.equal(
+      methodNotAllowed.headers.get('access-control-allow-origin'),
+      'https://web.example'
+    );
+
+    const notFoundWithAmbiguousRequestId = await fetch(
+      `http://127.0.0.1:${port}/missing-path`,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/problem+json',
+          'x-request-id': 'req-a,req-b',
+          origin: 'https://web.example'
+        }
+      }
+    );
+    const notFoundWithAmbiguousRequestIdPayload =
+      await parseResponseBody(notFoundWithAmbiguousRequestId);
+    assert.equal(notFoundWithAmbiguousRequestId.status, 404);
+    assert.equal(
+      notFoundWithAmbiguousRequestIdPayload.error_code,
+      'AUTH-404-NOT-FOUND'
+    );
+    assert.match(
+      notFoundWithAmbiguousRequestIdPayload.request_id,
+      UUID_PATTERN
+    );
+    assert.notEqual(
+      notFoundWithAmbiguousRequestIdPayload.request_id,
+      'req-a,req-b'
+    );
+    assert.equal(
+      notFoundWithAmbiguousRequestId.headers.get('access-control-allow-origin'),
+      'https://web.example'
+    );
+
   } finally {
     await app.close();
   }
 });
 
-test('createApiApp global error handler includes AUTH-500-INTERNAL error_code', async () => {
+test('createApiApp degrades /health when dependency probe throws', async () => {
   const mockConfig = readConfig({
     ALLOW_MOCK_BACKENDS: 'true',
     API_CORS_ALLOWED_ORIGINS: 'https://web.example'
@@ -2889,6 +2951,59 @@ test('createApiApp global error handler includes AUTH-500-INTERNAL error_code', 
         'x-request-id': requestId,
         origin: 'https://web.example'
       }
+    });
+    const payload = await parseResponseBody(response);
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.request_id, requestId);
+    assert.equal(payload.dependencies.db.mode, 'probe-error');
+    assert.equal(payload.dependencies.redis.mode, 'probe-error');
+    assert.equal(payload.dependencies.db.detail, 'dependency probe failed');
+    assert.equal(payload.dependencies.redis.detail, 'dependency probe failed');
+    assert.ok(!String(payload.dependencies.db.detail).includes('dependency probe exploded'));
+    assert.equal(response.headers.get('access-control-allow-origin'), 'https://web.example');
+  } finally {
+    await app.close();
+  }
+});
+
+test('createApiApp global error handler includes AUTH-500-INTERNAL error_code', async () => {
+  const mockConfig = readConfig({
+    ALLOW_MOCK_BACKENDS: 'true',
+    API_CORS_ALLOWED_ORIGINS: 'https://web.example'
+  });
+  const app = await createApiApp(mockConfig, {
+    authService: {
+      login: async () => {
+        throw new Error('unexpected-login-failure');
+      },
+      authorizeRoute: async () => ({
+        user_id: 'platform-admin',
+        session_id: 'platform-session'
+      })
+    }
+  });
+
+  await app.init();
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const requestId = 'req-create-apiapp-unhandled';
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/problem+json',
+        'content-type': 'application/json',
+        'x-request-id': requestId,
+        origin: 'https://web.example'
+      },
+      body: JSON.stringify({
+        phone: '13800000000',
+        password: 'Passw0rd!'
+      })
     });
     const payload = await parseResponseBody(response);
 

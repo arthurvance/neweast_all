@@ -337,6 +337,42 @@ test('deleteUserById executes delete sequence inside a single transaction', asyn
   assert.equal(txStatements[5].includes('DELETE FROM users'), true);
 });
 
+test('deleteUserById returns deleted=false when deadlock retries are exhausted', async () => {
+  const deadlockMetrics = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async () => {
+        throw createDeadlockError();
+      }
+    },
+    deadlockRetryConfig: {
+      maxRetries: 1,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      jitterMs: 0
+    },
+    sleepFn: async () => {},
+    random: () => 0,
+    onDeadlockMetric: (metric) => {
+      deadlockMetrics.push(metric);
+    }
+  });
+
+  const result = await store.deleteUserById('u-delete-deadlock-fail');
+  assert.deepEqual(result, { deleted: false });
+  assert.ok(
+    deadlockMetrics.some(
+      (metric) =>
+        metric.operation === 'deleteUserById'
+        && metric.event === 'final-failure'
+        && metric.retries_used === 1
+    )
+  );
+});
+
 test('createTenantMembershipForUser inserts tenant relationship and returns created=true', async () => {
   let insertSql = '';
   const store = createStore(async (sql) => {
@@ -2080,4 +2116,239 @@ test('rotateRefreshToken updates previous token with session_id/user_id ownershi
   assert.match(updateSql, /session_id\s*=\s*\?/i);
   assert.match(updateSql, /user_id\s*=\s*\?/i);
   assert.deepEqual(updateParams, ['token-prev', 'session-1', 'user-1']);
+});
+
+test('createOrganizationWithOwner persists org and owner membership in one transaction', async () => {
+  let inTransactionCalls = 0;
+  const txStatements = [];
+  const txParams = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) => {
+        inTransactionCalls += 1;
+        return runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            txStatements.push(normalizedSql);
+            txParams.push(params);
+            if (normalizedSql.includes('INSERT INTO orgs')) {
+              return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('INSERT INTO memberships')) {
+              return { affectedRows: 1 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        });
+      }
+    }
+  });
+
+  const result = await store.createOrganizationWithOwner({
+    orgName: '组织事务测试 A',
+    ownerUserId: 'u-owner-1',
+    operatorUserId: 'u-operator-1'
+  });
+
+  assert.equal(inTransactionCalls, 1);
+  assert.equal(txStatements.length, 2);
+  assert.match(txStatements[0], /INSERT\s+INTO\s+orgs/i);
+  assert.match(txStatements[1], /INSERT\s+INTO\s+memberships/i);
+  assert.equal(txParams[0][1], '组织事务测试 A');
+  assert.equal(txParams[0][2], 'u-owner-1');
+  assert.equal(txParams[1][1], 'u-owner-1');
+  assert.equal(result.owner_user_id, 'u-owner-1');
+  assert.equal(typeof result.org_id, 'string');
+  assert.ok(result.org_id.length > 0);
+});
+
+test('createOrganizationWithOwner retries deadlock and succeeds on next transaction attempt', async () => {
+  let inTransactionCalls = 0;
+  const deadlockMetrics = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) => {
+        inTransactionCalls += 1;
+        if (inTransactionCalls === 1) {
+          throw createDeadlockError();
+        }
+        return runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (normalizedSql.includes('INSERT INTO orgs')) {
+              return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('INSERT INTO memberships')) {
+              return { affectedRows: 1 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        });
+      }
+    },
+    deadlockRetryConfig: {
+      maxRetries: 2,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      jitterMs: 0
+    },
+    sleepFn: async () => {},
+    random: () => 0,
+    onDeadlockMetric: (metric) => {
+      deadlockMetrics.push(metric);
+    }
+  });
+
+  const result = await store.createOrganizationWithOwner({
+    orgName: '组织事务测试 D',
+    ownerUserId: 'u-owner-4',
+    operatorUserId: 'u-operator-4'
+  });
+
+  assert.equal(inTransactionCalls, 2);
+  assert.equal(result.owner_user_id, 'u-owner-4');
+  assert.equal(typeof result.org_id, 'string');
+  assert.ok(
+    deadlockMetrics.some(
+      (metric) =>
+        metric.operation === 'createOrganizationWithOwner'
+        && metric.event === 'deadlock-detected'
+    )
+  );
+  assert.ok(
+    deadlockMetrics.some(
+      (metric) =>
+        metric.operation === 'createOrganizationWithOwner'
+        && metric.event === 'retry-succeeded'
+        && metric.retries_used === 1
+    )
+  );
+});
+
+test('createOrganizationWithOwner throws deadlock error after retry exhaustion', async () => {
+  const deadlockMetrics = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async () => {
+        throw createDeadlockError();
+      }
+    },
+    deadlockRetryConfig: {
+      maxRetries: 1,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      jitterMs: 0
+    },
+    sleepFn: async () => {},
+    random: () => 0,
+    onDeadlockMetric: (metric) => {
+      deadlockMetrics.push(metric);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      store.createOrganizationWithOwner({
+        orgName: '组织事务测试 E',
+        ownerUserId: 'u-owner-5',
+        operatorUserId: 'u-operator-5'
+      }),
+    (error) => {
+      assert.equal(error.code, 'ER_LOCK_DEADLOCK');
+      assert.equal(error.errno, 1213);
+      return true;
+    }
+  );
+  assert.ok(
+    deadlockMetrics.some(
+      (metric) =>
+        metric.operation === 'createOrganizationWithOwner'
+        && metric.event === 'final-failure'
+        && metric.retries_used === 1
+    )
+  );
+});
+
+test('createOrganizationWithOwner surfaces transaction failure when membership insert fails mid-transaction', async () => {
+  let rollbackTriggered = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) => {
+        try {
+          return await runner({
+            query: async (sql) => {
+              const normalizedSql = String(sql);
+              if (normalizedSql.includes('INSERT INTO orgs')) {
+                return { affectedRows: 1 };
+              }
+              if (normalizedSql.includes('INSERT INTO memberships')) {
+                throw new Error('membership-write-failed');
+              }
+              assert.fail(`unexpected tx query: ${normalizedSql}`);
+              return [];
+            }
+          });
+        } catch (error) {
+          rollbackTriggered = true;
+          throw error;
+        }
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      store.createOrganizationWithOwner({
+        orgName: '组织事务测试 B',
+        ownerUserId: 'u-owner-2',
+        operatorUserId: 'u-operator-2'
+      }),
+    /membership-write-failed/
+  );
+  assert.equal(rollbackTriggered, true);
+});
+
+test('createOrganizationWithOwner rejects when transaction writes are not applied', async () => {
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (normalizedSql.includes('INSERT INTO orgs')) {
+              return { affectedRows: 0 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      store.createOrganizationWithOwner({
+        orgName: '组织事务测试 C',
+        ownerUserId: 'u-owner-3',
+        operatorUserId: 'u-operator-3'
+      }),
+    /org-create-write-not-applied/
+  );
 });

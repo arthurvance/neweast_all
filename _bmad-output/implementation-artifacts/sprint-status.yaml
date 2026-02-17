@@ -53,8 +53,8 @@ development_status:
   1-10-认证错误码与可重试语义统一映射: done
   epic-1-retrospective: optional
 
-  epic-2: backlog
-  2-1-组织创建与初始负责人校验: backlog
+  epic-2: in-progress
+  2-1-组织创建与初始负责人校验: done
   2-2-组织状态治理-启用-禁用: backlog
   2-3-平台用户创建与状态管理: backlog
   2-4-平台角色管理与受保护角色约束: backlog

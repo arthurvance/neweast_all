@@ -93,6 +93,18 @@ test('platform role-facts replace route exposes explicit permission declaration'
   assert.equal(replaceRoleFacts.permission_code, 'platform.member_admin.operate');
 });
 
+test('platform org create route exposes explicit permission declaration', () => {
+  const createPlatformOrg = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/orgs'
+  });
+
+  assert.ok(createPlatformOrg);
+  assert.equal(createPlatformOrg.access, 'protected');
+  assert.equal(createPlatformOrg.scope, 'platform');
+  assert.equal(createPlatformOrg.permission_code, 'platform.member_admin.operate');
+});
+
 test('protected routes are fail-closed when declaration is missing', () => {
   const result = validateRoutePermissionDeclarations([
     {

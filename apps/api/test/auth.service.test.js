@@ -4932,6 +4932,368 @@ test('in-memory auth store deleteUserById clears platform role facts and snapsho
   assert.equal(syncAfterDelete.reason, 'invalid-user-id');
 });
 
+test('getOrCreateUserIdentityByPhone reuses existing user without mutating password hash', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'bootstrap-reuse-user',
+        phone: '13835550103',
+        password: 'LegacyPass!2026',
+        status: 'active'
+      }
+    ]
+  });
+  const store = service._internals.authStore;
+  const beforeUser = await store.findUserByPhone('13835550103');
+  assert.ok(beforeUser);
+  const previousPasswordHash = beforeUser.passwordHash;
+
+  const result = await service.getOrCreateUserIdentityByPhone({
+    requestId: 'req-bootstrap-reuse-user-identity',
+    phone: '13835550103',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-bootstrap-reuse-session'
+  });
+
+  assert.equal(result.user_id, 'bootstrap-reuse-user');
+  assert.equal(result.created_user, false);
+  assert.equal(result.reused_existing_user, true);
+  assert.equal(result.credential_initialized, false);
+  const afterUser = await store.findUserByPhone('13835550103');
+  assert.equal(afterUser.passwordHash, previousPasswordHash);
+  const reusedAudit = service._internals.auditTrail
+    .filter((event) => event.type === 'auth.user.bootstrap.reused')
+    .at(-1);
+  assert.ok(reusedAudit);
+  assert.equal(reusedAudit.request_id, 'req-bootstrap-reuse-user-identity');
+});
+
+test('getOrCreateUserIdentityByPhone creates new user with hashed default credential', async () => {
+  const defaultPassword = 'BootstrapPass!2026';
+  const decryptionKey = 'bootstrap-default-password-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+  const store = service._internals.authStore;
+
+  const result = await service.getOrCreateUserIdentityByPhone({
+    requestId: 'req-bootstrap-create-user-identity',
+    phone: '13835550104',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-bootstrap-create-session'
+  });
+
+  assert.equal(result.created_user, true);
+  assert.equal(result.reused_existing_user, false);
+  assert.equal(result.credential_initialized, true);
+  const createdUser = await store.findUserByPhone('13835550104');
+  assert.ok(createdUser);
+  assert.ok(String(createdUser.passwordHash || '').startsWith('pbkdf2$'));
+  assert.notEqual(createdUser.passwordHash, defaultPassword);
+  const createdAudit = service._internals.auditTrail
+    .filter((event) => event.type === 'auth.user.bootstrap.created')
+    .at(-1);
+  assert.ok(createdAudit);
+  assert.equal(createdAudit.request_id, 'req-bootstrap-create-user-identity');
+});
+
+test('rollbackProvisionedUserIdentity removes unreferenced provisioned user', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const store = service._internals.authStore;
+  const createdUser = await store.createUserByPhone({
+    phone: '13835550105',
+    passwordHash: 'pbkdf2$bootstrap-rollback',
+    status: 'active'
+  });
+  assert.ok(createdUser);
+
+  await service.rollbackProvisionedUserIdentity({
+    requestId: 'req-bootstrap-rollback-user',
+    userId: createdUser.id
+  });
+
+  const afterRollback = await store.findUserById(createdUser.id);
+  assert.equal(afterRollback, null);
+});
+
+test('rollbackProvisionedUserIdentity fails closed when user rollback delete fails', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const store = service._internals.authStore;
+  const createdUser = await store.createUserByPhone({
+    phone: '13835550106',
+    passwordHash: 'pbkdf2$bootstrap-rollback-delete-failure',
+    status: 'active'
+  });
+  assert.ok(createdUser);
+
+  const originalDeleteUserById = store.deleteUserById;
+  store.deleteUserById = async () => {
+    throw new Error('rollback-delete-failed');
+  };
+  try {
+    await assert.rejects(
+      () =>
+        service.rollbackProvisionedUserIdentity({
+          requestId: 'req-bootstrap-rollback-delete-failure',
+          userId: createdUser.id
+        }),
+      /rollback-delete-failed/
+    );
+  } finally {
+    store.deleteUserById = originalDeleteUserById;
+  }
+
+  const afterFailedRollback = await store.findUserById(createdUser.id);
+  assert.ok(afterFailedRollback);
+});
+
+test('rollbackProvisionedUserIdentity fails closed when rollback delete result is malformed', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const store = service._internals.authStore;
+  const createdUser = await store.createUserByPhone({
+    phone: '13835550116',
+    passwordHash: 'pbkdf2$bootstrap-rollback-delete-result-invalid',
+    status: 'active'
+  });
+  assert.ok(createdUser);
+
+  const originalDeleteUserById = store.deleteUserById;
+  store.deleteUserById = async () => ({
+    synced: false,
+    reason: 'db-deadlock'
+  });
+  try {
+    await assert.rejects(
+      () =>
+        service.rollbackProvisionedUserIdentity({
+          requestId: 'req-bootstrap-rollback-delete-result-invalid',
+          userId: createdUser.id
+        }),
+      /rollback-provisioned-user-delete-result-invalid/
+    );
+  } finally {
+    store.deleteUserById = originalDeleteUserById;
+  }
+
+  const afterMalformedDeleteResult = await store.findUserById(createdUser.id);
+  assert.ok(afterMalformedDeleteResult);
+});
+
+test('rollbackProvisionedUserIdentity fails closed when rollback guard checks fail', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const store = service._internals.authStore;
+  const createdUser = await store.createUserByPhone({
+    phone: '13835550107',
+    passwordHash: 'pbkdf2$bootstrap-rollback-guard-failure',
+    status: 'active'
+  });
+  assert.ok(createdUser);
+
+  const originalFindDomainAccessByUserId = store.findDomainAccessByUserId;
+  store.findDomainAccessByUserId = async () => {
+    throw new Error('rollback-guard-check-failed');
+  };
+  try {
+    await assert.rejects(
+      () =>
+        service.rollbackProvisionedUserIdentity({
+          requestId: 'req-bootstrap-rollback-guard-failure',
+          userId: createdUser.id
+        }),
+      /rollback-guard-check-failed/
+    );
+  } finally {
+    store.findDomainAccessByUserId = originalFindDomainAccessByUserId;
+  }
+
+  const afterGuardFailure = await store.findUserById(createdUser.id);
+  assert.ok(afterGuardFailure);
+});
+
+test('in-memory auth store deleteUserById rejects users referenced by organization governance records', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'in-memory-org-owner-user',
+        phone: '13835550101',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'in-memory-org-operator-user',
+        phone: '13835550102',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+  const store = service._internals.authStore;
+
+  await service.createOrganizationWithOwner({
+    orgId: 'in-memory-org-delete-guard',
+    orgName: '删除保护组织',
+    ownerUserId: 'in-memory-org-owner-user',
+    operatorUserId: 'in-memory-org-operator-user'
+  });
+
+  await assert.rejects(
+    () => store.deleteUserById('in-memory-org-owner-user'),
+    (error) => {
+      assert.equal(error.code, 'ER_ROW_IS_REFERENCED_2');
+      assert.equal(error.errno, 1451);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () => store.deleteUserById('in-memory-org-operator-user'),
+    (error) => {
+      assert.equal(error.code, 'ER_ROW_IS_REFERENCED_2');
+      assert.equal(error.errno, 1451);
+      return true;
+    }
+  );
+
+  const ownerUser = await store.findUserById('in-memory-org-owner-user');
+  const operatorUser = await store.findUserById('in-memory-org-operator-user');
+  assert.ok(ownerUser);
+  assert.ok(operatorUser);
+});
+
+test('in-memory createOrganizationWithOwner mirrors mysql data-too-long error for org_name overflow', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'in-memory-org-owner-overflow',
+        phone: '13835550111',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'in-memory-org-operator-overflow',
+        phone: '13835550112',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.createOrganizationWithOwner({
+        orgId: 'in-memory-org-overflow',
+        orgName: 'x'.repeat(129),
+        ownerUserId: 'in-memory-org-owner-overflow',
+        operatorUserId: 'in-memory-org-operator-overflow'
+      }),
+    (error) => {
+      assert.equal(error.code, 'ER_DATA_TOO_LONG');
+      assert.equal(error.errno, 1406);
+      return true;
+    }
+  );
+});
+
+test('recordIdempotencyEvent records degraded outcomes with dedicated audit metadata', async () => {
+  const service = createService();
+  const authorizationContext = {
+    user_id: 'idempotency-operator-user',
+    session_id: 'idempotency-operator-session'
+  };
+
+  await service.recordIdempotencyEvent({
+    requestId: 'req-idempotency-store-unavailable-audit',
+    outcome: 'store_unavailable',
+    routeKey: 'POST /auth/platform/member-admin/provision-user',
+    idempotencyKey: 'idem-store-unavailable-audit',
+    authorizationContext
+  });
+  await service.recordIdempotencyEvent({
+    requestId: 'req-idempotency-pending-timeout-audit',
+    outcome: 'pending_timeout',
+    routeKey: 'POST /auth/platform/member-admin/provision-user',
+    idempotencyKey: 'idem-pending-timeout-audit',
+    authorizationContext
+  });
+
+  const degradedEvents = service._internals.auditTrail.filter(
+    (event) => event.type === 'auth.idempotency.degraded'
+  );
+  assert.equal(degradedEvents.length, 2);
+  assert.equal(degradedEvents[0].idempotency_outcome, 'store_unavailable');
+  assert.equal(degradedEvents[1].idempotency_outcome, 'pending_timeout');
+  assert.equal(degradedEvents[0].user_id, 'idempotency-operator-user');
+  assert.equal(degradedEvents[0].session_id, 'idempotency-operator-session');
+});
+
+test('recordIdempotencyEvent classifies unknown outcomes without mislabeling as replay hit', async () => {
+  const service = createService();
+
+  await service.recordIdempotencyEvent({
+    requestId: 'req-idempotency-unknown-outcome-audit',
+    outcome: 'unexpected_outcome',
+    routeKey: 'POST /platform/orgs',
+    idempotencyKey: 'idem-unknown-outcome-audit',
+    authorizationContext: {
+      user_id: 'idempotency-operator-user',
+      session_id: 'idempotency-operator-session'
+    }
+  });
+
+  const unknownEvent = service._internals.auditTrail
+    .filter((event) => event.type === 'auth.idempotency.unknown')
+    .at(-1);
+  assert.ok(unknownEvent);
+  assert.equal(unknownEvent.idempotency_outcome, 'unknown');
+  assert.equal(unknownEvent.detail, 'idempotency outcome is unrecognized');
+});
+
+test('auth audit trail keeps bounded size to avoid unbounded memory growth', async () => {
+  const service = createService();
+  const auditTrailLimit = 2000;
+  const totalEvents = auditTrailLimit + 25;
+
+  for (let index = 0; index < totalEvents; index += 1) {
+    await service.recordIdempotencyEvent({
+      requestId: `req-auth-audit-cap-${index}`,
+      outcome: 'hit',
+      routeKey: 'POST /platform/orgs',
+      idempotencyKey: `idem-auth-audit-cap-${index}`,
+      authorizationContext: {
+        user_id: 'audit-cap-user',
+        session_id: 'audit-cap-session'
+      }
+    });
+  }
+
+  const auditTrail = service._internals.auditTrail;
+  assert.equal(auditTrail.length, auditTrailLimit);
+  assert.equal(
+    auditTrail[0].request_id,
+    `req-auth-audit-cap-${totalEvents - auditTrailLimit}`
+  );
+  assert.equal(
+    auditTrail.at(-1).request_id,
+    `req-auth-audit-cap-${totalEvents - 1}`
+  );
+});
+
 test('extractBearerToken accepts case-insensitive Authorization scheme', () => {
   const { extractBearerToken } = require('../src/modules/auth/auth.routes');
 

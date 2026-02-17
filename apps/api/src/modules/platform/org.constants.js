@@ -1,0 +1,11 @@
+const PLATFORM_ORG_CREATE_PATH = '/platform/orgs';
+const PLATFORM_ORG_CREATE_ROUTE_KEY = 'POST /platform/orgs';
+const PLATFORM_ORG_CREATE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_ORG_SCOPE = 'platform';
+
+module.exports = {
+  PLATFORM_ORG_CREATE_PATH,
+  PLATFORM_ORG_CREATE_ROUTE_KEY,
+  PLATFORM_ORG_CREATE_PERMISSION_CODE,
+  PLATFORM_ORG_SCOPE
+};

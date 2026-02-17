@@ -18,6 +18,7 @@ const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled'
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
 const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
 const MAX_TENANT_NAME_LENGTH = 128;
+const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
 const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
@@ -820,6 +821,9 @@ const createAuthService = (options = {}) => {
     };
 
     auditTrail.push(event);
+    if (auditTrail.length > MAX_AUTH_AUDIT_TRAIL_ENTRIES) {
+      auditTrail.splice(0, auditTrail.length - MAX_AUTH_AUDIT_TRAIL_ENTRIES);
+    }
     log('info', 'Auth audit event', event);
   };
 
@@ -831,12 +835,36 @@ const createAuthService = (options = {}) => {
     authorizationContext = null,
     metadata = {}
   } = {}) => {
-    const normalizedOutcome = String(outcome || 'hit').trim().toLowerCase() === 'conflict'
-      ? 'conflict'
-      : 'hit';
-    const eventType = normalizedOutcome === 'conflict'
-      ? 'auth.idempotency.conflict'
-      : 'auth.idempotency.hit';
+    const requestedOutcome = String(outcome || 'hit').trim().toLowerCase();
+    const outcomeDescriptorByCode = {
+      hit: {
+        eventType: 'auth.idempotency.hit',
+        detail: 'idempotency replay served from prior result'
+      },
+      conflict: {
+        eventType: 'auth.idempotency.conflict',
+        detail: 'idempotency key reused with different request payload'
+      },
+      store_unavailable: {
+        eventType: 'auth.idempotency.degraded',
+        detail: 'idempotency store unavailable for this request'
+      },
+      pending_timeout: {
+        eventType: 'auth.idempotency.degraded',
+        detail: 'idempotency pending wait timeout'
+      },
+      unknown: {
+        eventType: 'auth.idempotency.unknown',
+        detail: 'idempotency outcome is unrecognized'
+      }
+    };
+    const normalizedOutcome = Object.prototype.hasOwnProperty.call(
+      outcomeDescriptorByCode,
+      requestedOutcome
+    )
+      ? requestedOutcome
+      : 'unknown';
+    const selectedOutcomeDescriptor = outcomeDescriptorByCode[normalizedOutcome];
     const resolvedUserId = String(
       authorizationContext?.user_id
       || authorizationContext?.user?.id
@@ -853,14 +881,11 @@ const createAuthService = (options = {}) => {
       .digest('hex');
 
     addAuditEvent({
-      type: eventType,
+      type: selectedOutcomeDescriptor.eventType,
       requestId,
       userId: resolvedUserId,
       sessionId: resolvedSessionId,
-      detail:
-        normalizedOutcome === 'conflict'
-          ? 'idempotency key reused with different request payload'
-          : 'idempotency replay served from prior result',
+      detail: selectedOutcomeDescriptor.detail,
       metadata: {
         route_key: String(routeKey || ''),
         idempotency_key_fingerprint: idempotencyKeyFingerprint,
@@ -2823,52 +2848,187 @@ const createAuthService = (options = {}) => {
     throw errors.provisionConflict();
   };
 
-  const rollbackProvisionedUser = async ({ requestId, userId }) => {
+  const getOrCreateUserIdentityByPhone = async ({
+    requestId,
+    phone,
+    operatorUserId = 'unknown',
+    operatorSessionId = 'unknown'
+  }) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      throw errors.invalidPayload();
+    }
+
+    const resolvedUser = await getOrCreateProvisionUserByPhone({
+      requestId,
+      phone: normalizedPhone,
+      operatorUserId,
+      operatorSessionId
+    });
+
+    addAuditEvent({
+      type: resolvedUser.createdUser
+        ? 'auth.user.bootstrap.created'
+        : 'auth.user.bootstrap.reused',
+      requestId,
+      userId: resolvedUser.user.id,
+      sessionId: operatorSessionId,
+      detail: resolvedUser.createdUser
+        ? 'owner user created with default password policy'
+        : 'owner user identity reused without credential mutation',
+      metadata: {
+        operator_user_id: operatorUserId,
+        phone_masked: maskPhone(normalizedPhone),
+        credential_initialized: resolvedUser.createdUser,
+        first_login_force_password_change: false
+      }
+    });
+
+    return {
+      user_id: resolvedUser.user.id,
+      phone: resolvedUser.user.phone,
+      created_user: resolvedUser.createdUser,
+      reused_existing_user: !resolvedUser.createdUser,
+      credential_initialized: resolvedUser.createdUser,
+      first_login_force_password_change: false
+    };
+  };
+
+  const createOrganizationWithOwner = async ({
+    orgId = randomUUID(),
+    orgName,
+    ownerUserId,
+    operatorUserId
+  }) => {
+    assertStoreMethod(authStore, 'createOrganizationWithOwner', 'authStore');
+    return authStore.createOrganizationWithOwner({
+      orgId,
+      orgName,
+      ownerUserId,
+      operatorUserId
+    });
+  };
+
+  const rollbackProvisionedUser = async ({
+    requestId,
+    userId,
+    strict = false
+  }) => {
     const normalizedUserId = String(userId || '').trim();
     if (!normalizedUserId || typeof authStore.deleteUserById !== 'function') {
-      return;
+      if (strict) {
+        throw new Error('rollback-provisioned-user-capability-unavailable');
+      }
+      return {
+        rolledBack: false,
+        reason: 'rollback-capability-unavailable'
+      };
     }
     try {
       const domainAccess = await getDomainAccessForUser(normalizedUserId);
       if (domainAccess.platform || domainAccess.tenant) {
-        return;
+        if (strict) {
+          throw new Error('rollback-skipped-user-has-domain-access');
+        }
+        return {
+          rolledBack: false,
+          reason: 'rollback-skipped-user-has-domain-access'
+        };
       }
       const tenantOptions = await getTenantOptionsForUser(normalizedUserId);
       if (tenantOptions.length > 0) {
-        return;
+        if (strict) {
+          throw new Error('rollback-skipped-user-has-tenant-options');
+        }
+        return {
+          rolledBack: false,
+          reason: 'rollback-skipped-user-has-tenant-options'
+        };
       }
       if (typeof authStore.hasAnyTenantRelationshipByUserId === 'function') {
         const hasAnyTenantRelationship = await authStore.hasAnyTenantRelationshipByUserId(
           normalizedUserId
         );
         if (hasAnyTenantRelationship) {
-          return;
+          if (strict) {
+            throw new Error('rollback-skipped-user-has-tenant-relationship');
+          }
+          return {
+            rolledBack: false,
+            reason: 'rollback-skipped-user-has-tenant-relationship'
+          };
         }
       }
     } catch (rollbackGuardError) {
-      log.warn(
+      log(
+        'warn',
+        'Skipped rollback for provisioned user after conflict due to guard check failure',
         {
           request_id: requestId || 'request_id_unset',
           user_id: normalizedUserId,
           reason: String(rollbackGuardError?.message || 'unknown')
-        },
-        'Skipped rollback for provisioned user after conflict due to guard check failure'
+        }
       );
-      return;
+      if (strict) {
+        throw rollbackGuardError;
+      }
+      return {
+        rolledBack: false,
+        reason: 'rollback-guard-check-failed'
+      };
     }
     try {
-      await authStore.deleteUserById(normalizedUserId);
+      const rollbackResult = await authStore.deleteUserById(normalizedUserId);
+      const rollbackDeleteApplied =
+        rollbackResult
+        && typeof rollbackResult === 'object'
+        && rollbackResult.deleted === true;
+      if (!rollbackDeleteApplied) {
+        const rollbackReason =
+          rollbackResult
+          && typeof rollbackResult === 'object'
+          && rollbackResult.deleted === false
+            ? 'rollback-not-deleted'
+            : 'rollback-delete-result-invalid';
+        const rollbackNotAppliedError = new Error(
+          rollbackReason === 'rollback-not-deleted'
+            ? 'rollback-provisioned-user-not-deleted'
+            : 'rollback-provisioned-user-delete-result-invalid'
+        );
+        if (strict) {
+          throw rollbackNotAppliedError;
+        }
+        return {
+          rolledBack: false,
+          reason: rollbackReason
+        };
+      }
+      return {
+        rolledBack: true,
+        reason: 'deleted'
+      };
     } catch (rollbackError) {
-      log.warn(
-        {
-          request_id: requestId || 'request_id_unset',
-          user_id: normalizedUserId,
-          reason: String(rollbackError?.message || 'unknown')
-        },
-        'Failed to rollback provisioned user after conflict'
-      );
+      log('warn', 'Failed to rollback provisioned user after conflict', {
+        request_id: requestId || 'request_id_unset',
+        user_id: normalizedUserId,
+        reason: String(rollbackError?.message || 'unknown')
+      });
+      if (strict) {
+        throw rollbackError;
+      }
+      return {
+        rolledBack: false,
+        reason: 'rollback-delete-failed'
+      };
     }
   };
+
+  const rollbackProvisionedUserIdentity = async ({ requestId, userId }) =>
+    rollbackProvisionedUser({
+      requestId,
+      userId,
+      strict: true
+    });
 
   const rollbackProvisionedTenantMembership = async ({
     requestId,
@@ -2890,15 +3050,12 @@ const createAuthService = (options = {}) => {
         tenantId: normalizedTenantId
       });
     } catch (rollbackError) {
-      log.warn(
-        {
-          request_id: requestId || 'request_id_unset',
-          user_id: normalizedUserId,
-          tenant_id: normalizedTenantId,
-          reason: String(rollbackError?.message || 'unknown')
-        },
-        'Failed to rollback provisioned tenant membership after conflict'
-      );
+      log('warn', 'Failed to rollback provisioned tenant membership after conflict', {
+        request_id: requestId || 'request_id_unset',
+        user_id: normalizedUserId,
+        tenant_id: normalizedTenantId,
+        reason: String(rollbackError?.message || 'unknown')
+      });
     }
     if (typeof authStore.removeTenantDomainAccessForUser !== 'function') {
       return;
@@ -2906,14 +3063,11 @@ const createAuthService = (options = {}) => {
     try {
       await authStore.removeTenantDomainAccessForUser(normalizedUserId);
     } catch (rollbackError) {
-      log.warn(
-        {
-          request_id: requestId || 'request_id_unset',
-          user_id: normalizedUserId,
-          reason: String(rollbackError?.message || 'unknown')
-        },
-        'Failed to rollback provisioned tenant domain access after conflict'
-      );
+      log('warn', 'Failed to rollback provisioned tenant domain access after conflict', {
+        request_id: requestId || 'request_id_unset',
+        user_id: normalizedUserId,
+        reason: String(rollbackError?.message || 'unknown')
+      });
     }
   };
 
@@ -3166,14 +3320,11 @@ const createAuthService = (options = {}) => {
           activeTenantId
         });
       } catch (recoveryError) {
-        log.warn(
-          {
-            request_id: requestId || 'request_id_unset',
-            user_id: String(provisionedUser?.id || 'unknown'),
-            reason: String(recoveryError?.message || 'unknown')
-          },
-          'Post-conflict provisioning recovery check failed'
-        );
+        log('warn', 'Post-conflict provisioning recovery check failed', {
+          request_id: requestId || 'request_id_unset',
+          user_id: String(provisionedUser?.id || 'unknown'),
+          reason: String(recoveryError?.message || 'unknown')
+        });
       }
       if (recoveredOutcome) {
         relationTenantId = recoveredOutcome.active_tenant_id;
@@ -3396,6 +3547,9 @@ const createAuthService = (options = {}) => {
     changePassword,
     provisionPlatformUserByPhone,
     provisionTenantUserByPhone,
+    getOrCreateUserIdentityByPhone,
+    createOrganizationWithOwner,
+    rollbackProvisionedUserIdentity,
     replacePlatformRolesAndSyncSnapshot,
     recordIdempotencyEvent,
     // Test support

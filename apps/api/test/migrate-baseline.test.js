@@ -166,6 +166,45 @@ test('0007 migration defines platform role fact table and reserved legacy snapsh
   assert.doesNotMatch(sql, /status\s*=\s*VALUES\s*\(\s*status\s*\)/i);
 });
 
+test('0008 migration defines org bootstrap tables and owner relationship constraints', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0008_platform_org_bootstrap.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS orgs/i);
+  assert.match(sql, /owner_user_id/i);
+  assert.match(sql, /UNIQUE KEY uk_orgs_name/i);
+  assert.match(sql, /FOREIGN KEY .*owner_user_id.*REFERENCES users \(id\)/is);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS memberships/i);
+  assert.match(sql, /UNIQUE KEY uk_memberships_org_user/i);
+  assert.match(sql, /FOREIGN KEY .*org_id.*REFERENCES orgs \(id\)/is);
+  assert.match(sql, /FOREIGN KEY .*user_id.*REFERENCES users \(id\)/is);
+});
+
+test('0008 down migration drops memberships and orgs tables in dependency-safe order', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0008_platform_org_bootstrap.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  const dropMembershipsIndex = sql.search(/DROP TABLE IF EXISTS memberships/i);
+  const dropOrgsIndex = sql.search(/DROP TABLE IF EXISTS orgs/i);
+
+  assert.ok(dropMembershipsIndex >= 0);
+  assert.ok(dropOrgsIndex >= 0);
+  assert.ok(
+    dropMembershipsIndex < dropOrgsIndex,
+    'expected memberships to be dropped before orgs'
+  );
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

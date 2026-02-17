@@ -6,6 +6,12 @@ const { checkDependencies } = require('./infrastructure/connectivity');
 const { buildProblemDetails } = require('./common/problem-details');
 const { AuthProblemError } = require('./modules/auth/auth.routes');
 const {
+  markRoutePreauthorizedContext
+} = require('./modules/auth/route-preauthorization');
+const {
+  PLATFORM_ORG_CREATE_ROUTE_KEY
+} = require('./modules/platform/org.constants');
+const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
 } = require('./modules/auth/auth.service');
@@ -21,7 +27,6 @@ const ROUTE_DECLARATION_LOOKUP_CACHE = new WeakMap();
 const AUTHORIZE_ROUTE_PREFLIGHT_CACHE = new WeakMap();
 const ROUTE_DECLARATION_LOOKUP_TOKEN = Symbol('routeDeclarationLookup');
 
-const requestIdFrom = (req) => req.headers['x-request-id'] || randomUUID();
 const asMethod = (method) => String(method || 'GET').toUpperCase();
 
 const normalizePathname = (pathname) => {
@@ -49,16 +54,38 @@ const parseRequestPath = (inputPath) => {
 };
 
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
 const DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 30 * 1000;
 const DEFAULT_IDEMPOTENCY_WAIT_TIMEOUT_MS = 5000;
 const DEFAULT_IDEMPOTENCY_WAIT_POLL_INTERVAL_MS = 40;
 const DEFAULT_IN_MEMORY_IDEMPOTENCY_MAX_ENTRIES = 5000;
+const IDEMPOTENCY_REQUEST_HASH_PATTERN = /^[0-9a-f]{64}$/i;
+const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES = new Set([
+  400,
+  401,
+  403,
+  404,
+  413,
+  415,
+  422,
+  429
+]);
 const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/tenant/member-admin/provision-user',
   'POST /auth/platform/member-admin/provision-user',
-  'POST /auth/platform/role-facts/replace'
+  'POST /auth/platform/role-facts/replace',
+  PLATFORM_ORG_CREATE_ROUTE_KEY
+]);
+const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
+  PLATFORM_ORG_CREATE_ROUTE_KEY
+]);
+const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
+  PLATFORM_ORG_CREATE_ROUTE_KEY
+]);
+const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
+  [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
 ]);
 
 const resolveJsonBodyLimitBytes = (value) => {
@@ -88,6 +115,7 @@ const CORS_METHOD_ORDER = Object.freeze([
 const CORS_METHOD_ORDER_INDEX = new Map(
   CORS_METHOD_ORDER.map((method, index) => [method, index])
 );
+const REQUEST_ID_CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]+/g;
 
 const parseCorsAllowedOrigins = (rawOrigins, nodeEnv = 'development') => {
   const hasExplicitOrigins =
@@ -277,10 +305,84 @@ const readHeaderValue = (headers = {}, headerName) => {
   return { present: true, value: collectedValues[0], values: collectedValues };
 };
 
+const isHeaderSafeValue = (headerName, value) => {
+  try {
+    http.validateHeaderValue(headerName, value);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+};
+
+const normalizeRequestIdCandidate = (value) => {
+  const normalized = String(value ?? '')
+    .replace(REQUEST_ID_CONTROL_CHAR_PATTERN, ' ')
+    .trim();
+  if (!normalized) {
+    return '';
+  }
+  try {
+    http.validateHeaderValue('x-request-id', normalized);
+  } catch (_error) {
+    return '';
+  }
+  const bounded =
+    normalized.length <= MAX_REQUEST_ID_LENGTH
+      ? normalized
+      : normalized.slice(0, MAX_REQUEST_ID_LENGTH);
+  try {
+    http.validateHeaderValue('x-request-id', bounded);
+  } catch (_error) {
+    return '';
+  }
+  return bounded;
+};
+
+const resolveRequestIdFromHeaders = (headers = {}) => {
+  const rawRequestIdHeader = readHeaderValue(headers, 'x-request-id');
+  const normalizedValues = rawRequestIdHeader.values
+    .map((value) => normalizeRequestIdCandidate(value))
+    .filter((value) => value.length > 0);
+  const hasAmbiguousMultiValueHeader = rawRequestIdHeader.values.length > 1;
+  const hasAmbiguousCommaSeparatedValue = normalizedValues.some((value) =>
+    value.includes(',')
+  );
+  if (
+    hasAmbiguousMultiValueHeader
+    || hasAmbiguousCommaSeparatedValue
+    || normalizedValues.length !== 1
+  ) {
+    return randomUUID();
+  }
+  return normalizedValues[0];
+};
+
+const resolveRequestId = ({ requestId, headers = {} } = {}) => {
+  const normalizedRequestId = normalizeRequestIdCandidate(requestId);
+  if (normalizedRequestId && !normalizedRequestId.includes(',')) {
+    return normalizedRequestId;
+  }
+  return resolveRequestIdFromHeaders(headers);
+};
+
+const requestIdFrom = (req) =>
+  resolveRequestIdFromHeaders(req?.headers || {});
+
 const normalizeIdempotencyKey = (headers = {}) => {
   const rawIdempotencyKey = readHeaderValue(headers, 'idempotency-key');
+  let hasInvalidHeaderValue = false;
   const normalizedValues = rawIdempotencyKey.values
     .map((value) => String(value || '').trim())
+    .map((value) => {
+      if (value.length === 0) {
+        return '';
+      }
+      if (!isHeaderSafeValue('idempotency-key', value)) {
+        hasInvalidHeaderValue = true;
+        return '';
+      }
+      return value;
+    })
     .filter((value) => value.length > 0);
   const hasAmbiguousMultiValueHeader = rawIdempotencyKey.values.length > 1;
   const hasAmbiguousCommaSeparatedValue = normalizedValues.some((value) =>
@@ -288,7 +390,40 @@ const normalizeIdempotencyKey = (headers = {}) => {
   );
   return {
     present: rawIdempotencyKey.present,
-    invalid: hasAmbiguousMultiValueHeader || hasAmbiguousCommaSeparatedValue,
+    invalid:
+      hasInvalidHeaderValue
+      || hasAmbiguousMultiValueHeader
+      || hasAmbiguousCommaSeparatedValue,
+    value: normalizedValues.length === 1 ? normalizedValues[0] : ''
+  };
+};
+
+const normalizeAuthorizationHeader = (headers = {}) => {
+  const rawAuthorization = readHeaderValue(headers, 'authorization');
+  let hasInvalidHeaderValue = false;
+  const normalizedValues = rawAuthorization.values
+    .map((value) => String(value || '').trim())
+    .map((value) => {
+      if (value.length === 0) {
+        return '';
+      }
+      if (!isHeaderSafeValue('authorization', value)) {
+        hasInvalidHeaderValue = true;
+        return '';
+      }
+      return value;
+    })
+    .filter((value) => value.length > 0);
+  const hasAmbiguousMultiValueHeader = rawAuthorization.values.length > 1;
+  const hasAmbiguousCommaSeparatedValue = normalizedValues.some((value) =>
+    value.includes(',')
+  );
+  return {
+    present: rawAuthorization.present,
+    invalid:
+      hasInvalidHeaderValue
+      || hasAmbiguousMultiValueHeader
+      || hasAmbiguousCommaSeparatedValue,
     value: normalizedValues.length === 1 ? normalizedValues[0] : ''
   };
 };
@@ -317,10 +452,24 @@ const canonicalizeForHash = (value) => {
 const toIdempotencyRequestHash = (body = {}) =>
   hashFingerprint(JSON.stringify(canonicalizeForHash(body || {})));
 
+const normalizeIdempotencyRequestHash = (requestHash) =>
+  String(requestHash || '').trim().toLowerCase();
+
+const isValidIdempotencyRequestHash = (requestHash) =>
+  IDEMPOTENCY_REQUEST_HASH_PATTERN.test(
+    normalizeIdempotencyRequestHash(requestHash)
+  );
+
 const resolveIdempotencyActorScope = ({
+  routeKey = '',
   authorizationContext = null,
   authorization = ''
 } = {}) => {
+  const normalizedRouteKey = String(routeKey || '').trim();
+  const preferUserScope = IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS.has(normalizedRouteKey);
+  const ignoreTenantInScope =
+    preferUserScope
+    && IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT.has(normalizedRouteKey);
   const resolvedSessionId = String(
     authorizationContext?.session_id
     || authorizationContext?.session?.sessionId
@@ -337,6 +486,18 @@ const resolveIdempotencyActorScope = ({
     || authorizationContext?.session_context?.active_tenant_id
     || ''
   ).trim();
+  const tenantScopeSuffix = ignoreTenantInScope
+    ? ''
+    : `:tenant:${resolvedTenantId || '-'}`;
+  if (preferUserScope) {
+    if (resolvedUserId) {
+      return `user:${resolvedUserId}${tenantScopeSuffix}`;
+    }
+    if (resolvedSessionId) {
+      return `session:${resolvedSessionId}${tenantScopeSuffix}`;
+    }
+    return `authorization:${String(authorization || '').trim()}`;
+  }
   if (resolvedSessionId) {
     return `session:${resolvedSessionId}:tenant:${resolvedTenantId || '-'}`;
   }
@@ -358,6 +519,20 @@ const toIdempotencyScopeWindowKey = ({
   actorScope
 }) =>
   `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}`;
+
+const shouldPersistIdempotencyResponse = ({ routeKey, statusCode }) => {
+  const resolvedStatusCode = Number(statusCode);
+  if (!Number.isFinite(resolvedStatusCode) || resolvedStatusCode >= 500) {
+    return false;
+  }
+  const nonCacheableStatuses = IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE.get(
+    String(routeKey || '').trim()
+  );
+  if (!(nonCacheableStatuses instanceof Set)) {
+    return true;
+  }
+  return !nonCacheableStatuses.has(resolvedStatusCode);
+};
 
 const cloneIdempotencyEntryResponse = (response = {}) => ({
   status: Number(response.status),
@@ -509,7 +684,29 @@ const createInMemoryAuthIdempotencyStore = ({
   };
 };
 
-const DEFAULT_AUTH_IDEMPOTENCY_STORE = createInMemoryAuthIdempotencyStore();
+const DEFAULT_AUTH_IDEMPOTENCY_STORE_BY_HANDLERS = new WeakMap();
+let fallbackDefaultAuthIdempotencyStore = null;
+
+const resolveDefaultAuthIdempotencyStore = (handlers = null) => {
+  const storeOwner =
+    handlers?._internals?.authService
+    && typeof handlers._internals.authService === 'object'
+      ? handlers._internals.authService
+      : handlers;
+  if (storeOwner && typeof storeOwner === 'object') {
+    const existingStore = DEFAULT_AUTH_IDEMPOTENCY_STORE_BY_HANDLERS.get(storeOwner);
+    if (existingStore) {
+      return existingStore;
+    }
+    const createdStore = createInMemoryAuthIdempotencyStore();
+    DEFAULT_AUTH_IDEMPOTENCY_STORE_BY_HANDLERS.set(storeOwner, createdStore);
+    return createdStore;
+  }
+  if (!fallbackDefaultAuthIdempotencyStore) {
+    fallbackDefaultAuthIdempotencyStore = createInMemoryAuthIdempotencyStore();
+  }
+  return fallbackDefaultAuthIdempotencyStore;
+};
 
 const cloneRouteResponse = (routeResponse = {}) => ({
   status: Number(routeResponse.status),
@@ -518,6 +715,28 @@ const cloneRouteResponse = (routeResponse = {}) => ({
   },
   body: String(routeResponse.body ?? '')
 });
+
+const isValidRouteResponse = (routeResponse = {}) => {
+  if (
+    !routeResponse
+    || typeof routeResponse !== 'object'
+    || Array.isArray(routeResponse)
+  ) {
+    return false;
+  }
+  const status = Number(routeResponse.status);
+  if (!Number.isInteger(status) || status < 100 || status > 599) {
+    return false;
+  }
+  if (
+    routeResponse.headers === null
+    || typeof routeResponse.headers !== 'object'
+    || Array.isArray(routeResponse.headers)
+  ) {
+    return false;
+  }
+  return typeof routeResponse.body === 'string';
+};
 
 const withPatchedResponseRequestId = (routeResponse = {}, requestId = '') => {
   const normalizedRequestId = String(requestId || '').trim();
@@ -603,6 +822,7 @@ const waitForResolvedIdempotencyEntry = async ({
     1,
     Number(pollIntervalMs) || DEFAULT_IDEMPOTENCY_WAIT_POLL_INTERVAL_MS
   );
+  const normalizedRequestHash = normalizeIdempotencyRequestHash(requestHash);
   const deadline = Date.now() + resolvedTimeoutMs;
 
   while (Date.now() <= deadline) {
@@ -610,11 +830,20 @@ const waitForResolvedIdempotencyEntry = async ({
     if (!existing) {
       return { state: 'missing' };
     }
-    if (String(existing.requestHash || '') !== String(requestHash || '')) {
+    const existingRequestHash = normalizeIdempotencyRequestHash(
+      existing.requestHash
+    );
+    if (!isValidIdempotencyRequestHash(existingRequestHash)) {
+      return { state: 'corrupted' };
+    }
+    if (existingRequestHash !== normalizedRequestHash) {
       return { state: 'conflict' };
     }
     if (existing.state === 'resolved') {
       return { state: 'resolved', entry: existing };
+    }
+    if (existing.state !== 'pending') {
+      return { state: 'corrupted' };
     }
     await sleep(resolvedPollIntervalMs);
   }
@@ -627,7 +856,8 @@ const emitAuthIdempotencyAuditEvent = async ({
   routeKey,
   idempotencyKey,
   outcome,
-  authorizationContext = null
+  authorizationContext = null,
+  metadata = {}
 }) => {
   if (typeof handlers?.recordAuthIdempotencyEvent !== 'function') {
     return;
@@ -638,7 +868,8 @@ const emitAuthIdempotencyAuditEvent = async ({
       routeKey,
       idempotencyKey,
       outcome,
-      authorizationContext
+      authorizationContext,
+      metadata
     });
   } catch (_error) {
   }
@@ -804,7 +1035,7 @@ const createRouteTable = ({
     && typeof handlers.authIdempotencyStore.resolve === 'function'
     && typeof handlers.authIdempotencyStore.releasePending === 'function'
       ? handlers.authIdempotencyStore
-      : DEFAULT_AUTH_IDEMPOTENCY_STORE;
+      : resolveDefaultAuthIdempotencyStore(handlers);
 
   const executeIdempotentAuthRoute = async ({
     routeKey,
@@ -830,10 +1061,13 @@ const createRouteTable = ({
 
     const authorizationContext = getAuthorizationContext() || null;
     const actorScope = resolveIdempotencyActorScope({
+      routeKey,
       authorizationContext,
       authorization: headers.authorization
     });
-    const requestHash = toIdempotencyRequestHash(body || {});
+    const requestHash = normalizeIdempotencyRequestHash(
+      toIdempotencyRequestHash(body || {})
+    );
     const scopeKey = toIdempotencyScopeKey({
       routeKey,
       idempotencyKey,
@@ -843,6 +1077,22 @@ const createRouteTable = ({
       routeKey,
       actorScope
     });
+    const respondWithAuditedIdempotencyProblem = async ({
+      problem,
+      outcome,
+      metadata = {}
+    }) => {
+      await emitAuthIdempotencyAuditEvent({
+        handlers,
+        requestId,
+        routeKey,
+        idempotencyKey,
+        outcome,
+        authorizationContext,
+        metadata
+      });
+      return authProblemResponse(problem, requestId);
+    };
     const maxAcquireAttempts = 2;
 
     for (let attempt = 0; attempt < maxAcquireAttempts; attempt += 1) {
@@ -856,7 +1106,13 @@ const createRouteTable = ({
           pendingToken
         });
       } catch (_error) {
-        return authProblemResponse(createIdempotencyStoreUnavailableProblem(), requestId);
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-unavailable'
+          }
+        });
       }
 
       if (claimResult?.action === 'claimed') {
@@ -864,26 +1120,101 @@ const createRouteTable = ({
           const executedResponse = await execute();
           const responseSnapshot = cloneRouteResponse(executedResponse);
           const resolvedStatus = Number(responseSnapshot.status);
-          if (Number.isFinite(resolvedStatus) && resolvedStatus < 500) {
+          if (
+            shouldPersistIdempotencyResponse({
+              routeKey,
+              statusCode: resolvedStatus
+            })
+          ) {
             try {
-              await idempotencyStore.resolve({
+              const resolveResult = await idempotencyStore.resolve({
                 scopeKey,
                 scopeWindowKey,
                 pendingToken,
                 requestHash,
                 response: responseSnapshot
               });
+              if (resolveResult === false) {
+                try {
+                  await idempotencyStore.releasePending({
+                    scopeKey,
+                    scopeWindowKey,
+                    pendingToken,
+                    requestHash
+                  });
+                } catch (_error) {
+                }
+                await emitAuthIdempotencyAuditEvent({
+                  handlers,
+                  requestId,
+                  routeKey,
+                  idempotencyKey,
+                  outcome: 'store_unavailable',
+                  authorizationContext,
+                  metadata: {
+                    degradation_reason: 'idempotency-store-unavailable',
+                    idempotency_stage: 'resolve'
+                  }
+                });
+              }
             } catch (_error) {
+              try {
+                await idempotencyStore.releasePending({
+                  scopeKey,
+                  scopeWindowKey,
+                  pendingToken,
+                  requestHash
+                });
+              } catch (_nestedError) {
+              }
+              await emitAuthIdempotencyAuditEvent({
+                handlers,
+                requestId,
+                routeKey,
+                idempotencyKey,
+                outcome: 'store_unavailable',
+                authorizationContext,
+                metadata: {
+                  degradation_reason: 'idempotency-store-unavailable',
+                  idempotency_stage: 'resolve'
+                }
+              });
             }
           } else {
             try {
-              await idempotencyStore.releasePending({
+              const releaseResult = await idempotencyStore.releasePending({
                 scopeKey,
                 scopeWindowKey,
                 pendingToken,
                 requestHash
               });
+              if (releaseResult === false) {
+                await emitAuthIdempotencyAuditEvent({
+                  handlers,
+                  requestId,
+                  routeKey,
+                  idempotencyKey,
+                  outcome: 'store_unavailable',
+                  authorizationContext,
+                  metadata: {
+                    degradation_reason: 'idempotency-store-unavailable',
+                    idempotency_stage: 'release-pending'
+                  }
+                });
+              }
             } catch (_error) {
+              await emitAuthIdempotencyAuditEvent({
+                handlers,
+                requestId,
+                routeKey,
+                idempotencyKey,
+                outcome: 'store_unavailable',
+                authorizationContext,
+                metadata: {
+                  degradation_reason: 'idempotency-store-unavailable',
+                  idempotency_stage: 'release-pending'
+                }
+              });
             }
           }
           return cloneRouteResponse(responseSnapshot);
@@ -907,10 +1238,30 @@ const createRouteTable = ({
 
       const existingEntry = claimResult?.entry;
       if (!existingEntry) {
-        continue;
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-corrupted-entry',
+            idempotency_stage: 'claim-or-read'
+          }
+        });
       }
 
-      if (String(existingEntry.requestHash || '') !== String(requestHash || '')) {
+      const existingRequestHash = normalizeIdempotencyRequestHash(
+        existingEntry.requestHash
+      );
+      if (!isValidIdempotencyRequestHash(existingRequestHash)) {
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-corrupted-entry',
+            idempotency_stage: 'claim-or-read'
+          }
+        });
+      }
+      if (existingRequestHash !== requestHash) {
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
@@ -923,6 +1274,20 @@ const createRouteTable = ({
       }
 
       if (existingEntry.state === 'resolved') {
+        const replayResponse = withPatchedResponseRequestId(
+          existingEntry.response,
+          requestId
+        );
+        if (!isValidRouteResponse(replayResponse)) {
+          return respondWithAuditedIdempotencyProblem({
+            problem: createIdempotencyStoreUnavailableProblem(),
+            outcome: 'store_unavailable',
+            metadata: {
+              degradation_reason: 'idempotency-store-corrupted-response',
+              idempotency_stage: 'replay'
+            }
+          });
+        }
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
@@ -931,11 +1296,18 @@ const createRouteTable = ({
           outcome: 'hit',
           authorizationContext
         });
-        return withPatchedResponseRequestId(existingEntry.response, requestId);
+        return replayResponse;
       }
 
       if (existingEntry.state !== 'pending') {
-        continue;
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-corrupted-entry',
+            idempotency_stage: 'claim-or-read'
+          }
+        });
       }
 
       let waitResult;
@@ -946,7 +1318,13 @@ const createRouteTable = ({
           requestHash
         });
       } catch (_error) {
-        return authProblemResponse(createIdempotencyStoreUnavailableProblem(), requestId);
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-unavailable'
+          }
+        });
       }
 
       if (waitResult.state === 'conflict') {
@@ -961,6 +1339,20 @@ const createRouteTable = ({
         return authProblemResponse(createIdempotencyConflictProblem(), requestId);
       }
       if (waitResult.state === 'resolved') {
+        const replayResponse = withPatchedResponseRequestId(
+          waitResult.entry.response,
+          requestId
+        );
+        if (!isValidRouteResponse(replayResponse)) {
+          return respondWithAuditedIdempotencyProblem({
+            problem: createIdempotencyStoreUnavailableProblem(),
+            outcome: 'store_unavailable',
+            metadata: {
+              degradation_reason: 'idempotency-store-corrupted-response',
+              idempotency_stage: 'replay-after-wait'
+            }
+          });
+        }
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
@@ -969,14 +1361,46 @@ const createRouteTable = ({
           outcome: 'hit',
           authorizationContext
         });
-        return withPatchedResponseRequestId(waitResult.entry.response, requestId);
+        return replayResponse;
+      }
+      if (waitResult.state === 'corrupted') {
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-corrupted-entry',
+            idempotency_stage: 'wait-for-resolved'
+          }
+        });
+      }
+      if (waitResult.state === 'missing') {
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyStoreUnavailableProblem(),
+          outcome: 'store_unavailable',
+          metadata: {
+            degradation_reason: 'idempotency-store-entry-missing',
+            idempotency_stage: 'wait-for-resolved'
+          }
+        });
       }
       if (waitResult.state === 'timeout') {
-        return authProblemResponse(createIdempotencyPendingTimeoutProblem(), requestId);
+        return respondWithAuditedIdempotencyProblem({
+          problem: createIdempotencyPendingTimeoutProblem(),
+          outcome: 'pending_timeout',
+          metadata: {
+            degradation_reason: 'idempotency-pending-timeout'
+          }
+        });
       }
     }
 
-    return authProblemResponse(createIdempotencyPendingTimeoutProblem(), requestId);
+    return respondWithAuditedIdempotencyProblem({
+      problem: createIdempotencyPendingTimeoutProblem(),
+      outcome: 'pending_timeout',
+      metadata: {
+        degradation_reason: 'idempotency-pending-timeout'
+      }
+    });
   };
 
   return {
@@ -1064,6 +1488,21 @@ const createRouteTable = ({
             requestId
           )
       }),
+    [PLATFORM_ORG_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ORG_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformCreateOrg(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
     'POST /auth/refresh': async () =>
       runAuthRoute(() => handlers.authRefresh(requestId, body || {}), requestId),
     'POST /auth/logout': async () =>
@@ -1137,15 +1576,34 @@ const authorizeProtectedRoute = async ({
     };
   }
 
+  const normalizedAuthorization = normalizeAuthorizationHeader(headers);
+  if (normalizedAuthorization.invalid) {
+    return {
+      authorizationFailure: authProblemResponse(
+        new AuthProblemError({
+          status: 401,
+          title: 'Unauthorized',
+          detail: '当前会话无效，请重新登录',
+          errorCode: 'AUTH-401-INVALID-ACCESS'
+        }),
+        requestId
+      )
+    };
+  }
+
   try {
     const authorizationContext = await handlers.authorizeRoute({
       requestId,
-      authorization: headers.authorization,
+      authorization: normalizedAuthorization.value,
       permissionCode: routeDefinition.permission_code,
       scope: routeDefinition.scope
     });
     return {
-      authorizationContext: authorizationContext || null
+      authorizationContext: markRoutePreauthorizedContext({
+        authorizationContext,
+        permissionCode: routeDefinition?.permission_code,
+        scope: routeDefinition?.scope
+      })
     };
   } catch (error) {
     if (error instanceof AuthProblemError) {
@@ -1309,12 +1767,10 @@ const dispatchApiRoute = async ({
     routeDefinitions: routeDefinitionSnapshot,
     routeDeclarationLookup
   });
-  const xRequestIdHeader = readHeaderValue(headers, 'x-request-id');
-  const resolvedRequestId = String(
-    requestId
-    || xRequestIdHeader.value
-    || ''
-  ).trim() || randomUUID();
+  const resolvedRequestId = resolveRequestId({
+    requestId,
+    headers
+  });
   const corsOptions = {
     corsPolicy,
     requestOrigin: headers.origin
@@ -1394,13 +1850,34 @@ const dispatchApiRoute = async ({
     return finalizeResponse(routeResponse);
   }
 
+  if (resolvedRouteDeclarationLookup.hasDeclaredRoutePath(routePath)) {
+    const allowMethods = toCorsAllowMethods(
+      resolvedRouteDeclarationLookup.listDeclaredMethodsForPath(routePath)
+    );
+    const methodNotAllowedResponse = responseJson(
+      405,
+      buildProblemDetails({
+        status: 405,
+        title: 'Method Not Allowed',
+        detail: `Method ${normalizedMethod} not allowed for ${routePath}`,
+        requestId: resolvedRequestId,
+        extensions: { error_code: 'AUTH-405-METHOD-NOT-ALLOWED' }
+      }),
+      'application/problem+json',
+      corsOptions
+    );
+    methodNotAllowedResponse.headers.allow = allowMethods;
+    return finalizeResponse(methodNotAllowedResponse);
+  }
+
   return finalizeResponse(responseJson(
     404,
     buildProblemDetails({
       status: 404,
       title: 'Not Found',
       detail: `No route for ${routePath}`,
-      requestId: resolvedRequestId
+      requestId: resolvedRequestId,
+      extensions: { error_code: 'AUTH-404-NOT-FOUND' }
     }),
     'application/problem+json',
     corsOptions
@@ -1431,8 +1908,7 @@ const handleApiRoute = async (
         options.supportedPermissionScopes || listSupportedRoutePermissionScopes()
     });
   }
-  const xRequestIdHeader = readHeaderValue(headers, 'x-request-id');
-  const requestId = String(xRequestIdHeader.value || '').trim() || randomUUID();
+  const requestId = resolveRequestId({ headers });
   const handlers = options.handlers || createRouteHandlers(config, {
     dependencyProbe,
     authService,
@@ -1491,9 +1967,7 @@ const createServer = (config, options = {}) => {
 
   return http.createServer(async (req, res) => {
     const requestId = requestIdFrom(req);
-    if (!req.headers['x-request-id']) {
-      req.headers['x-request-id'] = requestId;
-    }
+    req.headers['x-request-id'] = requestId;
 
     const bodyResult = await readJsonBody(req, jsonBodyLimitBytes);
     if (bodyResult.error) {
