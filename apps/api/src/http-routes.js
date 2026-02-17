@@ -2,17 +2,30 @@ const { authPing, createAuthHandlers } = require('./modules/auth/auth.routes');
 const { createAuthService } = require('./modules/auth/auth.service');
 const { createPlatformOrgHandlers } = require('./modules/platform/org.routes');
 const { createPlatformOrgService } = require('./modules/platform/org.service');
+const { createPlatformUserHandlers } = require('./modules/platform/user.routes');
+const { createPlatformUserService } = require('./modules/platform/user.service');
 const { buildOpenApiSpec } = require('./openapi');
 const { checkDependencies } = require('./infrastructure/connectivity');
 const { log } = require('./common/logger');
 
 const DEPENDENCY_PROBE_FAILURE_DETAIL = 'dependency probe failed';
 
-const assertAlignedPlatformOrgAuthService = ({
+const assertAlignedPlatformServicesAuthService = ({
   authService,
-  platformOrgService
+  platformOrgService,
+  platformUserService
 }) => {
   const platformOrgAuthService = platformOrgService?._internals?.authService;
+  const platformUserAuthService = platformUserService?._internals?.authService;
+  if (
+    platformOrgAuthService
+    && platformUserAuthService
+    && platformOrgAuthService !== platformUserAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformOrgService and platformUserService to share the same authService instance'
+    );
+  }
   if (
     authService
     && platformOrgAuthService
@@ -20,6 +33,15 @@ const assertAlignedPlatformOrgAuthService = ({
   ) {
     throw new TypeError(
       'createRouteHandlers requires authService and platformOrgService to share the same authService instance'
+    );
+  }
+  if (
+    authService
+    && platformUserAuthService
+    && authService !== platformUserAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires authService and platformUserService to share the same authService instance'
     );
   }
 };
@@ -94,13 +116,16 @@ const createRouteHandlers = (config, options = {}) => {
     ? options.dependencyProbe
     : checkDependencies;
   const preferredPlatformOrgAuthService = options.platformOrgService?._internals?.authService;
-  assertAlignedPlatformOrgAuthService({
+  const preferredPlatformUserAuthService = options.platformUserService?._internals?.authService;
+  assertAlignedPlatformServicesAuthService({
     authService: options.authService,
-    platformOrgService: options.platformOrgService
+    platformOrgService: options.platformOrgService,
+    platformUserService: options.platformUserService
   });
   const authService =
     options.authService
     || preferredPlatformOrgAuthService
+    || preferredPlatformUserAuthService
     || createAuthService();
   const authIdempotencyStore = options.authIdempotencyStore;
   const auth = createAuthHandlers(authService);
@@ -110,6 +135,12 @@ const createRouteHandlers = (config, options = {}) => {
       authService
     });
   const platformOrg = createPlatformOrgHandlers(platformOrgService);
+  const platformUserService =
+    options.platformUserService
+    || createPlatformUserService({
+      authService
+    });
+  const platformUser = createPlatformUserHandlers(platformUserService);
   const authorizeRouteHandler =
     typeof auth.authorizeRoute === 'function'
       ? async ({ requestId, authorization, permissionCode, scope }) =>
@@ -252,6 +283,32 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformCreateUser: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      platformUser.createUser({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
+    platformUpdateUserStatus: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      platformUser.updateUserStatus({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
     authTenantMemberAdminProvisionUser: async (
       requestId,
       authorization,
@@ -328,7 +385,8 @@ const createRouteHandlers = (config, options = {}) => {
 
   handlers._internals = {
     authService,
-    platformOrgService
+    platformOrgService,
+    platformUserService
   };
 
   return handlers;

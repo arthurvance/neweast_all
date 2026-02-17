@@ -16,6 +16,7 @@ const PBKDF2_DIGEST = 'sha512';
 const ACCESS_SESSION_CACHE_TTL_MS = 800;
 const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
+const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
 const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
 const MAX_TENANT_NAME_LENGTH = 128;
@@ -250,6 +251,14 @@ const errors = {
       title: 'Not Found',
       detail: '目标组织不存在',
       errorCode: 'AUTH-404-ORG-NOT-FOUND'
+    }),
+
+  userNotFound: () =>
+    authError({
+      status: 404,
+      title: 'Not Found',
+      detail: '目标用户不存在',
+      errorCode: 'AUTH-404-USER-NOT-FOUND'
     }),
 
   platformSnapshotDegraded: ({ reason = 'db-deadlock' } = {}) =>
@@ -955,6 +964,10 @@ const createAuthService = (options = {}) => {
         accessSessionCache.delete(key);
       }
     }
+  };
+
+  const invalidateAllAccessSessionCache = () => {
+    accessSessionCache.clear();
   };
 
   const buildSessionContext = (session = {}) => ({
@@ -2971,6 +2984,9 @@ const createAuthService = (options = {}) => {
     if (!previousStatus || !currentStatus) {
       throw errors.invalidPayload();
     }
+    if (previousStatus !== currentStatus) {
+      invalidateAllAccessSessionCache();
+    }
     addAuditEvent({
       type: 'auth.org.status.updated',
       requestId: normalizedRequestId,
@@ -2989,6 +3005,80 @@ const createAuthService = (options = {}) => {
 
     return {
       org_id: normalizedOrgId,
+      previous_status: previousStatus,
+      current_status: currentStatus
+    };
+  };
+
+  const updatePlatformUserStatus = async ({
+    requestId,
+    userId,
+    nextStatus,
+    operatorUserId,
+    operatorSessionId,
+    reason = null
+  }) => {
+    const normalizedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedOperatorUserId = String(operatorUserId || '').trim();
+    const normalizedOperatorSessionId = String(operatorSessionId || '').trim();
+    const normalizedNextStatus = normalizeOrgStatus(nextStatus);
+    const normalizedReason = reason === null || reason === undefined
+      ? null
+      : String(reason).trim() || null;
+
+    if (
+      !normalizedUserId
+      || !normalizedOperatorUserId
+      || !normalizedOperatorSessionId
+      || !VALID_PLATFORM_USER_STATUS.has(normalizedNextStatus)
+    ) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'updatePlatformUserStatus', 'authStore');
+    const result = await authStore.updatePlatformUserStatus({
+      requestId: normalizedRequestId,
+      userId: normalizedUserId,
+      nextStatus: normalizedNextStatus,
+      operatorUserId: normalizedOperatorUserId,
+      reason: normalizedReason
+    });
+    if (!result) {
+      throw errors.userNotFound();
+    }
+
+    const previousStatus = normalizeOrgStatus(result.previous_status);
+    const currentStatus = normalizeOrgStatus(result.current_status);
+    if (
+      !VALID_PLATFORM_USER_STATUS.has(previousStatus)
+      || !VALID_PLATFORM_USER_STATUS.has(currentStatus)
+    ) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-user-status-result-invalid'
+      });
+    }
+    if (previousStatus !== currentStatus) {
+      invalidateSessionCacheByUserId(normalizedUserId);
+    }
+    addAuditEvent({
+      type: 'auth.platform.user.status.updated',
+      requestId: normalizedRequestId,
+      userId: normalizedOperatorUserId,
+      sessionId: normalizedOperatorSessionId,
+      detail: previousStatus === currentStatus
+        ? 'platform user status update treated as no-op'
+        : 'platform user status updated',
+      metadata: {
+        target_user_id: normalizedUserId,
+        previous_status: previousStatus,
+        current_status: currentStatus,
+        reason: normalizedReason
+      }
+    });
+
+    return {
+      user_id: normalizedUserId,
       previous_status: previousStatus,
       current_status: currentStatus
     };
@@ -3321,7 +3411,8 @@ const createAuthService = (options = {}) => {
     scope,
     tenantName = undefined,
     payload = undefined,
-    authorizationContext = null
+    authorizationContext = null,
+    authorizedRoute = null
   }) => {
     const normalizedScope = String(scope || '').trim().toLowerCase();
     if (normalizedScope !== 'platform' && normalizedScope !== 'tenant') {
@@ -3357,17 +3448,52 @@ const createAuthService = (options = {}) => {
     const permissionCode = normalizedScope === 'platform'
       ? 'platform.member_admin.operate'
       : 'tenant.member_admin.operate';
-    const authorizedRoute = await authorizeRoute({
-      requestId,
-      accessToken,
-      permissionCode,
-      scope: normalizedScope,
-      authorizationContext
-    });
-    const operatorUserId = String(authorizedRoute?.user_id || '').trim() || 'unknown';
-    const operatorSessionId = String(authorizedRoute?.session_id || '').trim() || 'unknown';
-    const sessionEntryDomain = String(authorizedRoute?.entry_domain || '').trim().toLowerCase();
-    const activeTenantId = normalizeTenantId(authorizedRoute?.active_tenant_id);
+    const normalizedAuthorizedRoute =
+      authorizedRoute && typeof authorizedRoute === 'object'
+        ? {
+          user_id: String(
+            authorizedRoute.user_id
+            || authorizedRoute.userId
+            || ''
+          ).trim(),
+          session_id: String(
+            authorizedRoute.session_id
+            || authorizedRoute.sessionId
+            || ''
+          ).trim(),
+          entry_domain: normalizeEntryDomain(
+            authorizedRoute.entry_domain
+            || authorizedRoute.entryDomain
+          ),
+          active_tenant_id: normalizeTenantId(
+            authorizedRoute.active_tenant_id
+            || authorizedRoute.activeTenantId
+          )
+        }
+        : null;
+    let resolvedAuthorizedRoute = null;
+    if (normalizedAuthorizedRoute) {
+      if (
+        !normalizedAuthorizedRoute.user_id
+        || !normalizedAuthorizedRoute.session_id
+        || normalizedAuthorizedRoute.entry_domain !== normalizedScope
+      ) {
+        throw errors.forbidden();
+      }
+      resolvedAuthorizedRoute = normalizedAuthorizedRoute;
+    } else {
+      resolvedAuthorizedRoute = await authorizeRoute({
+        requestId,
+        accessToken,
+        permissionCode,
+        scope: normalizedScope,
+        authorizationContext
+      });
+    }
+    const operatorUserId = String(resolvedAuthorizedRoute?.user_id || '').trim() || 'unknown';
+    const operatorSessionId = String(resolvedAuthorizedRoute?.session_id || '').trim() || 'unknown';
+    const sessionEntryDomain = String(resolvedAuthorizedRoute?.entry_domain || '').trim().toLowerCase();
+    const activeTenantId = normalizeTenantId(resolvedAuthorizedRoute?.active_tenant_id);
     const resolvedTenantName = await resolveProvisionTenantName({
       scope: normalizedScope,
       operatorUserId,
@@ -3461,7 +3587,8 @@ const createAuthService = (options = {}) => {
     phone,
     tenantName = undefined,
     payload = undefined,
-    authorizationContext = null
+    authorizationContext = null,
+    authorizedRoute = null
   }) =>
     provisionUserByPhone({
       requestId,
@@ -3470,7 +3597,8 @@ const createAuthService = (options = {}) => {
       scope: 'platform',
       tenantName,
       payload,
-      authorizationContext
+      authorizationContext,
+      authorizedRoute
     });
 
   const provisionTenantUserByPhone = async ({
@@ -3479,7 +3607,8 @@ const createAuthService = (options = {}) => {
     phone,
     tenantName = undefined,
     payload = undefined,
-    authorizationContext = null
+    authorizationContext = null,
+    authorizedRoute = null
   }) =>
     provisionUserByPhone({
       requestId,
@@ -3488,7 +3617,8 @@ const createAuthService = (options = {}) => {
       scope: 'tenant',
       tenantName,
       payload,
-      authorizationContext
+      authorizationContext,
+      authorizedRoute
     });
 
   const selectOrSwitchTenant = async ({
@@ -3635,6 +3765,7 @@ const createAuthService = (options = {}) => {
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,
     updateOrganizationStatus,
+    updatePlatformUserStatus,
     rollbackProvisionedUserIdentity,
     replacePlatformRolesAndSyncSnapshot,
     recordIdempotencyEvent,

@@ -4,6 +4,12 @@ const {
   PLATFORM_ORG_CREATE_PERMISSION_CODE,
   PLATFORM_ORG_SCOPE
 } = require('./modules/platform/org.constants');
+const {
+  PLATFORM_USER_CREATE_PATH,
+  PLATFORM_USER_STATUS_PATH,
+  PLATFORM_USER_PERMISSION_CODE,
+  PLATFORM_USER_SCOPE
+} = require('./modules/platform/user.constants');
 
 const asMethod = (method) => String(method || 'GET').trim().toUpperCase();
 const normalizeAccess = (access) => String(access || '').trim().toLowerCase();
@@ -204,6 +210,20 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: PLATFORM_ORG_CREATE_PERMISSION_CODE,
     scope: PLATFORM_ORG_SCOPE
+  },
+  {
+    method: 'POST',
+    path: PLATFORM_USER_CREATE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_USER_PERMISSION_CODE,
+    scope: PLATFORM_USER_SCOPE
+  },
+  {
+    method: 'POST',
+    path: PLATFORM_USER_STATUS_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_USER_PERMISSION_CODE,
+    scope: PLATFORM_USER_SCOPE
   },
   {
     method: 'POST',

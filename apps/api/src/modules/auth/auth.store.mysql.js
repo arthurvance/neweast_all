@@ -10,6 +10,7 @@ const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
 });
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
+const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
@@ -1277,36 +1278,162 @@ const createMySqlAuthStore = ({
                 throw new Error('org-status-write-not-applied');
               }
 
-              const membershipRows = await tx.query(
-                `
-                  SELECT DISTINCT user_id
-                  FROM memberships
-                  WHERE org_id = ? AND status IN ('active', 'enabled')
-                `,
-                [normalizedOrgId]
-              );
-              const affectedUserIds = new Set(
-                (Array.isArray(membershipRows) ? membershipRows : [])
-                  .map((row) => String(row?.user_id || '').trim())
-                  .filter((userId) => userId.length > 0)
-              );
-              const ownerUserId = String(org.owner_user_id || '').trim();
-              if (ownerUserId.length > 0) {
-                affectedUserIds.add(ownerUserId);
-              }
-              for (const affectedUserId of affectedUserIds) {
-                await bumpSessionVersionAndConvergeSessionsTx({
-                  txClient: tx,
-                  userId: affectedUserId,
-                  reason: 'org-status-changed',
-                  revokeRefreshTokens: true,
-                  revokeAuthSessions: true
-                });
+              if (normalizedNextStatus === 'disabled') {
+                const membershipRows = await tx.query(
+                  `
+                    SELECT DISTINCT user_id
+                    FROM memberships
+                    WHERE org_id = ? AND status IN ('active', 'enabled')
+                  `,
+                  [normalizedOrgId]
+                );
+                const affectedUserIds = new Set(
+                  (Array.isArray(membershipRows) ? membershipRows : [])
+                    .map((row) => String(row?.user_id || '').trim())
+                    .filter((userId) => userId.length > 0)
+                );
+                const ownerUserId = String(org.owner_user_id || '').trim();
+                if (ownerUserId.length > 0) {
+                  affectedUserIds.add(ownerUserId);
+                }
+                for (const affectedUserId of affectedUserIds) {
+                  await tx.query(
+                    `
+                      UPDATE auth_sessions
+                      SET status = 'revoked',
+                          revoked_reason = ?,
+                          updated_at = CURRENT_TIMESTAMP(3)
+                      WHERE user_id = ?
+                        AND entry_domain = 'tenant'
+                        AND status = 'active'
+                    `,
+                    ['org-status-changed', affectedUserId]
+                  );
+                  await tx.query(
+                    `
+                      UPDATE refresh_tokens
+                      SET status = 'revoked',
+                          updated_at = CURRENT_TIMESTAMP(3)
+                      WHERE status = 'active'
+                        AND session_id IN (
+                          SELECT session_id
+                          FROM auth_sessions
+                          WHERE user_id = ?
+                            AND entry_domain = 'tenant'
+                        )
+                    `,
+                    [affectedUserId]
+                  );
+                }
               }
             }
 
             return {
               org_id: normalizedOrgId,
+              previous_status: previousStatus,
+              current_status: normalizedNextStatus
+            };
+          })
+      }),
+
+    updatePlatformUserStatus: async ({
+      userId,
+      nextStatus,
+      operatorUserId
+    }) =>
+      executeWithDeadlockRetry({
+        operation: 'updatePlatformUserStatus',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedUserId = String(userId || '').trim();
+            const normalizedNextStatus = normalizeOrgStatus(nextStatus);
+            const normalizedOperatorUserId = String(operatorUserId || '').trim();
+            if (
+              !normalizedUserId
+              || !normalizedOperatorUserId
+              || !VALID_PLATFORM_USER_STATUS.has(normalizedNextStatus)
+            ) {
+              throw new Error(
+                'updatePlatformUserStatus requires userId, nextStatus, and operatorUserId'
+              );
+            }
+
+            const userRows = await tx.query(
+              `
+                SELECT u.id AS user_id,
+                       da.status AS platform_status
+                FROM users u
+                LEFT JOIN auth_user_domain_access da
+                  ON da.user_id = u.id AND da.domain = 'platform'
+                WHERE u.id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedUserId]
+            );
+            const user = userRows?.[0] || null;
+            if (
+              !user
+              || user.platform_status === null
+              || user.platform_status === undefined
+            ) {
+              return null;
+            }
+
+            const previousStatus = normalizeOrgStatus(user.platform_status);
+            if (!VALID_PLATFORM_USER_STATUS.has(previousStatus)) {
+              throw new Error('platform-user-status-read-invalid');
+            }
+            if (previousStatus !== normalizedNextStatus) {
+              const updateResult = await tx.query(
+                `
+                  UPDATE auth_user_domain_access
+                  SET status = ?,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE user_id = ?
+                    AND domain = 'platform'
+                    AND status <> ?
+                `,
+                [normalizedNextStatus, normalizedUserId, normalizedNextStatus]
+              );
+              if (Number(updateResult?.affectedRows || 0) !== 1) {
+                throw new Error('platform-user-status-write-not-applied');
+              }
+
+              if (normalizedNextStatus === 'disabled') {
+                await tx.query(
+                  `
+                    UPDATE auth_sessions
+                    SET status = 'revoked',
+                        revoked_reason = ?,
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE user_id = ?
+                      AND entry_domain = 'platform'
+                      AND status = 'active'
+                  `,
+                  ['platform-user-status-changed', normalizedUserId]
+                );
+                await tx.query(
+                  `
+                    UPDATE refresh_tokens
+                    SET status = 'revoked',
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE status = 'active'
+                      AND session_id IN (
+                        SELECT session_id
+                        FROM auth_sessions
+                        WHERE user_id = ?
+                          AND entry_domain = 'platform'
+                      )
+                  `,
+                  [normalizedUserId]
+                );
+              }
+            }
+
+            return {
+              user_id: normalizedUserId,
               previous_status: previousStatus,
               current_status: normalizedNextStatus
             };
@@ -1578,17 +1705,8 @@ const createMySqlAuthStore = ({
       const normalizedUserId = String(userId);
       const result = await dbClient.query(
         `
-          INSERT INTO auth_user_domain_access (user_id, domain, status)
+          INSERT IGNORE INTO auth_user_domain_access (user_id, domain, status)
           VALUES (?, 'platform', 'active')
-          ON DUPLICATE KEY UPDATE
-            status = CASE
-              WHEN status IN ('active', 'enabled') THEN status
-              ELSE 'active'
-            END,
-            updated_at = CASE
-              WHEN status IN ('active', 'enabled') THEN updated_at
-              ELSE CURRENT_TIMESTAMP(3)
-            END
         `,
         [normalizedUserId]
       );

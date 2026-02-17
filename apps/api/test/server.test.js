@@ -104,6 +104,8 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/platform/orgs']);
   assert.ok(payload.paths['/platform/orgs/status']);
+  assert.ok(payload.paths['/platform/users']);
+  assert.ok(payload.paths['/platform/users/status']);
   assert.ok(payload.paths['/smoke']);
   assert.equal(
     payload.paths['/health'].get.responses['200'].content['application/json'].schema.properties
@@ -150,6 +152,16 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
+  assert.ok(
+    payload.paths['/platform/users'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/users/status'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
   assert.equal(
     payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
@@ -181,6 +193,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/platform/users'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/orgs'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
@@ -188,6 +212,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/platform/orgs/status'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/users'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
     '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
@@ -218,6 +254,50 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs/status'].post.responses['404']);
   assert.ok(payload.paths['/platform/orgs/status'].post.responses['409']);
   assert.ok(payload.paths['/platform/orgs/status'].post.responses['503']);
+  assert.ok(payload.paths['/platform/users'].post.responses['400']);
+  assert.ok(payload.paths['/platform/users'].post.responses['401']);
+  assert.ok(payload.paths['/platform/users'].post.responses['403']);
+  assert.ok(payload.paths['/platform/users'].post.responses['409']);
+  assert.ok(payload.paths['/platform/users'].post.responses['503']);
+  assert.ok(payload.paths['/platform/users/status'].post.responses['400']);
+  assert.ok(payload.paths['/platform/users/status'].post.responses['401']);
+  assert.ok(payload.paths['/platform/users/status'].post.responses['403']);
+  assert.ok(payload.paths['/platform/users/status'].post.responses['404']);
+  assert.ok(payload.paths['/platform/users/status'].post.responses['409']);
+  assert.ok(payload.paths['/platform/users/status'].post.responses['503']);
+  assert.equal(
+    payload.paths['/platform/orgs/status'].post.summary,
+    'Update organization status (active|disabled, tenant-domain scoped)'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/status'].post.description,
+    '组织状态治理仅影响 tenant 域访问可用性；平台域（platform）访问不因该接口直接改变。'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/status'].post.responses['200'].description,
+    'Organization status updated (or no-op). Only tenant-domain access is affected.'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.summary,
+    'Update platform user status (active|disabled, platform-domain scoped)'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.description,
+    '平台用户状态治理仅影响 platform 域访问可用性；组织域（tenant）访问不因该接口直接改变。'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.responses['200'].description,
+    'Platform user status updated (or no-op). Only platform-domain access is affected.'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.responses['404'].description,
+    'Target platform user not found or has no platform-domain access'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.responses['404'].content['application/problem+json']
+      .examples.user_not_found.value.detail,
+    '目标平台用户不存在或无 platform 域访问'
+  );
   assert.equal(
     payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.minLength,
     11
@@ -278,6 +358,30 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     256
   );
   assert.equal(
+    payload.components.schemas.UpdatePlatformOrgStatusRequest.properties.status.description,
+    '目标组织状态（仅影响 tenant 域访问可用性，不影响 platform 域）'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformOrgStatusResponse.properties.previous_status.description,
+    '组织状态更新前值（tenant 域治理状态）'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformOrgStatusResponse.properties.current_status.description,
+    '组织状态更新后值（tenant 域治理状态）'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformUserStatusRequest.properties.status.description,
+    '目标平台用户状态（仅影响 platform 域访问可用性，不影响 tenant 域）'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformUserStatusResponse.properties.previous_status.description,
+    '平台用户状态更新前值（platform 域治理状态）'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformUserStatusResponse.properties.current_status.description,
+    '平台用户状态更新后值（platform 域治理状态）'
+  );
+  assert.equal(
     payload.components.schemas.CreatePlatformOrgResponse.required.includes('org_id'),
     true
   );
@@ -308,6 +412,17 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.paths['/platform/orgs'].post.responses['503'].content['application/problem+json']
       .examples.dependency_unavailable.value.error_code,
     'ORG-503-DEPENDENCY-UNAVAILABLE'
+  );
+  assert.equal(
+    payload.paths['/platform/users'].post.responses['503'].content['application/problem+json']
+      .examples.governance_dependency_unavailable.value.error_code,
+    'USR-503-DEPENDENCY-UNAVAILABLE'
+  );
+  assert.equal(
+    payload.paths['/platform/users/status'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.platform_snapshot_degraded.value.error_code,
+    'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED'
   );
   assert.equal(
     payload.paths['/platform/orgs'].post.responses['503'].content['application/problem+json']
@@ -600,6 +715,37 @@ test('createRouteHandlers fails fast when injected authService mismatches platfo
         platformOrgService
       }),
     /share the same authService instance/
+  );
+});
+
+test('createRouteHandlers fails fast when platformOrgService and platformUserService authService differ', () => {
+  const platformOrgService = {
+    createOrg: async () => ({}),
+    updateOrgStatus: async () => ({}),
+    _internals: {
+      authService: {
+        authorizeRoute: async () => ({})
+      }
+    }
+  };
+  const platformUserService = {
+    createUser: async () => ({}),
+    updateUserStatus: async () => ({}),
+    _internals: {
+      authService: {
+        authorizeRoute: async () => ({})
+      }
+    }
+  };
+
+  assert.throws(
+    () =>
+      createRouteHandlers(config, {
+        dependencyProbe,
+        platformOrgService,
+        platformUserService
+      }),
+    /platformOrgService and platformUserService to share the same authService instance/
   );
 });
 

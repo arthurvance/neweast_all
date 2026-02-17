@@ -13,6 +13,10 @@ const {
   PLATFORM_ORG_STATUS_ROUTE_KEY
 } = require('./modules/platform/org.constants');
 const {
+  PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_STATUS_ROUTE_KEY
+} = require('./modules/platform/user.constants');
+const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
 } = require('./modules/auth/auth.service');
@@ -78,19 +82,27 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/platform/member-admin/provision-user',
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
-  PLATFORM_ORG_STATUS_ROUTE_KEY
+  PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
-  PLATFORM_ORG_STATUS_ROUTE_KEY
+  PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
-  PLATFORM_ORG_STATUS_ROUTE_KEY
+  PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
-  [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
+  [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_USER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
 ]);
 
 const resolveJsonBodyLimitBytes = (value) => {
@@ -1515,6 +1527,36 @@ const createRouteTable = ({
           runAuthRoute(
             () =>
               handlers.platformUpdateOrgStatus(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_USER_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_USER_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformCreateUser(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_USER_STATUS_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_USER_STATUS_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformUpdateUserStatus(
                 requestId,
                 headers.authorization,
                 body || {},

@@ -169,7 +169,7 @@ test('ensureDefaultDomainAccessForUser inserts platform domain access when user 
   let insertStatement = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
       insertCalled = true;
       insertStatement = normalizedSql;
       return { affectedRows: 1 };
@@ -180,8 +180,8 @@ test('ensureDefaultDomainAccessForUser inserts platform domain access when user 
 
   const result = await store.ensureDefaultDomainAccessForUser('u-new');
   assert.equal(insertCalled, true);
-  assert.equal(/INSERT\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
-  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), true);
+  assert.equal(/INSERT\s+IGNORE\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
+  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), false);
   assert.equal(/VALUES\s*\(\?,\s*'platform',\s*'active'\)/i.test(insertStatement), true);
   assert.deepEqual(result, { inserted: true });
 });
@@ -190,7 +190,7 @@ test('ensureDefaultDomainAccessForUser returns inserted=false when platform doma
   let upsertCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
       upsertCalled = true;
       return { affectedRows: 0 };
     }
@@ -203,30 +203,30 @@ test('ensureDefaultDomainAccessForUser returns inserted=false when platform doma
   assert.deepEqual(result, { inserted: false });
 });
 
-test('ensureDefaultDomainAccessForUser re-enables disabled platform domain row', async () => {
+test('ensureDefaultDomainAccessForUser does not re-enable disabled platform domain row', async () => {
   let insertStatement = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
       insertStatement = normalizedSql;
-      // Simulate ON DUPLICATE KEY UPDATE re-activating a disabled row.
-      return { affectedRows: 2 };
+      // Existing disabled row keeps affectedRows=0 under INSERT IGNORE.
+      return { affectedRows: 0 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
   const result = await store.ensureDefaultDomainAccessForUser('u-race');
-  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), true);
-  assert.equal(/status\s*=\s*CASE/i.test(insertStatement), true);
-  assert.deepEqual(result, { inserted: true });
+  assert.equal(/INSERT\s+IGNORE\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
+  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), false);
+  assert.deepEqual(result, { inserted: false });
 });
 
-test('ensureDefaultDomainAccessForUser upsert targets platform domain only', async () => {
+test('ensureDefaultDomainAccessForUser insert targets platform domain only', async () => {
   let upsertSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
       upsertSql = normalizedSql;
       return { affectedRows: 1 };
     }
@@ -2428,11 +2428,10 @@ test('createOrganizationWithOwner rejects when transaction writes are not applie
   );
 });
 
-test('updateOrganizationStatus updates org status and converges active member sessions', async () => {
+test('updateOrganizationStatus updates org status and converges active member tenant sessions only', async () => {
   let inTransactionCalls = 0;
-  const sessionVersionParams = [];
-  const revokeSessionParams = [];
-  const revokeRefreshParams = [];
+  const revokeTenantSessionParams = [];
+  const revokeTenantRefreshParams = [];
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -2459,39 +2458,23 @@ test('updateOrganizationStatus updates org status and converges active member se
               return [{ user_id: 'u-owner' }, { user_id: 'u-member' }];
             }
             if (
-              normalizedSql.includes('UPDATE users')
-              && normalizedSql.includes('session_version = session_version + 1')
-            ) {
-              sessionVersionParams.push(params);
-              return { affectedRows: 1 };
-            }
-            if (
               normalizedSql.includes('UPDATE auth_sessions')
               && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes("entry_domain = 'tenant'")
             ) {
-              revokeSessionParams.push(params);
+              revokeTenantSessionParams.push(params);
               return { affectedRows: 1 };
             }
             if (
               normalizedSql.includes('UPDATE refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes("entry_domain = 'tenant'")
             ) {
-              revokeRefreshParams.push(params);
+              revokeTenantRefreshParams.push(params);
               return { affectedRows: 1 };
             }
-            if (
-              normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')
-              && normalizedSql.includes('FROM users')
-            ) {
-              return [
-                {
-                  id: String(params?.[0] || ''),
-                  phone: '13835559999',
-                  password_hash: 'hash',
-                  status: 'active',
-                  session_version: 2
-                }
-              ];
+            if (normalizedSql.includes('UPDATE users')) {
+              assert.fail(`unexpected session version update query: ${normalizedSql}`);
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
             return [];
@@ -2513,19 +2496,22 @@ test('updateOrganizationStatus updates org status and converges active member se
     previous_status: 'active',
     current_status: 'disabled'
   });
-  assert.equal(sessionVersionParams.length, 2);
+  assert.equal(revokeTenantSessionParams.length, 2);
   assert.deepEqual(
-    sessionVersionParams.map((params) => params?.[0]).sort(),
+    revokeTenantSessionParams.map((params) => params?.[1]).sort(),
     ['u-member', 'u-owner']
   );
-  assert.equal(revokeSessionParams.length, 2);
-  assert.equal(revokeRefreshParams.length, 2);
+  assert.equal(revokeTenantRefreshParams.length, 2);
+  assert.deepEqual(
+    revokeTenantRefreshParams.map((params) => params?.[0]).sort(),
+    ['u-member', 'u-owner']
+  );
 });
 
 test('updateOrganizationStatus treats same-status change as no-op without session convergence', async () => {
   let updateOrgCalled = false;
   let readMembershipCalled = false;
-  let updateUserCalled = false;
+  let convergeSessionCalled = false;
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -2550,18 +2536,10 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
               return [];
             }
             if (
-              normalizedSql.includes('UPDATE users')
-              && normalizedSql.includes('session_version = session_version + 1')
-            ) {
-              updateUserCalled = true;
-              return { affectedRows: 1 };
-            }
-            if (
               normalizedSql.includes('UPDATE auth_sessions')
               || normalizedSql.includes('UPDATE refresh_tokens')
-              || normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')
             ) {
-              updateUserCalled = true;
+              convergeSessionCalled = true;
               return [];
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
@@ -2584,7 +2562,7 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
   });
   assert.equal(updateOrgCalled, false);
   assert.equal(readMembershipCalled, false);
-  assert.equal(updateUserCalled, false);
+  assert.equal(convergeSessionCalled, false);
 });
 
 test('updateOrganizationStatus returns null when target org does not exist', async () => {
@@ -2616,6 +2594,179 @@ test('updateOrganizationStatus returns null when target org does not exist', asy
     orgId: 'org-status-missing',
     nextStatus: 'disabled',
     operatorUserId: 'u-operator'
+  });
+
+  assert.equal(result, null);
+  assert.equal(updateCalled, false);
+});
+
+test('updatePlatformUserStatus updates platform domain status and converges platform sessions only', async () => {
+  let inTransactionCalls = 0;
+  let updatePlatformDomainCalled = false;
+  const revokeSessionParams = [];
+  const revokeRefreshParams = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) => {
+        inTransactionCalls += 1;
+        return runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT u.id AS user_id')
+              && normalizedSql.includes('LEFT JOIN auth_user_domain_access')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [{
+                user_id: 'platform-status-user-1',
+                platform_status: 'active'
+              }];
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_domain_access')
+              && normalizedSql.includes('SET status = ?')
+              && normalizedSql.includes("domain = 'platform'")
+            ) {
+              updatePlatformDomainCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes("entry_domain = 'platform'")
+            ) {
+              revokeSessionParams.push(params);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('session_id IN')
+              && normalizedSql.includes('FROM auth_sessions')
+            ) {
+              revokeRefreshParams.push(params);
+              return { affectedRows: 1 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        });
+      }
+    }
+  });
+
+  const result = await store.updatePlatformUserStatus({
+    userId: 'platform-status-user-1',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-operator-user'
+  });
+
+  assert.equal(inTransactionCalls, 1);
+  assert.deepEqual(result, {
+    user_id: 'platform-status-user-1',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+  assert.equal(updatePlatformDomainCalled, true);
+  assert.equal(revokeSessionParams.length, 1);
+  assert.equal(revokeSessionParams[0]?.[0], 'platform-user-status-changed');
+  assert.equal(revokeSessionParams[0]?.[1], 'platform-status-user-1');
+  assert.equal(revokeRefreshParams.length, 1);
+  assert.equal(revokeRefreshParams[0]?.[0], 'platform-status-user-1');
+});
+
+test('updatePlatformUserStatus treats same-status change as no-op without session convergence', async () => {
+  let updateStatusCalled = false;
+  let updateUserCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT u.id AS user_id')
+              && normalizedSql.includes('LEFT JOIN auth_user_domain_access')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [{
+                user_id: 'platform-status-user-noop',
+                platform_status: 'disabled'
+              }];
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_domain_access')
+              && normalizedSql.includes('SET status = ?')
+              && normalizedSql.includes("domain = 'platform'")
+            ) {
+              updateStatusCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              || normalizedSql.includes('UPDATE refresh_tokens')
+            ) {
+              updateUserCalled = true;
+              return [];
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.updatePlatformUserStatus({
+    userId: 'platform-status-user-noop',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-operator-user'
+  });
+
+  assert.deepEqual(result, {
+    user_id: 'platform-status-user-noop',
+    previous_status: 'disabled',
+    current_status: 'disabled'
+  });
+  assert.equal(updateStatusCalled, false);
+  assert.equal(updateUserCalled, false);
+});
+
+test('updatePlatformUserStatus returns null when target user does not exist', async () => {
+  let updateCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT u.id AS user_id')
+              && normalizedSql.includes('LEFT JOIN auth_user_domain_access')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [];
+            }
+            updateCalled = true;
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.updatePlatformUserStatus({
+    userId: 'platform-status-user-missing',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-operator-user'
   });
 
   assert.equal(result, null);

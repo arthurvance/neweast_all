@@ -3503,6 +3503,43 @@ test('provisionPlatformUserByPhone creates user with hashed default credential a
   assert.equal(Object.prototype.hasOwnProperty.call(loginResult, 'force_password_change_required'), false);
 });
 
+test('provisionPlatformUserByPhone accepts pre-authorized route context without access token', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-platform-authorized-route-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-provision-platform-authorized-route-operator-login'
+  );
+
+  const provisionResult = await service.provisionPlatformUserByPhone({
+    requestId: 'req-provision-platform-authorized-route',
+    phone: '13835550098',
+    authorizedRoute: {
+      user_id: 'platform-role-facts-operator',
+      session_id: operatorLogin.session_id,
+      entry_domain: 'platform',
+      active_tenant_id: null
+    }
+  });
+
+  assert.equal(provisionResult.created_user, true);
+  assert.equal(provisionResult.reused_existing_user, false);
+  assert.equal(provisionResult.entry_domain, 'platform');
+  assert.equal(provisionResult.request_id, 'req-provision-platform-authorized-route');
+});
+
 test('provisionPlatformUserByPhone rejects tenantName payload with AUTH-400-INVALID-PAYLOAD', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'provision-platform-tenant-name-invalid-key';
@@ -5210,7 +5247,7 @@ test('in-memory createOrganizationWithOwner mirrors mysql data-too-long error fo
   );
 });
 
-test('updateOrganizationStatus disables org access, converges existing sessions, and restores access after re-enable', async () => {
+test('updateOrganizationStatus disables tenant-domain access only and restores tenant access after re-enable', async () => {
   const service = createAuthService({
     seedUsers: [
       buildPlatformRoleFactsOperatorSeed(),
@@ -5219,7 +5256,19 @@ test('updateOrganizationStatus disables org access, converges existing sessions,
         phone: '13835550121',
         password: 'Passw0rd!',
         status: 'active',
-        domains: ['tenant'],
+        domains: ['platform', 'tenant'],
+        platformRoles: [
+          {
+            roleId: 'org-status-owner-platform-view',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ],
         tenants: [{
           tenantId: 'org-status-governance-1',
           tenantName: '组织状态治理-1',
@@ -5243,6 +5292,19 @@ test('updateOrganizationStatus disables org access, converges existing sessions,
     entryDomain: 'tenant'
   });
   assert.equal(ownerLogin.active_tenant_id, 'org-status-governance-1');
+  const ownerPlatformLogin = await service.login({
+    requestId: 'req-org-status-owner-platform-login-before-disable',
+    phone: '13835550121',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const tenantAuthorizedBeforeDisable = await service.authorizeRoute({
+    requestId: 'req-org-status-tenant-authorize-before-disable',
+    accessToken: ownerLogin.access_token,
+    permissionCode: 'tenant.member_admin.view',
+    scope: 'tenant'
+  });
+  assert.equal(tenantAuthorizedBeforeDisable.user_id, 'org-status-owner-user');
 
   const disabled = await service.updateOrganizationStatus({
     requestId: 'req-org-status-disable',
@@ -5257,6 +5319,22 @@ test('updateOrganizationStatus disables org access, converges existing sessions,
     previous_status: 'active',
     current_status: 'disabled'
   });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-org-status-tenant-authorize-after-disable',
+        accessToken: ownerLogin.access_token,
+        permissionCode: 'tenant.member_admin.view',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
 
   await assert.rejects(
     () =>
@@ -5287,6 +5365,14 @@ test('updateOrganizationStatus disables org access, converges existing sessions,
       return true;
     }
   );
+
+  const authorizedPlatformAfterDisable = await service.authorizeRoute({
+    requestId: 'req-org-status-platform-authorize-after-disable',
+    accessToken: ownerPlatformLogin.access_token,
+    permissionCode: 'platform.member_admin.view',
+    scope: 'platform'
+  });
+  assert.equal(authorizedPlatformAfterDisable.user_id, 'org-status-owner-user');
 
   const reenabled = await service.updateOrganizationStatus({
     requestId: 'req-org-status-enable',
@@ -5441,6 +5527,413 @@ test('updateOrganizationStatus returns AUTH-404-ORG-NOT-FOUND for missing org', 
       assert.ok(error instanceof AuthProblemError);
       assert.equal(error.status, 404);
       assert.equal(error.errorCode, 'AUTH-404-ORG-NOT-FOUND');
+      return true;
+    }
+  );
+});
+
+test('updatePlatformUserStatus disables platform-domain access immediately and restores it after re-enable', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-target-user',
+        phone: '13835550131',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-status-target-view',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-operator-login'
+  );
+  const targetLogin = await service.login({
+    requestId: 'req-platform-status-target-login-before-disable',
+    phone: '13835550131',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  const authorizedBeforeDisable = await service.authorizeRoute({
+    requestId: 'req-platform-status-authorize-before-disable',
+    accessToken: targetLogin.access_token,
+    permissionCode: 'platform.member_admin.view',
+    scope: 'platform'
+  });
+  assert.equal(authorizedBeforeDisable.user_id, 'platform-status-target-user');
+
+  const disabled = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-status-disable',
+    userId: 'platform-status-target-user',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id,
+    reason: 'manual-disable'
+  });
+  assert.deepEqual(disabled, {
+    user_id: 'platform-status-target-user',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-platform-status-authorize-after-disable',
+        accessToken: targetLogin.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-platform-status-login-disabled',
+        phone: '13835550131',
+        password: 'Passw0rd!',
+        entryDomain: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const reenabled = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-status-enable',
+    userId: 'platform-status-target-user',
+    nextStatus: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id,
+    reason: 'manual-enable'
+  });
+  assert.deepEqual(reenabled, {
+    user_id: 'platform-status-target-user',
+    previous_status: 'disabled',
+    current_status: 'active'
+  });
+
+  const loginAfterEnable = await service.login({
+    requestId: 'req-platform-status-login-enabled',
+    phone: '13835550131',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const authorizedAfterEnable = await service.authorizeRoute({
+    requestId: 'req-platform-status-authorize-after-enable',
+    accessToken: loginAfterEnable.access_token,
+    permissionCode: 'platform.member_admin.view',
+    scope: 'platform'
+  });
+  assert.equal(authorizedAfterEnable.user_id, 'platform-status-target-user');
+});
+
+test('updatePlatformUserStatus disabled only affects platform domain and keeps tenant domain access', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-scope-user',
+        phone: '13835550135',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        platformRoles: [
+          {
+            roleId: 'platform-status-scope-view',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ],
+        tenants: [
+          {
+            tenantId: 'platform-status-scope-tenant',
+            tenantName: '平台状态域边界租户',
+            status: 'active',
+            permission: tenantPermissionA
+          }
+        ]
+      }
+    ]
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-scope-operator-login'
+  );
+  const platformLogin = await service.login({
+    requestId: 'req-platform-status-scope-platform-login',
+    phone: '13835550135',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const tenantLogin = await service.login({
+    requestId: 'req-platform-status-scope-tenant-login',
+    phone: '13835550135',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  const disabled = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-status-scope-disable',
+    userId: 'platform-status-scope-user',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+  assert.deepEqual(disabled, {
+    user_id: 'platform-status-scope-user',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-platform-status-scope-platform-authorize-after-disable',
+        accessToken: platformLogin.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-platform-status-scope-platform-login-disabled',
+        phone: '13835550135',
+        password: 'Passw0rd!',
+        entryDomain: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const tenantAuthorized = await service.authorizeRoute({
+    requestId: 'req-platform-status-scope-tenant-authorize-after-disable',
+    accessToken: tenantLogin.access_token,
+    permissionCode: 'tenant.member_admin.view',
+    scope: 'tenant'
+  });
+  assert.equal(tenantAuthorized.user_id, 'platform-status-scope-user');
+  assert.equal(tenantAuthorized.entry_domain, 'tenant');
+  assert.equal(tenantAuthorized.active_tenant_id, 'platform-status-scope-tenant');
+
+  const tenantLoginAfterDisable = await service.login({
+    requestId: 'req-platform-status-scope-tenant-login-after-disable',
+    phone: '13835550135',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(tenantLoginAfterDisable.entry_domain, 'tenant');
+});
+
+test('updatePlatformUserStatus treats same-status update as no-op and keeps current session valid', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-noop-user',
+        phone: '13835550132',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-status-noop-view',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-noop-operator-login'
+  );
+  const targetLogin = await service.login({
+    requestId: 'req-platform-status-noop-target-login',
+    phone: '13835550132',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  const result = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-status-noop',
+    userId: 'platform-status-noop-user',
+    nextStatus: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+  assert.deepEqual(result, {
+    user_id: 'platform-status-noop-user',
+    previous_status: 'active',
+    current_status: 'active'
+  });
+
+  const logoutResult = await service.logout({
+    requestId: 'req-platform-status-noop-logout',
+    accessToken: targetLogin.access_token
+  });
+  assert.equal(logoutResult.ok, true);
+  assert.equal(logoutResult.request_id, 'req-platform-status-noop-logout');
+});
+
+test('updatePlatformUserStatus returns AUTH-404-USER-NOT-FOUND for missing user', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-missing-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.updatePlatformUserStatus({
+        requestId: 'req-platform-status-missing',
+        userId: 'platform-status-missing-user',
+        nextStatus: 'disabled',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: operatorLogin.session_id
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 404);
+      assert.equal(error.errorCode, 'AUTH-404-USER-NOT-FOUND');
+      return true;
+    }
+  );
+});
+
+test('updatePlatformUserStatus returns AUTH-404-USER-NOT-FOUND for user without platform domain access', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-tenant-only-user',
+        phone: '13835550133',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'platform-status-tenant-only-org',
+            tenantName: '平台状态-租户域用户',
+            status: 'active',
+            permission: tenantPermissionA
+          }
+        ]
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-tenant-only-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.updatePlatformUserStatus({
+        requestId: 'req-platform-status-tenant-only',
+        userId: 'platform-status-tenant-only-user',
+        nextStatus: 'disabled',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: operatorLogin.session_id
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 404);
+      assert.equal(error.errorCode, 'AUTH-404-USER-NOT-FOUND');
+      return true;
+    }
+  );
+});
+
+test('updatePlatformUserStatus returns AUTH-503-PLATFORM-SNAPSHOT-DEGRADED when store returns invalid status', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-invalid-store-user',
+        phone: '13835550134',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const authStore = service._internals.authStore;
+  authStore.updatePlatformUserStatus = async () => ({
+    user_id: 'platform-status-invalid-store-user',
+    previous_status: 'active',
+    current_status: 'archived'
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-invalid-store-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.updatePlatformUserStatus({
+        requestId: 'req-platform-status-invalid-store',
+        userId: 'platform-status-invalid-store-user',
+        nextStatus: 'disabled',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: operatorLogin.session_id
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
       return true;
     }
   );

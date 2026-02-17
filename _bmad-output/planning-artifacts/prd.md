@@ -589,7 +589,7 @@ Phase 1（MVP）以“治理闭环 + 1 条真实外部集成”作为发布主�
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
 
 - FR9
-  - 需求陈述: 系统可以在用户无有效域权限时拒绝进入对应域，并返回错误码 `AUTH-403-NO-DOMAIN` 与标准提示文案。
+  - 需求陈述: 系统可以在用户无有效域权限时拒绝进入对应域，并返回错误码 `AUTH-403-NO-DOMAIN` 与标准提示文案（`platform`/`tenant` 独立判定，不跨域放大影响）。
   - 验收口径: 采用统一模板 AC1/AC2/AC3，且三项全部通过。
   - 测量方法: 发布前执行自动化回归、权限负向回归与审计链路抽样。
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
@@ -603,7 +603,7 @@ Phase 1（MVP）以“治理闭环 + 1 条真实外部集成”作为发布主�
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
 
 - FR11
-  - 需求陈述: 平台管理员可以维护组织状态（启用/禁用）。
+  - 需求陈述: 平台管理员可以维护组织状态（启用/禁用），且状态变更仅影响组织侧（`tenant` 域）访问可用性，不影响平台侧（`platform` 域）。
   - 验收口径: 采用统一模板 AC1/AC2/AC3，且三项全部通过。
   - 测量方法: 发布前执行自动化回归、权限负向回归与审计链路抽样。
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
@@ -621,7 +621,7 @@ Phase 1（MVP）以“治理闭环 + 1 条真实外部集成”作为发布主�
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。
 
 - FR14
-  - 需求陈述: 平台管理员可以维护平台用户状态。
+  - 需求陈述: 平台管理员可以维护平台用户状态，且状态变更仅影响平台侧（`platform` 域）访问可用性，不影响组织侧（`tenant` 域）。
   - 验收口径: 采用统一模板 AC1/AC2/AC3，且三项全部通过。
   - 测量方法: 发布前执行自动化回归、权限负向回归与审计链路抽样。
   - 追踪来源: User Journeys + MVP Scope + Success Criteria。

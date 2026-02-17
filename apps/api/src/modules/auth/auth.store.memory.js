@@ -6,6 +6,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const sessionsById = new Map();
   const refreshTokensByHash = new Map();
   const domainsByUserId = new Map();
+  const platformDomainKnownByUserId = new Set();
   const tenantsByUserId = new Map();
   const platformRolesByUserId = new Map();
   const platformPermissionsByUserId = new Map();
@@ -14,6 +15,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const membershipsByOrgId = new Map();
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
+  const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const MAX_ORG_NAME_LENGTH = 128;
 
   const isActiveLikeStatus = (status) => {
@@ -216,6 +218,9 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         .filter((domain) => domain === 'platform' || domain === 'tenant')
     );
     domainsByUserId.set(normalizedUser.id, domainSet);
+    if (domainSet.has('platform')) {
+      platformDomainKnownByUserId.add(normalizedUser.id);
+    }
 
     const rawTenants = Array.isArray(user.tenants) ? user.tenants : [];
     tenantsByUserId.set(
@@ -299,6 +304,69 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     return clone(user);
   };
+
+  const revokeSessionsForUserByEntryDomain = ({
+    userId,
+    entryDomain,
+    reason
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedEntryDomain = String(entryDomain || '').trim().toLowerCase();
+    if (!normalizedUserId) {
+      return;
+    }
+    if (!normalizedEntryDomain) {
+      return;
+    }
+
+    const revokedSessionIds = new Set();
+    for (const session of sessionsById.values()) {
+      if (
+        session.userId === normalizedUserId
+        && session.status === 'active'
+        && String(session.entryDomain || '').trim().toLowerCase() === normalizedEntryDomain
+      ) {
+        session.status = 'revoked';
+        session.revokedReason = reason;
+        session.updatedAt = Date.now();
+        revokedSessionIds.add(String(session.sessionId || '').trim());
+      }
+    }
+
+    if (revokedSessionIds.size === 0) {
+      return;
+    }
+
+    for (const refreshRecord of refreshTokensByHash.values()) {
+      if (
+        refreshRecord.status === 'active'
+        && revokedSessionIds.has(String(refreshRecord.sessionId || '').trim())
+      ) {
+        refreshRecord.status = 'revoked';
+        refreshRecord.updatedAt = Date.now();
+      }
+    }
+  };
+
+  const revokePlatformSessionsForUser = ({
+    userId,
+    reason = 'platform-user-status-changed'
+  }) =>
+    revokeSessionsForUserByEntryDomain({
+      userId,
+      entryDomain: 'platform',
+      reason
+    });
+
+  const revokeTenantSessionsForUser = ({
+    userId,
+    reason = 'org-status-changed'
+  }) =>
+    revokeSessionsForUserByEntryDomain({
+      userId,
+      entryDomain: 'tenant',
+      reason
+    });
 
   const createForeignKeyConstraintError = () => {
     const error = new Error('Cannot delete or update a parent row: a foreign key constraint fails');
@@ -467,31 +535,78 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         existingOrg.updatedAt = Date.now();
         orgsById.set(normalizedOrgId, existingOrg);
 
-        const affectedUserIds = new Set();
-        const orgMemberships = membershipsByOrgId.get(normalizedOrgId) || [];
-        for (const membership of orgMemberships) {
-          const membershipUserId = String(membership?.userId || '').trim();
-          if (!membershipUserId || !isActiveLikeStatus(membership?.status)) {
-            continue;
+        if (normalizedNextStatus === 'disabled') {
+          const affectedUserIds = new Set();
+          const orgMemberships = membershipsByOrgId.get(normalizedOrgId) || [];
+          for (const membership of orgMemberships) {
+            const membershipUserId = String(membership?.userId || '').trim();
+            if (!membershipUserId || !isActiveLikeStatus(membership?.status)) {
+              continue;
+            }
+            affectedUserIds.add(membershipUserId);
           }
-          affectedUserIds.add(membershipUserId);
-        }
-        const ownerUserId = String(existingOrg.ownerUserId || '').trim();
-        if (ownerUserId) {
-          affectedUserIds.add(ownerUserId);
-        }
-        for (const userId of affectedUserIds) {
-          bumpSessionVersionAndConvergeSessions({
-            userId,
-            reason: 'org-status-changed',
-            revokeRefreshTokens: true,
-            revokeAuthSessions: true
-          });
+          const ownerUserId = String(existingOrg.ownerUserId || '').trim();
+          if (ownerUserId) {
+            affectedUserIds.add(ownerUserId);
+          }
+          for (const userId of affectedUserIds) {
+            revokeTenantSessionsForUser({
+              userId,
+              reason: 'org-status-changed'
+            });
+          }
         }
       }
 
       return {
         org_id: normalizedOrgId,
+        previous_status: previousStatus,
+        current_status: normalizedNextStatus
+      };
+    },
+
+    updatePlatformUserStatus: async ({
+      userId,
+      nextStatus,
+      operatorUserId
+    }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedOperatorUserId = String(operatorUserId || '').trim();
+      const normalizedNextStatus = normalizeOrgStatus(nextStatus);
+      if (
+        !normalizedUserId
+        || !normalizedOperatorUserId
+        || !VALID_PLATFORM_USER_STATUS.has(normalizedNextStatus)
+      ) {
+        throw new Error(
+          'updatePlatformUserStatus requires userId, nextStatus, and operatorUserId'
+        );
+      }
+      const existingUser = usersById.get(normalizedUserId);
+      if (
+        !existingUser
+        || !platformDomainKnownByUserId.has(normalizedUserId)
+      ) {
+        return null;
+      }
+
+      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+      const previousStatus = userDomains.has('platform') ? 'active' : 'disabled';
+      if (previousStatus !== normalizedNextStatus) {
+        if (normalizedNextStatus === 'active') {
+          userDomains.add('platform');
+        } else {
+          userDomains.delete('platform');
+          revokePlatformSessionsForUser({
+            userId: normalizedUserId,
+            reason: 'platform-user-status-changed'
+          });
+        }
+        domainsByUserId.set(normalizedUserId, userDomains);
+      }
+
+      return {
+        user_id: normalizedUserId,
         previous_status: previousStatus,
         current_status: normalizedNextStatus
       };
@@ -513,6 +628,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       usersById.delete(normalizedUserId);
       usersByPhone.delete(String(existingUser.phone || ''));
       domainsByUserId.delete(normalizedUserId);
+      platformDomainKnownByUserId.delete(normalizedUserId);
       tenantsByUserId.delete(normalizedUserId);
       platformRolesByUserId.delete(normalizedUserId);
       platformPermissionsByUserId.delete(normalizedUserId);
@@ -656,10 +772,16 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
       if (userDomains.has('platform')) {
         domainsByUserId.set(normalizedUserId, userDomains);
+        platformDomainKnownByUserId.add(normalizedUserId);
+        return { inserted: false };
+      }
+      if (platformDomainKnownByUserId.has(normalizedUserId)) {
+        domainsByUserId.set(normalizedUserId, userDomains);
         return { inserted: false };
       }
       userDomains.add('platform');
       domainsByUserId.set(normalizedUserId, userDomains);
+      platformDomainKnownByUserId.add(normalizedUserId);
       return { inserted: true };
     },
 
