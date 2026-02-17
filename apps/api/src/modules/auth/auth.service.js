@@ -15,6 +15,7 @@ const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
 const ACCESS_SESSION_CACHE_TTL_MS = 800;
 const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
 const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
 const MAX_TENANT_NAME_LENGTH = 128;
@@ -241,6 +242,14 @@ const errors = {
       title: 'Forbidden',
       detail: '当前操作无权限',
       errorCode: 'AUTH-403-FORBIDDEN'
+    }),
+
+  orgNotFound: () =>
+    authError({
+      status: 404,
+      title: 'Not Found',
+      detail: '目标组织不存在',
+      errorCode: 'AUTH-404-ORG-NOT-FOUND'
     }),
 
   platformSnapshotDegraded: ({ reason = 'db-deadlock' } = {}) =>
@@ -567,6 +576,16 @@ const normalizeTenantId = (tenantId) => {
   }
   const normalized = String(tenantId).trim();
   return normalized.length > 0 ? normalized : null;
+};
+const normalizeOrgStatus = (status) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  if (normalizedStatus === 'active' || normalizedStatus === 'disabled') {
+    return normalizedStatus;
+  }
+  return '';
 };
 const parseOptionalTenantName = (tenantName) => {
   if (tenantName === null || tenantName === undefined) {
@@ -2909,6 +2928,72 @@ const createAuthService = (options = {}) => {
     });
   };
 
+  const updateOrganizationStatus = async ({
+    requestId,
+    orgId,
+    nextStatus,
+    operatorUserId,
+    operatorSessionId,
+    reason = null
+  }) => {
+    const normalizedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedOrgId = String(orgId || '').trim();
+    const normalizedOperatorUserId = String(operatorUserId || '').trim();
+    const normalizedOperatorSessionId = String(operatorSessionId || '').trim();
+    const normalizedNextStatus = normalizeOrgStatus(nextStatus);
+    const normalizedReason = reason === null || reason === undefined
+      ? null
+      : String(reason).trim() || null;
+
+    if (
+      !normalizedOrgId
+      || !normalizedOperatorUserId
+      || !normalizedOperatorSessionId
+      || !VALID_ORG_STATUS.has(normalizedNextStatus)
+    ) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'updateOrganizationStatus', 'authStore');
+    const result = await authStore.updateOrganizationStatus({
+      requestId: normalizedRequestId,
+      orgId: normalizedOrgId,
+      nextStatus: normalizedNextStatus,
+      operatorUserId: normalizedOperatorUserId,
+      reason: normalizedReason
+    });
+    if (!result) {
+      throw errors.orgNotFound();
+    }
+
+    const previousStatus = normalizeOrgStatus(result.previous_status);
+    const currentStatus = normalizeOrgStatus(result.current_status);
+    if (!previousStatus || !currentStatus) {
+      throw errors.invalidPayload();
+    }
+    addAuditEvent({
+      type: 'auth.org.status.updated',
+      requestId: normalizedRequestId,
+      userId: normalizedOperatorUserId,
+      sessionId: normalizedOperatorSessionId,
+      detail: previousStatus === currentStatus
+        ? 'organization status update treated as no-op'
+        : 'organization status updated',
+      metadata: {
+        org_id: normalizedOrgId,
+        previous_status: previousStatus,
+        current_status: currentStatus,
+        reason: normalizedReason
+      }
+    });
+
+    return {
+      org_id: normalizedOrgId,
+      previous_status: previousStatus,
+      current_status: currentStatus
+    };
+  };
+
   const rollbackProvisionedUser = async ({
     requestId,
     userId,
@@ -3549,6 +3634,7 @@ const createAuthService = (options = {}) => {
     provisionTenantUserByPhone,
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,
+    updateOrganizationStatus,
     rollbackProvisionedUserIdentity,
     replacePlatformRolesAndSyncSnapshot,
     recordIdempotencyEvent,

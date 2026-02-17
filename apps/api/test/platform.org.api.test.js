@@ -37,10 +37,16 @@ const createHarness = ({
     org_id: orgId,
     owner_user_id: ownerUserId
   }),
+  updateOrganizationStatus = async ({ orgId, nextStatus }) => ({
+    org_id: orgId,
+    previous_status: nextStatus === 'disabled' ? 'active' : 'disabled',
+    current_status: nextStatus
+  }),
   recordIdempotencyEvent = async () => {},
   authIdempotencyStore = null
 } = {}) => {
   const storeCalls = [];
+  const statusStoreCalls = [];
   const rollbackCalls = [];
   const authorizeCalls = [];
   const idempotencyEvents = [];
@@ -53,6 +59,10 @@ const createHarness = ({
     createOrganizationWithOwner: async (payload) => {
       storeCalls.push(payload);
       return createOrganizationWithOwner(payload);
+    },
+    updateOrganizationStatus: async (payload) => {
+      statusStoreCalls.push(payload);
+      return updateOrganizationStatus(payload);
     },
     recordIdempotencyEvent: async (payload) => {
       idempotencyEvents.push(payload);
@@ -81,6 +91,7 @@ const createHarness = ({
     handlers,
     platformOrgService,
     storeCalls,
+    statusStoreCalls,
     rollbackCalls,
     authorizeCalls,
     idempotencyEvents
@@ -1152,6 +1163,300 @@ test('POST /platform/orgs fails closed when owner rollback fails after org stora
   const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
   assert.equal(lastAuditEvent.type, 'org.create.rejected');
   assert.match(lastAuditEvent.detail, /rollback failed/);
+});
+
+test('POST /platform/orgs/status rejects invalid payload with standard problem details', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-invalid-payload',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 123,
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  assert.equal(route.headers['content-type'], 'application/problem+json');
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.equal(payload.request_id, 'req-platform-org-status-invalid-payload');
+  assert.equal(harness.statusStoreCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.status.rejected');
+  assert.equal(lastAuditEvent.previous_status, null);
+  assert.equal(lastAuditEvent.next_status, 'disabled');
+});
+
+test('POST /platform/orgs/status rejects null reason to keep request contract strict', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-null-reason',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-null-reason',
+      status: 'disabled',
+      reason: null
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.equal(harness.statusStoreCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.status.rejected');
+  assert.equal(lastAuditEvent.previous_status, null);
+  assert.equal(lastAuditEvent.next_status, 'disabled');
+});
+
+test('POST /platform/orgs/status rejects unsupported status values', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-invalid-status',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-invalid',
+      status: 'archived'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.match(payload.detail, /active 或 disabled/);
+  assert.equal(harness.statusStoreCalls.length, 0);
+});
+
+test('POST /platform/orgs/status succeeds and records status update audit fields', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-success',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-success',
+      status: 'disabled',
+      reason: 'manual-governance'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.deepEqual(payload, {
+    org_id: 'org-status-success',
+    previous_status: 'active',
+    current_status: 'disabled',
+    request_id: 'req-platform-org-status-success'
+  });
+  assert.equal(harness.statusStoreCalls.length, 1);
+  assert.equal(harness.statusStoreCalls[0].orgId, 'org-status-success');
+  assert.equal(harness.statusStoreCalls[0].nextStatus, 'disabled');
+  assert.equal(harness.statusStoreCalls[0].operatorUserId, 'platform-operator');
+  assert.equal(harness.statusStoreCalls[0].operatorSessionId, 'platform-session');
+  assert.equal(harness.statusStoreCalls[0].reason, 'manual-governance');
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.status.updated');
+  assert.equal(lastAuditEvent.org_id, 'org-status-success');
+  assert.equal(lastAuditEvent.previous_status, 'active');
+  assert.equal(lastAuditEvent.next_status, 'disabled');
+});
+
+test('POST /platform/orgs/status fails closed when dependency returns malformed status values', async () => {
+  const harness = createHarness({
+    updateOrganizationStatus: async ({ orgId }) => ({
+      org_id: orgId,
+      previous_status: '',
+      current_status: 'disabled'
+    })
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-malformed-result',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-malformed-result',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.status.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(lastAuditEvent.upstream_error_code, 'ORG-STATUS-RESULT-INVALID');
+  assert.equal(lastAuditEvent.previous_status, null);
+  assert.equal(lastAuditEvent.next_status, 'disabled');
+});
+
+test('POST /platform/orgs/status maps upstream missing org to ORG-404-ORG-NOT-FOUND', async () => {
+  const harness = createHarness({
+    updateOrganizationStatus: async () => {
+      throw new AuthProblemError({
+        status: 404,
+        title: 'Not Found',
+        detail: 'organization missing',
+        errorCode: 'AUTH-404-ORG-NOT-FOUND'
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-missing',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-missing',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-404-ORG-NOT-FOUND');
+  assert.equal(payload.request_id, 'req-platform-org-status-missing');
+});
+
+test('POST /platform/orgs/status replays first success response for same Idempotency-Key and payload', async () => {
+  const harness = createHarness();
+  const requestBody = {
+    org_id: 'org-status-idem-replay',
+    status: 'disabled'
+  };
+
+  const first = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-idem-replay-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-status-replay-001'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-idem-replay-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-status-replay-001'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(harness.statusStoreCalls.length, 1);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(secondPayload.org_id, firstPayload.org_id);
+  assert.equal(secondPayload.current_status, firstPayload.current_status);
+  assert.equal(secondPayload.request_id, 'req-platform-org-status-idem-replay-2');
+});
+
+test('POST /platform/orgs/status rejects same Idempotency-Key with different payloads', async () => {
+  const harness = createHarness();
+  const first = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-idem-conflict-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-status-conflict-001'
+    },
+    body: {
+      org_id: 'org-status-idem-conflict',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-idem-conflict-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-status-conflict-001'
+    },
+    body: {
+      org_id: 'org-status-idem-conflict',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  const payload = JSON.parse(second.body);
+  assert.equal(payload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-org-status-idem-conflict-2');
+  assert.equal(harness.statusStoreCalls.length, 1);
+});
+
+test('POST /platform/orgs/status fails closed when authorizeRoute does not resolve operator identifiers', async () => {
+  const harness = createHarness({
+    authorizeRoute: async () => ({
+      user_id: '',
+      session_id: '',
+      entry_domain: 'platform',
+      active_tenant_id: null
+    })
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-missing-operator-context',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-missing-operator',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 403);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-403-FORBIDDEN');
+  assert.equal(harness.statusStoreCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.status.rejected');
+  assert.equal(lastAuditEvent.request_id, 'req-platform-org-status-missing-operator-context');
+  assert.equal(lastAuditEvent.error_code, 'AUTH-403-FORBIDDEN');
+  assert.equal(lastAuditEvent.previous_status, null);
+  assert.equal(lastAuditEvent.next_status, 'disabled');
 });
 
 test('platformCreateOrg maps owner bootstrap 503 errors to ORG-503-DEPENDENCY-UNAVAILABLE', async () => {

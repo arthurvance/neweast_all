@@ -1422,6 +1422,209 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/orgs/status': {
+      post: {
+        summary: 'Update organization status (active|disabled)',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/UpdatePlatformOrgStatusRequest' },
+              examples: {
+                disable_org: {
+                  value: {
+                    org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                    status: 'disabled',
+                    reason: '组织经营状态异常，平台临时禁用'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Organization status updated (or no-op when same status is requested)',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/UpdatePlatformOrgStatusResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'ORG-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Organization not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  org_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标组织不存在',
+                      error_code: 'ORG-404-ORG-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Organization governance dependency or idempotency storage is unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织治理依赖暂不可用，请稍后重试',
+                      error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  },
+                  idempotency_pending_timeout: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等请求处理中，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-pending-timeout'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/auth/refresh': {
       post: {
         summary: 'Refresh session token pair with rotation',
@@ -1921,6 +2124,53 @@ const buildOpenApiSpec = () => {
           owner_user_id: { type: 'string' },
           created_owner_user: { type: 'boolean' },
           reused_existing_user: { type: 'boolean' },
+          request_id: { type: 'string' }
+        }
+      },
+      UpdatePlatformOrgStatusRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['org_id', 'status'],
+        properties: {
+          org_id: {
+            type: 'string',
+            minLength: 1,
+            pattern: '.*\\S.*',
+            description: '组织唯一标识'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled'],
+            description: '目标组织状态'
+          },
+          reason: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
+            description: '状态变更备注（可选）'
+          }
+        }
+      },
+      UpdatePlatformOrgStatusResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'org_id',
+          'previous_status',
+          'current_status',
+          'request_id'
+        ],
+        properties: {
+          org_id: { type: 'string' },
+          previous_status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          },
+          current_status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          },
           request_id: { type: 'string' }
         }
       },

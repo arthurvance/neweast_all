@@ -55,7 +55,7 @@ development_status:
 
   epic-2: in-progress
   2-1-组织创建与初始负责人校验: done
-  2-2-组织状态治理-启用-禁用: backlog
+  2-2-组织状态治理-启用-禁用: done
   2-3-平台用户创建与状态管理: backlog
   2-4-平台角色管理与受保护角色约束: backlog
   2-5-平台权限树配置与角色分配生效: backlog

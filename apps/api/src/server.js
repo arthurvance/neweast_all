@@ -9,7 +9,8 @@ const {
   markRoutePreauthorizedContext
 } = require('./modules/auth/route-preauthorization');
 const {
-  PLATFORM_ORG_CREATE_ROUTE_KEY
+  PLATFORM_ORG_CREATE_ROUTE_KEY,
+  PLATFORM_ORG_STATUS_ROUTE_KEY
 } = require('./modules/platform/org.constants');
 const {
   listSupportedRoutePermissionCodes,
@@ -76,16 +77,20 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/tenant/member-admin/provision-user',
   'POST /auth/platform/member-admin/provision-user',
   'POST /auth/platform/role-facts/replace',
-  PLATFORM_ORG_CREATE_ROUTE_KEY
+  PLATFORM_ORG_CREATE_ROUTE_KEY,
+  PLATFORM_ORG_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
-  PLATFORM_ORG_CREATE_ROUTE_KEY
+  PLATFORM_ORG_CREATE_ROUTE_KEY,
+  PLATFORM_ORG_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
-  PLATFORM_ORG_CREATE_ROUTE_KEY
+  PLATFORM_ORG_CREATE_ROUTE_KEY,
+  PLATFORM_ORG_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
-  [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
+  [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
 ]);
 
 const resolveJsonBodyLimitBytes = (value) => {
@@ -1495,6 +1500,21 @@ const createRouteTable = ({
           runAuthRoute(
             () =>
               handlers.platformCreateOrg(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_ORG_STATUS_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ORG_STATUS_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformUpdateOrgStatus(
                 requestId,
                 headers.authorization,
                 body || {},

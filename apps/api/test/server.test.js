@@ -103,6 +103,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/platform/orgs']);
+  assert.ok(payload.paths['/platform/orgs/status']);
   assert.ok(payload.paths['/smoke']);
   assert.equal(
     payload.paths['/health'].get.responses['200'].content['application/json'].schema.properties
@@ -144,6 +145,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
+  assert.ok(
+    payload.paths['/platform/orgs/status'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
   assert.equal(
     payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
@@ -169,7 +175,19 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/platform/orgs/status'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/orgs'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/status'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
     '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
@@ -196,6 +214,10 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs'].post.responses['403']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['409']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['503']);
+  assert.ok(payload.paths['/platform/orgs/status'].post.responses['400']);
+  assert.ok(payload.paths['/platform/orgs/status'].post.responses['404']);
+  assert.ok(payload.paths['/platform/orgs/status'].post.responses['409']);
+  assert.ok(payload.paths['/platform/orgs/status'].post.responses['503']);
   assert.equal(
     payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.minLength,
     11
@@ -242,6 +264,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.equal(
     payload.components.schemas.CreatePlatformOrgRequest.additionalProperties,
     false
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformOrgStatusRequest.required.includes('reason'),
+    false
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformOrgStatusRequest.properties.reason.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformOrgStatusRequest.properties.reason.maxLength,
+    256
   );
   assert.equal(
     payload.components.schemas.CreatePlatformOrgResponse.required.includes('org_id'),

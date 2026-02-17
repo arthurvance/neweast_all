@@ -5210,6 +5210,242 @@ test('in-memory createOrganizationWithOwner mirrors mysql data-too-long error fo
   );
 });
 
+test('updateOrganizationStatus disables org access, converges existing sessions, and restores access after re-enable', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'org-status-owner-user',
+        phone: '13835550121',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [{
+          tenantId: 'org-status-governance-1',
+          tenantName: '组织状态治理-1',
+          permission: tenantPermissionA
+        }]
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'org-status-governance-1',
+    orgName: '组织状态治理-1',
+    ownerUserId: 'org-status-owner-user',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  const ownerLogin = await service.login({
+    requestId: 'req-org-status-owner-login-before-disable',
+    phone: '13835550121',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(ownerLogin.active_tenant_id, 'org-status-governance-1');
+
+  const disabled = await service.updateOrganizationStatus({
+    requestId: 'req-org-status-disable',
+    orgId: 'org-status-governance-1',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: 'manual-governance'
+  });
+  assert.deepEqual(disabled, {
+    org_id: 'org-status-governance-1',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+
+  await assert.rejects(
+    () =>
+      service.tenantOptions({
+        requestId: 'req-org-status-options-after-disable',
+        accessToken: ownerLogin.access_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-org-status-login-disabled',
+        phone: '13835550121',
+        password: 'Passw0rd!',
+        entryDomain: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+
+  const reenabled = await service.updateOrganizationStatus({
+    requestId: 'req-org-status-enable',
+    orgId: 'org-status-governance-1',
+    nextStatus: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: 'manual-recovery'
+  });
+  assert.deepEqual(reenabled, {
+    org_id: 'org-status-governance-1',
+    previous_status: 'disabled',
+    current_status: 'active'
+  });
+
+  const loginAfterEnable = await service.login({
+    requestId: 'req-org-status-login-enabled',
+    phone: '13835550121',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(loginAfterEnable.active_tenant_id, 'org-status-governance-1');
+});
+
+test('in-memory tenant access is fail-closed when membership points to missing org', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'orphan-tenant-owner-user',
+        phone: '13835550124',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [{
+          tenantId: 'existing-org-for-guard',
+          tenantName: 'Existing Org For Guard',
+          permission: tenantPermissionA
+        }]
+      },
+      {
+        id: 'orphan-tenant-user',
+        phone: '13835550123',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'existing-org-for-guard',
+    orgName: 'Existing Org For Guard',
+    ownerUserId: 'orphan-tenant-owner-user',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await service._internals.authStore.createTenantMembershipForUser({
+    userId: 'orphan-tenant-user',
+    tenantId: 'orphan-org-1',
+    tenantName: 'Orphan Org'
+  });
+  await service._internals.authStore.ensureTenantDomainAccessForUser('orphan-tenant-user');
+
+  const options = await service._internals.authStore.listTenantOptionsByUserId('orphan-tenant-user');
+  assert.deepEqual(options, []);
+
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-orphan-tenant-login',
+        phone: '13835550123',
+        password: 'Passw0rd!',
+        entryDomain: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('updateOrganizationStatus treats same-status update as no-op and keeps existing access session valid', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'org-status-noop-owner-user',
+        phone: '13835550122',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [{
+          tenantId: 'org-status-governance-noop',
+          tenantName: '组织状态治理-noop',
+          permission: tenantPermissionA
+        }]
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'org-status-governance-noop',
+    orgName: '组织状态治理-noop',
+    ownerUserId: 'org-status-noop-owner-user',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  const ownerLogin = await service.login({
+    requestId: 'req-org-status-noop-owner-login',
+    phone: '13835550122',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  const result = await service.updateOrganizationStatus({
+    requestId: 'req-org-status-noop',
+    orgId: 'org-status-governance-noop',
+    nextStatus: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+  assert.deepEqual(result, {
+    org_id: 'org-status-governance-noop',
+    previous_status: 'active',
+    current_status: 'active'
+  });
+
+  const options = await service.tenantOptions({
+    requestId: 'req-org-status-noop-options',
+    accessToken: ownerLogin.access_token
+  });
+  assert.equal(options.active_tenant_id, 'org-status-governance-noop');
+});
+
+test('updateOrganizationStatus returns AUTH-404-ORG-NOT-FOUND for missing org', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateOrganizationStatus({
+        requestId: 'req-org-status-missing',
+        orgId: 'org-status-missing',
+        nextStatus: 'disabled',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 404);
+      assert.equal(error.errorCode, 'AUTH-404-ORG-NOT-FOUND');
+      return true;
+    }
+  );
+});
+
 test('recordIdempotencyEvent records degraded outcomes with dedicated audit metadata', async () => {
   const service = createService();
   const authorizationContext = {

@@ -14,8 +14,11 @@ const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
 const OWNER_PHONE_PATTERN = /^1\d{10}$/;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const MAX_ORG_NAME_LENGTH = 128;
+const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const CREATE_ORG_ALLOWED_FIELDS = new Set(['org_name', 'initial_owner_phone']);
+const UPDATE_ORG_STATUS_ALLOWED_FIELDS = new Set(['org_id', 'status', 'reason']);
+const VALID_ORG_STATUSES = new Set(['active', 'disabled']);
 const MAX_UNKNOWN_PAYLOAD_KEYS_IN_DETAIL = 8;
 const MAX_UNKNOWN_PAYLOAD_KEY_LENGTH_IN_DETAIL = 64;
 const MAX_UNKNOWN_PAYLOAD_DETAIL_LENGTH = 280;
@@ -136,6 +139,17 @@ const orgErrors = {
       }
     }),
 
+  orgNotFound: () =>
+    orgProblem({
+      status: 404,
+      title: 'Not Found',
+      detail: '目标组织不存在',
+      errorCode: 'ORG-404-ORG-NOT-FOUND',
+      extensions: {
+        retryable: false
+      }
+    }),
+
   dependencyUnavailable: () =>
     orgProblem({
       status: 503,
@@ -206,6 +220,67 @@ const parseCreateOrgPayload = (payload) => {
   return {
     orgName,
     ownerPhone: ownerPhoneRaw
+  };
+};
+
+const parseUpdateOrgStatusPayload = (payload) => {
+  if (!isPlainObject(payload)) {
+    throw orgErrors.invalidPayload();
+  }
+
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !UPDATE_ORG_STATUS_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw orgErrors.invalidPayload(formatUnknownPayloadKeysDetail(unknownPayloadKeys));
+  }
+
+  const hasOrgId = Object.prototype.hasOwnProperty.call(payload, 'org_id');
+  const hasStatus = Object.prototype.hasOwnProperty.call(payload, 'status');
+  if (!hasOrgId || !hasStatus) {
+    throw orgErrors.invalidPayload();
+  }
+
+  if (typeof payload.org_id !== 'string') {
+    throw orgErrors.invalidPayload('org_id 必须为字符串');
+  }
+  if (typeof payload.status !== 'string') {
+    throw orgErrors.invalidPayload('status 必须为字符串');
+  }
+
+  const orgId = normalizeRequiredString(payload.org_id);
+  const nextStatus = normalizeRequiredString(payload.status).toLowerCase();
+  if (!orgId) {
+    throw orgErrors.invalidPayload('org_id 不能为空');
+  }
+  if (!VALID_ORG_STATUSES.has(nextStatus)) {
+    throw orgErrors.invalidPayload('status 必须为 active 或 disabled');
+  }
+
+  let reason = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'reason')) {
+    if (typeof payload.reason !== 'string') {
+      throw orgErrors.invalidPayload('reason 必须为字符串');
+    }
+    const normalizedReason = normalizeRequiredString(payload.reason);
+    if (!normalizedReason) {
+      throw orgErrors.invalidPayload('reason 不能为空字符串');
+    }
+    if (CONTROL_CHAR_PATTERN.test(normalizedReason)) {
+      throw orgErrors.invalidPayload('reason 不能包含控制字符');
+    }
+    if (normalizedReason.length > MAX_STATUS_REASON_LENGTH) {
+      throw orgErrors.invalidPayload(
+        `reason 长度不能超过 ${MAX_STATUS_REASON_LENGTH}`
+      );
+    }
+    reason = normalizedReason;
+  }
+
+  return {
+    orgId,
+    nextStatus,
+    reason
   };
 };
 
@@ -289,13 +364,11 @@ const createPlatformOrgService = ({ authService } = {}) => {
     }
   };
 
-  const createOrg = async ({
+  const resolveOperatorContext = async ({
     requestId,
     accessToken,
-    payload = {},
     authorizationContext = null
   }) => {
-    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
     const preAuthorizedOperatorContext =
       resolveAuthorizedOperatorContext(authorizationContext);
     let operatorUserId = preAuthorizedOperatorContext?.operatorUserId || 'unknown';
@@ -303,7 +376,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     if (!preAuthorizedOperatorContext) {
       assertAuthServiceMethod('authorizeRoute');
       const authorized = await authService.authorizeRoute({
-        requestId: resolvedRequestId,
+        requestId,
         accessToken,
         permissionCode: PLATFORM_ORG_CREATE_PERMISSION_CODE,
         scope: PLATFORM_ORG_SCOPE,
@@ -318,17 +391,43 @@ const createPlatformOrgService = ({ authService } = {}) => {
       !isResolvedOperatorIdentifier(operatorUserId)
       || !isResolvedOperatorIdentifier(operatorSessionId)
     ) {
+      throw orgErrors.forbidden();
+    }
+    return {
+      operatorUserId,
+      operatorSessionId
+    };
+  };
+
+  const createOrg = async ({
+    requestId,
+    accessToken,
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext
+      });
+    } catch (error) {
+      const mappedError =
+        error instanceof AuthProblemError ? error : orgErrors.forbidden();
       addAuditEvent({
         type: 'org.create.rejected',
         requestId: resolvedRequestId,
-        operatorUserId,
+        operatorUserId: 'unknown',
         detail: 'operator authorization context invalid',
         metadata: {
-          error_code: 'AUTH-403-FORBIDDEN'
+          error_code: mappedError.errorCode
         }
       });
-      throw orgErrors.forbidden();
+      throw mappedError;
     }
+    const { operatorUserId, operatorSessionId } = operatorContext;
 
     let parsedPayload;
     try {
@@ -483,8 +582,157 @@ const createPlatformOrgService = ({ authService } = {}) => {
     };
   };
 
+  const updateOrgStatus = async ({
+    requestId,
+    accessToken,
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const requestedOrgId = String(payload?.org_id || '').trim() || null;
+    const requestedNextStatus = String(payload?.status || '').trim().toLowerCase() || null;
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext
+      });
+    } catch (error) {
+      const mappedError =
+        error instanceof AuthProblemError ? error : orgErrors.forbidden();
+      addAuditEvent({
+        type: 'org.status.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          previous_status: null,
+          next_status: requestedNextStatus,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+    const { operatorUserId, operatorSessionId } = operatorContext;
+
+    let parsedPayload;
+    try {
+      parsedPayload = parseUpdateOrgStatusPayload(payload);
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'org.status.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          orgId: requestedOrgId,
+          detail: 'payload validation failed',
+          metadata: {
+            previous_status: null,
+            next_status: requestedNextStatus,
+            error_code: error.errorCode
+          }
+        });
+      }
+      throw error;
+    }
+
+    assertAuthServiceMethod('updateOrganizationStatus');
+
+    let statusUpdateResult;
+    try {
+      statusUpdateResult = await authService.updateOrganizationStatus({
+        requestId: resolvedRequestId,
+        orgId: parsedPayload.orgId,
+        nextStatus: parsedPayload.nextStatus,
+        operatorUserId,
+        operatorSessionId,
+        reason: parsedPayload.reason
+      });
+    } catch (error) {
+      const mappedError =
+        error instanceof AuthProblemError && Number(error.status) === 404
+          ? orgErrors.orgNotFound()
+          : orgErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'org.status.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail:
+          mappedError.errorCode === 'ORG-404-ORG-NOT-FOUND'
+            ? 'organization not found'
+            : 'organization status dependency unavailable',
+        metadata: {
+          previous_status: null,
+          next_status: parsedPayload.nextStatus,
+          error_code: mappedError.errorCode,
+          upstream_error_code: String(error?.errorCode || error?.code || '').trim() || 'unknown'
+        }
+      });
+      throw mappedError;
+    }
+
+    if (!statusUpdateResult) {
+      addAuditEvent({
+        type: 'org.status.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail: 'organization not found',
+        metadata: {
+          previous_status: null,
+          next_status: parsedPayload.nextStatus,
+          error_code: 'ORG-404-ORG-NOT-FOUND'
+        }
+      });
+      throw orgErrors.orgNotFound();
+    }
+
+    const previousStatus = String(statusUpdateResult.previous_status || '').trim().toLowerCase();
+    const currentStatus = String(statusUpdateResult.current_status || '').trim().toLowerCase();
+    if (!VALID_ORG_STATUSES.has(previousStatus) || !VALID_ORG_STATUSES.has(currentStatus)) {
+      addAuditEvent({
+        type: 'org.status.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail: 'organization status dependency returned invalid state',
+        metadata: {
+          previous_status: previousStatus || null,
+          next_status: parsedPayload.nextStatus,
+          error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: 'ORG-STATUS-RESULT-INVALID'
+        }
+      });
+      throw orgErrors.dependencyUnavailable();
+    }
+    const isNoOp = previousStatus === currentStatus;
+    addAuditEvent({
+      type: 'org.status.updated',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      orgId: parsedPayload.orgId,
+      detail: isNoOp
+        ? 'organization status update treated as no-op'
+        : 'organization status updated',
+      metadata: {
+        previous_status: previousStatus,
+        next_status: currentStatus
+      }
+    });
+
+    return {
+      org_id: parsedPayload.orgId,
+      previous_status: previousStatus,
+      current_status: currentStatus,
+      request_id: resolvedRequestId
+    };
+  };
+
   return {
     createOrg,
+    updateOrgStatus,
     _internals: {
       auditTrail,
       authService

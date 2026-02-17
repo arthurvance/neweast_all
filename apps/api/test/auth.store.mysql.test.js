@@ -113,12 +113,14 @@ test('findDomainAccessByUserId returns no domain access when explicit rows and t
 });
 
 test('findDomainAccessByUserId keeps tenant domain accessible when only platform row exists but tenant memberships are active', async () => {
+  let tenantCountSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (normalizedSql.includes('FROM auth_user_domain_access')) {
       return [{ domain: 'platform', status: 'active' }];
     }
     if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
+      tenantCountSql = normalizedSql;
       return [{ tenant_count: 2 }];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -127,6 +129,39 @@ test('findDomainAccessByUserId keeps tenant domain accessible when only platform
 
   const access = await store.findDomainAccessByUserId('u-2c');
   assert.deepEqual(access, { platform: true, tenant: true });
+  assert.doesNotMatch(tenantCountSql, /o\.id IS NULL/i);
+});
+
+test('findDomainAccessByUserId falls back to legacy tenant query when orgs table is missing', async () => {
+  let orgAwareCountQueryAttempts = 0;
+  let legacyCountQueryAttempts = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('FROM auth_user_domain_access')) {
+      return [];
+    }
+    if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
+      if (normalizedSql.includes('LEFT JOIN orgs')) {
+        assert.doesNotMatch(normalizedSql, /o\.id IS NULL/i);
+        orgAwareCountQueryAttempts += 1;
+        const error = new Error("Table 'neweast.orgs' doesn't exist");
+        error.code = 'ER_NO_SUCH_TABLE';
+        error.errno = 1146;
+        throw error;
+      }
+      legacyCountQueryAttempts += 1;
+      return [{ tenant_count: 1 }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const first = await store.findDomainAccessByUserId('u-legacy-fallback');
+  const second = await store.findDomainAccessByUserId('u-legacy-fallback');
+  assert.deepEqual(first, { platform: false, tenant: true });
+  assert.deepEqual(second, { platform: false, tenant: true });
+  assert.equal(orgAwareCountQueryAttempts, 1);
+  assert.equal(legacyCountQueryAttempts, 2);
 });
 
 test('ensureDefaultDomainAccessForUser inserts platform domain access when user has no domain rows', async () => {
@@ -474,6 +509,7 @@ test('removeTenantDomainAccessForUser removes tenant domain only when active mem
 
   const result = await store.removeTenantDomainAccessForUser('u-tenant-domain-cleanup');
   assert.equal(/NOT EXISTS/i.test(deleteSql), true);
+  assert.doesNotMatch(deleteSql, /o\.id IS NULL/i);
   assert.deepEqual(deleteParams, ['u-tenant-domain-cleanup', 'u-tenant-domain-cleanup']);
   assert.deepEqual(result, { removed: true });
 });
@@ -495,9 +531,11 @@ test('findDomainAccessByUserId surfaces schema errors for missing domain access 
 });
 
 test('listTenantOptionsByUserId returns active tenant options from mysql storage', async () => {
+  let listSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (normalizedSql.includes('FROM auth_user_tenants')) {
+      listSql = normalizedSql;
       return [
         { tenant_id: 'tenant-a', tenant_name: 'Tenant A' },
         { tenant_id: 'tenant-b', tenant_name: null }
@@ -512,6 +550,38 @@ test('listTenantOptionsByUserId returns active tenant options from mysql storage
     { tenantId: 'tenant-a', tenantName: 'Tenant A' },
     { tenantId: 'tenant-b', tenantName: null }
   ]);
+  assert.match(listSql, /LEFT JOIN orgs/i);
+  assert.match(listSql, /o\.status IN \('active', 'enabled'\)/i);
+  assert.doesNotMatch(listSql, /o\.id IS NULL/i);
+});
+
+test('listTenantOptionsByUserId falls back to legacy query when orgs table is missing', async () => {
+  let orgAwareAttempts = 0;
+  let legacyAttempts = 0;
+  let lastSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (!normalizedSql.includes('FROM auth_user_tenants')) {
+      assert.fail(`unexpected query: ${normalizedSql}`);
+      return [];
+    }
+    if (normalizedSql.includes('LEFT JOIN orgs')) {
+      orgAwareAttempts += 1;
+      const error = new Error("Table 'neweast.orgs' doesn't exist");
+      error.code = 'ER_NO_SUCH_TABLE';
+      error.errno = 1146;
+      throw error;
+    }
+    legacyAttempts += 1;
+    lastSql = normalizedSql;
+    return [{ tenant_id: 'tenant-legacy', tenant_name: 'Legacy Tenant' }];
+  });
+
+  const options = await store.listTenantOptionsByUserId('u-legacy-options');
+  assert.deepEqual(options, [{ tenantId: 'tenant-legacy', tenantName: 'Legacy Tenant' }]);
+  assert.equal(orgAwareAttempts, 1);
+  assert.equal(legacyAttempts, 1);
+  assert.doesNotMatch(lastSql, /LEFT JOIN orgs/i);
 });
 
 test('hasAnyTenantRelationshipByUserId returns true when tenant relationships exist regardless of status', async () => {
@@ -551,9 +621,11 @@ test('findTenantPermissionByUserAndTenantId surfaces schema errors for missing p
 });
 
 test('findTenantPermissionByUserAndTenantId reads permission columns when available', async () => {
+  let permissionSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (normalizedSql.includes('can_view_member_admin')) {
+      permissionSql = normalizedSql;
       return [
         {
           tenant_id: 'tenant-z',
@@ -580,6 +652,9 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
     canViewBilling: true,
     canOperateBilling: true
   });
+  assert.match(permissionSql, /LEFT JOIN orgs/i);
+  assert.match(permissionSql, /o\.status IN \('active', 'enabled'\)/i);
+  assert.doesNotMatch(permissionSql, /o\.id IS NULL/i);
 });
 
 test('findPlatformPermissionByUserId is fail-closed without explicit platform permission snapshot', async () => {
@@ -2351,4 +2426,198 @@ test('createOrganizationWithOwner rejects when transaction writes are not applie
       }),
     /org-create-write-not-applied/
   );
+});
+
+test('updateOrganizationStatus updates org status and converges active member sessions', async () => {
+  let inTransactionCalls = 0;
+  const sessionVersionParams = [];
+  const revokeSessionParams = [];
+  const revokeRefreshParams = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) => {
+        inTransactionCalls += 1;
+        return runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id, status, owner_user_id')
+              && normalizedSql.includes('FROM orgs')
+            ) {
+              return [{ id: 'org-status-1', status: 'active', owner_user_id: 'u-owner' }];
+            }
+            if (normalizedSql.includes('UPDATE orgs')) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('SELECT DISTINCT user_id')
+              && normalizedSql.includes('FROM memberships')
+            ) {
+              return [{ user_id: 'u-owner' }, { user_id: 'u-member' }];
+            }
+            if (
+              normalizedSql.includes('UPDATE users')
+              && normalizedSql.includes('session_version = session_version + 1')
+            ) {
+              sessionVersionParams.push(params);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes("SET status = 'revoked'")
+            ) {
+              revokeSessionParams.push(params);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes("SET status = 'revoked'")
+            ) {
+              revokeRefreshParams.push(params);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')
+              && normalizedSql.includes('FROM users')
+            ) {
+              return [
+                {
+                  id: String(params?.[0] || ''),
+                  phone: '13835559999',
+                  password_hash: 'hash',
+                  status: 'active',
+                  session_version: 2
+                }
+              ];
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        });
+      }
+    }
+  });
+
+  const result = await store.updateOrganizationStatus({
+    orgId: 'org-status-1',
+    nextStatus: 'disabled',
+    operatorUserId: 'u-operator'
+  });
+
+  assert.equal(inTransactionCalls, 1);
+  assert.deepEqual(result, {
+    org_id: 'org-status-1',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+  assert.equal(sessionVersionParams.length, 2);
+  assert.deepEqual(
+    sessionVersionParams.map((params) => params?.[0]).sort(),
+    ['u-member', 'u-owner']
+  );
+  assert.equal(revokeSessionParams.length, 2);
+  assert.equal(revokeRefreshParams.length, 2);
+});
+
+test('updateOrganizationStatus treats same-status change as no-op without session convergence', async () => {
+  let updateOrgCalled = false;
+  let readMembershipCalled = false;
+  let updateUserCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id, status, owner_user_id')
+              && normalizedSql.includes('FROM orgs')
+            ) {
+              return [{ id: 'org-status-noop', status: 'disabled', owner_user_id: 'u-owner' }];
+            }
+            if (normalizedSql.includes('UPDATE orgs')) {
+              updateOrgCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('FROM memberships')) {
+              readMembershipCalled = true;
+              return [];
+            }
+            if (
+              normalizedSql.includes('UPDATE users')
+              && normalizedSql.includes('session_version = session_version + 1')
+            ) {
+              updateUserCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              || normalizedSql.includes('UPDATE refresh_tokens')
+              || normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')
+            ) {
+              updateUserCalled = true;
+              return [];
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.updateOrganizationStatus({
+    orgId: 'org-status-noop',
+    nextStatus: 'disabled',
+    operatorUserId: 'u-operator'
+  });
+
+  assert.deepEqual(result, {
+    org_id: 'org-status-noop',
+    previous_status: 'disabled',
+    current_status: 'disabled'
+  });
+  assert.equal(updateOrgCalled, false);
+  assert.equal(readMembershipCalled, false);
+  assert.equal(updateUserCalled, false);
+});
+
+test('updateOrganizationStatus returns null when target org does not exist', async () => {
+  let updateCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id, status, owner_user_id')
+              && normalizedSql.includes('FROM orgs')
+            ) {
+              return [];
+            }
+            updateCalled = true;
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.updateOrganizationStatus({
+    orgId: 'org-status-missing',
+    nextStatus: 'disabled',
+    operatorUserId: 'u-operator'
+  });
+
+  assert.equal(result, null);
+  assert.equal(updateCalled, false);
 });

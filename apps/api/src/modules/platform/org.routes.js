@@ -32,9 +32,13 @@ const resolveAccessToken = ({
 };
 
 const createPlatformOrgHandlers = (platformOrgService) => {
-  if (!platformOrgService || typeof platformOrgService.createOrg !== 'function') {
+  if (
+    !platformOrgService
+    || typeof platformOrgService.createOrg !== 'function'
+    || typeof platformOrgService.updateOrgStatus !== 'function'
+  ) {
     throw new TypeError(
-      'createPlatformOrgHandlers requires a platformOrgService with createOrg'
+      'createPlatformOrgHandlers requires a platformOrgService with createOrg and updateOrgStatus'
     );
   }
 
@@ -46,6 +50,21 @@ const createPlatformOrgHandlers = (platformOrgService) => {
       authorizationContext = null
     }) =>
       platformOrgService.createOrg({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext
+        }),
+        payload: body || {},
+        authorizationContext
+      }),
+    updateOrgStatus: async ({
+      requestId,
+      authorization,
+      body,
+      authorizationContext = null
+    }) =>
+      platformOrgService.updateOrgStatus({
         requestId,
         accessToken: resolveAccessToken({
           authorization,

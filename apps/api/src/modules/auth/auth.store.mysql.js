@@ -9,6 +9,7 @@ const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   jitterMs: 20
 });
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
+const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
@@ -25,6 +26,13 @@ const normalizeOrgName = (orgName) => {
     return '';
   }
   return orgName.trim();
+};
+const normalizeOrgStatus = (status) => {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'enabled') {
+    return 'active';
+  }
+  return value;
 };
 const DEFAULT_DEADLOCK_FALLBACK_RESULT = Object.freeze({
   synced: false,
@@ -237,6 +245,9 @@ const isDeadlockError = (error) =>
 const isDuplicateEntryError = (error) =>
   String(error?.code || '').toUpperCase() === 'ER_DUP_ENTRY'
   || Number(error?.errno || 0) === MYSQL_DUP_ENTRY_ERRNO;
+const isMissingOrgsTableError = (error) =>
+  isTableMissingError(error)
+  && /\borgs\b/i.test(String(error?.message || ''));
 
 const createMySqlAuthStore = ({
   dbClient,
@@ -459,6 +470,28 @@ const createMySqlAuthStore = ({
         }
         return DEFAULT_DEADLOCK_FALLBACK_RESULT;
       }
+    }
+  };
+  let orgStatusGuardAvailable = true;
+
+  const runTenantMembershipQuery = async ({
+    txClient = dbClient,
+    sqlWithOrgGuard,
+    sqlWithoutOrgGuard,
+    params = []
+  }) => {
+    const queryClient = txClient || dbClient;
+    if (!orgStatusGuardAvailable) {
+      return queryClient.query(sqlWithoutOrgGuard, params);
+    }
+    try {
+      return await queryClient.query(sqlWithOrgGuard, params);
+    } catch (error) {
+      if (!isMissingOrgsTableError(error)) {
+        throw error;
+      }
+      orgStatusGuardAvailable = false;
+      return queryClient.query(sqlWithoutOrgGuard, params);
     }
   };
 
@@ -1191,6 +1224,95 @@ const createMySqlAuthStore = ({
           })
       }),
 
+    updateOrganizationStatus: async ({
+      orgId,
+      nextStatus,
+      operatorUserId
+    }) =>
+      executeWithDeadlockRetry({
+        operation: 'updateOrganizationStatus',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedOrgId = String(orgId || '').trim();
+            const normalizedNextStatus = normalizeOrgStatus(nextStatus);
+            const normalizedOperatorUserId = String(operatorUserId || '').trim();
+            if (
+              !normalizedOrgId
+              || !normalizedOperatorUserId
+              || !VALID_ORG_STATUS.has(normalizedNextStatus)
+            ) {
+              throw new Error(
+                'updateOrganizationStatus requires orgId, nextStatus, and operatorUserId'
+              );
+            }
+
+            const orgRows = await tx.query(
+              `
+                SELECT id, status, owner_user_id
+                FROM orgs
+                WHERE id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedOrgId]
+            );
+            const org = orgRows?.[0] || null;
+            if (!org) {
+              return null;
+            }
+
+            const previousStatus = normalizeOrgStatus(org.status);
+            if (previousStatus !== normalizedNextStatus) {
+              const updateResult = await tx.query(
+                `
+                  UPDATE orgs
+                  SET status = ?,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE id = ? AND status <> ?
+                `,
+                [normalizedNextStatus, normalizedOrgId, normalizedNextStatus]
+              );
+              if (Number(updateResult?.affectedRows || 0) !== 1) {
+                throw new Error('org-status-write-not-applied');
+              }
+
+              const membershipRows = await tx.query(
+                `
+                  SELECT DISTINCT user_id
+                  FROM memberships
+                  WHERE org_id = ? AND status IN ('active', 'enabled')
+                `,
+                [normalizedOrgId]
+              );
+              const affectedUserIds = new Set(
+                (Array.isArray(membershipRows) ? membershipRows : [])
+                  .map((row) => String(row?.user_id || '').trim())
+                  .filter((userId) => userId.length > 0)
+              );
+              const ownerUserId = String(org.owner_user_id || '').trim();
+              if (ownerUserId.length > 0) {
+                affectedUserIds.add(ownerUserId);
+              }
+              for (const affectedUserId of affectedUserIds) {
+                await bumpSessionVersionAndConvergeSessionsTx({
+                  txClient: tx,
+                  userId: affectedUserId,
+                  reason: 'org-status-changed',
+                  revokeRefreshTokens: true,
+                  revokeAuthSessions: true
+                });
+              }
+            }
+
+            return {
+              org_id: normalizedOrgId,
+              previous_status: previousStatus,
+              current_status: normalizedNextStatus
+            };
+          })
+      }),
+
     deleteUserById: async (userId) => {
       const normalizedUserId = String(userId || '').trim();
       if (!normalizedUserId) {
@@ -1308,19 +1430,33 @@ const createMySqlAuthStore = ({
       if (!normalizedUserId) {
         return { removed: false };
       }
-      const result = await dbClient.query(
-        `
+      const result = await runTenantMembershipQuery({
+        sqlWithOrgGuard: `
+          DELETE FROM auth_user_domain_access
+          WHERE user_id = ?
+            AND domain = 'tenant'
+            AND NOT EXISTS (
+                SELECT 1
+              FROM auth_user_tenants ut
+              LEFT JOIN orgs o ON o.id = ut.tenant_id
+              WHERE ut.user_id = ?
+                AND ut.status IN ('active', 'enabled')
+                AND o.status IN ('active', 'enabled')
+            )
+        `,
+        sqlWithoutOrgGuard: `
           DELETE FROM auth_user_domain_access
           WHERE user_id = ?
             AND domain = 'tenant'
             AND NOT EXISTS (
               SELECT 1
-              FROM auth_user_tenants
-              WHERE user_id = ? AND status IN ('active', 'enabled')
+              FROM auth_user_tenants ut
+              WHERE ut.user_id = ?
+                AND ut.status IN ('active', 'enabled')
             )
         `,
-        [normalizedUserId, normalizedUserId]
-      );
+        params: [normalizedUserId, normalizedUserId]
+      });
       return { removed: Number(result?.affectedRows || 0) > 0 };
     },
 
@@ -1408,14 +1544,23 @@ const createMySqlAuthStore = ({
 
         let tenantFromMembership = false;
         if (!activeDomains.has('tenant') && !hasAnyTenantDomainRecord) {
-          const tenantRows = await dbClient.query(
-            `
+          const tenantRows = await runTenantMembershipQuery({
+            sqlWithOrgGuard: `
               SELECT COUNT(*) AS tenant_count
-              FROM auth_user_tenants
-              WHERE user_id = ? AND status IN ('active', 'enabled')
+              FROM auth_user_tenants ut
+              LEFT JOIN orgs o ON o.id = ut.tenant_id
+              WHERE ut.user_id = ?
+                AND ut.status IN ('active', 'enabled')
+                AND o.status IN ('active', 'enabled')
             `,
-            [normalizedUserId]
-          );
+            sqlWithoutOrgGuard: `
+              SELECT COUNT(*) AS tenant_count
+              FROM auth_user_tenants ut
+              WHERE ut.user_id = ?
+                AND ut.status IN ('active', 'enabled')
+            `,
+            params: [normalizedUserId]
+          });
           const tenantCount = Number(tenantRows?.[0]?.tenant_count || 0);
           tenantFromMembership = tenantCount > 0;
         }
@@ -1453,14 +1598,23 @@ const createMySqlAuthStore = ({
 
     ensureTenantDomainAccessForUser: async (userId) => {
       const normalizedUserId = String(userId);
-      const tenantCountRows = await dbClient.query(
-        `
+      const tenantCountRows = await runTenantMembershipQuery({
+        sqlWithOrgGuard: `
           SELECT COUNT(*) AS tenant_count
-          FROM auth_user_tenants
-          WHERE user_id = ? AND status IN ('active', 'enabled')
+          FROM auth_user_tenants ut
+          LEFT JOIN orgs o ON o.id = ut.tenant_id
+          WHERE ut.user_id = ?
+            AND ut.status IN ('active', 'enabled')
+            AND o.status IN ('active', 'enabled')
         `,
-        [normalizedUserId]
-      );
+        sqlWithoutOrgGuard: `
+          SELECT COUNT(*) AS tenant_count
+          FROM auth_user_tenants ut
+          WHERE ut.user_id = ?
+            AND ut.status IN ('active', 'enabled')
+        `,
+        params: [normalizedUserId]
+      });
       const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
       if (tenantCount <= 0) {
         return { inserted: false };
@@ -1493,20 +1647,37 @@ const createMySqlAuthStore = ({
       }
 
       try {
-        const rows = await dbClient.query(
-          `
+        const rows = await runTenantMembershipQuery({
+          sqlWithOrgGuard: `
             SELECT tenant_id,
                    tenant_name,
                    can_view_member_admin,
                    can_operate_member_admin,
                    can_view_billing,
                    can_operate_billing
-            FROM auth_user_tenants
-            WHERE user_id = ? AND tenant_id = ? AND status IN ('active', 'enabled')
+            FROM auth_user_tenants ut
+            LEFT JOIN orgs o ON o.id = ut.tenant_id
+            WHERE ut.user_id = ?
+              AND ut.tenant_id = ?
+              AND ut.status IN ('active', 'enabled')
+              AND o.status IN ('active', 'enabled')
             LIMIT 1
           `,
-          [normalizedUserId, normalizedTenantId]
-        );
+          sqlWithoutOrgGuard: `
+            SELECT tenant_id,
+                   tenant_name,
+                   can_view_member_admin,
+                   can_operate_member_admin,
+                   can_view_billing,
+                   can_operate_billing
+            FROM auth_user_tenants ut
+            WHERE ut.user_id = ?
+              AND ut.tenant_id = ?
+              AND ut.status IN ('active', 'enabled')
+            LIMIT 1
+          `,
+          params: [normalizedUserId, normalizedTenantId]
+        });
         const row = rows?.[0];
         if (!row) {
           return null;
@@ -1526,15 +1697,25 @@ const createMySqlAuthStore = ({
     listTenantOptionsByUserId: async (userId) => {
       const normalizedUserId = String(userId);
       try {
-        const rows = await dbClient.query(
-          `
+        const rows = await runTenantMembershipQuery({
+          sqlWithOrgGuard: `
             SELECT tenant_id, tenant_name
-            FROM auth_user_tenants
-            WHERE user_id = ? AND status IN ('active', 'enabled')
+            FROM auth_user_tenants ut
+            LEFT JOIN orgs o ON o.id = ut.tenant_id
+            WHERE ut.user_id = ?
+              AND ut.status IN ('active', 'enabled')
+              AND o.status IN ('active', 'enabled')
             ORDER BY tenant_id ASC
           `,
-          [normalizedUserId]
-        );
+          sqlWithoutOrgGuard: `
+            SELECT tenant_id, tenant_name
+            FROM auth_user_tenants ut
+            WHERE ut.user_id = ?
+              AND ut.status IN ('active', 'enabled')
+            ORDER BY tenant_id ASC
+          `,
+          params: [normalizedUserId]
+        });
 
         return (Array.isArray(rows) ? rows : [])
           .map((row) => ({

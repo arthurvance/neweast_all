@@ -239,6 +239,19 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformUpdateOrgStatus: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      platformOrg.updateOrgStatus({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
     authTenantMemberAdminProvisionUser: async (
       requestId,
       authorization,

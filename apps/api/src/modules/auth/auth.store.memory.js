@@ -13,11 +13,35 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const orgIdByName = new Map();
   const membershipsByOrgId = new Map();
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+  const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const MAX_ORG_NAME_LENGTH = 128;
 
   const isActiveLikeStatus = (status) => {
     const normalizedStatus = String(status || 'active').trim().toLowerCase();
     return normalizedStatus === 'active' || normalizedStatus === 'enabled';
+  };
+  const normalizeOrgStatus = (status) => {
+    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    if (normalizedStatus === 'enabled') {
+      return 'active';
+    }
+    return normalizedStatus;
+  };
+  const isTenantMembershipActiveForAuth = (tenantMembership) => {
+    if (!isActiveLikeStatus(tenantMembership?.status)) {
+      return false;
+    }
+    const tenantId = String(
+      tenantMembership?.tenantId || tenantMembership?.tenant_id || ''
+    ).trim();
+    if (!tenantId) {
+      return false;
+    }
+    const org = orgsById.get(tenantId);
+    if (!org) {
+      return orgsById.size === 0;
+    }
+    return isActiveLikeStatus(normalizeOrgStatus(org.status));
   };
 
   const normalizePlatformRoleStatus = (status) => {
@@ -415,6 +439,64 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       };
     },
 
+    updateOrganizationStatus: async ({
+      orgId,
+      nextStatus,
+      operatorUserId
+    }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      const normalizedOperatorUserId = String(operatorUserId || '').trim();
+      const normalizedNextStatus = normalizeOrgStatus(nextStatus);
+      if (
+        !normalizedOrgId
+        || !normalizedOperatorUserId
+        || !VALID_ORG_STATUS.has(normalizedNextStatus)
+      ) {
+        throw new Error(
+          'updateOrganizationStatus requires orgId, nextStatus, and operatorUserId'
+        );
+      }
+      const existingOrg = orgsById.get(normalizedOrgId);
+      if (!existingOrg) {
+        return null;
+      }
+
+      const previousStatus = normalizeOrgStatus(existingOrg.status);
+      if (previousStatus !== normalizedNextStatus) {
+        existingOrg.status = normalizedNextStatus;
+        existingOrg.updatedAt = Date.now();
+        orgsById.set(normalizedOrgId, existingOrg);
+
+        const affectedUserIds = new Set();
+        const orgMemberships = membershipsByOrgId.get(normalizedOrgId) || [];
+        for (const membership of orgMemberships) {
+          const membershipUserId = String(membership?.userId || '').trim();
+          if (!membershipUserId || !isActiveLikeStatus(membership?.status)) {
+            continue;
+          }
+          affectedUserIds.add(membershipUserId);
+        }
+        const ownerUserId = String(existingOrg.ownerUserId || '').trim();
+        if (ownerUserId) {
+          affectedUserIds.add(ownerUserId);
+        }
+        for (const userId of affectedUserIds) {
+          bumpSessionVersionAndConvergeSessions({
+            userId,
+            reason: 'org-status-changed',
+            revokeRefreshTokens: true,
+            revokeAuthSessions: true
+          });
+        }
+      }
+
+      return {
+        org_id: normalizedOrgId,
+        previous_status: previousStatus,
+        current_status: normalizedNextStatus
+      };
+    },
+
     deleteUserById: async (userId) => {
       const normalizedUserId = String(userId || '').trim();
       if (!normalizedUserId) {
@@ -517,7 +599,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         return { removed: false };
       }
       const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
-        (tenant) => isActiveLikeStatus(tenant?.status)
+        (tenant) => isTenantMembershipActiveForAuth(tenant)
       );
       if (hasActiveTenantMembership) {
         domainsByUserId.set(normalizedUserId, userDomains);
@@ -590,7 +672,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       }
 
       const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
-        (tenant) => isActiveLikeStatus(tenant?.status)
+        (tenant) => isTenantMembershipActiveForAuth(tenant)
       );
       if (!hasActiveTenantMembership) {
         domainsByUserId.set(normalizedUserId, userDomains);
@@ -604,7 +686,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     listTenantOptionsByUserId: async (userId) =>
       (tenantsByUserId.get(String(userId)) || [])
-        .filter((tenant) => isActiveLikeStatus(tenant?.status))
+        .filter((tenant) => isTenantMembershipActiveForAuth(tenant))
         .map((tenant) => ({ ...tenant })),
 
     hasAnyTenantRelationshipByUserId: async (userId) =>
@@ -619,7 +701,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       const tenant = (tenantsByUserId.get(String(userId)) || []).find(
         (item) =>
           String(item.tenantId) === normalizedTenantId &&
-          isActiveLikeStatus(item?.status)
+          isTenantMembershipActiveForAuth(item)
       );
       if (!tenant) {
         return null;
