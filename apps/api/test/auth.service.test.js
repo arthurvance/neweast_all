@@ -6532,6 +6532,733 @@ test('updateOrganizationStatus returns AUTH-404-ORG-NOT-FOUND for missing org', 
   );
 });
 
+test('validateOwnerTransferRequest returns normalized transfer context for active org and active candidate owner', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-current-owner',
+        phone: '13835550140',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-new-owner',
+        phone: '13835550141',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-1',
+    orgName: '负责人变更测试组织-1',
+    ownerUserId: 'owner-transfer-current-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  const result = await service.validateOwnerTransferRequest({
+    requestId: 'req-owner-transfer-validate-success',
+    orgId: 'owner-transfer-org-1',
+    newOwnerPhone: '13835550141',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交'
+  });
+
+  assert.deepEqual(result, {
+    org_id: 'owner-transfer-org-1',
+    old_owner_user_id: 'owner-transfer-current-owner',
+    new_owner_user_id: 'owner-transfer-new-owner'
+  });
+});
+
+test('validateOwnerTransferRequest rejects orgId with leading or trailing whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-org-whitespace-current',
+        phone: '13835550190',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-org-whitespace-next',
+        phone: '13835550191',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-whitespace-org-id',
+    orgName: '负责人变更测试组织-org-whitespace',
+    ownerUserId: 'owner-transfer-org-whitespace-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-org-whitespace',
+        orgId: ' owner-transfer-org-whitespace-org-id ',
+        newOwnerPhone: '13835550191',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects orgId containing internal whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-org-internal-whitespace-current',
+        phone: '13835550194',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-org-internal-whitespace-next',
+        phone: '13835550195',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-internal-whitespace',
+    orgName: '负责人变更测试组织-org-internal-whitespace',
+    ownerUserId: 'owner-transfer-org-internal-whitespace-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-org-internal-whitespace',
+        orgId: 'owner-transfer-org internal-whitespace',
+        newOwnerPhone: '13835550195',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects newOwnerPhone with leading or trailing whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-phone-whitespace-current',
+        phone: '13835550192',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-phone-whitespace-next',
+        phone: '13835550193',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-phone-whitespace',
+    orgName: '负责人变更测试组织-phone-whitespace',
+    ownerUserId: 'owner-transfer-phone-whitespace-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-phone-whitespace',
+        orgId: 'owner-transfer-org-phone-whitespace',
+        newOwnerPhone: ' 13835550193 ',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects reason with leading or trailing whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-whitespace-owner-current',
+        phone: '13835550172',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-whitespace-owner-next',
+        phone: '13835550173',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-whitespace-reason',
+    orgName: '负责人变更测试组织-whitespace-reason',
+    ownerUserId: 'owner-transfer-whitespace-owner-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-reason-whitespace',
+        orgId: 'owner-transfer-org-whitespace-reason',
+        newOwnerPhone: '13835550173',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: ' 治理责任移交 '
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects non-string reason payloads', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-nonstring-owner-current',
+        phone: '13835550174',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-nonstring-owner-next',
+        phone: '13835550175',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-nonstring-reason',
+    orgName: '负责人变更测试组织-nonstring-reason',
+    ownerUserId: 'owner-transfer-nonstring-owner-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-reason-nonstring',
+        orgId: 'owner-transfer-org-nonstring-reason',
+        newOwnerPhone: '13835550175',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: 12345
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects reason containing control characters', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-control-char-owner-current',
+        phone: '13835550176',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-control-char-owner-next',
+        phone: '13835550177',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-control-char-reason',
+    orgName: '负责人变更测试组织-control-char-reason',
+    ownerUserId: 'owner-transfer-control-char-owner-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-reason-control-char',
+        orgId: 'owner-transfer-org-control-char-reason',
+        newOwnerPhone: '13835550177',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交\n'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects reason exceeding 256 characters', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-reason-too-long-owner-current',
+        phone: '13835550178',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-reason-too-long-owner-next',
+        phone: '13835550179',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-reason-too-long',
+    orgName: '负责人变更测试组织-reason-too-long',
+    ownerUserId: 'owner-transfer-reason-too-long-owner-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-reason-too-long',
+        orgId: 'owner-transfer-org-reason-too-long',
+        newOwnerPhone: '13835550179',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: 'x'.repeat(257)
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects disabled org with AUTH-409-ORG-NOT-ACTIVE', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-disabled-org-owner',
+        phone: '13835550142',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-disabled-org-candidate',
+        phone: '13835550143',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-disabled',
+    orgName: '负责人变更测试组织-disabled',
+    ownerUserId: 'owner-transfer-disabled-org-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+  await service.updateOrganizationStatus({
+    requestId: 'req-owner-transfer-disable-org',
+    orgId: 'owner-transfer-org-disabled',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: 'manual-disable'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-disabled-org',
+        orgId: 'owner-transfer-org-disabled',
+        newOwnerPhone: '13835550143',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-ORG-NOT-ACTIVE');
+      assert.equal(error.extensions.org_id, 'owner-transfer-org-disabled');
+      assert.equal(
+        error.extensions.old_owner_user_id,
+        'owner-transfer-disabled-org-owner'
+      );
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects missing candidate owner with AUTH-404-USER-NOT-FOUND', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-missing-owner-current',
+        phone: '13835550144',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-missing-candidate',
+    orgName: '负责人变更测试组织-missing-candidate',
+    ownerUserId: 'owner-transfer-missing-owner-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-missing-candidate',
+        orgId: 'owner-transfer-org-missing-candidate',
+        newOwnerPhone: '13835550145',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 404);
+      assert.equal(error.errorCode, 'AUTH-404-USER-NOT-FOUND');
+      assert.equal(error.extensions.org_id, 'owner-transfer-org-missing-candidate');
+      assert.equal(
+        error.extensions.old_owner_user_id,
+        'owner-transfer-missing-owner-current'
+      );
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects disabled candidate owner with AUTH-409-OWNER-TRANSFER-TARGET-USER-INACTIVE', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-inactive-owner-current',
+        phone: '13835550146',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-inactive-owner-candidate',
+        phone: '13835550147',
+        password: 'Passw0rd!',
+        status: 'disabled',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-inactive-candidate',
+    orgName: '负责人变更测试组织-inactive-candidate',
+    ownerUserId: 'owner-transfer-inactive-owner-current',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-inactive-candidate',
+        orgId: 'owner-transfer-org-inactive-candidate',
+        newOwnerPhone: '13835550147',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-OWNER-TRANSFER-TARGET-USER-INACTIVE');
+      assert.equal(error.extensions.org_id, 'owner-transfer-org-inactive-candidate');
+      assert.equal(
+        error.extensions.old_owner_user_id,
+        'owner-transfer-inactive-owner-current'
+      );
+      assert.equal(
+        error.extensions.new_owner_user_id,
+        'owner-transfer-inactive-owner-candidate'
+      );
+      return true;
+    }
+  );
+});
+
+test('validateOwnerTransferRequest rejects same owner transfer with AUTH-409-OWNER-TRANSFER-SAME-OWNER', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-same-owner',
+        phone: '13835550148',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-same-owner',
+    orgName: '负责人变更测试组织-same-owner',
+    ownerUserId: 'owner-transfer-same-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.validateOwnerTransferRequest({
+        requestId: 'req-owner-transfer-same-owner',
+        orgId: 'owner-transfer-org-same-owner',
+        newOwnerPhone: '13835550148',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 409);
+      assert.equal(error.errorCode, 'AUTH-409-OWNER-TRANSFER-SAME-OWNER');
+      assert.equal(error.extensions.org_id, 'owner-transfer-org-same-owner');
+      assert.equal(error.extensions.old_owner_user_id, 'owner-transfer-same-owner');
+      assert.equal(error.extensions.new_owner_user_id, 'owner-transfer-same-owner');
+      return true;
+    }
+  );
+});
+
+test('acquireOwnerTransferLock delegates to authStore lock methods', async () => {
+  const calls = [];
+  const service = createAuthService({
+    allowInMemoryOtpStores: true,
+    authStore: {
+      acquireOwnerTransferLock: async (payload) => {
+        calls.push(['acquire', payload]);
+        return true;
+      },
+      releaseOwnerTransferLock: async (payload) => {
+        calls.push(['release', payload]);
+        return true;
+      }
+    }
+  });
+
+  const acquired = await service.acquireOwnerTransferLock({
+    orgId: 'owner-transfer-lock-org',
+    requestId: 'req-owner-transfer-lock',
+    operatorUserId: 'platform-role-facts-operator',
+    timeoutSeconds: 0
+  });
+  const released = await service.releaseOwnerTransferLock({
+    orgId: 'owner-transfer-lock-org'
+  });
+
+  assert.equal(acquired, true);
+  assert.equal(released, true);
+  assert.deepEqual(calls, [
+    [
+      'acquire',
+      {
+        orgId: 'owner-transfer-lock-org',
+        requestId: 'req-owner-transfer-lock',
+        operatorUserId: 'platform-role-facts-operator',
+        timeoutSeconds: 0
+      }
+    ],
+    [
+      'release',
+      {
+        orgId: 'owner-transfer-lock-org'
+      }
+    ]
+  ]);
+});
+
+test('acquireOwnerTransferLock blocks same-org reentry within one auth service instance', async () => {
+  let acquireCount = 0;
+  const service = createAuthService({
+    allowInMemoryOtpStores: true,
+    authStore: {
+      acquireOwnerTransferLock: async () => {
+        acquireCount += 1;
+        return true;
+      },
+      releaseOwnerTransferLock: async () => true
+    }
+  });
+
+  const firstAcquire = await service.acquireOwnerTransferLock({
+    orgId: 'owner-transfer-lock-reentry-org',
+    requestId: 'req-owner-transfer-lock-reentry-1',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+  const secondAcquire = await service.acquireOwnerTransferLock({
+    orgId: 'owner-transfer-lock-reentry-org',
+    requestId: 'req-owner-transfer-lock-reentry-2',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+  const released = await service.releaseOwnerTransferLock({
+    orgId: 'owner-transfer-lock-reentry-org'
+  });
+
+  assert.equal(firstAcquire, true);
+  assert.equal(secondAcquire, false);
+  assert.equal(acquireCount, 1);
+  assert.equal(released, true);
+});
+
+test('in-memory owner-transfer locks are isolated per auth service instance', async () => {
+  const serviceA = createAuthService();
+  const serviceB = createAuthService();
+
+  const acquiredByA = await serviceA.acquireOwnerTransferLock({
+    orgId: 'owner-transfer-lock-isolation-org',
+    requestId: 'req-owner-transfer-lock-isolation-a',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+  const acquiredByB = await serviceB.acquireOwnerTransferLock({
+    orgId: 'owner-transfer-lock-isolation-org',
+    requestId: 'req-owner-transfer-lock-isolation-b',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  assert.equal(acquiredByA, true);
+  assert.equal(acquiredByB, true);
+
+  await serviceA.releaseOwnerTransferLock({
+    orgId: 'owner-transfer-lock-isolation-org'
+  });
+  await serviceB.releaseOwnerTransferLock({
+    orgId: 'owner-transfer-lock-isolation-org'
+  });
+});
+
+test('acquireOwnerTransferLock returns false for orgId containing internal whitespace', async () => {
+  let acquireCalled = false;
+  const service = createAuthService({
+    allowInMemoryOtpStores: true,
+    authStore: {
+      acquireOwnerTransferLock: async () => {
+        acquireCalled = true;
+        return true;
+      },
+      releaseOwnerTransferLock: async () => true
+    }
+  });
+
+  const acquired = await service.acquireOwnerTransferLock({
+    orgId: 'owner transfer lock org',
+    requestId: 'req-owner-transfer-lock-invalid-org-id',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  assert.equal(acquired, false);
+  assert.equal(acquireCalled, false);
+});
+
+test('acquireOwnerTransferLock maps store errors to AUTH-503-OWNER-TRANSFER-LOCK-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    allowInMemoryOtpStores: true,
+    authStore: {
+      acquireOwnerTransferLock: async () => {
+        throw new Error('lock backend unavailable');
+      },
+      releaseOwnerTransferLock: async () => true
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      service.acquireOwnerTransferLock({
+        orgId: 'owner-transfer-lock-failure',
+        requestId: 'req-owner-transfer-lock-failure',
+        operatorUserId: 'platform-role-facts-operator'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-OWNER-TRANSFER-LOCK-UNAVAILABLE');
+      assert.equal(error.extensions.retryable, true);
+      return true;
+    }
+  );
+});
+
 test('updatePlatformUserStatus disables platform-domain access immediately and restores it after re-enable', async () => {
   const service = createAuthService({
     seedUsers: [

@@ -107,6 +107,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/roles/{role_id}/permissions']);
   assert.ok(payload.paths['/platform/orgs']);
   assert.ok(payload.paths['/platform/orgs/status']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer']);
   assert.ok(payload.paths['/platform/users']);
   assert.ok(payload.paths['/platform/users/status']);
   assert.ok(payload.paths['/smoke']);
@@ -192,6 +193,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     )
   );
   assert.ok(
+    payload.paths['/platform/orgs/owner-transfer'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
     payload.paths['/platform/users'].post.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
@@ -256,6 +262,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/users'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
@@ -299,6 +311,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/platform/orgs/status'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
     '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
@@ -370,6 +388,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs/status'].post.responses['404']);
   assert.ok(payload.paths['/platform/orgs/status'].post.responses['409']);
   assert.ok(payload.paths['/platform/orgs/status'].post.responses['503']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['400']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['401']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['403']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['404']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['409']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['413']);
+  assert.ok(payload.paths['/platform/orgs/owner-transfer'].post.responses['503']);
   assert.ok(payload.paths['/platform/users'].post.responses['400']);
   assert.ok(payload.paths['/platform/users'].post.responses['401']);
   assert.ok(payload.paths['/platform/users'].post.responses['403']);
@@ -392,6 +417,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.equal(
     payload.paths['/platform/orgs/status'].post.responses['200'].description,
     'Organization status updated (or no-op). Only tenant-domain access is affected.'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.summary,
+    'Submit organization owner-transfer request (entry + precheck only)'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.description,
+    '仅交付发起入口与前置校验，不在本接口执行 owner 真正切换与自动接管。'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['200'].description,
+    'Owner-transfer request accepted for downstream orchestration.'
   );
   assert.equal(
     payload.paths['/platform/users/status'].post.summary,
@@ -486,6 +523,70 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '组织状态更新后值（tenant 域治理状态）'
   );
   assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.required.includes('org_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.required.includes('new_owner_phone'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.required.includes('reason'),
+    false
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.properties.org_id.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.properties.org_id.pattern,
+    '^(?!.*\\s)[^\\x00-\\x1F\\x7F]+$'
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.properties.reason.pattern,
+    '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]+$'
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.properties.new_owner_phone.pattern,
+    '^1\\d{10}$'
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferRequest.additionalProperties,
+    false
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('request_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('org_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('old_owner_user_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('new_owner_user_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('result_status'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('error_code'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.required.includes('retryable'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.PlatformOrgOwnerTransferResponse.additionalProperties,
+    false
+  );
+  assert.equal(
     payload.components.schemas.UpdatePlatformUserStatusRequest.properties.status.description,
     '目标平台用户状态（仅影响 platform 域访问可用性，不影响 tenant 域）'
   );
@@ -574,6 +675,129 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.paths['/platform/orgs'].post.responses['403'].content['application/problem+json']
       .examples.forbidden.value.error_code,
     'AUTH-403-FORBIDDEN'
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      payload.paths['/platform/roles'].post.responses['400'].content[
+        'application/problem+json'
+      ].examples.invalid_idempotency_key.value,
+      'org_id'
+    ),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      payload.paths['/platform/orgs'].post.responses['409'].content[
+        'application/problem+json'
+      ].examples.idempotency_conflict.value,
+      'result_status'
+    ),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      payload.paths['/platform/orgs'].post.responses['413'].content[
+        'application/problem+json'
+      ].examples.payload_too_large.value,
+      'old_owner_user_id'
+    ),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      payload.paths['/platform/orgs'].post.responses['413'].content[
+        'application/problem+json'
+      ].examples.payload_too_large.value,
+      'result_status'
+    ),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      payload.paths['/platform/orgs/status'].post.responses['503'].content[
+        'application/problem+json'
+      ].examples.idempotency_store_unavailable.value,
+      'old_owner_user_id'
+    ),
+    false
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_idempotency_key.value.error_code,
+    'AUTH-400-IDEMPOTENCY-KEY-INVALID'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_idempotency_key.value.result_status,
+    'rejected'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_payload.value.result_status,
+    'rejected'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['400'].content[
+      'application/problem+json'
+    ].examples.invalid_payload.value.org_id,
+    null
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['409'].content[
+      'application/problem+json'
+    ].examples.concurrent_conflict.value.error_code,
+    'ORG-409-OWNER-TRANSFER-CONFLICT'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['409'].content[
+      'application/problem+json'
+    ].examples.concurrent_conflict.value.result_status,
+    'conflict'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['409'].content[
+      'application/problem+json'
+    ].examples.idempotency_conflict.value.result_status,
+    'conflict'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.idempotency_store_unavailable.value.error_code,
+    'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.idempotency_store_unavailable.value.result_status,
+    'rejected'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.idempotency_pending_timeout.value.result_status,
+    'rejected'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['503'].content[
+      'application/problem+json'
+    ].examples.dependency_unavailable.value.result_status,
+    'rejected'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['413'].content[
+      'application/problem+json'
+    ].examples.payload_too_large.value.result_status,
+    'rejected'
+  );
+  assert.equal(
+    payload.paths['/platform/orgs/owner-transfer'].post.responses['413'].content[
+      'application/problem+json'
+    ].examples.payload_too_large.value.org_id,
+    null
   );
   assert.equal(
     payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.minItems,
@@ -847,6 +1071,7 @@ test('createRouteHandlers fails fast when platformOrgService and platformUserSer
   const platformOrgService = {
     createOrg: async () => ({}),
     updateOrgStatus: async () => ({}),
+    ownerTransfer: async () => ({}),
     _internals: {
       authService: {
         authorizeRoute: async () => ({})
@@ -954,6 +1179,40 @@ test('createServer enforces json payload limit on /platform/orgs with AUTH-413-P
     assert.equal(response.status, 413);
     assert.equal(payload.error_code, 'AUTH-413-PAYLOAD-TOO-LARGE');
     assert.equal(payload.detail, 'JSON payload exceeds allowed size');
+    assert.equal(String(response.headers.get('connection') || '').toLowerCase(), 'close');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('createServer enforces json payload limit on /platform/orgs/owner-transfer with stable transfer contract fields', async () => {
+  const harness = await startServer({
+    ALLOW_MOCK_BACKENDS: 'true',
+    API_JSON_BODY_LIMIT_BYTES: '256'
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/platform/orgs/owner-transfer`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, application/problem+json',
+        authorization: 'Bearer fake-access-token'
+      },
+      body: JSON.stringify({
+        org_id: 'org-owner-transfer-payload-too-large',
+        new_owner_phone: '13800000099',
+        reason: 'x'.repeat(1024)
+      })
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 413);
+    assert.equal(payload.error_code, 'AUTH-413-PAYLOAD-TOO-LARGE');
+    assert.equal(payload.org_id, null);
+    assert.equal(payload.old_owner_user_id, null);
+    assert.equal(payload.new_owner_user_id, null);
+    assert.equal(payload.result_status, 'rejected');
+    assert.equal(payload.retryable, false);
     assert.equal(String(response.headers.get('connection') || '').toLowerCase(), 'close');
   } finally {
     await harness.close();

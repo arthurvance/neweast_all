@@ -36,9 +36,10 @@ const createPlatformOrgHandlers = (platformOrgService) => {
     !platformOrgService
     || typeof platformOrgService.createOrg !== 'function'
     || typeof platformOrgService.updateOrgStatus !== 'function'
+    || typeof platformOrgService.ownerTransfer !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformOrgHandlers requires a platformOrgService with createOrg and updateOrgStatus'
+      'createPlatformOrgHandlers requires a platformOrgService with createOrg, updateOrgStatus and ownerTransfer'
     );
   }
 
@@ -65,6 +66,21 @@ const createPlatformOrgHandlers = (platformOrgService) => {
       authorizationContext = null
     }) =>
       platformOrgService.updateOrgStatus({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext
+        }),
+        payload: body || {},
+        authorizationContext
+      }),
+    ownerTransfer: async ({
+      requestId,
+      authorization,
+      body,
+      authorizationContext = null
+    }) =>
+      platformOrgService.ownerTransfer({
         requestId,
         accessToken: resolveAccessToken({
           authorization,

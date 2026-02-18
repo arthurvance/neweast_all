@@ -118,6 +118,18 @@ test('platform org status route exposes explicit permission declaration', () => 
   assert.equal(updatePlatformOrgStatus.permission_code, 'platform.member_admin.operate');
 });
 
+test('platform owner-transfer route exposes explicit permission declaration', () => {
+  const transferPlatformOrgOwner = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/orgs/owner-transfer'
+  });
+
+  assert.ok(transferPlatformOrgOwner);
+  assert.equal(transferPlatformOrgOwner.access, 'protected');
+  assert.equal(transferPlatformOrgOwner.scope, 'platform');
+  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.member_admin.operate');
+});
+
 test('platform user create route exposes explicit permission declaration', () => {
   const createPlatformUser = findRouteDefinition({
     method: 'POST',

@@ -24,9 +24,13 @@ const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
 const MAX_ROLE_PERMISSION_CODES_PER_REQUEST = 64;
 const MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS = 100;
 const MAX_TENANT_NAME_LENGTH = 128;
+const MAX_OWNER_TRANSFER_ORG_ID_LENGTH = 64;
+const MAX_OWNER_TRANSFER_REASON_LENGTH = 256;
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
+const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
+const WHITESPACE_PATTERN = /\s/;
 const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
 const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
 const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
@@ -325,12 +329,61 @@ const errors = {
       errorCode: 'AUTH-404-ORG-NOT-FOUND'
     }),
 
-  userNotFound: () =>
+  userNotFound: ({ extensions = null } = {}) =>
     authError({
       status: 404,
       title: 'Not Found',
       detail: '目标用户不存在',
-      errorCode: 'AUTH-404-USER-NOT-FOUND'
+      errorCode: 'AUTH-404-USER-NOT-FOUND',
+      extensions: isPlainObject(extensions) ? extensions : {}
+    }),
+
+  ownerTransferOrgNotActive: ({
+    orgId = null,
+    oldOwnerUserId = null
+  } = {}) =>
+    authError({
+      status: 409,
+      title: 'Conflict',
+      detail: '目标组织当前不可发起负责人变更，请先启用后重试',
+      errorCode: 'AUTH-409-ORG-NOT-ACTIVE',
+      extensions: {
+        org_id: orgId ? String(orgId).trim() : null,
+        old_owner_user_id: oldOwnerUserId ? String(oldOwnerUserId).trim() : null
+      }
+    }),
+
+  ownerTransferTargetUserInactive: ({
+    orgId = null,
+    oldOwnerUserId = null,
+    newOwnerUserId = null
+  } = {}) =>
+    authError({
+      status: 409,
+      title: 'Conflict',
+      detail: '候选新负责人状态不可用',
+      errorCode: 'AUTH-409-OWNER-TRANSFER-TARGET-USER-INACTIVE',
+      extensions: {
+        org_id: orgId ? String(orgId).trim() : null,
+        old_owner_user_id: oldOwnerUserId ? String(oldOwnerUserId).trim() : null,
+        new_owner_user_id: newOwnerUserId ? String(newOwnerUserId).trim() : null
+      }
+    }),
+
+  ownerTransferSameOwner: ({
+    orgId = null,
+    oldOwnerUserId = null
+  } = {}) =>
+    authError({
+      status: 409,
+      title: 'Conflict',
+      detail: '新负责人不能与当前负责人相同',
+      errorCode: 'AUTH-409-OWNER-TRANSFER-SAME-OWNER',
+      extensions: {
+        org_id: orgId ? String(orgId).trim() : null,
+        old_owner_user_id: oldOwnerUserId ? String(oldOwnerUserId).trim() : null,
+        new_owner_user_id: oldOwnerUserId ? String(oldOwnerUserId).trim() : null
+      }
     }),
 
   roleNotFound: () =>
@@ -362,6 +415,18 @@ const errors = {
       extensions: {
         retryable: true,
         degradation_reason: 'default-password-config-unavailable'
+      }
+    }),
+
+  ownerTransferLockUnavailable: () =>
+    authError({
+      status: 503,
+      title: 'Service Unavailable',
+      detail: '负责人变更锁服务暂不可用，请稍后重试',
+      errorCode: 'AUTH-503-OWNER-TRANSFER-LOCK-UNAVAILABLE',
+      extensions: {
+        retryable: true,
+        degradation_reason: 'owner-transfer-lock-unavailable'
       }
     }),
 
@@ -909,6 +974,7 @@ const createAuthService = (options = {}) => {
   })();
 
   const auditTrail = [];
+  const ownerTransferLocksByOrgId = new Map();
 
   const addAuditEvent = ({
     type,
@@ -3311,6 +3377,201 @@ const createAuthService = (options = {}) => {
     });
   };
 
+  const acquireOwnerTransferLock = async ({
+    orgId,
+    requestId = 'request_id_unset',
+    operatorUserId = 'unknown',
+    timeoutSeconds = 0
+  } = {}) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (
+      !normalizedOrgId
+      || WHITESPACE_PATTERN.test(normalizedOrgId)
+      || CONTROL_CHAR_PATTERN.test(normalizedOrgId)
+      || normalizedOrgId.length > MAX_OWNER_TRANSFER_ORG_ID_LENGTH
+    ) {
+      return false;
+    }
+    assertStoreMethod(authStore, 'acquireOwnerTransferLock', 'authStore');
+    if (ownerTransferLocksByOrgId.has(normalizedOrgId)) {
+      return false;
+    }
+    ownerTransferLocksByOrgId.set(normalizedOrgId, {
+      request_id: String(requestId || '').trim() || 'request_id_unset',
+      operator_user_id: String(operatorUserId || '').trim() || 'unknown',
+      started_at: new Date(now()).toISOString()
+    });
+    try {
+      const acquired = await authStore.acquireOwnerTransferLock({
+        orgId: normalizedOrgId,
+        requestId: String(requestId || '').trim() || 'request_id_unset',
+        operatorUserId: String(operatorUserId || '').trim() || 'unknown',
+        timeoutSeconds
+      });
+      if (acquired === true) {
+        return true;
+      }
+      ownerTransferLocksByOrgId.delete(normalizedOrgId);
+      return false;
+    } catch (_error) {
+      ownerTransferLocksByOrgId.delete(normalizedOrgId);
+      throw errors.ownerTransferLockUnavailable();
+    }
+  };
+
+  const releaseOwnerTransferLock = async ({
+    orgId
+  } = {}) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (!normalizedOrgId) {
+      return false;
+    }
+    ownerTransferLocksByOrgId.delete(normalizedOrgId);
+    assertStoreMethod(authStore, 'releaseOwnerTransferLock', 'authStore');
+    try {
+      const released = await authStore.releaseOwnerTransferLock({
+        orgId: normalizedOrgId
+      });
+      return released === true;
+    } catch (_error) {
+      return false;
+    }
+  };
+
+  const validateOwnerTransferRequest = async ({
+    requestId,
+    orgId,
+    newOwnerPhone,
+    operatorUserId,
+    operatorSessionId,
+    reason = null
+  }) => {
+    const normalizedRequestId = String(requestId || '').trim() || 'request_id_unset';
+
+    if (typeof orgId !== 'string' || typeof newOwnerPhone !== 'string') {
+      throw errors.invalidPayload();
+    }
+    const normalizedOrgId = orgId.trim();
+    if (
+      !normalizedOrgId
+      || normalizedOrgId !== orgId
+      || WHITESPACE_PATTERN.test(normalizedOrgId)
+      || CONTROL_CHAR_PATTERN.test(normalizedOrgId)
+      || normalizedOrgId.length > MAX_OWNER_TRANSFER_ORG_ID_LENGTH
+    ) {
+      throw errors.invalidPayload();
+    }
+    const normalizedNewOwnerPhone = normalizePhone(newOwnerPhone);
+    if (!normalizedNewOwnerPhone || normalizedNewOwnerPhone !== newOwnerPhone) {
+      throw errors.invalidPayload();
+    }
+
+    const normalizedOperatorUserId = String(operatorUserId || '').trim();
+    const normalizedOperatorSessionId = String(operatorSessionId || '').trim();
+    let normalizedReason = null;
+    if (reason !== null && reason !== undefined) {
+      if (typeof reason !== 'string') {
+        throw errors.invalidPayload();
+      }
+      const trimmedReason = reason.trim();
+      if (!trimmedReason || trimmedReason !== reason) {
+        throw errors.invalidPayload();
+      }
+      if (CONTROL_CHAR_PATTERN.test(trimmedReason)) {
+        throw errors.invalidPayload();
+      }
+      if (trimmedReason.length > MAX_OWNER_TRANSFER_REASON_LENGTH) {
+        throw errors.invalidPayload();
+      }
+      normalizedReason = trimmedReason;
+    }
+
+    if (
+      !normalizedOrgId
+      || !normalizedNewOwnerPhone
+      || !normalizedOperatorUserId
+      || !normalizedOperatorSessionId
+    ) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'findOrganizationById', 'authStore');
+    assertStoreMethod(authStore, 'findUserByPhone', 'authStore');
+
+    const org = await authStore.findOrganizationById({
+      orgId: normalizedOrgId
+    });
+    if (!org) {
+      throw errors.orgNotFound();
+    }
+
+    const oldOwnerUserId = String(
+      org.owner_user_id || org.ownerUserId || ''
+    ).trim();
+    if (!oldOwnerUserId) {
+      throw errors.invalidPayload();
+    }
+
+    const normalizedOrgStatus = normalizeOrgStatus(org.status);
+    if (normalizedOrgStatus !== 'active') {
+      throw errors.ownerTransferOrgNotActive({
+        orgId: normalizedOrgId,
+        oldOwnerUserId
+      });
+    }
+
+    const candidateOwner = await authStore.findUserByPhone(normalizedNewOwnerPhone);
+    if (!candidateOwner) {
+      throw errors.userNotFound({
+        extensions: {
+          org_id: normalizedOrgId,
+          old_owner_user_id: oldOwnerUserId
+        }
+      });
+    }
+
+    const newOwnerUserId = String(
+      candidateOwner.id || candidateOwner.user_id || ''
+    ).trim();
+    if (!newOwnerUserId) {
+      throw errors.invalidPayload();
+    }
+    if (!isUserActive(candidateOwner)) {
+      throw errors.ownerTransferTargetUserInactive({
+        orgId: normalizedOrgId,
+        oldOwnerUserId,
+        newOwnerUserId
+      });
+    }
+    if (newOwnerUserId === oldOwnerUserId) {
+      throw errors.ownerTransferSameOwner({
+        orgId: normalizedOrgId,
+        oldOwnerUserId
+      });
+    }
+
+    addAuditEvent({
+      type: 'auth.org.owner_transfer.validated',
+      requestId: normalizedRequestId,
+      userId: normalizedOperatorUserId,
+      sessionId: normalizedOperatorSessionId,
+      detail: 'owner transfer request validated',
+      metadata: {
+        org_id: normalizedOrgId,
+        old_owner_user_id: oldOwnerUserId,
+        new_owner_user_id: newOwnerUserId,
+        new_owner_phone_masked: maskPhone(normalizedNewOwnerPhone),
+        reason: normalizedReason
+      }
+    });
+
+    return {
+      org_id: normalizedOrgId,
+      old_owner_user_id: oldOwnerUserId,
+      new_owner_user_id: newOwnerUserId
+    };
+  };
+
   const createPlatformRoleCatalogEntry = async ({
     roleId,
     code,
@@ -4695,6 +4956,9 @@ const createAuthService = (options = {}) => {
     provisionTenantUserByPhone,
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,
+    acquireOwnerTransferLock,
+    releaseOwnerTransferLock,
+    validateOwnerTransferRequest,
     createPlatformRoleCatalogEntry,
     updatePlatformRoleCatalogEntry,
     deletePlatformRoleCatalogEntry,
@@ -4712,7 +4976,8 @@ const createAuthService = (options = {}) => {
       auditTrail,
       authStore,
       accessSessionCache,
-      accessSessionCacheTtlMs
+      accessSessionCacheTtlMs,
+      ownerTransferLocksByOrgId
     }
   };
 };

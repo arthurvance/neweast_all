@@ -42,14 +42,23 @@ const createHarness = ({
     previous_status: nextStatus === 'disabled' ? 'active' : 'disabled',
     current_status: nextStatus
   }),
+  validateOwnerTransferRequest = async ({ orgId }) => ({
+    org_id: orgId,
+    old_owner_user_id: 'owner-user-current',
+    new_owner_user_id: 'owner-user-next'
+  }),
+  acquireOwnerTransferLock = null,
+  releaseOwnerTransferLock = null,
   recordIdempotencyEvent = async () => {},
   authIdempotencyStore = null
 } = {}) => {
   const storeCalls = [];
   const statusStoreCalls = [];
+  const ownerTransferCalls = [];
   const rollbackCalls = [];
   const authorizeCalls = [];
   const idempotencyEvents = [];
+  const fallbackOwnerTransferLocks = new Map();
   const authService = {
     authorizeRoute: async (payload) => {
       authorizeCalls.push(payload);
@@ -63,6 +72,38 @@ const createHarness = ({
     updateOrganizationStatus: async (payload) => {
       statusStoreCalls.push(payload);
       return updateOrganizationStatus(payload);
+    },
+    validateOwnerTransferRequest: async (payload) => {
+      ownerTransferCalls.push(payload);
+      return validateOwnerTransferRequest(payload);
+    },
+    acquireOwnerTransferLock: async (payload = {}) => {
+      if (typeof acquireOwnerTransferLock === 'function') {
+        return acquireOwnerTransferLock(payload);
+      }
+      const normalizedOrgId = String(payload.orgId || '').trim();
+      if (!normalizedOrgId) {
+        return false;
+      }
+      if (fallbackOwnerTransferLocks.has(normalizedOrgId)) {
+        return false;
+      }
+      fallbackOwnerTransferLocks.set(normalizedOrgId, {
+        request_id: String(payload.requestId || '').trim() || 'request_id_unset',
+        operator_user_id: String(payload.operatorUserId || '').trim() || 'unknown',
+        started_at: new Date().toISOString()
+      });
+      return true;
+    },
+    releaseOwnerTransferLock: async (payload = {}) => {
+      if (typeof releaseOwnerTransferLock === 'function') {
+        return releaseOwnerTransferLock(payload);
+      }
+      const normalizedOrgId = String(payload.orgId || '').trim();
+      if (!normalizedOrgId) {
+        return false;
+      }
+      return fallbackOwnerTransferLocks.delete(normalizedOrgId);
     },
     recordIdempotencyEvent: async (payload) => {
       idempotencyEvents.push(payload);
@@ -92,6 +133,7 @@ const createHarness = ({
     platformOrgService,
     storeCalls,
     statusStoreCalls,
+    ownerTransferCalls,
     rollbackCalls,
     authorizeCalls,
     idempotencyEvents
@@ -1457,6 +1499,1074 @@ test('POST /platform/orgs/status fails closed when authorizeRoute does not resol
   assert.equal(lastAuditEvent.error_code, 'AUTH-403-FORBIDDEN');
   assert.equal(lastAuditEvent.previous_status, null);
   assert.equal(lastAuditEvent.next_status, 'disabled');
+});
+
+test('POST /platform/orgs/owner-transfer maps missing access token to stable transfer contract fields', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-unauthorized',
+    headers: {},
+    body: {
+      org_id: 'org-owner-transfer-unauthorized',
+      new_owner_phone: '13800000061'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 401);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-401-INVALID-ACCESS');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-unauthorized');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+});
+
+test('POST /platform/orgs/owner-transfer maps forbidden authorization to stable transfer contract fields', async () => {
+  const harness = createHarness({
+    authorizeRoute: async () => {
+      throw new AuthProblemError({
+        status: 403,
+        title: 'Forbidden',
+        detail: '当前操作无权限',
+        errorCode: 'AUTH-403-FORBIDDEN'
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-forbidden',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-forbidden',
+      new_owner_phone: '13800000061'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 403);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-403-FORBIDDEN');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-forbidden');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+});
+
+test('POST /platform/orgs/owner-transfer rejects invalid payload with standard problem details', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-invalid-payload',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 123,
+      new_owner_phone: '13800000061'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  assert.equal(route.headers['content-type'], 'application/problem+json');
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-invalid-payload');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+});
+
+test('POST /platform/orgs/owner-transfer rejects reason with leading or trailing whitespace', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-reason-whitespace',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-reason-whitespace',
+      new_owner_phone: '13800000061',
+      reason: ' 治理责任移交 '
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.match(payload.detail, /reason/);
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-reason-whitespace');
+  assert.equal(payload.org_id, 'org-owner-transfer-reason-whitespace');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-400-INVALID-PAYLOAD');
+});
+
+test('POST /platform/orgs/owner-transfer rejects org_id that exceeds max length', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-org-id-too-long',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'o'.repeat(65),
+      new_owner_phone: '13800000061'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.match(payload.detail, /org_id/);
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-org-id-too-long');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /platform/orgs/owner-transfer rejects org_id containing internal whitespace', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-org-id-internal-whitespace',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner transfer',
+      new_owner_phone: '13800000061'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.match(payload.detail, /org_id/);
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-org-id-internal-whitespace');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /platform/orgs/owner-transfer succeeds with stable transfer contract fields', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-success',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-success',
+      new_owner_phone: '13800000062',
+      reason: '治理责任移交'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.deepEqual(payload, {
+    request_id: 'req-platform-org-owner-transfer-success',
+    org_id: 'org-owner-transfer-success',
+    old_owner_user_id: 'owner-user-current',
+    new_owner_user_id: 'owner-user-next',
+    result_status: 'accepted',
+    error_code: 'ORG-200-OWNER-TRANSFER-ACCEPTED',
+    retryable: false
+  });
+  assert.equal(harness.ownerTransferCalls.length, 1);
+  assert.equal(harness.ownerTransferCalls[0].orgId, 'org-owner-transfer-success');
+  assert.equal(harness.ownerTransferCalls[0].newOwnerPhone, '13800000062');
+  assert.equal(harness.ownerTransferCalls[0].operatorUserId, 'platform-operator');
+  assert.equal(harness.ownerTransferCalls[0].operatorSessionId, 'platform-session');
+  assert.equal(harness.ownerTransferCalls[0].reason, '治理责任移交');
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.submitted');
+  assert.equal(lastAuditEvent.org_id, 'org-owner-transfer-success');
+  assert.equal(lastAuditEvent.old_owner_user_id, 'owner-user-current');
+  assert.equal(lastAuditEvent.new_owner_user_id, 'owner-user-next');
+});
+
+test('POST /platform/orgs/owner-transfer maps auth domain missing org to ORG-404-ORG-NOT-FOUND', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async () => {
+      throw new AuthProblemError({
+        status: 404,
+        title: 'Not Found',
+        detail: 'organization missing',
+        errorCode: 'AUTH-404-ORG-NOT-FOUND'
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-org-not-found',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-missing',
+      new_owner_phone: '13800000063'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-404-ORG-NOT-FOUND');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-org-not-found');
+  assert.equal(payload.org_id, 'org-owner-transfer-missing');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-404-ORG-NOT-FOUND');
+});
+
+test('POST /platform/orgs/owner-transfer maps upstream AUTH-400-INVALID-PAYLOAD to ORG-400-INVALID-PAYLOAD', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async () => {
+      throw new AuthProblemError({
+        status: 400,
+        title: 'Bad Request',
+        detail: 'upstream invalid payload',
+        errorCode: 'AUTH-400-INVALID-PAYLOAD'
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-upstream-invalid-payload',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-upstream-invalid-payload',
+      new_owner_phone: '13800000098'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INVALID-PAYLOAD');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-upstream-invalid-payload');
+  assert.equal(payload.org_id, 'org-owner-transfer-upstream-invalid-payload');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-400-INVALID-PAYLOAD');
+});
+
+test('POST /platform/orgs/owner-transfer maps unexpected validation dependency failure to 503 with stable transfer contract fields', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async () => {
+      throw new Error('owner-transfer-validation-unavailable');
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-dependency-503',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-dependency-failure',
+      new_owner_phone: '13800000096'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-dependency-503');
+  assert.equal(payload.org_id, 'org-owner-transfer-dependency-failure');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, true);
+});
+
+test('POST /platform/orgs/owner-transfer maps disabled candidate owner to ORG-409-NEW-OWNER-INACTIVE', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async () => {
+      throw new AuthProblemError({
+        status: 409,
+        title: 'Conflict',
+        detail: 'candidate owner is disabled',
+        errorCode: 'AUTH-409-OWNER-TRANSFER-TARGET-USER-INACTIVE'
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-owner-disabled',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-owner-disabled',
+      new_owner_phone: '13800000064'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 409);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-409-NEW-OWNER-INACTIVE');
+  assert.equal(payload.retryable, false);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-409-NEW-OWNER-INACTIVE');
+});
+
+test('POST /platform/orgs/owner-transfer preserves owner ids from auth validation extensions', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async () => {
+      throw new AuthProblemError({
+        status: 409,
+        title: 'Conflict',
+        detail: 'same owner',
+        errorCode: 'AUTH-409-OWNER-TRANSFER-SAME-OWNER',
+        extensions: {
+          org_id: 'org-owner-transfer-same-owner',
+          old_owner_user_id: 'owner-same-user',
+          new_owner_user_id: 'owner-same-user'
+        }
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-same-owner',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-same-owner',
+      new_owner_phone: '13800000095'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 409);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-409-OWNER-TRANSFER-SAME-OWNER');
+  assert.equal(payload.org_id, 'org-owner-transfer-same-owner');
+  assert.equal(payload.old_owner_user_id, 'owner-same-user');
+  assert.equal(payload.new_owner_user_id, 'owner-same-user');
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /platform/orgs/owner-transfer returns ORG-409-OWNER-TRANSFER-CONFLICT for concurrent same-org requests', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async ({ orgId }) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return {
+        org_id: orgId,
+        old_owner_user_id: 'owner-user-current',
+        new_owner_user_id: 'owner-user-next'
+      };
+    }
+  });
+
+  const firstPromise = dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-concurrent-1',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-concurrent',
+      new_owner_phone: '13800000065'
+    },
+    handlers: harness.handlers
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const secondPromise = dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-concurrent-2',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-concurrent',
+      new_owner_phone: '13800000066'
+    },
+    handlers: harness.handlers
+  });
+
+  const [first, second] = await Promise.all([firstPromise, secondPromise]);
+  const statuses = [first.status, second.status].sort((left, right) => left - right);
+  assert.deepEqual(statuses, [200, 409]);
+  const conflictRoute = first.status === 409 ? first : second;
+  const conflictPayload = JSON.parse(conflictRoute.body);
+  assert.equal(conflictPayload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(conflictPayload.retryable, true);
+});
+
+test('POST /platform/orgs/owner-transfer maps lock dependency unavailable to ORG-503 with stable transfer contract fields', async () => {
+  const harness = createHarness({
+    acquireOwnerTransferLock: async () => {
+      throw new AuthProblemError({
+        status: 503,
+        title: 'Service Unavailable',
+        detail: '负责人变更锁服务暂不可用，请稍后重试',
+        errorCode: 'AUTH-503-OWNER-TRANSFER-LOCK-UNAVAILABLE',
+        extensions: {
+          retryable: true,
+          degradation_reason: 'owner-transfer-lock-unavailable'
+        }
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-lock-unavailable',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-lock-unavailable',
+      new_owner_phone: '13800000065'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-lock-unavailable');
+  assert.equal(payload.org_id, 'org-owner-transfer-lock-unavailable');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, true);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(lastAuditEvent.upstream_error_code, 'AUTH-503-OWNER-TRANSFER-LOCK-UNAVAILABLE');
+});
+
+test('POST /platform/orgs/owner-transfer maps lock conflict problem to ORG-409 conflict contract', async () => {
+  const harness = createHarness({
+    acquireOwnerTransferLock: async () => {
+      throw new AuthProblemError({
+        status: 409,
+        title: 'Conflict',
+        detail: 'lock conflict',
+        errorCode: 'AUTH-409-OWNER-TRANSFER-CONFLICT'
+      });
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-lock-conflict',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-lock-conflict',
+      new_owner_phone: '13800000065'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 409);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-lock-conflict');
+  assert.equal(payload.org_id, 'org-owner-transfer-lock-conflict');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'conflict');
+  assert.equal(payload.retryable, true);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.conflict');
+  assert.equal(lastAuditEvent.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(lastAuditEvent.upstream_error_code, 'AUTH-409-OWNER-TRANSFER-CONFLICT');
+});
+
+test('POST /platform/orgs/owner-transfer maps unexpected lock errors to ORG-503 with stable transfer contract fields', async () => {
+  const harness = createHarness({
+    acquireOwnerTransferLock: async () => {
+      throw new Error('lock-backend-down');
+    }
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-lock-error',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-lock-error',
+      new_owner_phone: '13800000065'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-lock-error');
+  assert.equal(payload.org_id, 'org-owner-transfer-lock-error');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, true);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(lastAuditEvent.upstream_error_code, 'unknown');
+});
+
+test('POST /platform/orgs/owner-transfer preserves org_id case and avoids false conflicts across case-variant ids', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async ({ orgId }) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        org_id: orgId,
+        old_owner_user_id: 'owner-user-current',
+        new_owner_user_id: 'owner-user-next'
+      };
+    }
+  });
+
+  const [first, second] = await Promise.all([
+    dispatchApiRoute({
+      pathname: '/platform/orgs/owner-transfer',
+      method: 'POST',
+      requestId: 'req-platform-org-owner-transfer-case-1',
+      headers: {
+        authorization: 'Bearer fake-access-token'
+      },
+      body: {
+        org_id: 'Org-Case-Sensitive',
+        new_owner_phone: '13800000067'
+      },
+      handlers: harness.handlers
+    }),
+    dispatchApiRoute({
+      pathname: '/platform/orgs/owner-transfer',
+      method: 'POST',
+      requestId: 'req-platform-org-owner-transfer-case-2',
+      headers: {
+        authorization: 'Bearer fake-access-token'
+      },
+      body: {
+        org_id: 'org-case-sensitive',
+        new_owner_phone: '13800000068'
+      },
+      handlers: harness.handlers
+    })
+  ]);
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(firstPayload.org_id, 'Org-Case-Sensitive');
+  assert.equal(secondPayload.org_id, 'org-case-sensitive');
+  assert.equal(harness.ownerTransferCalls.length, 2);
+  const calledOrgIds = harness.ownerTransferCalls.map((call) => call.orgId);
+  assert.deepEqual(calledOrgIds.sort(), ['Org-Case-Sensitive', 'org-case-sensitive'].sort());
+});
+
+test('POST /platform/orgs/owner-transfer invalid Idempotency-Key keeps stable transfer contract fields', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-invalid-idempotency-key',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': '   '
+    },
+    body: {
+      org_id: 'org-owner-transfer-invalid-idem-key',
+      new_owner_phone: '13800000067'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-400-IDEMPOTENCY-KEY-INVALID');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-invalid-idempotency-key');
+  assert.equal(payload.org_id, 'org-owner-transfer-invalid-idem-key');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /platform/orgs/owner-transfer invalid Idempotency-Key does not expose invalid org_id values', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-invalid-idempotency-key-org-id-invalid',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': '   '
+    },
+    body: {
+      org_id: 123,
+      new_owner_phone: '13800000067'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-400-IDEMPOTENCY-KEY-INVALID');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-invalid-idempotency-key-org-id-invalid');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /platform/orgs/owner-transfer invalid Idempotency-Key does not expose org_id containing internal whitespace', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-invalid-idempotency-key-org-id-whitespace',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': '   '
+    },
+    body: {
+      org_id: 'org-owner transfer',
+      new_owner_phone: '13800000067'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-400-IDEMPOTENCY-KEY-INVALID');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-invalid-idempotency-key-org-id-whitespace');
+  assert.equal(payload.org_id, null);
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /platform/orgs/owner-transfer replays first success response for same Idempotency-Key and payload', async () => {
+  const harness = createHarness();
+  const requestBody = {
+    org_id: 'org-owner-transfer-idem-replay',
+    new_owner_phone: '13800000067'
+  };
+  const first = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-replay-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-replay-001'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-replay-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-replay-001'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(harness.ownerTransferCalls.length, 1);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(secondPayload.org_id, firstPayload.org_id);
+  assert.equal(secondPayload.result_status, firstPayload.result_status);
+  assert.equal(secondPayload.request_id, 'req-platform-org-owner-transfer-idem-replay-2');
+});
+
+test('POST /platform/orgs/owner-transfer rejects same Idempotency-Key with different payloads', async () => {
+  const harness = createHarness();
+  const first = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-conflict-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-conflict-001'
+    },
+    body: {
+      org_id: 'org-owner-transfer-idem-conflict',
+      new_owner_phone: '13800000068'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-conflict-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-conflict-001'
+    },
+    body: {
+      org_id: 'org-owner-transfer-idem-conflict',
+      new_owner_phone: '13800000069'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  const payload = JSON.parse(second.body);
+  assert.equal(payload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-idem-conflict-2');
+  assert.equal(payload.org_id, 'org-owner-transfer-idem-conflict');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'conflict');
+  assert.equal(payload.retryable, false);
+  assert.equal(harness.ownerTransferCalls.length, 1);
+});
+
+test('POST /platform/orgs/owner-transfer replays non-retryable 409 precheck conflicts for same Idempotency-Key', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async ({ orgId }) => {
+      throw new AuthProblemError({
+        status: 409,
+        title: 'Conflict',
+        detail: 'same owner',
+        errorCode: 'AUTH-409-OWNER-TRANSFER-SAME-OWNER',
+        extensions: {
+          org_id: orgId,
+          old_owner_user_id: 'owner-user-current',
+          new_owner_user_id: 'owner-user-current'
+        }
+      });
+    }
+  });
+  const requestBody = {
+    org_id: 'org-owner-transfer-idem-same-owner',
+    new_owner_phone: '13800000068'
+  };
+
+  const first = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-same-owner-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-same-owner-1'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+  const replay = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-same-owner-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-same-owner-1'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 409);
+  assert.equal(replay.status, 409);
+  assert.equal(harness.ownerTransferCalls.length, 1);
+
+  const firstPayload = JSON.parse(first.body);
+  const replayPayload = JSON.parse(replay.body);
+  assert.equal(firstPayload.error_code, 'ORG-409-OWNER-TRANSFER-SAME-OWNER');
+  assert.equal(firstPayload.result_status, 'rejected');
+  assert.equal(firstPayload.retryable, false);
+  assert.equal(replayPayload.error_code, 'ORG-409-OWNER-TRANSFER-SAME-OWNER');
+  assert.equal(replayPayload.result_status, 'rejected');
+  assert.equal(replayPayload.retryable, false);
+  assert.equal(replayPayload.request_id, 'req-platform-org-owner-transfer-idem-same-owner-2');
+});
+
+test('POST /platform/orgs/owner-transfer does not cache retryable conflict responses for the same Idempotency-Key', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async ({ orgId }) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return {
+        org_id: orgId,
+        old_owner_user_id: 'owner-user-current',
+        new_owner_user_id: 'owner-user-next'
+      };
+    }
+  });
+
+  const firstPromise = dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-retryable-conflict-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-retryable-lock-1'
+    },
+    body: {
+      org_id: 'org-owner-transfer-idem-retryable-lock',
+      new_owner_phone: '13800000068'
+    },
+    handlers: harness.handlers
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const conflict = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-retryable-conflict-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-retryable-lock-2'
+    },
+    body: {
+      org_id: 'org-owner-transfer-idem-retryable-lock',
+      new_owner_phone: '13800000069'
+    },
+    handlers: harness.handlers
+  });
+
+  const first = await firstPromise;
+
+  const retry = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-idem-retryable-conflict-3',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-retryable-lock-2'
+    },
+    body: {
+      org_id: 'org-owner-transfer-idem-retryable-lock',
+      new_owner_phone: '13800000069'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(conflict.status, 409);
+  const conflictPayload = JSON.parse(conflict.body);
+  assert.equal(conflictPayload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(conflictPayload.retryable, true);
+
+  assert.equal(retry.status, 200);
+  const retryPayload = JSON.parse(retry.body);
+  assert.equal(retryPayload.result_status, 'accepted');
+  assert.equal(retryPayload.request_id, 'req-platform-org-owner-transfer-idem-retryable-conflict-3');
+  assert.equal(harness.ownerTransferCalls.length, 2);
+});
+
+test('POST /platform/orgs/owner-transfer enforces conflict across separate service instances with shared lock backend', async () => {
+  const sharedLocks = new Map();
+  const acquireOwnerTransferLock = async ({ orgId }) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (!normalizedOrgId) {
+      return false;
+    }
+    if (sharedLocks.has(normalizedOrgId)) {
+      return false;
+    }
+    sharedLocks.set(normalizedOrgId, Date.now());
+    return true;
+  };
+  const releaseOwnerTransferLock = async ({ orgId }) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (!normalizedOrgId) {
+      return false;
+    }
+    return sharedLocks.delete(normalizedOrgId);
+  };
+
+  let releaseFirstValidation = null;
+  const firstValidationStarted = new Promise((resolve) => {
+    releaseFirstValidation = resolve;
+  });
+  let continueFirstValidation = null;
+  const firstValidationBlocked = new Promise((resolve) => {
+    continueFirstValidation = resolve;
+  });
+
+  const harnessA = createHarness({
+    acquireOwnerTransferLock,
+    releaseOwnerTransferLock,
+    validateOwnerTransferRequest: async ({ orgId }) => {
+      releaseFirstValidation();
+      await firstValidationBlocked;
+      return {
+        org_id: orgId,
+        old_owner_user_id: 'owner-user-current',
+        new_owner_user_id: 'owner-user-next'
+      };
+    }
+  });
+  const harnessB = createHarness({
+    acquireOwnerTransferLock,
+    releaseOwnerTransferLock
+  });
+
+  const firstPromise = dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-cross-instance-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-cross-instance-1'
+    },
+    body: {
+      org_id: 'org-owner-transfer-cross-instance',
+      new_owner_phone: '13800000068'
+    },
+    handlers: harnessA.handlers
+  });
+  await firstValidationStarted;
+
+  const second = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-cross-instance-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-org-owner-transfer-cross-instance-2'
+    },
+    body: {
+      org_id: 'org-owner-transfer-cross-instance',
+      new_owner_phone: '13800000069'
+    },
+    handlers: harnessB.handlers
+  });
+
+  continueFirstValidation();
+  const first = await firstPromise;
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  const conflictPayload = JSON.parse(second.body);
+  assert.equal(conflictPayload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(conflictPayload.result_status, 'conflict');
+  assert.equal(conflictPayload.retryable, true);
+});
+
+test('POST /platform/orgs/owner-transfer maps upstream AUTH-409-OWNER-TRANSFER-CONFLICT to retryable conflict contract', async () => {
+  const harness = createHarness({
+    validateOwnerTransferRequest: async ({ orgId }) => {
+      throw new AuthProblemError({
+        status: 409,
+        title: 'Conflict',
+        detail: 'owner transfer already processing',
+        errorCode: 'AUTH-409-OWNER-TRANSFER-CONFLICT',
+        extensions: {
+          org_id: orgId,
+          old_owner_user_id: 'owner-user-current',
+          new_owner_user_id: 'owner-user-next'
+        }
+      });
+    }
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-upstream-conflict',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-upstream-conflict',
+      new_owner_phone: '13800000069'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 409);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-upstream-conflict');
+  assert.equal(payload.org_id, 'org-owner-transfer-upstream-conflict');
+  assert.equal(payload.old_owner_user_id, 'owner-user-current');
+  assert.equal(payload.new_owner_user_id, 'owner-user-next');
+  assert.equal(payload.result_status, 'conflict');
+  assert.equal(payload.retryable, true);
+
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.conflict');
+  assert.equal(lastAuditEvent.detail, 'owner transfer request already in progress');
+  assert.equal(lastAuditEvent.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(lastAuditEvent.upstream_error_code, 'AUTH-409-OWNER-TRANSFER-CONFLICT');
 });
 
 test('platformCreateOrg maps owner bootstrap 503 errors to ORG-503-DEPENDENCY-UNAVAILABLE', async () => {

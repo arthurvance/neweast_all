@@ -13,15 +13,19 @@ const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
 const OWNER_PHONE_PATTERN = /^1\d{10}$/;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
+const WHITESPACE_PATTERN = /\s/;
 const MAX_ORG_NAME_LENGTH = 128;
+const MAX_ORG_ID_LENGTH = 64;
 const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const CREATE_ORG_ALLOWED_FIELDS = new Set(['org_name', 'initial_owner_phone']);
 const UPDATE_ORG_STATUS_ALLOWED_FIELDS = new Set(['org_id', 'status', 'reason']);
+const OWNER_TRANSFER_ALLOWED_FIELDS = new Set(['org_id', 'new_owner_phone', 'reason']);
 const VALID_ORG_STATUSES = new Set(['active', 'disabled']);
 const MAX_UNKNOWN_PAYLOAD_KEYS_IN_DETAIL = 8;
 const MAX_UNKNOWN_PAYLOAD_KEY_LENGTH_IN_DETAIL = 64;
 const MAX_UNKNOWN_PAYLOAD_DETAIL_LENGTH = 280;
+const OWNER_TRANSFER_ACCEPTED_ERROR_CODE = 'ORG-200-OWNER-TRANSFER-ACCEPTED';
 
 const isPlainObject = (candidate) =>
   candidate !== null
@@ -103,6 +107,65 @@ const orgProblem = ({ status, title, detail, errorCode, extensions = {} }) =>
     extensions
   });
 
+const toOwnerTransferContractExtensions = ({
+  orgId = null,
+  oldOwnerUserId = null,
+  newOwnerUserId = null,
+  resultStatus = 'rejected',
+  retryable = false
+} = {}) => ({
+  retryable: Boolean(retryable),
+  org_id: orgId ? String(orgId).trim() : null,
+  old_owner_user_id: oldOwnerUserId ? String(oldOwnerUserId).trim() : null,
+  new_owner_user_id: newOwnerUserId ? String(newOwnerUserId).trim() : null,
+  result_status: String(resultStatus || 'rejected').trim() || 'rejected'
+});
+
+const withOwnerTransferContractProblem = ({
+  problem,
+  orgId = null,
+  oldOwnerUserId = null,
+  newOwnerUserId = null,
+  resultStatus = null,
+  retryable = null
+} = {}) => {
+  if (!(problem instanceof AuthProblemError)) {
+    return orgProblem({
+      status: 503,
+      title: 'Service Unavailable',
+      detail: '组织治理依赖暂不可用，请稍后重试',
+      errorCode: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+      extensions: toOwnerTransferContractExtensions({
+        orgId,
+        oldOwnerUserId,
+        newOwnerUserId,
+        resultStatus: resultStatus || 'rejected',
+        retryable: retryable === null || retryable === undefined ? true : retryable
+      })
+    });
+  }
+
+  const baseExtensions = isPlainObject(problem.extensions) ? problem.extensions : {};
+  return orgProblem({
+    status: Number(problem.status) || 503,
+    title: String(problem.title || 'Service Unavailable'),
+    detail: String(problem.detail || '组织治理依赖暂不可用，请稍后重试'),
+    errorCode:
+      String(problem.errorCode || 'ORG-503-DEPENDENCY-UNAVAILABLE').trim()
+      || 'ORG-503-DEPENDENCY-UNAVAILABLE',
+    extensions: {
+      ...baseExtensions,
+      ...toOwnerTransferContractExtensions({
+        orgId: baseExtensions.org_id ?? orgId,
+        oldOwnerUserId: baseExtensions.old_owner_user_id ?? oldOwnerUserId,
+        newOwnerUserId: baseExtensions.new_owner_user_id ?? newOwnerUserId,
+        resultStatus: baseExtensions.result_status ?? resultStatus ?? 'rejected',
+        retryable: retryable ?? baseExtensions.retryable ?? false
+      })
+    }
+  });
+};
+
 const orgErrors = {
   invalidPayload: (detail = '请求参数不完整或格式错误') =>
     orgProblem({
@@ -148,6 +211,99 @@ const orgErrors = {
       extensions: {
         retryable: false
       }
+    }),
+
+  ownerTransferOrgNotActive: ({
+    orgId = null,
+    oldOwnerUserId = null,
+    newOwnerUserId = null
+  } = {}) =>
+    orgProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: '目标组织当前不可发起负责人变更，请先启用后重试',
+      errorCode: 'ORG-409-ORG-NOT-ACTIVE',
+      extensions: toOwnerTransferContractExtensions({
+        orgId,
+        oldOwnerUserId,
+        newOwnerUserId,
+        resultStatus: 'rejected',
+        retryable: false
+      })
+    }),
+
+  ownerTransferNewOwnerNotFound: ({
+    orgId = null,
+    oldOwnerUserId = null
+  } = {}) =>
+    orgProblem({
+      status: 404,
+      title: 'Not Found',
+      detail: '候选新负责人不存在',
+      errorCode: 'ORG-404-NEW-OWNER-NOT-FOUND',
+      extensions: toOwnerTransferContractExtensions({
+        orgId,
+        oldOwnerUserId,
+        newOwnerUserId: null,
+        resultStatus: 'rejected',
+        retryable: false
+      })
+    }),
+
+  ownerTransferNewOwnerInactive: ({
+    orgId = null,
+    oldOwnerUserId = null,
+    newOwnerUserId = null
+  } = {}) =>
+    orgProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: '候选新负责人状态不可用，请确认激活后重试',
+      errorCode: 'ORG-409-NEW-OWNER-INACTIVE',
+      extensions: toOwnerTransferContractExtensions({
+        orgId,
+        oldOwnerUserId,
+        newOwnerUserId,
+        resultStatus: 'rejected',
+        retryable: false
+      })
+    }),
+
+  ownerTransferSameOwner: ({
+    orgId = null,
+    oldOwnerUserId = null
+  } = {}) =>
+    orgProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: '新负责人不能与当前负责人相同',
+      errorCode: 'ORG-409-OWNER-TRANSFER-SAME-OWNER',
+      extensions: toOwnerTransferContractExtensions({
+        orgId,
+        oldOwnerUserId,
+        newOwnerUserId: oldOwnerUserId,
+        resultStatus: 'rejected',
+        retryable: false
+      })
+    }),
+
+  ownerTransferConflict: ({
+    orgId = null,
+    oldOwnerUserId = null,
+    newOwnerUserId = null
+  } = {}) =>
+    orgProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: '组织负责人变更请求处理中，请稍后重试',
+      errorCode: 'ORG-409-OWNER-TRANSFER-CONFLICT',
+      extensions: toOwnerTransferContractExtensions({
+        orgId,
+        oldOwnerUserId,
+        newOwnerUserId,
+        resultStatus: 'conflict',
+        retryable: true
+      })
     }),
 
   dependencyUnavailable: () =>
@@ -284,8 +440,115 @@ const parseUpdateOrgStatusPayload = (payload) => {
   };
 };
 
+const parseOwnerTransferPayload = (payload) => {
+  if (!isPlainObject(payload)) {
+    throw orgErrors.invalidPayload();
+  }
+
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !OWNER_TRANSFER_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw orgErrors.invalidPayload(formatUnknownPayloadKeysDetail(unknownPayloadKeys));
+  }
+
+  const hasOrgId = Object.prototype.hasOwnProperty.call(payload, 'org_id');
+  const hasNewOwnerPhone = Object.prototype.hasOwnProperty.call(
+    payload,
+    'new_owner_phone'
+  );
+  if (!hasOrgId || !hasNewOwnerPhone) {
+    throw orgErrors.invalidPayload();
+  }
+
+  if (typeof payload.org_id !== 'string') {
+    throw orgErrors.invalidPayload('org_id 必须为字符串');
+  }
+  if (typeof payload.new_owner_phone !== 'string') {
+    throw orgErrors.invalidPayload('new_owner_phone 格式错误');
+  }
+
+  const orgIdRaw = payload.org_id;
+  const orgId = normalizeRequiredString(orgIdRaw);
+  const newOwnerPhoneInput = payload.new_owner_phone;
+  const newOwnerPhone = normalizeRequiredString(newOwnerPhoneInput);
+  if (!orgId) {
+    throw orgErrors.invalidPayload('org_id 不能为空');
+  }
+  if (orgIdRaw !== orgId) {
+    throw orgErrors.invalidPayload('org_id 不能包含前后空白');
+  }
+  if (CONTROL_CHAR_PATTERN.test(orgId)) {
+    throw orgErrors.invalidPayload('org_id 不能包含控制字符');
+  }
+  if (WHITESPACE_PATTERN.test(orgId)) {
+    throw orgErrors.invalidPayload('org_id 不能包含空白字符');
+  }
+  if (orgId.length > MAX_ORG_ID_LENGTH) {
+    throw orgErrors.invalidPayload(`org_id 长度不能超过 ${MAX_ORG_ID_LENGTH}`);
+  }
+  if (!newOwnerPhone) {
+    throw orgErrors.invalidPayload('new_owner_phone 格式错误');
+  }
+  if (newOwnerPhoneInput !== newOwnerPhone) {
+    throw orgErrors.invalidPayload('new_owner_phone 格式错误');
+  }
+  if (!OWNER_PHONE_PATTERN.test(newOwnerPhone)) {
+    throw orgErrors.invalidPayload('new_owner_phone 格式错误');
+  }
+
+  let reason = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'reason')) {
+    if (typeof payload.reason !== 'string') {
+      throw orgErrors.invalidPayload('reason 必须为字符串');
+    }
+    const reasonInput = payload.reason;
+    const normalizedReason = normalizeRequiredString(reasonInput);
+    if (!normalizedReason) {
+      throw orgErrors.invalidPayload('reason 不能为空字符串');
+    }
+    if (reasonInput !== normalizedReason) {
+      throw orgErrors.invalidPayload('reason 不能包含前后空白');
+    }
+    if (CONTROL_CHAR_PATTERN.test(normalizedReason)) {
+      throw orgErrors.invalidPayload('reason 不能包含控制字符');
+    }
+    if (normalizedReason.length > MAX_STATUS_REASON_LENGTH) {
+      throw orgErrors.invalidPayload(
+        `reason 长度不能超过 ${MAX_STATUS_REASON_LENGTH}`
+      );
+    }
+    reason = normalizedReason;
+  }
+
+  return {
+    orgId,
+    newOwnerPhone,
+    reason
+  };
+};
+
+const resolveRequestedOwnerTransferOrgId = (payload = {}) => {
+  if (!isPlainObject(payload) || typeof payload.org_id !== 'string') {
+    return null;
+  }
+  const orgIdRaw = payload.org_id;
+  const normalizedOrgId = orgIdRaw.trim();
+  if (
+    !normalizedOrgId
+    || normalizedOrgId !== orgIdRaw
+    || normalizedOrgId.length > MAX_ORG_ID_LENGTH
+    || WHITESPACE_PATTERN.test(normalizedOrgId)
+    || CONTROL_CHAR_PATTERN.test(normalizedOrgId)
+  ) {
+    return null;
+  }
+  return normalizedOrgId;
+};
+
 const createPlatformOrgService = ({ authService } = {}) => {
   const auditTrail = [];
+  const ownerTransferLocksByOrgId = new Map();
 
   const addAuditEvent = ({
     type,
@@ -315,6 +578,117 @@ const createPlatformOrgService = ({ authService } = {}) => {
     if (!authService || typeof authService[methodName] !== 'function') {
       throw orgErrors.dependencyUnavailable();
     }
+  };
+
+  const acquireOwnerTransferLock = async ({
+    orgId,
+    requestId,
+    operatorUserId
+  }) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (!normalizedOrgId) {
+      return false;
+    }
+    if (authService && typeof authService.acquireOwnerTransferLock === 'function') {
+      return (
+        await authService.acquireOwnerTransferLock({
+          orgId: normalizedOrgId,
+          requestId,
+          operatorUserId,
+          timeoutSeconds: 0
+        })
+      ) === true;
+    }
+    if (ownerTransferLocksByOrgId.has(normalizedOrgId)) {
+      return false;
+    }
+    ownerTransferLocksByOrgId.set(normalizedOrgId, {
+      request_id: String(requestId || '').trim() || 'request_id_unset',
+      operator_user_id: String(operatorUserId || '').trim() || 'unknown',
+      started_at: new Date().toISOString()
+    });
+    return true;
+  };
+
+  const releaseOwnerTransferLock = async (orgId) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (!normalizedOrgId) {
+      return false;
+    }
+    if (authService && typeof authService.releaseOwnerTransferLock === 'function') {
+      return (
+        await authService.releaseOwnerTransferLock({
+          orgId: normalizedOrgId
+        })
+      ) === true;
+    }
+    return ownerTransferLocksByOrgId.delete(normalizedOrgId);
+  };
+
+  const mapOwnerTransferValidationProblem = ({
+    error,
+    orgId = null,
+    oldOwnerUserId = null,
+    newOwnerUserId = null
+  } = {}) => {
+    const errorExtensions = isPlainObject(error?.extensions) ? error.extensions : {};
+    const resolvedOrgId = errorExtensions.org_id ?? orgId;
+    const resolvedOldOwnerUserId =
+      errorExtensions.old_owner_user_id ?? oldOwnerUserId;
+    const resolvedNewOwnerUserId =
+      errorExtensions.new_owner_user_id ?? newOwnerUserId;
+    let mappedProblem = null;
+    if (error instanceof AuthProblemError) {
+      const normalizedErrorCode = String(error.errorCode || '').trim();
+      if (normalizedErrorCode === 'AUTH-400-INVALID-PAYLOAD') {
+        mappedProblem = orgErrors.invalidPayload();
+      } else if (normalizedErrorCode === 'AUTH-404-ORG-NOT-FOUND') {
+        mappedProblem = orgErrors.orgNotFound();
+      } else if (normalizedErrorCode === 'AUTH-404-USER-NOT-FOUND') {
+        mappedProblem = orgErrors.ownerTransferNewOwnerNotFound({
+          orgId: resolvedOrgId,
+          oldOwnerUserId: resolvedOldOwnerUserId
+        });
+      } else if (normalizedErrorCode === 'AUTH-409-ORG-NOT-ACTIVE') {
+        mappedProblem = orgErrors.ownerTransferOrgNotActive({
+          orgId: resolvedOrgId,
+          oldOwnerUserId: resolvedOldOwnerUserId,
+          newOwnerUserId: resolvedNewOwnerUserId
+        });
+      } else if (
+        normalizedErrorCode === 'AUTH-409-OWNER-TRANSFER-TARGET-USER-INACTIVE'
+      ) {
+        mappedProblem = orgErrors.ownerTransferNewOwnerInactive({
+          orgId: resolvedOrgId,
+          oldOwnerUserId: resolvedOldOwnerUserId,
+          newOwnerUserId: resolvedNewOwnerUserId
+        });
+      } else if (normalizedErrorCode === 'AUTH-409-OWNER-TRANSFER-SAME-OWNER') {
+        mappedProblem = orgErrors.ownerTransferSameOwner({
+          orgId: resolvedOrgId,
+          oldOwnerUserId: resolvedOldOwnerUserId
+        });
+      } else if (normalizedErrorCode === 'AUTH-409-OWNER-TRANSFER-CONFLICT') {
+        mappedProblem = orgErrors.ownerTransferConflict({
+          orgId: resolvedOrgId,
+          oldOwnerUserId: resolvedOldOwnerUserId,
+          newOwnerUserId: resolvedNewOwnerUserId
+        });
+      }
+    }
+
+    const fallbackProblem = mappedProblem || orgErrors.dependencyUnavailable();
+    const fallbackErrorCode = String(fallbackProblem.errorCode || '').trim();
+    return withOwnerTransferContractProblem({
+      problem: fallbackProblem,
+      orgId: resolvedOrgId,
+      oldOwnerUserId: resolvedOldOwnerUserId,
+      newOwnerUserId: resolvedNewOwnerUserId,
+      resultStatus:
+        fallbackErrorCode === 'ORG-409-OWNER-TRANSFER-CONFLICT'
+          ? 'conflict'
+          : 'rejected'
+    });
   };
 
   const mapOwnerIdentityBootstrapProblem = (error) => {
@@ -730,12 +1104,304 @@ const createPlatformOrgService = ({ authService } = {}) => {
     };
   };
 
+  const ownerTransfer = async ({
+    requestId,
+    accessToken,
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const requestedOrgId = resolveRequestedOwnerTransferOrgId(payload);
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext
+      });
+    } catch (error) {
+      const mappedError =
+        error instanceof AuthProblemError ? error : orgErrors.forbidden();
+      const ownerTransferMappedError = withOwnerTransferContractProblem({
+        problem: mappedError,
+        orgId: requestedOrgId
+      });
+      addAuditEvent({
+        type: 'org.owner_transfer.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        orgId: requestedOrgId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: ownerTransferMappedError.errorCode,
+          result_status: String(
+            ownerTransferMappedError.extensions?.result_status || 'rejected'
+          ),
+          retryable: Boolean(ownerTransferMappedError.extensions?.retryable)
+        }
+      });
+      throw ownerTransferMappedError;
+    }
+    const { operatorUserId, operatorSessionId } = operatorContext;
+
+    let parsedPayload;
+    try {
+      parsedPayload = parseOwnerTransferPayload(payload);
+    } catch (error) {
+      const mappedPayloadError =
+        error instanceof AuthProblemError
+          ? withOwnerTransferContractProblem({
+            problem: error,
+            orgId: requestedOrgId
+          })
+          : error;
+      if (mappedPayloadError instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'org.owner_transfer.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          orgId: requestedOrgId,
+          detail: 'payload validation failed',
+          metadata: {
+            error_code: mappedPayloadError.errorCode,
+            result_status: String(
+              mappedPayloadError.extensions?.result_status || 'rejected'
+            ),
+            retryable: Boolean(mappedPayloadError.extensions?.retryable)
+          }
+        });
+      }
+      throw mappedPayloadError;
+    }
+
+    let lockAcquired = false;
+    try {
+      lockAcquired = await acquireOwnerTransferLock({
+        orgId: parsedPayload.orgId,
+        requestId: resolvedRequestId,
+        operatorUserId
+      });
+    } catch (error) {
+      const mappedLockError =
+        error instanceof AuthProblemError
+          ? mapOwnerTransferValidationProblem({
+            error,
+            orgId: parsedPayload.orgId
+          })
+          : withOwnerTransferContractProblem({
+            problem: orgErrors.dependencyUnavailable(),
+            orgId: parsedPayload.orgId
+          });
+      const mappedLockErrorCode = String(mappedLockError.errorCode || '').trim();
+      addAuditEvent({
+        type: mappedLockErrorCode === 'ORG-409-OWNER-TRANSFER-CONFLICT'
+          ? 'org.owner_transfer.conflict'
+          : 'org.owner_transfer.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail:
+          mappedLockErrorCode === 'ORG-409-OWNER-TRANSFER-CONFLICT'
+            ? 'owner transfer request already in progress'
+            : 'owner transfer lock dependency unavailable',
+        metadata: {
+          error_code: mappedLockErrorCode || 'ORG-503-DEPENDENCY-UNAVAILABLE',
+          result_status: String(
+            mappedLockError.extensions?.result_status
+            || (mappedLockErrorCode === 'ORG-409-OWNER-TRANSFER-CONFLICT'
+              ? 'conflict'
+              : 'rejected')
+          ),
+          retryable: Boolean(mappedLockError.extensions?.retryable),
+          upstream_error_code: String(
+            error?.errorCode || error?.code || 'unknown'
+          ).trim() || 'unknown'
+        }
+      });
+      throw mappedLockError;
+    }
+
+    if (!lockAcquired) {
+      const mappedConflictError = orgErrors.ownerTransferConflict({
+        orgId: parsedPayload.orgId
+      });
+      addAuditEvent({
+        type: 'org.owner_transfer.conflict',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail: 'owner transfer request is already in progress for target org',
+        metadata: {
+          error_code: mappedConflictError.errorCode,
+          retryable: true,
+          result_status: 'conflict'
+        }
+      });
+      throw mappedConflictError;
+    }
+
+    try {
+      addAuditEvent({
+        type: 'org.owner_transfer.initiated',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail: 'owner transfer request initiated',
+        metadata: {
+          result_status: 'accepted',
+          reason: parsedPayload.reason
+        }
+      });
+
+      assertAuthServiceMethod('validateOwnerTransferRequest');
+      const validationResult = await authService.validateOwnerTransferRequest({
+        requestId: resolvedRequestId,
+        orgId: parsedPayload.orgId,
+        newOwnerPhone: parsedPayload.newOwnerPhone,
+        operatorUserId,
+        operatorSessionId,
+        reason: parsedPayload.reason
+      });
+
+      const resolvedOrgId = String(validationResult?.org_id || '').trim();
+      const oldOwnerUserId = String(
+        validationResult?.old_owner_user_id || ''
+      ).trim();
+      const newOwnerUserId = String(
+        validationResult?.new_owner_user_id || ''
+      ).trim();
+      if (
+        !resolvedOrgId
+        || !oldOwnerUserId
+        || !newOwnerUserId
+        || resolvedOrgId !== parsedPayload.orgId
+      ) {
+        addAuditEvent({
+          type: 'org.owner_transfer.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          orgId: parsedPayload.orgId,
+          detail: 'owner transfer validation dependency returned invalid payload',
+          metadata: {
+            error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+            result_status: 'rejected',
+            upstream_error_code: 'ORG-OWNER-TRANSFER-VALIDATION-RESULT-INVALID'
+          }
+        });
+        throw withOwnerTransferContractProblem({
+          problem: orgErrors.dependencyUnavailable(),
+          orgId: parsedPayload.orgId
+        });
+      }
+
+      addAuditEvent({
+        type: 'org.owner_transfer.submitted',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: resolvedOrgId,
+        detail: 'owner transfer request submitted for downstream orchestration',
+        metadata: {
+          old_owner_user_id: oldOwnerUserId,
+          new_owner_user_id: newOwnerUserId,
+          result_status: 'accepted',
+          error_code: OWNER_TRANSFER_ACCEPTED_ERROR_CODE,
+          retryable: false
+        }
+      });
+
+      return {
+        request_id: resolvedRequestId,
+        org_id: resolvedOrgId,
+        old_owner_user_id: oldOwnerUserId,
+        new_owner_user_id: newOwnerUserId,
+        result_status: 'accepted',
+        error_code: OWNER_TRANSFER_ACCEPTED_ERROR_CODE,
+        retryable: false
+      };
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        const mappedError = mapOwnerTransferValidationProblem({
+          error,
+          orgId: parsedPayload.orgId
+        });
+        const mappedErrorCode = String(mappedError.errorCode || '').trim();
+        addAuditEvent({
+          type: mappedErrorCode === 'ORG-409-OWNER-TRANSFER-CONFLICT'
+            ? 'org.owner_transfer.conflict'
+            : 'org.owner_transfer.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          orgId: parsedPayload.orgId,
+          detail:
+            mappedErrorCode === 'ORG-404-ORG-NOT-FOUND'
+              ? 'owner transfer org not found'
+              : mappedErrorCode === 'ORG-404-NEW-OWNER-NOT-FOUND'
+                ? 'owner transfer candidate not found'
+                : mappedErrorCode === 'ORG-409-OWNER-TRANSFER-CONFLICT'
+                  ? 'owner transfer request already in progress'
+                : mappedErrorCode === 'ORG-409-ORG-NOT-ACTIVE'
+                  ? 'owner transfer org not active'
+                  : mappedErrorCode === 'ORG-409-NEW-OWNER-INACTIVE'
+                    ? 'owner transfer candidate inactive'
+                    : mappedErrorCode === 'ORG-409-OWNER-TRANSFER-SAME-OWNER'
+                      ? 'owner transfer target equals current owner'
+                      : 'owner transfer dependency unavailable',
+          metadata: {
+            error_code: mappedErrorCode || 'ORG-503-DEPENDENCY-UNAVAILABLE',
+            result_status: String(
+              mappedError.extensions?.result_status || 'rejected'
+            ),
+            retryable: Boolean(mappedError.extensions?.retryable),
+            upstream_error_code: String(
+              error.errorCode || error.code || 'unknown'
+            ).trim() || 'unknown'
+          }
+        });
+        throw mappedError;
+      }
+      addAuditEvent({
+        type: 'org.owner_transfer.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail: 'owner transfer dependency unavailable',
+        metadata: {
+          error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+          result_status: 'rejected'
+        }
+      });
+      throw withOwnerTransferContractProblem({
+        problem: orgErrors.dependencyUnavailable(),
+        orgId: parsedPayload.orgId
+      });
+    } finally {
+      try {
+        const released = await releaseOwnerTransferLock(parsedPayload.orgId);
+        if (!released) {
+          log('warn', 'owner transfer lock release not confirmed', {
+            request_id: resolvedRequestId,
+            org_id: parsedPayload.orgId
+          });
+        }
+      } catch (releaseError) {
+        log('warn', 'owner transfer lock release failed', {
+          request_id: resolvedRequestId,
+          org_id: parsedPayload.orgId,
+          error_code: String(releaseError?.code || ''),
+          detail: String(releaseError?.message || '')
+        });
+      }
+    }
+  };
+
   return {
     createOrg,
     updateOrgStatus,
+    ownerTransfer,
     _internals: {
       auditTrail,
-      authService
+      authService,
+      ownerTransferLocksByOrgId
     }
   };
 };

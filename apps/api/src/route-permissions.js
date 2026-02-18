@@ -1,6 +1,7 @@
 const {
   PLATFORM_ORG_CREATE_PATH,
   PLATFORM_ORG_STATUS_PATH,
+  PLATFORM_ORG_OWNER_TRANSFER_PATH,
   PLATFORM_ORG_CREATE_PERMISSION_CODE,
   PLATFORM_ORG_SCOPE
 } = require('./modules/platform/org.constants');
@@ -299,6 +300,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   {
     method: 'POST',
     path: PLATFORM_ORG_STATUS_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ORG_CREATE_PERMISSION_CODE,
+    scope: PLATFORM_ORG_SCOPE
+  },
+  {
+    method: 'POST',
+    path: PLATFORM_ORG_OWNER_TRANSFER_PATH,
     access: 'protected',
     permission_code: PLATFORM_ORG_CREATE_PERMISSION_CODE,
     scope: PLATFORM_ORG_SCOPE

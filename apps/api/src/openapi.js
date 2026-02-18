@@ -789,7 +789,7 @@ const buildOpenApiSpec = () => {
             }
           },
           400: {
-            description: 'Invalid payload',
+            description: 'Invalid payload or invalid Idempotency-Key',
             content: {
               'application/problem+json': {
                 schema: { $ref: '#/components/schemas/ProblemDetails' },
@@ -1055,7 +1055,7 @@ const buildOpenApiSpec = () => {
             }
           },
           400: {
-            description: 'Invalid payload',
+            description: 'Invalid payload or invalid Idempotency-Key',
             content: {
               'application/problem+json': {
                 schema: { $ref: '#/components/schemas/ProblemDetails' },
@@ -2228,6 +2228,346 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/orgs/owner-transfer': {
+      post: {
+        summary: 'Submit organization owner-transfer request (entry + precheck only)',
+        description: '仅交付发起入口与前置校验，不在本接口执行 owner 真正切换与自动接管。',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/PlatformOrgOwnerTransferRequest' },
+              examples: {
+                submit_owner_transfer: {
+                  value: {
+                    org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                    new_owner_phone: '13800000062',
+                    reason: '治理责任移交'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Owner-transfer request accepted for downstream orchestration.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformOrgOwnerTransferResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'ORG-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      org_id: null,
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      org_id: null,
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      org_id: null,
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Organization or candidate owner not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  org_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标组织不存在',
+                      error_code: 'ORG-404-ORG-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  },
+                  new_owner_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '候选新负责人不存在',
+                      error_code: 'ORG-404-NEW-OWNER-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Conflict from precheck, concurrent org transfer, or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  concurrent_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '组织负责人变更请求处理中，请稍后重试',
+                      error_code: 'ORG-409-OWNER-TRANSFER-CONFLICT',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'conflict',
+                      retryable: true
+                    }
+                  },
+                  org_not_active: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '目标组织当前不可发起负责人变更，请先启用后重试',
+                      error_code: 'ORG-409-ORG-NOT-ACTIVE',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  },
+                  new_owner_inactive: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '候选新负责人状态不可用，请确认激活后重试',
+                      error_code: 'ORG-409-NEW-OWNER-INACTIVE',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  },
+                  same_owner: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '新负责人不能与当前负责人相同',
+                      error_code: 'ORG-409-OWNER-TRANSFER-SAME-OWNER',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: 'owner-user-current',
+                      new_owner_user_id: 'owner-user-current',
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'conflict',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      org_id: null,
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Organization governance dependency or idempotency storage is unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织治理依赖暂不可用，请稍后重试',
+                      error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  },
+                  idempotency_pending_timeout: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等请求处理中，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT',
+                      request_id: 'request_id_unset',
+                      org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
+                      old_owner_user_id: null,
+                      new_owner_user_id: null,
+                      result_status: 'rejected',
+                      retryable: true,
+                      degradation_reason: 'idempotency-pending-timeout'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/users': {
       post: {
         summary: 'Create or reuse platform user by phone',
@@ -3335,7 +3675,8 @@ const buildOpenApiSpec = () => {
           org_id: {
             type: 'string',
             minLength: 1,
-            pattern: '.*\\S.*',
+            maxLength: 64,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
             description: '组织唯一标识'
           },
           status: {
@@ -3374,6 +3715,59 @@ const buildOpenApiSpec = () => {
             description: '组织状态更新后值（tenant 域治理状态）'
           },
           request_id: { type: 'string' }
+        }
+      },
+      PlatformOrgOwnerTransferRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['org_id', 'new_owner_phone'],
+        properties: {
+          org_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!.*\\s)[^\\x00-\\x1F\\x7F]+$',
+            description: '组织唯一标识'
+          },
+          new_owner_phone: {
+            type: 'string',
+            minLength: 11,
+            maxLength: 11,
+            pattern: '^1\\d{10}$',
+            description: '候选新负责人手机号（11位）'
+          },
+          reason: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]+$',
+            description: '负责人变更发起原因（可选）'
+          }
+        }
+      },
+      PlatformOrgOwnerTransferResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'request_id',
+          'org_id',
+          'old_owner_user_id',
+          'new_owner_user_id',
+          'result_status',
+          'error_code',
+          'retryable'
+        ],
+        properties: {
+          request_id: { type: 'string' },
+          org_id: { type: 'string' },
+          old_owner_user_id: { type: 'string' },
+          new_owner_user_id: { type: 'string' },
+          result_status: {
+            type: 'string',
+            enum: ['accepted', 'rejected', 'conflict']
+          },
+          error_code: { type: 'string' },
+          retryable: { type: 'boolean' }
         }
       },
       CreatePlatformUserRequest: {

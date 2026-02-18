@@ -1,5 +1,5 @@
 const { setTimeout: sleep } = require('node:timers/promises');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { log } = require('../../common/logger');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
@@ -14,6 +14,8 @@ const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
+const OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX = 30;
+const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
 
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
@@ -49,6 +51,30 @@ const normalizePlatformRoleCatalogScope = (scope) =>
   String(scope || '').trim().toLowerCase();
 const normalizePlatformRoleCatalogRoleId = (roleId) =>
   String(roleId || '').trim().toLowerCase();
+const normalizeOwnerTransferLockTimeoutSeconds = (timeoutSeconds) => {
+  const parsed = Number(timeoutSeconds);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(
+    0,
+    Math.min(
+      OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX,
+      Math.floor(parsed)
+    )
+  );
+};
+const toOwnerTransferLockName = (orgId) => {
+  const normalizedOrgId = String(orgId || '').trim();
+  if (!normalizedOrgId) {
+    return '';
+  }
+  const lockDigest = createHash('sha256')
+    .update(normalizedOrgId)
+    .digest('hex')
+    .slice(0, 40);
+  return `${OWNER_TRANSFER_LOCK_NAME_PREFIX}${lockDigest}`;
+};
 const DEFAULT_DEADLOCK_FALLBACK_RESULT = Object.freeze({
   synced: false,
   reason: 'db-deadlock',
@@ -2026,6 +2052,77 @@ const createMySqlAuthStore = ({
           })
       }),
 
+    findOrganizationById: async ({ orgId }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      if (!normalizedOrgId) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT id, name, owner_user_id, status, created_by_user_id
+          FROM orgs
+          WHERE BINARY id = ?
+          LIMIT 1
+        `,
+        [normalizedOrgId]
+      );
+      const org = rows?.[0] || null;
+      if (!org) {
+        return null;
+      }
+      return {
+        org_id: String(org.id || '').trim(),
+        org_name: String(org.name || '').trim(),
+        owner_user_id: String(org.owner_user_id || '').trim(),
+        status: normalizeOrgStatus(org.status),
+        created_by_user_id: org.created_by_user_id
+          ? String(org.created_by_user_id).trim()
+          : null
+      };
+    },
+
+    acquireOwnerTransferLock: async ({
+      orgId,
+      timeoutSeconds = 0
+    }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      if (!normalizedOrgId) {
+        return false;
+      }
+      const lockName = toOwnerTransferLockName(normalizedOrgId);
+      if (!lockName) {
+        return false;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT GET_LOCK(?, ?) AS lock_acquired
+        `,
+        [
+          lockName,
+          normalizeOwnerTransferLockTimeoutSeconds(timeoutSeconds)
+        ]
+      );
+      return Number(rows?.[0]?.lock_acquired || 0) === 1;
+    },
+
+    releaseOwnerTransferLock: async ({ orgId }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      if (!normalizedOrgId) {
+        return false;
+      }
+      const lockName = toOwnerTransferLockName(normalizedOrgId);
+      if (!lockName) {
+        return false;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT RELEASE_LOCK(?) AS lock_released
+        `,
+        [lockName]
+      );
+      return Number(rows?.[0]?.lock_released || 0) === 1;
+    },
+
     updateOrganizationStatus: async ({
       orgId,
       nextStatus,
@@ -2053,7 +2150,7 @@ const createMySqlAuthStore = ({
               `
                 SELECT id, status, owner_user_id
                 FROM orgs
-                WHERE id = ?
+                WHERE BINARY id = ?
                 LIMIT 1
                 FOR UPDATE
               `,
@@ -2071,7 +2168,7 @@ const createMySqlAuthStore = ({
                   UPDATE orgs
                   SET status = ?,
                       updated_at = CURRENT_TIMESTAMP(3)
-                  WHERE id = ? AND status <> ?
+                  WHERE BINARY id = ? AND status <> ?
                 `,
                 [normalizedNextStatus, normalizedOrgId, normalizedNextStatus]
               );

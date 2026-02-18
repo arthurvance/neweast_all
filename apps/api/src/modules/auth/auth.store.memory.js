@@ -14,6 +14,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const platformRoleCatalogCodeIndex = new Map();
   const platformRolePermissionGrantsByRoleId = new Map();
   const orgsById = new Map();
+  const ownerTransferLocksByOrgId = new Map();
   const orgIdByName = new Map();
   const membershipsByOrgId = new Map();
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
@@ -762,6 +763,54 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         org_id: normalizedOrgId,
         owner_user_id: normalizedOwnerUserId
       };
+    },
+
+    findOrganizationById: async ({ orgId }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      if (!normalizedOrgId) {
+        return null;
+      }
+      const org = orgsById.get(normalizedOrgId);
+      if (!org) {
+        return null;
+      }
+      return {
+        org_id: normalizedOrgId,
+        org_name: String(org.name || '').trim(),
+        owner_user_id: String(org.ownerUserId || '').trim(),
+        status: normalizeOrgStatus(org.status),
+        created_by_user_id: org.createdByUserId
+          ? String(org.createdByUserId).trim()
+          : null
+      };
+    },
+
+    acquireOwnerTransferLock: async ({
+      orgId,
+      requestId,
+      operatorUserId
+    }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      if (!normalizedOrgId) {
+        return false;
+      }
+      if (ownerTransferLocksByOrgId.has(normalizedOrgId)) {
+        return false;
+      }
+      ownerTransferLocksByOrgId.set(normalizedOrgId, {
+        request_id: String(requestId || '').trim() || 'request_id_unset',
+        operator_user_id: String(operatorUserId || '').trim() || 'unknown',
+        started_at: new Date().toISOString()
+      });
+      return true;
+    },
+
+    releaseOwnerTransferLock: async ({ orgId }) => {
+      const normalizedOrgId = String(orgId || '').trim();
+      if (!normalizedOrgId) {
+        return false;
+      }
+      return ownerTransferLocksByOrgId.delete(normalizedOrgId);
     },
 
     updateOrganizationStatus: async ({

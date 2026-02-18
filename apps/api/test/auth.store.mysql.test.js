@@ -2428,10 +2428,167 @@ test('createOrganizationWithOwner rejects when transaction writes are not applie
   );
 });
 
+test('findOrganizationById returns normalized org projection when org exists', async () => {
+  let selectSql = '';
+  let selectParams = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql, params = []) => {
+        const normalizedSql = String(sql);
+        if (normalizedSql.includes('FROM orgs') && normalizedSql.includes('WHERE BINARY id = ?')) {
+          selectSql = normalizedSql;
+          selectParams = params;
+          return [{
+            id: 'org-owner-transfer-1',
+            name: '负责人变更组织',
+            owner_user_id: 'owner-user-1',
+            status: 'enabled',
+            created_by_user_id: 'operator-user-1'
+          }];
+        }
+        assert.fail(`unexpected query: ${normalizedSql}`);
+        return [];
+      },
+      inTransaction: async () => {
+        assert.fail('findOrganizationById should not require transaction');
+      }
+    }
+  });
+
+  const result = await store.findOrganizationById({
+    orgId: 'org-owner-transfer-1'
+  });
+
+  assert.match(selectSql, /SELECT id, name, owner_user_id, status, created_by_user_id/i);
+  assert.deepEqual(selectParams, ['org-owner-transfer-1']);
+  assert.deepEqual(result, {
+    org_id: 'org-owner-transfer-1',
+    org_name: '负责人变更组织',
+    owner_user_id: 'owner-user-1',
+    status: 'active',
+    created_by_user_id: 'operator-user-1'
+  });
+});
+
+test('findOrganizationById returns null when target org does not exist', async () => {
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        const normalizedSql = String(sql);
+        if (normalizedSql.includes('FROM orgs') && normalizedSql.includes('WHERE BINARY id = ?')) {
+          return [];
+        }
+        assert.fail(`unexpected query: ${normalizedSql}`);
+        return [];
+      },
+      inTransaction: async () => {
+        assert.fail('findOrganizationById should not require transaction');
+      }
+    }
+  });
+
+  const result = await store.findOrganizationById({
+    orgId: 'org-owner-transfer-missing'
+  });
+  assert.equal(result, null);
+});
+
+test('acquireOwnerTransferLock uses mysql GET_LOCK with deterministic hashed key', async () => {
+  let lockSql = '';
+  let lockParams = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql, params = []) => {
+        const normalizedSql = String(sql);
+        if (normalizedSql.includes('GET_LOCK')) {
+          lockSql = normalizedSql;
+          lockParams = params;
+          return [{ lock_acquired: 1 }];
+        }
+        assert.fail(`unexpected query: ${normalizedSql}`);
+        return [];
+      },
+      inTransaction: async () => {
+        assert.fail('acquireOwnerTransferLock should not require transaction');
+      }
+    }
+  });
+
+  const acquired = await store.acquireOwnerTransferLock({
+    orgId: 'org-owner-transfer-lock-sql',
+    timeoutSeconds: 0
+  });
+
+  assert.equal(acquired, true);
+  assert.match(lockSql, /SELECT GET_LOCK\(\?, \?\) AS lock_acquired/i);
+  assert.equal(lockParams.length, 2);
+  assert.equal(lockParams[1], 0);
+  assert.equal(typeof lockParams[0], 'string');
+  assert.match(lockParams[0], /^neweast:owner-transfer:[0-9a-f]{40}$/);
+  assert.ok(lockParams[0].length <= 64);
+});
+
+test('acquireOwnerTransferLock returns false when mysql lock is already held', async () => {
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        const normalizedSql = String(sql);
+        if (normalizedSql.includes('GET_LOCK')) {
+          return [{ lock_acquired: 0 }];
+        }
+        assert.fail(`unexpected query: ${normalizedSql}`);
+        return [];
+      },
+      inTransaction: async () => {
+        assert.fail('acquireOwnerTransferLock should not require transaction');
+      }
+    }
+  });
+
+  const acquired = await store.acquireOwnerTransferLock({
+    orgId: 'org-owner-transfer-lock-held',
+    timeoutSeconds: 0
+  });
+
+  assert.equal(acquired, false);
+});
+
+test('releaseOwnerTransferLock uses mysql RELEASE_LOCK and returns release state', async () => {
+  const queryHistory = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql, params = []) => {
+        const normalizedSql = String(sql);
+        queryHistory.push({ sql: normalizedSql, params });
+        if (normalizedSql.includes('RELEASE_LOCK')) {
+          return [{ lock_released: 1 }];
+        }
+        assert.fail(`unexpected query: ${normalizedSql}`);
+        return [];
+      },
+      inTransaction: async () => {
+        assert.fail('releaseOwnerTransferLock should not require transaction');
+      }
+    }
+  });
+
+  const released = await store.releaseOwnerTransferLock({
+    orgId: 'org-owner-transfer-lock-release'
+  });
+
+  assert.equal(released, true);
+  assert.equal(queryHistory.length, 1);
+  assert.match(queryHistory[0].sql, /SELECT RELEASE_LOCK\(\?\) AS lock_released/i);
+  assert.equal(queryHistory[0].params.length, 1);
+  assert.match(queryHistory[0].params[0], /^neweast:owner-transfer:[0-9a-f]{40}$/);
+});
+
 test('updateOrganizationStatus updates org status and converges active member tenant sessions only', async () => {
   let inTransactionCalls = 0;
   const revokeTenantSessionParams = [];
   const revokeTenantRefreshParams = [];
+  const orgSelectSql = [];
+  const orgUpdateSql = [];
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -2446,9 +2603,11 @@ test('updateOrganizationStatus updates org status and converges active member te
               normalizedSql.includes('SELECT id, status, owner_user_id')
               && normalizedSql.includes('FROM orgs')
             ) {
+              orgSelectSql.push(normalizedSql);
               return [{ id: 'org-status-1', status: 'active', owner_user_id: 'u-owner' }];
             }
             if (normalizedSql.includes('UPDATE orgs')) {
+              orgUpdateSql.push(normalizedSql);
               return { affectedRows: 1 };
             }
             if (
@@ -2506,6 +2665,8 @@ test('updateOrganizationStatus updates org status and converges active member te
     revokeTenantRefreshParams.map((params) => params?.[0]).sort(),
     ['u-member', 'u-owner']
   );
+  assert.equal(orgSelectSql.some((sql) => sql.includes('WHERE BINARY id = ?')), true);
+  assert.equal(orgUpdateSql.some((sql) => sql.includes('WHERE BINARY id = ?')), true);
 });
 
 test('updateOrganizationStatus treats same-status change as no-op without session convergence', async () => {

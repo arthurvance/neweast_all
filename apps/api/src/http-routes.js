@@ -323,6 +323,19 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformOwnerTransfer: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      platformOrg.ownerTransfer({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
     platformListRoles: async (
       requestId,
       authorization,

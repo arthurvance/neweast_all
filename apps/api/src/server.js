@@ -10,7 +10,9 @@ const {
 } = require('./modules/auth/route-preauthorization');
 const {
   PLATFORM_ORG_CREATE_ROUTE_KEY,
-  PLATFORM_ORG_STATUS_ROUTE_KEY
+  PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
+  PLATFORM_ORG_OWNER_TRANSFER_PATH
 } = require('./modules/platform/org.constants');
 const {
   PLATFORM_ROLE_LIST_ROUTE_KEY,
@@ -80,6 +82,7 @@ const parseRequestPath = (inputPath) => {
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+const OWNER_TRANSFER_ORG_ID_MAX_LENGTH = 64;
 const DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 30 * 1000;
 const DEFAULT_IDEMPOTENCY_WAIT_TIMEOUT_MS = 5000;
@@ -96,12 +99,17 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES = new Set([
   422,
   429
 ]);
+const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT = new Set([
+  ...IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES,
+  409
+]);
 const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/tenant/member-admin/provision-user',
   'POST /auth/platform/member-admin/provision-user',
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
@@ -112,6 +120,7 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
@@ -122,6 +131,7 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
@@ -132,6 +142,10 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [
+    PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
   [PLATFORM_ROLE_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ROLE_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
@@ -171,6 +185,8 @@ const CORS_METHOD_ORDER_INDEX = new Map(
   CORS_METHOD_ORDER.map((method, index) => [method, index])
 );
 const REQUEST_ID_CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]+/g;
+const OWNER_TRANSFER_CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
+const OWNER_TRANSFER_WHITESPACE_PATTERN = /\s/;
 
 const parseCorsAllowedOrigins = (rawOrigins, nodeEnv = 'development') => {
   const hasExplicitOrigins =
@@ -601,7 +617,33 @@ const toIdempotencyScopeWindowKey = ({
 }) =>
   `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}:${hashFingerprint(routeVariant || '')}`;
 
-const shouldPersistIdempotencyResponse = ({ routeKey, statusCode }) => {
+const parseProblemErrorCodeFromResponse = (response = {}) => {
+  if (!response || typeof response !== 'object') {
+    return '';
+  }
+  if (typeof response.body !== 'string') {
+    return '';
+  }
+  try {
+    const parsed = JSON.parse(response.body);
+    if (
+      !parsed
+      || typeof parsed !== 'object'
+      || Array.isArray(parsed)
+    ) {
+      return '';
+    }
+    return String(parsed.error_code || '').trim();
+  } catch (_error) {
+    return '';
+  }
+};
+
+const shouldPersistIdempotencyResponse = ({
+  routeKey,
+  statusCode,
+  response = null
+}) => {
   const resolvedStatusCode = Number(statusCode);
   if (!Number.isFinite(resolvedStatusCode) || resolvedStatusCode >= 500) {
     return false;
@@ -611,6 +653,13 @@ const shouldPersistIdempotencyResponse = ({ routeKey, statusCode }) => {
   );
   if (!(nonCacheableStatuses instanceof Set)) {
     return true;
+  }
+  if (
+    String(routeKey || '').trim() === PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY
+    && resolvedStatusCode === 409
+  ) {
+    const errorCode = parseProblemErrorCodeFromResponse(response);
+    return errorCode !== 'ORG-409-OWNER-TRANSFER-CONFLICT';
   }
   return !nonCacheableStatuses.has(resolvedStatusCode);
 };
@@ -889,6 +938,138 @@ const createIdempotencyPendingTimeoutProblem = () =>
     }
   });
 
+const normalizeOwnerTransferOrgIdFromBody = (payloadBody = {}) => {
+  if (
+    !payloadBody
+    || typeof payloadBody !== 'object'
+    || Array.isArray(payloadBody)
+    || !Object.prototype.hasOwnProperty.call(payloadBody, 'org_id')
+  ) {
+    return null;
+  }
+  if (typeof payloadBody.org_id !== 'string') {
+    return null;
+  }
+  const orgIdRaw = payloadBody.org_id;
+  const normalizedOrgId = orgIdRaw.trim();
+  if (
+    !normalizedOrgId
+    || normalizedOrgId !== orgIdRaw
+    || normalizedOrgId.length > OWNER_TRANSFER_ORG_ID_MAX_LENGTH
+    || OWNER_TRANSFER_WHITESPACE_PATTERN.test(normalizedOrgId)
+    || OWNER_TRANSFER_CONTROL_CHAR_PATTERN.test(normalizedOrgId)
+  ) {
+    return null;
+  }
+  return normalizedOrgId;
+};
+
+const withOwnerTransferIdempotencyProblemContract = ({
+  problem,
+  body = {},
+  outcome = ''
+} = {}) => {
+  if (!(problem instanceof AuthProblemError)) {
+    return problem;
+  }
+  const baseExtensions =
+    problem.extensions
+    && typeof problem.extensions === 'object'
+    && !Array.isArray(problem.extensions)
+      ? problem.extensions
+      : {};
+  const normalizedOutcome = String(outcome || '').trim().toLowerCase();
+  return new AuthProblemError({
+    status: problem.status,
+    title: problem.title,
+    detail: problem.detail,
+    errorCode: problem.errorCode,
+    extensions: {
+      ...baseExtensions,
+      org_id: normalizeOwnerTransferOrgIdFromBody(body),
+      old_owner_user_id: null,
+      new_owner_user_id: null,
+      result_status: normalizedOutcome === 'conflict' ? 'conflict' : 'rejected',
+      retryable: baseExtensions.retryable === true
+    }
+  });
+};
+
+const toRouteSpecificIdempotencyProblem = ({
+  routeKey,
+  problem,
+  body = {},
+  outcome = ''
+} = {}) => {
+  if (routeKey === PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY) {
+    return withOwnerTransferIdempotencyProblemContract({
+      problem,
+      body,
+      outcome
+    });
+  }
+  return problem;
+};
+
+const isOwnerTransferPath = (routePath = '') =>
+  normalizePathname(String(routePath || '')) === PLATFORM_ORG_OWNER_TRANSFER_PATH;
+
+const withOwnerTransferParseProblemContract = ({
+  problemResponse,
+  routePath = ''
+} = {}) => {
+  if (!isOwnerTransferPath(routePath)) {
+    return problemResponse;
+  }
+  if (
+    !problemResponse
+    || typeof problemResponse !== 'object'
+    || typeof problemResponse.body !== 'string'
+  ) {
+    return problemResponse;
+  }
+  let parsedProblemBody;
+  try {
+    parsedProblemBody = JSON.parse(problemResponse.body);
+  } catch (_error) {
+    return problemResponse;
+  }
+  if (
+    !parsedProblemBody
+    || typeof parsedProblemBody !== 'object'
+    || Array.isArray(parsedProblemBody)
+  ) {
+    return problemResponse;
+  }
+
+  const patchedProblemBody = {
+    ...parsedProblemBody,
+    org_id: Object.prototype.hasOwnProperty.call(parsedProblemBody, 'org_id')
+      ? parsedProblemBody.org_id
+      : null,
+    old_owner_user_id: Object.prototype.hasOwnProperty.call(
+      parsedProblemBody,
+      'old_owner_user_id'
+    )
+      ? parsedProblemBody.old_owner_user_id
+      : null,
+    new_owner_user_id: Object.prototype.hasOwnProperty.call(
+      parsedProblemBody,
+      'new_owner_user_id'
+    )
+      ? parsedProblemBody.new_owner_user_id
+      : null,
+    result_status:
+      parsedProblemBody.result_status === 'conflict' ? 'conflict' : 'rejected',
+    retryable: parsedProblemBody.retryable === true
+  };
+
+  return {
+    ...problemResponse,
+    body: JSON.stringify(patchedProblemBody)
+  };
+};
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const waitForResolvedIdempotencyEntry = async ({
@@ -1128,7 +1309,15 @@ const createRouteTable = ({
     }
     const normalizedIdempotencyKey = normalizeIdempotencyKey(headers);
     if (normalizedIdempotencyKey.invalid) {
-      return authProblemResponse(createInvalidIdempotencyKeyProblem(), requestId);
+      return authProblemResponse(
+        toRouteSpecificIdempotencyProblem({
+          routeKey,
+          problem: createInvalidIdempotencyKeyProblem(),
+          body,
+          outcome: 'invalid_key'
+        }),
+        requestId
+      );
     }
     if (!normalizedIdempotencyKey.present) {
       return execute();
@@ -1138,7 +1327,15 @@ const createRouteTable = ({
       !idempotencyKey
       || idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH
     ) {
-      return authProblemResponse(createInvalidIdempotencyKeyProblem(), requestId);
+      return authProblemResponse(
+        toRouteSpecificIdempotencyProblem({
+          routeKey,
+          problem: createInvalidIdempotencyKeyProblem(),
+          body,
+          outcome: 'invalid_key'
+        }),
+        requestId
+      );
     }
 
     const authorizationContext = getAuthorizationContext() || null;
@@ -1188,7 +1385,15 @@ const createRouteTable = ({
         authorizationContext,
         metadata
       });
-      return authProblemResponse(problem, requestId);
+      return authProblemResponse(
+        toRouteSpecificIdempotencyProblem({
+          routeKey,
+          problem,
+          body,
+          outcome
+        }),
+        requestId
+      );
     };
     const maxAcquireAttempts = 2;
 
@@ -1220,7 +1425,8 @@ const createRouteTable = ({
           if (
             shouldPersistIdempotencyResponse({
               routeKey,
-              statusCode: resolvedStatus
+              statusCode: resolvedStatus,
+              response: responseSnapshot
             })
           ) {
             try {
@@ -1367,7 +1573,15 @@ const createRouteTable = ({
           outcome: 'conflict',
           authorizationContext
         });
-        return authProblemResponse(createIdempotencyConflictProblem(), requestId);
+        return authProblemResponse(
+          toRouteSpecificIdempotencyProblem({
+            routeKey,
+            problem: createIdempotencyConflictProblem(),
+            body,
+            outcome: 'conflict'
+          }),
+          requestId
+        );
       }
 
       if (existingEntry.state === 'resolved') {
@@ -1433,7 +1647,15 @@ const createRouteTable = ({
           outcome: 'conflict',
           authorizationContext
         });
-        return authProblemResponse(createIdempotencyConflictProblem(), requestId);
+        return authProblemResponse(
+          toRouteSpecificIdempotencyProblem({
+            routeKey,
+            problem: createIdempotencyConflictProblem(),
+            body,
+            outcome: 'conflict'
+          }),
+          requestId
+        );
       }
       if (waitResult.state === 'resolved') {
         const replayResponse = withPatchedResponseRequestId(
@@ -1607,6 +1829,21 @@ const createRouteTable = ({
           runAuthRoute(
             () =>
               handlers.platformUpdateOrgStatus(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformOwnerTransfer(
                 requestId,
                 headers.authorization,
                 body || {},
@@ -2118,7 +2355,11 @@ const dispatchApiRoute = async ({
       headers
     });
     if (authorizationFailure) {
-      return finalizeResponse(authorizationFailure);
+      const routeSpecificAuthorizationFailure = withOwnerTransferParseProblemContract({
+        problemResponse: authorizationFailure,
+        routePath
+      });
+      return finalizeResponse(routeSpecificAuthorizationFailure);
     }
     authorizationContext = resolvedAuthorizationContext;
     const routeResponse = await routeHandler();
@@ -2246,9 +2487,15 @@ const createServer = (config, options = {}) => {
 
     const bodyResult = await readJsonBody(req, jsonBodyLimitBytes);
     if (bodyResult.error) {
-      res.statusCode = bodyResult.error.status;
+      const parsedBodyRoutePath = parseRequestPath(req.url || '/');
+      const routeSpecificBodyError = withOwnerTransferParseProblemContract({
+        problemResponse: bodyResult.error,
+        routePath: parsedBodyRoutePath.pathname
+      });
+
+      res.statusCode = routeSpecificBodyError.status;
       const responseHeaders = applyCorsPolicyToHeaders(
-        bodyResult.error.headers,
+        routeSpecificBodyError.headers,
         corsPolicy,
         req.headers.origin
       );
@@ -2262,7 +2509,7 @@ const createServer = (config, options = {}) => {
           }
         });
       }
-      res.end(bodyResult.error.body);
+      res.end(routeSpecificBodyError.body);
       return;
     }
     const body = bodyResult.body || {};

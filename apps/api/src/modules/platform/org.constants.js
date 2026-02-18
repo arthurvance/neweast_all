@@ -2,6 +2,8 @@ const PLATFORM_ORG_CREATE_PATH = '/platform/orgs';
 const PLATFORM_ORG_CREATE_ROUTE_KEY = 'POST /platform/orgs';
 const PLATFORM_ORG_STATUS_PATH = '/platform/orgs/status';
 const PLATFORM_ORG_STATUS_ROUTE_KEY = 'POST /platform/orgs/status';
+const PLATFORM_ORG_OWNER_TRANSFER_PATH = '/platform/orgs/owner-transfer';
+const PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY = 'POST /platform/orgs/owner-transfer';
 const PLATFORM_ORG_CREATE_PERMISSION_CODE = 'platform.member_admin.operate';
 const PLATFORM_ORG_SCOPE = 'platform';
 
@@ -10,6 +12,8 @@ module.exports = {
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_PATH,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ORG_OWNER_TRANSFER_PATH,
+  PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
   PLATFORM_ORG_CREATE_PERMISSION_CODE,
   PLATFORM_ORG_SCOPE
 };
