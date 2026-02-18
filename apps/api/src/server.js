@@ -16,7 +16,9 @@ const {
   PLATFORM_ROLE_LIST_ROUTE_KEY,
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
-  PLATFORM_ROLE_DELETE_ROUTE_KEY
+  PLATFORM_ROLE_DELETE_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY
 } = require('./modules/platform/role.constants');
 const {
   PLATFORM_USER_CREATE_ROUTE_KEY,
@@ -103,6 +105,7 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
@@ -112,6 +115,7 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
@@ -121,6 +125,7 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
@@ -130,6 +135,7 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_ROLE_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ROLE_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
 ]);
@@ -516,6 +522,7 @@ const normalizeRouteParamsForRoute = ({
   if (
     routeKey === PLATFORM_ROLE_UPDATE_ROUTE_KEY
     || routeKey === PLATFORM_ROLE_DELETE_ROUTE_KEY
+    || routeKey === PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY
   ) {
     normalizedRouteParams.role_id = String(
       normalizedRouteParams.role_id || ''
@@ -1659,6 +1666,33 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 getRouteParams(),
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.platformGetRolePermissions(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformReplaceRolePermissions(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
                 getAuthorizationContext()
               ),
             requestId

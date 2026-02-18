@@ -387,7 +387,7 @@ test('platform role-facts replace converges session and invalidates previous acc
       },
       body: {
         user_id: 'user-platform-role-admin',
-        roles: []
+        roles: [{ role_id: 'sys_admin', status: 'active' }]
       }
     },
     context
@@ -397,10 +397,10 @@ test('platform role-facts replace converges session and invalidates previous acc
   assert.equal(replaced.body.reason, 'ok');
   assert.deepEqual(replaced.body.platform_permission_context, {
     scope_label: '平台权限（角色并集）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_member_admin: true,
+    can_operate_member_admin: true,
+    can_view_billing: true,
+    can_operate_billing: true
   });
 
   const oldAccess = await callRoute(
@@ -504,13 +504,7 @@ test('platform role-facts replace replays the same Idempotency-Key without dupli
     roles: [
       {
         role_id: 'sys_admin',
-        status: 'active',
-        permission: {
-          can_view_member_admin: true,
-          can_operate_member_admin: false,
-          can_view_billing: false,
-          can_operate_billing: false
-        }
+        status: 'active'
       }
     ]
   };
@@ -626,7 +620,7 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
       },
       body: {
         user_id: 'user-platform-role-target-idempotency-conflict',
-        roles: []
+        roles: [{ role_id: 'sys_admin', status: 'active' }]
       }
     },
     context
@@ -1679,7 +1673,7 @@ test('platform role-facts replace maps degraded sync reason to AUTH-503-PLATFORM
       },
       body: {
         user_id: 'user-platform-role-admin-6',
-        roles: []
+        roles: [{ role_id: 'sys_admin', status: 'active' }]
       }
     },
     context

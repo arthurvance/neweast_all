@@ -375,6 +375,34 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformGetRolePermissions: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext
+    ) =>
+      platformRole.getRolePermissions({
+        requestId,
+        authorization,
+        params: params || {},
+        authorizationContext
+      }),
+
+    platformReplaceRolePermissions: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext
+    ) =>
+      platformRole.replaceRolePermissions({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        authorizationContext
+      }),
+
     platformCreateUser: async (
       requestId,
       authorization,

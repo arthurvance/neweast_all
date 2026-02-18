@@ -2484,7 +2484,7 @@ test('platform role facts replace fails closed when platform role catalog table 
   );
 });
 
-test('platform role facts replace fails closed for empty role set when platform role catalog table is unavailable', async () => {
+test('platform role facts replace fails closed when platform role catalog table is unavailable', async () => {
   const service = createAuthService({
     seedUsers: [
       buildPlatformRoleFactsOperatorSeed(),
@@ -2499,7 +2499,7 @@ test('platform role facts replace fails closed for empty role set when platform 
     ]
   });
 
-  service._internals.authStore.countPlatformRoleCatalogEntries = async () => {
+  service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => {
     const missingTableError = new Error(
       "Table 'neweast.platform_role_catalog' doesn't exist"
     );
@@ -2518,7 +2518,7 @@ test('platform role facts replace fails closed for empty role set when platform 
         requestId: 'req-role-catalog-missing-empty-roles',
         accessToken: operatorLogin.access_token,
         userId: 'platform-role-catalog-missing-empty-roles-user',
-        roles: [],
+        roles: [{ role_id: 'sys_admin', status: 'active' }],
         enforceRoleCatalogValidation: true
       }),
     (error) => {
@@ -2577,7 +2577,7 @@ test('platform role facts replace fails closed when role catalog lookup capabili
   );
 });
 
-test('platform role facts replace fails closed for empty role set when role catalog lookup capability is unavailable', async () => {
+test('platform role facts replace fails closed when role catalog lookup capability is unavailable', async () => {
   const service = createAuthService({
     seedUsers: [
       buildPlatformRoleFactsOperatorSeed(),
@@ -2605,7 +2605,7 @@ test('platform role facts replace fails closed for empty role set when role cata
         requestId: 'req-role-catalog-unsupported-empty-roles',
         accessToken: operatorLogin.access_token,
         userId: 'platform-role-catalog-unsupported-empty-roles-user',
-        roles: [],
+        roles: [{ role_id: 'sys_admin', status: 'active' }],
         enforceRoleCatalogValidation: true
       }),
     (error) => {
@@ -2838,6 +2838,774 @@ test('platform role facts replace maps unknown sync reason to AUTH-503-PLATFORM-
       return true;
     }
   );
+});
+
+test('replacePlatformRolePermissionGrants re-loads user role facts after write to avoid stale overwrite', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-grants-stale-target',
+        phone: '13810000433',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_alpha',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          },
+          {
+            roleId: 'role_beta',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_alpha',
+    code: 'ROLE_ALPHA',
+    name: 'Role Alpha'
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_beta',
+    code: 'ROLE_BETA',
+    name: 'Role Beta'
+  });
+  await service.replacePlatformRolePermissionGrants({
+    requestId: 'req-role-permission-grants-stale-prime-role-beta',
+    roleId: 'role_beta',
+    permissionCodes: ['platform.billing.view'],
+    operatorUserId: 'platform-role-grants-operator',
+    operatorSessionId: 'platform-role-grants-operator-session'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  const originalReplacePlatformRolesAndSyncSnapshot = authStore.replacePlatformRolesAndSyncSnapshot;
+
+  let listRoleFactsCallCount = 0;
+  let capturedSyncedRoles = null;
+  authStore.listUserIdsByPlatformRoleId = async ({ roleId }) =>
+    String(roleId || '').trim().toLowerCase() === 'role_alpha'
+      ? ['platform-role-grants-stale-target']
+      : [];
+  authStore.listPlatformRoleFactsByUserId = async () => {
+    listRoleFactsCallCount += 1;
+    if (listRoleFactsCallCount === 1) {
+      return [
+        {
+          roleId: 'role_alpha',
+          status: 'active',
+          permission: {
+            canViewMemberAdmin: true,
+            canOperateMemberAdmin: false,
+            canViewBilling: false,
+            canOperateBilling: false
+          }
+        },
+        {
+          roleId: 'role_beta',
+          status: 'active',
+          permission: {
+            canViewMemberAdmin: false,
+            canOperateMemberAdmin: false,
+            canViewBilling: false,
+            canOperateBilling: false
+          }
+        }
+      ];
+    }
+    return [
+      {
+        roleId: 'role_alpha',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: false,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      },
+      {
+        roleId: 'role_beta',
+        status: 'active',
+        permission: {
+          canViewMemberAdmin: false,
+          canOperateMemberAdmin: false,
+          canViewBilling: true,
+          canOperateBilling: false
+        }
+      }
+    ];
+  };
+  authStore.replacePlatformRolesAndSyncSnapshot = async ({ roles }) => {
+    capturedSyncedRoles = roles;
+    return {
+      synced: true,
+      reason: 'ok'
+    };
+  };
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-role-permission-grants-stale-refresh',
+      roleId: 'role_alpha',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-grants-operator',
+      operatorSessionId: 'platform-role-grants-operator-session'
+    });
+
+    assert.equal(result.role_id, 'role_alpha');
+    assert.equal(result.affected_user_count, 1);
+    assert.equal(listRoleFactsCallCount, 2);
+    assert.ok(Array.isArray(capturedSyncedRoles));
+    const roleBeta = capturedSyncedRoles.find((role) => role.roleId === 'role_beta');
+    assert.ok(roleBeta);
+    assert.equal(roleBeta.permission.canViewBilling, true);
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+    authStore.replacePlatformRolesAndSyncSnapshot = originalReplacePlatformRolesAndSyncSnapshot;
+  }
+});
+
+test('replacePlatformRolePermissionGrants re-computes non-target role permissions from grants source', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-grants-source-target',
+        phone: '13810000435',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_alpha',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          },
+          {
+            roleId: 'role_beta',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_alpha',
+    code: 'ROLE_ALPHA_GRANTS_SOURCE',
+    name: 'Role Alpha Grants Source'
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_beta',
+    code: 'ROLE_BETA_GRANTS_SOURCE',
+    name: 'Role Beta Grants Source'
+  });
+
+  await service.replacePlatformRolePermissionGrants({
+    requestId: 'req-role-permission-grants-source-beta',
+    roleId: 'role_beta',
+    permissionCodes: ['platform.billing.view'],
+    operatorUserId: 'platform-role-grants-operator',
+    operatorSessionId: 'platform-role-grants-operator-session'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  const originalReplacePlatformRolesAndSyncSnapshot = authStore.replacePlatformRolesAndSyncSnapshot;
+
+  let capturedSyncedRoles = null;
+  authStore.listUserIdsByPlatformRoleId = async ({ roleId }) =>
+    String(roleId || '').trim().toLowerCase() === 'role_alpha'
+      ? ['platform-role-grants-source-target']
+      : [];
+  authStore.listPlatformRoleFactsByUserId = async () => [
+    {
+      roleId: 'role_alpha',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: true,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    },
+    {
+      roleId: 'role_beta',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: false,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ];
+  authStore.replacePlatformRolesAndSyncSnapshot = async ({ roles }) => {
+    capturedSyncedRoles = roles;
+    return {
+      synced: true,
+      reason: 'ok'
+    };
+  };
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-role-permission-grants-source-alpha',
+      roleId: 'role_alpha',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-grants-operator',
+      operatorSessionId: 'platform-role-grants-operator-session'
+    });
+
+    assert.equal(result.role_id, 'role_alpha');
+    assert.equal(result.affected_user_count, 1);
+    assert.ok(Array.isArray(capturedSyncedRoles));
+    const roleBeta = capturedSyncedRoles.find((role) => role.roleId === 'role_beta');
+    assert.ok(roleBeta);
+    assert.equal(roleBeta.permission.canViewBilling, true);
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+    authStore.replacePlatformRolesAndSyncSnapshot = originalReplacePlatformRolesAndSyncSnapshot;
+  }
+});
+
+test('replacePlatformRolePermissionGrants maps invalid stored role facts to snapshot degraded error', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-grants-invalid-role-fact-target',
+        phone: '13810000436',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_alpha',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_alpha',
+    code: 'ROLE_ALPHA_INVALID_FACT',
+    name: 'Role Alpha Invalid Fact'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  authStore.listUserIdsByPlatformRoleId = async ({ roleId }) =>
+    String(roleId || '').trim().toLowerCase() === 'role_alpha'
+      ? ['platform-role-grants-invalid-role-fact-target']
+      : [];
+  authStore.listPlatformRoleFactsByUserId = async () => [
+    {
+      roleId: '',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: false,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replacePlatformRolePermissionGrants({
+          requestId: 'req-role-permission-grants-invalid-role-facts',
+          roleId: 'role_alpha',
+          permissionCodes: ['platform.member_admin.view'],
+          operatorUserId: 'platform-role-grants-operator',
+          operatorSessionId: 'platform-role-grants-operator-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+        assert.equal(
+          error.extensions.degradation_reason,
+          'platform-role-permission-role-facts-invalid'
+        );
+        return true;
+      }
+    );
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+  }
+});
+
+test('listPlatformRolePermissionGrants fails closed when grants dependency returns malformed shape', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListPlatformRolePermissionGrantsByRoleIds =
+    authStore.listPlatformRolePermissionGrantsByRoleIds;
+  authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
+    {
+      permissionCodes: ['platform.member_admin.view']
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.listPlatformRolePermissionGrants({
+          roleId: 'sys_admin'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+        assert.equal(
+          error.extensions.degradation_reason,
+          'platform-role-permission-grants-invalid'
+        );
+        return true;
+      }
+    );
+  } finally {
+    authStore.listPlatformRolePermissionGrantsByRoleIds =
+      originalListPlatformRolePermissionGrantsByRoleIds;
+  }
+});
+
+test('replacePlatformRolePermissionGrants re-loads affected users after write and resyncs newly matched users', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_gamma',
+    code: 'ROLE_GAMMA',
+    name: 'Role Gamma'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  const originalReplacePlatformRolesAndSyncSnapshot = authStore.replacePlatformRolesAndSyncSnapshot;
+
+  let listUserIdsCallCount = 0;
+  const syncedUserIds = [];
+  authStore.listUserIdsByPlatformRoleId = async () => {
+    listUserIdsCallCount += 1;
+    return listUserIdsCallCount === 1
+      ? ['platform-role-grants-user-a']
+      : ['platform-role-grants-user-a', 'platform-role-grants-user-b'];
+  };
+  authStore.listPlatformRoleFactsByUserId = async () => [
+    {
+      roleId: 'role_gamma',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: false,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ];
+  authStore.replacePlatformRolesAndSyncSnapshot = async ({ userId }) => {
+    syncedUserIds.push(String(userId || '').trim());
+    return {
+      synced: true,
+      reason: 'ok'
+    };
+  };
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-role-permission-grants-reload-affected-users',
+      roleId: 'role_gamma',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-grants-operator',
+      operatorSessionId: 'platform-role-grants-operator-session'
+    });
+
+    assert.equal(listUserIdsCallCount, 2);
+    assert.equal(result.affected_user_count, 2);
+    assert.deepEqual(
+      [...new Set(syncedUserIds)].sort((left, right) => left.localeCompare(right)),
+      ['platform-role-grants-user-a', 'platform-role-grants-user-b']
+    );
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+    authStore.replacePlatformRolesAndSyncSnapshot = originalReplacePlatformRolesAndSyncSnapshot;
+  }
+});
+
+test('replacePlatformRolePermissionGrants rolls back grants and synced users when resync fails mid-flight', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-grants-rollback-user-a',
+        phone: '13810000456',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_delta',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'platform-role-grants-rollback-user-b',
+        phone: '13810000457',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_delta',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_delta',
+    code: 'ROLE_DELTA_ROLLBACK',
+    name: 'Role Delta Rollback'
+  });
+  await service.replacePlatformRolePermissionGrants({
+    requestId: 'req-role-permission-grants-rollback-prime',
+    roleId: 'role_delta',
+    permissionCodes: ['platform.member_admin.view'],
+    operatorUserId: 'platform-role-grants-operator',
+    operatorSessionId: 'platform-role-grants-operator-session'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  const originalReplacePlatformRolesAndSyncSnapshot = authStore.replacePlatformRolesAndSyncSnapshot;
+
+  const syncCallUserIds = [];
+  let injectedFailure = false;
+  authStore.listUserIdsByPlatformRoleId = async ({ roleId }) =>
+    String(roleId || '').trim().toLowerCase() === 'role_delta'
+      ? [
+        'platform-role-grants-rollback-user-a',
+        'platform-role-grants-rollback-user-b'
+      ]
+      : [];
+  authStore.listPlatformRoleFactsByUserId = async ({ userId }) => [
+    {
+      roleId: 'role_delta',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: true,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ];
+  authStore.replacePlatformRolesAndSyncSnapshot = async ({ userId }) => {
+    const normalizedUserId = String(userId || '').trim();
+    syncCallUserIds.push(normalizedUserId);
+    if (
+      normalizedUserId === 'platform-role-grants-rollback-user-b'
+      && injectedFailure === false
+    ) {
+      injectedFailure = true;
+      return {
+        synced: false,
+        reason: 'db-deadlock'
+      };
+    }
+    return {
+      synced: true,
+      reason: 'ok'
+    };
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replacePlatformRolePermissionGrants({
+          requestId: 'req-role-permission-grants-rollback-failed',
+          roleId: 'role_delta',
+          permissionCodes: ['platform.billing.view'],
+          operatorUserId: 'platform-role-grants-operator',
+          operatorSessionId: 'platform-role-grants-operator-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+        assert.equal(error.extensions.degradation_reason, 'db-deadlock');
+        return true;
+      }
+    );
+
+    const grantsAfterRollback = await service.listPlatformRolePermissionGrants({
+      roleId: 'role_delta'
+    });
+    assert.deepEqual(
+      grantsAfterRollback.permission_codes,
+      ['platform.member_admin.view']
+    );
+    assert.deepEqual(
+      syncCallUserIds,
+      [
+        'platform-role-grants-rollback-user-a',
+        'platform-role-grants-rollback-user-b',
+        'platform-role-grants-rollback-user-a'
+      ]
+    );
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+    authStore.replacePlatformRolesAndSyncSnapshot = originalReplacePlatformRolesAndSyncSnapshot;
+  }
+});
+
+test('replacePlatformRolePermissionGrants loads grants in batch for affected users', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-grants-batch-user-a',
+        phone: '13810000458',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_epsilon',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          },
+          {
+            roleId: 'role_zeta',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'platform-role-grants-batch-user-b',
+        phone: '13810000459',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_epsilon',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          },
+          {
+            roleId: 'role_zeta',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_epsilon',
+    code: 'ROLE_EPSILON_BATCH',
+    name: 'Role Epsilon Batch'
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_zeta',
+    code: 'ROLE_ZETA_BATCH',
+    name: 'Role Zeta Batch'
+  });
+  await service.replacePlatformRolePermissionGrants({
+    requestId: 'req-role-permission-grants-batch-prime-zeta',
+    roleId: 'role_zeta',
+    permissionCodes: ['platform.billing.view'],
+    operatorUserId: 'platform-role-grants-operator',
+    operatorSessionId: 'platform-role-grants-operator-session'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListPlatformRolePermissionGrantsByRoleIds =
+    authStore.listPlatformRolePermissionGrantsByRoleIds;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  const originalReplacePlatformRolesAndSyncSnapshot = authStore.replacePlatformRolesAndSyncSnapshot;
+
+  let grantsLookupCallCount = 0;
+  authStore.listPlatformRolePermissionGrantsByRoleIds = async (payload) => {
+    grantsLookupCallCount += 1;
+    return originalListPlatformRolePermissionGrantsByRoleIds(payload);
+  };
+  authStore.listUserIdsByPlatformRoleId = async ({ roleId }) =>
+    String(roleId || '').trim().toLowerCase() === 'role_epsilon'
+      ? [
+        'platform-role-grants-batch-user-a',
+        'platform-role-grants-batch-user-b'
+      ]
+      : [];
+  authStore.listPlatformRoleFactsByUserId = async () => [
+    {
+      roleId: 'role_epsilon',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: false,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    },
+    {
+      roleId: 'role_zeta',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: false,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ];
+  authStore.replacePlatformRolesAndSyncSnapshot = async () => ({
+    synced: true,
+    reason: 'ok'
+  });
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-role-permission-grants-batch-epsilon',
+      roleId: 'role_epsilon',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-grants-operator',
+      operatorSessionId: 'platform-role-grants-operator-session'
+    });
+    assert.equal(result.affected_user_count, 2);
+    assert.equal(grantsLookupCallCount, 2);
+  } finally {
+    authStore.listPlatformRolePermissionGrantsByRoleIds =
+      originalListPlatformRolePermissionGrantsByRoleIds;
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+    authStore.replacePlatformRolesAndSyncSnapshot = originalReplacePlatformRolesAndSyncSnapshot;
+  }
+});
+
+test('platform role facts replace canonicalizes role_id to lowercase under role catalog validation', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-canonical-target',
+        phone: '13810000434',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-facts-canonical-operator-login'
+  );
+
+  const replaceResult = await service.replacePlatformRolesAndSyncSnapshot({
+    requestId: 'req-role-facts-canonical-replace',
+    accessToken: operatorLogin.access_token,
+    userId: 'platform-role-canonical-target',
+    roles: [{ role_id: 'SYS_ADMIN', status: 'active' }],
+    enforceRoleCatalogValidation: true
+  });
+  assert.equal(replaceResult.reason, 'ok');
+
+  const persistedRoleFacts = await service._internals.authStore.listPlatformRoleFactsByUserId({
+    userId: 'platform-role-canonical-target'
+  });
+  assert.equal(persistedRoleFacts.length, 1);
+  assert.equal(persistedRoleFacts[0].roleId, 'sys_admin');
+  assert.equal(persistedRoleFacts[0].role_id, 'sys_admin');
 });
 
 test('change password mismatch audit includes masked phone metadata', async () => {

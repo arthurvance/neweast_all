@@ -48,9 +48,11 @@ const createPlatformRoleHandlers = (platformRoleService) => {
     || typeof platformRoleService.updateRole !== 'function'
     || typeof platformRoleService.deleteRole !== 'function'
     || typeof platformRoleService.listRoles !== 'function'
+    || typeof platformRoleService.getRolePermissions !== 'function'
+    || typeof platformRoleService.replaceRolePermissions !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformRoleHandlers requires a platformRoleService with createRole, updateRole, deleteRole, and listRoles'
+      'createPlatformRoleHandlers requires a platformRoleService with createRole, updateRole, deleteRole, listRoles, getRolePermissions, and replaceRolePermissions'
     );
   }
 
@@ -120,6 +122,42 @@ const createPlatformRoleHandlers = (platformRoleService) => {
           expectedPermissionCode: PLATFORM_ROLE_OPERATE_PERMISSION_CODE
         }),
         roleId: params.role_id,
+        authorizationContext
+      }),
+
+    getRolePermissions: async ({
+      requestId,
+      authorization,
+      params = {},
+      authorizationContext = null
+    }) =>
+      platformRoleService.getRolePermissions({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_ROLE_VIEW_PERMISSION_CODE
+        }),
+        roleId: params.role_id,
+        authorizationContext
+      }),
+
+    replaceRolePermissions: async ({
+      requestId,
+      authorization,
+      params = {},
+      body,
+      authorizationContext = null
+    }) =>
+      platformRoleService.replaceRolePermissions({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_ROLE_OPERATE_PERMISSION_CODE
+        }),
+        roleId: params.role_id,
+        payload: body || {},
         authorizationContext
       })
   };

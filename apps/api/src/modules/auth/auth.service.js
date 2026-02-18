@@ -21,6 +21,8 @@ const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
 const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
+const MAX_ROLE_PERMISSION_CODES_PER_REQUEST = 64;
+const MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS = 100;
 const MAX_TENANT_NAME_LENGTH = 128;
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
@@ -40,6 +42,11 @@ const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
   'can_view_billing',
   'canOperateBilling',
   'can_operate_billing'
+]);
+const PLATFORM_ROLE_ASSIGNMENT_ALLOWED_FIELDS = new Set([
+  'role_id',
+  'roleId',
+  'status'
 ]);
 
 const DEFAULT_SEED_USERS = [];
@@ -150,6 +157,53 @@ const hasTopLevelPlatformRolePermissionField = (role) =>
   PLATFORM_ROLE_PERMISSION_FIELD_KEYS.some((field) =>
     hasOwnProperty(role, field)
   );
+const normalizePlatformPermissionCode = (permissionCode) =>
+  String(permissionCode || '').trim();
+const toPlatformPermissionCodeKey = (permissionCode) =>
+  normalizePlatformPermissionCode(permissionCode).toLowerCase();
+const isPlatformPermissionCode = (permissionCode) =>
+  String(permissionCode || '').trim().startsWith('platform.');
+const listSupportedPlatformPermissionCodes = () =>
+  Object.keys(ROUTE_PERMISSION_EVALUATORS)
+    .filter((permissionCode) =>
+      isPlatformPermissionCode(permissionCode)
+      && (ROUTE_PERMISSION_SCOPE_RULES[permissionCode] || []).includes('platform')
+    )
+    .sort((left, right) => left.localeCompare(right));
+const SUPPORTED_PLATFORM_PERMISSION_CODE_SET = new Set(
+  listSupportedPlatformPermissionCodes().map((permissionCode) =>
+    toPlatformPermissionCodeKey(permissionCode)
+  )
+);
+const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
+  const snapshot = {
+    canViewMemberAdmin: false,
+    canOperateMemberAdmin: false,
+    canViewBilling: false,
+    canOperateBilling: false
+  };
+  for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
+    switch (toPlatformPermissionCodeKey(permissionCode)) {
+      case 'platform.member_admin.view':
+        snapshot.canViewMemberAdmin = true;
+        break;
+      case 'platform.member_admin.operate':
+        snapshot.canViewMemberAdmin = true;
+        snapshot.canOperateMemberAdmin = true;
+        break;
+      case 'platform.billing.view':
+        snapshot.canViewBilling = true;
+        break;
+      case 'platform.billing.operate':
+        snapshot.canViewBilling = true;
+        snapshot.canOperateBilling = true;
+        break;
+      default:
+        break;
+    }
+  }
+  return snapshot;
+};
 const listSupportedRoutePermissionScopes = () =>
   Object.fromEntries(
     Object.entries(ROUTE_PERMISSION_SCOPE_RULES).map(([permissionCode, scopes]) => [
@@ -277,6 +331,14 @@ const errors = {
       title: 'Not Found',
       detail: '目标用户不存在',
       errorCode: 'AUTH-404-USER-NOT-FOUND'
+    }),
+
+  roleNotFound: () =>
+    authError({
+      status: 404,
+      title: 'Not Found',
+      detail: '目标平台角色不存在',
+      errorCode: 'AUTH-404-ROLE-NOT-FOUND'
     }),
 
   platformSnapshotDegraded: ({ reason = 'db-deadlock' } = {}) =>
@@ -2418,51 +2480,56 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const assertRoleDefinitionSupportedForPlatformRoleFacts = async ({
-    roles = []
-  }) => {
-    const mapRoleCatalogLookupErrorToProblem = (error) => {
-      if (isMissingPlatformRoleCatalogTableError(error)) {
-        return errors.platformSnapshotDegraded({
-          reason: 'platform-role-catalog-unavailable'
-        });
-      }
+  const mapPlatformRoleCatalogLookupErrorToProblem = (error) => {
+    if (isMissingPlatformRoleCatalogTableError(error)) {
       return errors.platformSnapshotDegraded({
-        reason: 'platform-role-catalog-query-failed'
+        reason: 'platform-role-catalog-unavailable'
       });
-    };
-    const assertRoleCatalogLookupCapability = () => {
-      if (typeof authStore.findPlatformRoleCatalogEntriesByRoleIds !== 'function') {
-        throw errors.platformSnapshotDegraded({
-          reason: 'platform-role-catalog-lookup-unsupported'
-        });
-      }
-    };
-    const assertRoleCatalogDependencyAvailable = async () => {
-      // enforceRoleCatalogValidation=true must fail closed when lookup capability is unavailable.
-      assertRoleCatalogLookupCapability();
-      if (typeof authStore.countPlatformRoleCatalogEntries === 'function') {
-        try {
-          await authStore.countPlatformRoleCatalogEntries();
-          return;
-        } catch (error) {
-          throw mapRoleCatalogLookupErrorToProblem(error);
-        }
-      }
-      try {
-        await authStore.findPlatformRoleCatalogEntriesByRoleIds({
-          roleIds: ['__platform_role_catalog_health_probe__']
-        });
-      } catch (error) {
-        throw mapRoleCatalogLookupErrorToProblem(error);
-      }
-    };
-
-    if (!Array.isArray(roles) || roles.length === 0) {
-      await assertRoleCatalogDependencyAvailable();
-      return;
     }
-    assertRoleCatalogLookupCapability();
+    return errors.platformSnapshotDegraded({
+      reason: 'platform-role-catalog-query-failed'
+    });
+  };
+
+  const assertPlatformRoleCatalogLookupCapability = () => {
+    if (typeof authStore.findPlatformRoleCatalogEntriesByRoleIds !== 'function') {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-catalog-lookup-unsupported'
+      });
+    }
+  };
+
+  const assertPlatformRoleCatalogDependencyAvailable = async () => {
+    assertPlatformRoleCatalogLookupCapability();
+    if (typeof authStore.countPlatformRoleCatalogEntries === 'function') {
+      try {
+        await authStore.countPlatformRoleCatalogEntries();
+        return;
+      } catch (error) {
+        throw mapPlatformRoleCatalogLookupErrorToProblem(error);
+      }
+    }
+    try {
+      await authStore.findPlatformRoleCatalogEntriesByRoleIds({
+        roleIds: ['__platform_role_catalog_health_probe__']
+      });
+    } catch (error) {
+      throw mapPlatformRoleCatalogLookupErrorToProblem(error);
+    }
+  };
+
+  const loadValidatedPlatformRoleCatalogEntriesForRoleFacts = async ({
+    roles = [],
+    allowDisabledRoles = false
+  }) => {
+    if (!Array.isArray(roles) || roles.length === 0) {
+      await assertPlatformRoleCatalogDependencyAvailable();
+      return {
+        requestedRoleIds: [],
+        catalogEntriesByRoleIdKey: new Map()
+      };
+    }
+    assertPlatformRoleCatalogLookupCapability();
 
     const requestedRoleIds = [];
     const requestedRoleIdKeys = new Set();
@@ -2485,7 +2552,7 @@ const createAuthService = (options = {}) => {
         roleIds: requestedRoleIds
       });
     } catch (error) {
-      throw mapRoleCatalogLookupErrorToProblem(error);
+      throw mapPlatformRoleCatalogLookupErrorToProblem(error);
     }
     const catalogEntriesByRoleIdKey = new Map();
     for (const catalogEntry of Array.isArray(catalogEntries) ? catalogEntries : []) {
@@ -2518,12 +2585,237 @@ const createAuthService = (options = {}) => {
       );
       if (
         !VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatus)
-        || normalizedStatus === 'disabled'
+        || (!allowDisabledRoles && normalizedStatus === 'disabled')
         || normalizedScope !== PLATFORM_ROLE_CATALOG_SCOPE
       ) {
         throw errors.invalidPayload();
       }
     }
+
+    return {
+      requestedRoleIds,
+      catalogEntriesByRoleIdKey
+    };
+  };
+
+  const loadPlatformRolePermissionGrantsByRoleIds = async ({
+    roleIds = []
+  }) => {
+    const normalizedRoleIds = [...new Set(
+      (Array.isArray(roleIds) ? roleIds : [])
+        .map((roleId) => normalizeRequiredStringField(roleId, errors.invalidPayload))
+    )];
+    if (normalizedRoleIds.length === 0) {
+      return new Map();
+    }
+
+    if (typeof authStore.listPlatformRolePermissionGrantsByRoleIds !== 'function') {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-grants-unsupported'
+      });
+    }
+
+    let grantEntries = [];
+    try {
+      grantEntries = await authStore.listPlatformRolePermissionGrantsByRoleIds({
+        roleIds: normalizedRoleIds
+      });
+    } catch (_error) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-grants-query-failed'
+      });
+    }
+
+    const grantsByRoleIdKey = new Map();
+    for (const roleId of normalizedRoleIds) {
+      grantsByRoleIdKey.set(normalizePlatformRoleIdKey(roleId), []);
+    }
+
+    for (const grantEntry of Array.isArray(grantEntries) ? grantEntries : []) {
+      const roleId = String(
+        (grantEntry?.roleId ?? grantEntry?.role_id) || ''
+      ).trim();
+      if (!roleId) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-grants-invalid'
+        });
+      }
+      const roleIdKey = normalizePlatformRoleIdKey(roleId);
+      if (!grantsByRoleIdKey.has(roleIdKey)) {
+        continue;
+      }
+      const hasPermissionCodes = (
+        Array.isArray(grantEntry?.permissionCodes)
+        || Array.isArray(grantEntry?.permission_codes)
+      );
+      if (!hasPermissionCodes) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-grants-invalid'
+        });
+      }
+      const permissionCodes = Array.isArray(grantEntry?.permissionCodes)
+        ? grantEntry.permissionCodes
+        : grantEntry.permission_codes;
+      const dedupedCodes = new Map();
+      for (const permissionCode of permissionCodes) {
+        const normalizedPermissionCode = normalizePlatformPermissionCode(permissionCode);
+        if (!normalizedPermissionCode) {
+          continue;
+        }
+        const permissionCodeKey = toPlatformPermissionCodeKey(normalizedPermissionCode);
+        if (
+          !isPlatformPermissionCode(normalizedPermissionCode)
+          || !SUPPORTED_PLATFORM_PERMISSION_CODE_SET.has(permissionCodeKey)
+        ) {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-permission-grants-invalid'
+          });
+        }
+        dedupedCodes.set(permissionCodeKey, permissionCodeKey);
+      }
+      grantsByRoleIdKey.set(roleIdKey, [...dedupedCodes.values()]);
+    }
+
+    return grantsByRoleIdKey;
+  };
+
+  const normalizePlatformRoleFactsForReplace = async ({
+    roles = [],
+    enforceRoleCatalogValidation = false
+  }) => {
+    const normalizedRoleFacts = [];
+    const distinctRoleIds = new Set();
+
+    for (const role of roles) {
+      if (!isPlainObject(role)) {
+        throw errors.invalidPayload();
+      }
+
+      const unknownRoleKeys = Object.keys(role).filter(
+        (key) => !PLATFORM_ROLE_ASSIGNMENT_ALLOWED_FIELDS.has(key) && key !== 'permission'
+      );
+      if (enforceRoleCatalogValidation && unknownRoleKeys.length > 0) {
+        throw errors.invalidPayload();
+      }
+
+      const hasPermissionField = hasOwnProperty(role, 'permission');
+      if (
+        enforceRoleCatalogValidation
+        && (hasPermissionField || hasTopLevelPlatformRolePermissionField(role))
+      ) {
+        throw errors.invalidPayload();
+      }
+      if (!enforceRoleCatalogValidation && hasPermissionField && !isPlainObject(role.permission)) {
+        throw errors.invalidPayload();
+      }
+      if (!enforceRoleCatalogValidation && hasTopLevelPlatformRolePermissionField(role)) {
+        throw errors.invalidPayload();
+      }
+
+      const rawRoleId = resolveRawRoleIdCandidate(role);
+      const normalizedRoleId = normalizeRequiredStringField(
+        rawRoleId,
+        errors.invalidPayload
+      );
+      const normalizedRoleIdKey = normalizePlatformRoleIdKey(normalizedRoleId);
+      if (normalizedRoleIdKey.length > MAX_PLATFORM_ROLE_ID_LENGTH) {
+        throw errors.invalidPayload();
+      }
+      if (distinctRoleIds.has(normalizedRoleIdKey)) {
+        throw errors.invalidPayload();
+      }
+      distinctRoleIds.add(normalizedRoleIdKey);
+
+      let normalizedRoleStatus = 'active';
+      if (hasOwnProperty(role, 'status')) {
+        if (typeof role.status !== 'string') {
+          throw errors.invalidPayload();
+        }
+        normalizedRoleStatus = role.status.trim().toLowerCase();
+        if (!normalizedRoleStatus) {
+          throw errors.invalidPayload();
+        }
+      }
+      if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedRoleStatus)) {
+        throw errors.invalidPayload();
+      }
+      const resolvedRoleStatus = normalizedRoleStatus === 'enabled'
+        ? 'active'
+        : normalizedRoleStatus;
+      if (enforceRoleCatalogValidation && resolvedRoleStatus !== 'active') {
+        throw errors.invalidPayload();
+      }
+
+      if (!enforceRoleCatalogValidation) {
+        const rolePermissionSource = hasPermissionField ? role.permission : {};
+        assertOptionalBooleanRolePermission(
+          rolePermissionSource?.canViewMemberAdmin ?? rolePermissionSource?.can_view_member_admin,
+          errors.invalidPayload
+        );
+        assertOptionalBooleanRolePermission(
+          rolePermissionSource?.canOperateMemberAdmin ?? rolePermissionSource?.can_operate_member_admin,
+          errors.invalidPayload
+        );
+        assertOptionalBooleanRolePermission(
+          rolePermissionSource?.canViewBilling ?? rolePermissionSource?.can_view_billing,
+          errors.invalidPayload
+        );
+        assertOptionalBooleanRolePermission(
+          rolePermissionSource?.canOperateBilling ?? rolePermissionSource?.can_operate_billing,
+          errors.invalidPayload
+        );
+        normalizedRoleFacts.push({
+          roleId: normalizedRoleIdKey,
+          status: resolvedRoleStatus,
+          permission: {
+            canViewMemberAdmin: Boolean(
+              rolePermissionSource?.canViewMemberAdmin
+              ?? rolePermissionSource?.can_view_member_admin
+            ),
+            canOperateMemberAdmin: Boolean(
+              rolePermissionSource?.canOperateMemberAdmin
+              ?? rolePermissionSource?.can_operate_member_admin
+            ),
+            canViewBilling: Boolean(
+              rolePermissionSource?.canViewBilling
+              ?? rolePermissionSource?.can_view_billing
+            ),
+            canOperateBilling: Boolean(
+              rolePermissionSource?.canOperateBilling
+              ?? rolePermissionSource?.can_operate_billing
+            )
+          }
+        });
+        continue;
+      }
+
+      normalizedRoleFacts.push({
+        roleId: normalizedRoleIdKey,
+        status: resolvedRoleStatus
+      });
+    }
+
+    if (!enforceRoleCatalogValidation) {
+      return normalizedRoleFacts;
+    }
+
+    const { requestedRoleIds } =
+      await loadValidatedPlatformRoleCatalogEntriesForRoleFacts({
+        roles: normalizedRoleFacts
+      });
+    const grantsByRoleIdKey = await loadPlatformRolePermissionGrantsByRoleIds({
+      roleIds: requestedRoleIds
+    });
+
+    return normalizedRoleFacts.map((roleFact) => {
+      const roleIdKey = normalizePlatformRoleIdKey(roleFact.roleId);
+      const permissionCodes = grantsByRoleIdKey.get(roleIdKey) || [];
+      return {
+        roleId: roleFact.roleId,
+        status: 'active',
+        permission: toPlatformPermissionSnapshotFromCodes(permissionCodes)
+      };
+    });
   };
 
   const replacePlatformRolesAndSyncSnapshot = async ({
@@ -2565,71 +2857,16 @@ const createAuthService = (options = {}) => {
     if (!Array.isArray(roles)) {
       throw errors.invalidPayload();
     }
+    if (enforceRoleCatalogValidation && roles.length === 0) {
+      throw errors.invalidPayload();
+    }
     if (roles.length > MAX_PLATFORM_ROLE_FACTS_PER_USER) {
       throw errors.invalidPayload();
     }
-    const distinctRoleIds = new Set();
-    for (const role of roles) {
-      if (!isPlainObject(role)) {
-        throw errors.invalidPayload();
-      }
-      const hasPermissionField = hasOwnProperty(role, 'permission');
-      if (hasPermissionField && !isPlainObject(role.permission)) {
-        throw errors.invalidPayload();
-      }
-      if (hasTopLevelPlatformRolePermissionField(role)) {
-        throw errors.invalidPayload();
-      }
-      const rawRoleId = resolveRawRoleIdCandidate(role);
-      const normalizedRoleId = normalizeRequiredStringField(
-        rawRoleId,
-        errors.invalidPayload
-      );
-      const normalizedRoleIdKey = normalizePlatformRoleIdKey(normalizedRoleId);
-      if (normalizedRoleId.length > MAX_PLATFORM_ROLE_ID_LENGTH) {
-        throw errors.invalidPayload();
-      }
-      if (distinctRoleIds.has(normalizedRoleIdKey)) {
-        throw errors.invalidPayload();
-      }
-      distinctRoleIds.add(normalizedRoleIdKey);
-      let normalizedRoleStatus = 'active';
-      if (hasOwnProperty(role, 'status')) {
-        if (typeof role.status !== 'string') {
-          throw errors.invalidPayload();
-        }
-        normalizedRoleStatus = role.status.trim().toLowerCase();
-        if (!normalizedRoleStatus) {
-          throw errors.invalidPayload();
-        }
-      }
-      if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedRoleStatus)) {
-        throw errors.invalidPayload();
-      }
-      const rolePermissionSource = hasPermissionField ? role.permission : {};
-      assertOptionalBooleanRolePermission(
-        rolePermissionSource?.canViewMemberAdmin ?? rolePermissionSource?.can_view_member_admin,
-        errors.invalidPayload
-      );
-      assertOptionalBooleanRolePermission(
-        rolePermissionSource?.canOperateMemberAdmin ?? rolePermissionSource?.can_operate_member_admin,
-        errors.invalidPayload
-      );
-      assertOptionalBooleanRolePermission(
-        rolePermissionSource?.canViewBilling ?? rolePermissionSource?.can_view_billing,
-        errors.invalidPayload
-      );
-      assertOptionalBooleanRolePermission(
-        rolePermissionSource?.canOperateBilling ?? rolePermissionSource?.can_operate_billing,
-        errors.invalidPayload
-      );
-    }
-
-    if (enforceRoleCatalogValidation) {
-      await assertRoleDefinitionSupportedForPlatformRoleFacts({
-        roles
-      });
-    }
+    const rolesForPersistence = await normalizePlatformRoleFactsForReplace({
+      roles,
+      enforceRoleCatalogValidation
+    });
 
     const hasUserLookup = typeof authStore.findUserById === 'function';
     const previousUser = hasUserLookup
@@ -2642,7 +2879,7 @@ const createAuthService = (options = {}) => {
     try {
       result = await authStore.replacePlatformRolesAndSyncSnapshot({
         userId: normalizedUserId,
-        roles
+        roles: rolesForPersistence
       });
     } catch (error) {
       if (
@@ -3184,6 +3421,455 @@ const createAuthService = (options = {}) => {
     return authStore.listPlatformRoleCatalogEntries({
       scope: normalizedScope
     });
+  };
+
+  const listPlatformPermissionCatalog = () =>
+    listSupportedPlatformPermissionCodes();
+
+  const listPlatformRolePermissionGrants = async ({ roleId }) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    const {
+      requestedRoleIds
+    } = await loadValidatedPlatformRoleCatalogEntriesForRoleFacts({
+      roles: [{ roleId: normalizedRoleId }],
+      allowDisabledRoles: true
+    });
+    const grantsByRoleIdKey = await loadPlatformRolePermissionGrantsByRoleIds({
+      roleIds: requestedRoleIds
+    });
+    const grants = grantsByRoleIdKey.get(normalizePlatformRoleIdKey(normalizedRoleId)) || [];
+    return {
+      role_id: normalizedRoleId,
+      permission_codes: grants,
+      available_permission_codes: listPlatformPermissionCatalog()
+    };
+  };
+
+  const toDistinctNormalizedUserIds = (userIds = []) =>
+    [...new Set(
+      (Array.isArray(userIds) ? userIds : [])
+        .map((userId) => String(userId || '').trim())
+        .filter((userId) => userId.length > 0)
+    )];
+
+  const normalizeStoredRoleFactsForPermissionResync = (roleFacts = []) => {
+    const normalizedStoredRoleFacts = [];
+    for (const roleFact of Array.isArray(roleFacts) ? roleFacts : []) {
+      let normalizedRoleFactRoleId;
+      try {
+        normalizedRoleFactRoleId = normalizeRequiredStringField(
+          resolveRawRoleIdCandidate(roleFact),
+          errors.invalidPayload
+        );
+      } catch (_error) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-role-facts-invalid'
+        });
+      }
+      const normalizedRoleFactRoleIdKey =
+        normalizePlatformRoleIdKey(normalizedRoleFactRoleId);
+      const normalizedRoleFactStatusInput = String(
+        roleFact?.status || 'active'
+      ).trim().toLowerCase();
+      if (!VALID_PLATFORM_ROLE_FACT_STATUS.has(normalizedRoleFactStatusInput)) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-role-facts-invalid'
+        });
+      }
+      const normalizedRoleFactStatus = normalizedRoleFactStatusInput === 'enabled'
+        ? 'active'
+        : normalizedRoleFactStatusInput;
+      normalizedStoredRoleFacts.push({
+        roleIdKey: normalizedRoleFactRoleIdKey,
+        status: normalizedRoleFactStatus
+      });
+    }
+    return normalizedStoredRoleFacts;
+  };
+
+  const cloneRoleFactsSnapshotForRollback = (roleFacts = []) =>
+    (Array.isArray(roleFacts) ? roleFacts : []).map((roleFact) => ({
+      roleId: String(roleFact?.roleId || roleFact?.role_id || '').trim(),
+      role_id: String(roleFact?.roleId || roleFact?.role_id || '').trim(),
+      status: String(roleFact?.status || 'active').trim().toLowerCase() || 'active',
+      permission:
+        roleFact?.permission
+        && typeof roleFact.permission === 'object'
+        && !Array.isArray(roleFact.permission)
+          ? {
+            canViewMemberAdmin: Boolean(
+              roleFact.permission.canViewMemberAdmin
+              ?? roleFact.permission.can_view_member_admin
+            ),
+            canOperateMemberAdmin: Boolean(
+              roleFact.permission.canOperateMemberAdmin
+              ?? roleFact.permission.can_operate_member_admin
+            ),
+            canViewBilling: Boolean(
+              roleFact.permission.canViewBilling
+              ?? roleFact.permission.can_view_billing
+            ),
+            canOperateBilling: Boolean(
+              roleFact.permission.canOperateBilling
+              ?? roleFact.permission.can_operate_billing
+            )
+          }
+          : null
+    }));
+
+  const replacePlatformRolePermissionGrants = async ({
+    requestId,
+    roleId,
+    permissionCodes = [],
+    operatorUserId = null,
+    operatorSessionId = null
+  }) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    const normalizedTargetRoleIdKey = normalizePlatformRoleIdKey(normalizedRoleId);
+    if (!Array.isArray(permissionCodes)) {
+      throw errors.invalidPayload();
+    }
+    if (permissionCodes.length > MAX_ROLE_PERMISSION_CODES_PER_REQUEST) {
+      throw errors.invalidPayload();
+    }
+    const dedupedPermissionCodes = new Map();
+    for (const permissionCode of permissionCodes) {
+      const normalizedPermissionCode = normalizePlatformPermissionCode(permissionCode);
+      if (!normalizedPermissionCode) {
+        throw errors.invalidPayload();
+      }
+      const permissionCodeKey = toPlatformPermissionCodeKey(normalizedPermissionCode);
+      if (
+        !isPlatformPermissionCode(normalizedPermissionCode)
+        || !SUPPORTED_PLATFORM_PERMISSION_CODE_SET.has(permissionCodeKey)
+      ) {
+        throw errors.invalidPayload();
+      }
+      dedupedPermissionCodes.set(permissionCodeKey, permissionCodeKey);
+    }
+    const normalizedPermissionCodes = [...dedupedPermissionCodes.values()];
+
+    await loadValidatedPlatformRoleCatalogEntriesForRoleFacts({
+      roles: [{ roleId: normalizedRoleId }],
+      allowDisabledRoles: true
+    });
+
+    if (typeof authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots === 'function') {
+      let atomicWriteResult;
+      try {
+        atomicWriteResult =
+          await authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots({
+            roleId: normalizedRoleId,
+            permissionCodes: normalizedPermissionCodes,
+            operatorUserId,
+            operatorSessionId,
+            maxAffectedUsers: MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS
+          });
+      } catch (error) {
+        if (error instanceof AuthProblemError) {
+          throw error;
+        }
+        if (String(error?.code || '').trim()
+          === 'ERR_PLATFORM_ROLE_PERMISSION_AFFECTED_USERS_OVER_LIMIT') {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-permission-affected-users-over-limit'
+          });
+        }
+        if (String(error?.code || '').trim() === 'ERR_PLATFORM_ROLE_PERMISSION_SYNC_FAILED') {
+          throw errors.platformSnapshotDegraded({
+            reason: String(error?.syncReason || 'platform-role-permission-resync-failed')
+          });
+        }
+        const normalizedErrorMessage = String(error?.message || '')
+          .trim()
+          .toLowerCase();
+        throw errors.platformSnapshotDegraded({
+          reason: normalizedErrorMessage.includes('deadlock')
+            ? 'db-deadlock'
+            : 'platform-role-permission-atomic-write-failed'
+        });
+      }
+
+      if (!atomicWriteResult) {
+        throw errors.roleNotFound();
+      }
+
+      const savedPermissionCodes = [...new Set(
+        (
+          Array.isArray(atomicWriteResult?.permissionCodes)
+            ? atomicWriteResult.permissionCodes
+            : Array.isArray(atomicWriteResult?.permission_codes)
+              ? atomicWriteResult.permission_codes
+              : []
+        )
+          .map((permissionCode) => normalizePlatformPermissionCode(permissionCode))
+          .filter((permissionCode) => permissionCode.length > 0)
+      )];
+      const affectedUserIds = toDistinctNormalizedUserIds(
+        Array.isArray(atomicWriteResult?.affectedUserIds)
+          ? atomicWriteResult.affectedUserIds
+          : Array.isArray(atomicWriteResult?.affected_user_ids)
+            ? atomicWriteResult.affected_user_ids
+            : []
+      );
+      for (const affectedUserId of affectedUserIds) {
+        invalidateSessionCacheByUserId(affectedUserId);
+      }
+      const resyncedUserCount = Number(
+        atomicWriteResult?.affectedUserCount
+        ?? atomicWriteResult?.affected_user_count
+        ?? affectedUserIds.length
+      );
+
+      addAuditEvent({
+        type: 'auth.platform_role_permission_grants.updated',
+        requestId,
+        userId: operatorUserId || 'unknown',
+        sessionId: operatorSessionId || 'unknown',
+        detail: 'platform role permission grants replaced and affected snapshots resynced',
+        metadata: {
+          role_id: normalizedRoleId,
+          permission_codes: savedPermissionCodes,
+          affected_user_count: resyncedUserCount
+        }
+      });
+
+      return {
+        role_id: normalizedRoleId,
+        permission_codes: savedPermissionCodes,
+        affected_user_count: resyncedUserCount
+      };
+    }
+
+    if (typeof authStore.replacePlatformRolePermissionGrants !== 'function') {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-grants-unsupported'
+      });
+    }
+    if (
+      typeof authStore.listUserIdsByPlatformRoleId !== 'function'
+      || typeof authStore.listPlatformRoleFactsByUserId !== 'function'
+      || typeof authStore.replacePlatformRolesAndSyncSnapshot !== 'function'
+    ) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-resync-unsupported'
+      });
+    }
+
+    let affectedUserIds = [];
+    try {
+      affectedUserIds = await authStore.listUserIdsByPlatformRoleId({
+        roleId: normalizedRoleId
+      });
+    } catch (_error) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-affected-users-query-failed'
+      });
+    }
+    const precheckedAffectedUserIds = toDistinctNormalizedUserIds(affectedUserIds);
+    for (const normalizedAffectedUserId of precheckedAffectedUserIds) {
+      try {
+        await authStore.listPlatformRoleFactsByUserId({
+          userId: normalizedAffectedUserId
+        });
+      } catch (_error) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-role-facts-query-failed'
+        });
+      }
+    }
+
+    let previousTargetRolePermissionCodes = [];
+    try {
+      const previousTargetRoleGrantsByRoleIdKey =
+        await loadPlatformRolePermissionGrantsByRoleIds({
+          roleIds: [normalizedRoleId]
+        });
+      previousTargetRolePermissionCodes =
+        previousTargetRoleGrantsByRoleIdKey.get(normalizedTargetRoleIdKey) || [];
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        throw error;
+      }
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-grants-query-failed'
+      });
+    }
+
+    let savedPermissionCodes = [];
+    let grantsWriteApplied = false;
+    const preSyncRoleFactsByUserId = new Map();
+    const normalizedRoleFactsByUserId = new Map();
+    const syncedUserIds = [];
+    try {
+      const saved = await authStore.replacePlatformRolePermissionGrants({
+        roleId: normalizedRoleId,
+        permissionCodes: normalizedPermissionCodes,
+        operatorUserId,
+        operatorSessionId
+      });
+      if (!saved) {
+        throw errors.roleNotFound();
+      }
+      savedPermissionCodes = [...new Set(
+        (Array.isArray(saved) ? saved : [])
+          .map((permissionCode) => normalizePlatformPermissionCode(permissionCode))
+          .filter((permissionCode) => permissionCode.length > 0)
+      )];
+      grantsWriteApplied = true;
+
+      let postWriteAffectedUserIds = [];
+      try {
+        postWriteAffectedUserIds = await authStore.listUserIdsByPlatformRoleId({
+          roleId: normalizedRoleId
+        });
+      } catch (_error) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-affected-users-query-failed'
+        });
+      }
+      const normalizedAffectedUserIds = [...new Set([
+        ...precheckedAffectedUserIds,
+        ...toDistinctNormalizedUserIds(postWriteAffectedUserIds)
+      ])];
+
+      const normalizedAllRoleIds = new Set();
+      for (const normalizedAffectedUserId of normalizedAffectedUserIds) {
+        let roleFacts = [];
+        try {
+          roleFacts = await authStore.listPlatformRoleFactsByUserId({
+            userId: normalizedAffectedUserId
+          });
+        } catch (_error) {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-permission-role-facts-query-failed'
+          });
+        }
+        preSyncRoleFactsByUserId.set(
+          normalizedAffectedUserId,
+          cloneRoleFactsSnapshotForRollback(roleFacts)
+        );
+        const normalizedStoredRoleFacts = normalizeStoredRoleFactsForPermissionResync(roleFacts);
+        normalizedRoleFactsByUserId.set(
+          normalizedAffectedUserId,
+          normalizedStoredRoleFacts
+        );
+        for (const roleFact of normalizedStoredRoleFacts) {
+          normalizedAllRoleIds.add(roleFact.roleIdKey);
+        }
+      }
+
+      let grantsByRoleIdKey = new Map();
+      try {
+        grantsByRoleIdKey = await loadPlatformRolePermissionGrantsByRoleIds({
+          roleIds: [...normalizedAllRoleIds]
+        });
+      } catch (error) {
+        if (error instanceof AuthProblemError) {
+          throw error;
+        }
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-grants-query-failed'
+        });
+      }
+
+      for (const normalizedAffectedUserId of normalizedAffectedUserIds) {
+        const normalizedStoredRoleFacts =
+          normalizedRoleFactsByUserId.get(normalizedAffectedUserId) || [];
+        const nextRoleFacts = normalizedStoredRoleFacts.map((roleFact) => {
+          const permissionCodes = grantsByRoleIdKey.get(roleFact.roleIdKey) || [];
+          return {
+            roleId: roleFact.roleIdKey,
+            status: roleFact.status,
+            permission: toPlatformPermissionSnapshotFromCodes(permissionCodes)
+          };
+        });
+
+        let syncResult;
+        try {
+          syncResult = await authStore.replacePlatformRolesAndSyncSnapshot({
+            userId: normalizedAffectedUserId,
+            roles: nextRoleFacts
+          });
+        } catch (_error) {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-permission-resync-failed'
+          });
+        }
+        const syncReason = String(syncResult?.reason || 'unknown').trim().toLowerCase();
+        if (syncReason !== 'ok') {
+          throw errors.platformSnapshotDegraded({
+            reason: syncReason || 'platform-role-permission-resync-failed'
+          });
+        }
+        syncedUserIds.push(normalizedAffectedUserId);
+        invalidateSessionCacheByUserId(normalizedAffectedUserId);
+      }
+    } catch (error) {
+      if (grantsWriteApplied) {
+        try {
+          const restoredGrants = await authStore.replacePlatformRolePermissionGrants({
+            roleId: normalizedRoleId,
+            permissionCodes: previousTargetRolePermissionCodes,
+            operatorUserId,
+            operatorSessionId
+          });
+          if (!restoredGrants) {
+            throw new Error('platform-role-permission-grants-rollback-role-not-found');
+          }
+          for (const syncedUserId of [...syncedUserIds].reverse()) {
+            const rollbackRoleFacts = preSyncRoleFactsByUserId.get(syncedUserId) || [];
+            const rollbackResult = await authStore.replacePlatformRolesAndSyncSnapshot({
+              userId: syncedUserId,
+              roles: rollbackRoleFacts
+            });
+            const rollbackReason = String(
+              rollbackResult?.reason || 'unknown'
+            ).trim().toLowerCase();
+            if (rollbackReason !== 'ok') {
+              throw new Error(`platform-role-permission-resync-rollback-failed:${rollbackReason}`);
+            }
+            invalidateSessionCacheByUserId(syncedUserId);
+          }
+        } catch (_rollbackError) {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-permission-compensation-failed'
+          });
+        }
+      }
+      if (error instanceof AuthProblemError) {
+        throw error;
+      }
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-permission-resync-failed'
+      });
+    }
+    const resyncedUserCount = syncedUserIds.length;
+
+    addAuditEvent({
+      type: 'auth.platform_role_permission_grants.updated',
+      requestId,
+      userId: operatorUserId || 'unknown',
+      sessionId: operatorSessionId || 'unknown',
+      detail: 'platform role permission grants replaced and affected snapshots resynced',
+      metadata: {
+        role_id: normalizedRoleId,
+        permission_codes: savedPermissionCodes,
+        affected_user_count: resyncedUserCount
+      }
+    });
+
+    return {
+      role_id: normalizedRoleId,
+      permission_codes: savedPermissionCodes,
+      affected_user_count: resyncedUserCount
+    };
   };
 
   const updateOrganizationStatus = async ({
@@ -4013,6 +4699,9 @@ const createAuthService = (options = {}) => {
     updatePlatformRoleCatalogEntry,
     deletePlatformRoleCatalogEntry,
     listPlatformRoleCatalogEntries,
+    listPlatformRolePermissionGrants,
+    replacePlatformRolePermissionGrants,
+    listPlatformPermissionCatalog,
     updateOrganizationStatus,
     updatePlatformUserStatus,
     rollbackProvisionedUserIdentity,

@@ -178,6 +178,30 @@ test('platform role update route exposes explicit permission declaration', () =>
   assert.equal(updatePlatformRole.permission_code, 'platform.member_admin.operate');
 });
 
+test('platform role permissions read route exposes explicit permission declaration', () => {
+  const readPlatformRolePermissions = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/roles/demo-role/permissions'
+  });
+
+  assert.ok(readPlatformRolePermissions);
+  assert.equal(readPlatformRolePermissions.access, 'protected');
+  assert.equal(readPlatformRolePermissions.scope, 'platform');
+  assert.equal(readPlatformRolePermissions.permission_code, 'platform.member_admin.view');
+});
+
+test('platform role permissions update route exposes explicit permission declaration', () => {
+  const updatePlatformRolePermissions = findRouteDefinition({
+    method: 'PUT',
+    path: '/platform/roles/demo-role/permissions'
+  });
+
+  assert.ok(updatePlatformRolePermissions);
+  assert.equal(updatePlatformRolePermissions.access, 'protected');
+  assert.equal(updatePlatformRolePermissions.scope, 'platform');
+  assert.equal(updatePlatformRolePermissions.permission_code, 'platform.member_admin.operate');
+});
+
 test('route parameter extraction decodes URL-encoded path values', () => {
   const params = extractRoutePathParams(
     '/platform/roles/:role_id',

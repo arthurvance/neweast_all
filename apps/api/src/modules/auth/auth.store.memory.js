@@ -12,6 +12,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const platformPermissionsByUserId = new Map();
   const platformRoleCatalogById = new Map();
   const platformRoleCatalogCodeIndex = new Map();
+  const platformRolePermissionGrantsByRoleId = new Map();
   const orgsById = new Map();
   const orgIdByName = new Map();
   const membershipsByOrgId = new Map();
@@ -21,6 +22,12 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const MAX_ORG_NAME_LENGTH = 128;
+  const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
+    'platform.member_admin.view',
+    'platform.member_admin.operate',
+    'platform.billing.view',
+    'platform.billing.operate'
+  ]);
 
   const isActiveLikeStatus = (status) => {
     const normalizedStatus = String(status || 'active').trim().toLowerCase();
@@ -91,6 +98,10 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     String(code || '').trim();
   const toPlatformRoleCatalogCodeKey = (code) =>
     normalizePlatformRoleCatalogCode(code).toLowerCase();
+  const normalizePlatformPermissionCode = (permissionCode) =>
+    String(permissionCode || '').trim();
+  const toPlatformPermissionCodeKey = (permissionCode) =>
+    normalizePlatformPermissionCode(permissionCode).toLowerCase();
   const createDuplicatePlatformRoleCatalogEntryError = ({ target = 'code' } = {}) => {
     const normalizedTarget = String(target || '').trim().toLowerCase();
     const resolvedTarget = normalizedTarget === 'role_id' ? 'role_id' : 'code';
@@ -209,6 +220,77 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     canOperateBilling: false
   });
 
+  const normalizePlatformPermissionCodes = (permissionCodes = []) => {
+    const deduped = new Map();
+    for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
+      const normalizedCode = normalizePlatformPermissionCode(permissionCode);
+      if (!normalizedCode) {
+        continue;
+      }
+      const permissionCodeKey = toPlatformPermissionCodeKey(normalizedCode);
+      deduped.set(permissionCodeKey, permissionCodeKey);
+    }
+    return [...deduped.values()];
+  };
+
+  const resolvePlatformPermissionFromGrantCodes = (permissionCodes = []) => {
+    const permission = buildEmptyPlatformPermission();
+    for (const permissionCode of normalizePlatformPermissionCodes(permissionCodes)) {
+      switch (toPlatformPermissionCodeKey(permissionCode)) {
+        case 'platform.member_admin.view':
+          permission.canViewMemberAdmin = true;
+          break;
+        case 'platform.member_admin.operate':
+          permission.canViewMemberAdmin = true;
+          permission.canOperateMemberAdmin = true;
+          break;
+        case 'platform.billing.view':
+          permission.canViewBilling = true;
+          break;
+        case 'platform.billing.operate':
+          permission.canViewBilling = true;
+          permission.canOperateBilling = true;
+          break;
+        default:
+          break;
+      }
+    }
+    return permission;
+  };
+
+  const listPlatformRolePermissionGrantsForRoleId = (roleId) => {
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+    if (!normalizedRoleId) {
+      return [];
+    }
+    return [
+      ...new Set(
+        (platformRolePermissionGrantsByRoleId.get(normalizedRoleId) || [])
+          .map((permissionCode) => normalizePlatformPermissionCode(permissionCode))
+          .filter((permissionCode) => permissionCode.length > 0)
+      )
+    ].sort((left, right) => left.localeCompare(right));
+  };
+
+  const replacePlatformRolePermissionGrantsForRoleId = ({
+    roleId,
+    permissionCodes = []
+  }) => {
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+    if (!normalizedRoleId) {
+      throw new Error('replacePlatformRolePermissionGrants requires roleId');
+    }
+    const normalizedPermissionCodes = normalizePlatformPermissionCodes(permissionCodes)
+      .filter((permissionCode) =>
+        KNOWN_PLATFORM_PERMISSION_CODES.includes(permissionCode)
+      );
+    platformRolePermissionGrantsByRoleId.set(
+      normalizedRoleId,
+      normalizedPermissionCodes
+    );
+    return listPlatformRolePermissionGrantsForRoleId(normalizedRoleId);
+  };
+
   const isSamePlatformPermission = (left, right) => {
     const normalizedLeft = left || buildEmptyPlatformPermission();
     const normalizedRight = right || buildEmptyPlatformPermission();
@@ -226,10 +308,30 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       return null;
     }
     const permissionSource = role?.permission || role;
+    const hasExplicitPermissionPayload = Boolean(
+      role?.permission
+      || permissionSource?.canViewMemberAdmin !== undefined
+      || permissionSource?.can_view_member_admin !== undefined
+      || permissionSource?.canOperateMemberAdmin !== undefined
+      || permissionSource?.can_operate_member_admin !== undefined
+      || permissionSource?.canViewBilling !== undefined
+      || permissionSource?.can_view_billing !== undefined
+      || permissionSource?.canOperateBilling !== undefined
+      || permissionSource?.can_operate_billing !== undefined
+    );
+    const rolePermissionFromPayload = normalizePlatformPermission(
+      permissionSource,
+      '平台权限（角色并集）'
+    );
+    const rolePermissionFromGrants = resolvePlatformPermissionFromGrantCodes(
+      listPlatformRolePermissionGrantsForRoleId(roleId)
+    );
     return {
       roleId,
       status: normalizePlatformRoleStatus(role?.status),
-      permission: normalizePlatformPermission(permissionSource, '平台权限（角色并集）')
+      permission: hasExplicitPermissionPayload
+        ? rolePermissionFromPayload
+        : rolePermissionFromGrants
     };
   };
 
@@ -348,6 +450,10 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     isSystem: true,
     createdByUserId: null,
     updatedByUserId: null
+  });
+  replacePlatformRolePermissionGrantsForRoleId({
+    roleId: 'sys_admin',
+    permissionCodes: KNOWN_PLATFORM_PERMISSION_CODES
   });
 
   for (const user of seedUsers) {
@@ -1046,6 +1152,62 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         matches.push(clonePlatformRoleCatalogRecord(entry));
       }
       return matches;
+    },
+
+    listPlatformRolePermissionGrants: async ({ roleId }) =>
+      listPlatformRolePermissionGrantsForRoleId(roleId),
+
+    listPlatformRolePermissionGrantsByRoleIds: async ({ roleIds = [] } = {}) => {
+      const normalizedRoleIds = [...new Set(
+        (Array.isArray(roleIds) ? roleIds : [])
+          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+          .filter((roleId) => roleId.length > 0)
+      )];
+      return normalizedRoleIds.map((roleId) => ({
+        roleId,
+        permissionCodes: listPlatformRolePermissionGrantsForRoleId(roleId)
+      }));
+    },
+
+    replacePlatformRolePermissionGrants: async ({
+      roleId,
+      permissionCodes = []
+    }) =>
+      replacePlatformRolePermissionGrantsForRoleId({
+        roleId,
+        permissionCodes
+      }),
+
+    listUserIdsByPlatformRoleId: async ({ roleId }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        return [];
+      }
+      const normalizedRoleIdKey = normalizedRoleId.toLowerCase();
+      const matchedUserIds = [];
+      for (const [userId, roles] of platformRolesByUserId.entries()) {
+        const hasMatchedRole = (Array.isArray(roles) ? roles : []).some((role) =>
+          String(role?.roleId || '').trim().toLowerCase() === normalizedRoleIdKey
+        );
+        if (hasMatchedRole) {
+          matchedUserIds.push(String(userId));
+        }
+      }
+      return matchedUserIds;
+    },
+
+    listPlatformRoleFactsByUserId: async ({ userId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return [];
+      }
+      const roles = platformRolesByUserId.get(normalizedUserId) || [];
+      return (Array.isArray(roles) ? roles : []).map((role) => ({
+        roleId: String(role?.roleId || '').trim(),
+        role_id: String(role?.roleId || '').trim(),
+        status: String(role?.status || 'active').trim().toLowerCase() || 'active',
+        permission: role?.permission ? { ...role.permission } : null
+      }));
     },
 
     createPlatformRoleCatalogEntry: async ({

@@ -66,6 +66,14 @@ const loginOperator = async (authService, requestId) =>
     entryDomain: 'platform'
   });
 
+const loginByPhone = async (authService, requestId, phone) =>
+  authService.login({
+    requestId,
+    phone,
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
 test('POST /platform/roles creates role and GET /platform/roles returns traceable fields', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-1');
@@ -660,6 +668,63 @@ test('PATCH /platform/roles/:role_id enforces idempotency across canonicalized r
   assert.equal(secondPayload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
 });
 
+test('PUT /platform/roles/:role_id/permissions enforces idempotency across canonicalized role_id path variants', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(
+    harness.authService,
+    'req-platform-role-login-permission-idem-canonicalized'
+  );
+  const authHeaders = {
+    authorization: `Bearer ${login.access_token}`
+  };
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-idem-canonicalized',
+    headers: authHeaders,
+    body: {
+      role_id: 'idem_permission_canonicalized',
+      code: 'IDEM_PERMISSION_CANONICALIZED',
+      name: '权限幂等规范化角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const firstReplace = await dispatchApiRoute({
+    pathname: '/platform/roles/Idem_Permission_Canonicalized/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-idem-canonicalized-1',
+    headers: {
+      ...authHeaders,
+      'idempotency-key': 'idem-platform-role-permission-canonicalized-path'
+    },
+    body: {
+      permission_codes: ['platform.member_admin.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(firstReplace.status, 200);
+
+  const secondReplace = await dispatchApiRoute({
+    pathname: '/platform/roles/IDEM_PERMISSION_CANONICALIZED/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-idem-canonicalized-2',
+    headers: {
+      ...authHeaders,
+      'idempotency-key': 'idem-platform-role-permission-canonicalized-path'
+    },
+    body: {
+      permission_codes: ['platform.billing.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(secondReplace.status, 409);
+  const secondPayload = JSON.parse(secondReplace.body);
+  assert.equal(secondPayload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+});
+
 test('DELETE /platform/roles/:role_id idempotency hash ignores request body drift', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-delete-body-drift');
@@ -714,6 +779,553 @@ test('DELETE /platform/roles/:role_id idempotency hash ignores request body drif
   assert.equal(secondDeletePayload.role_id, 'delete_body_drift_target');
   assert.equal(secondDeletePayload.status, 'disabled');
   assert.equal(secondDeletePayload.request_id, 'req-platform-role-delete-body-drift-2');
+});
+
+test('PUT/GET /platform/roles/:role_id/permissions persists final grant codes and can be read back', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_editor',
+      code: 'PERMISSION_EDITOR',
+      name: '权限配置员',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_editor/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-replace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      'idempotency-key': 'idem-platform-role-permission-replace-1'
+    },
+    body: {
+      permission_codes: [
+        'platform.member_admin.view',
+        'platform.member_admin.operate'
+      ]
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 200);
+  const replacePayload = JSON.parse(replacePermissions.body);
+  assert.equal(replacePayload.role_id, 'platform_permission_editor');
+  assert.deepEqual(
+    replacePayload.permission_codes,
+    ['platform.member_admin.operate', 'platform.member_admin.view']
+  );
+  assert.equal(replacePayload.request_id, 'req-platform-role-permission-replace-1');
+  assert.ok(Array.isArray(replacePayload.available_permission_codes));
+  assert.ok(replacePayload.available_permission_codes.includes('platform.member_admin.view'));
+
+  const getPermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_editor/permissions',
+    method: 'GET',
+    requestId: 'req-platform-role-permission-read-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(getPermissions.status, 200);
+  const getPayload = JSON.parse(getPermissions.body);
+  assert.equal(getPayload.role_id, 'platform_permission_editor');
+  assert.deepEqual(
+    getPayload.permission_codes,
+    ['platform.member_admin.operate', 'platform.member_admin.view']
+  );
+  assert.equal(getPayload.request_id, 'req-platform-role-permission-read-1');
+});
+
+test('PUT /platform/roles/:role_id/permissions allows disabled role definitions to be configured', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-disabled-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-disabled-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_disabled_role',
+      code: 'PERMISSION_DISABLED_ROLE',
+      name: '禁用状态权限配置角色',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_disabled_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-disabled-replace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      'idempotency-key': 'idem-platform-role-permission-disabled-replace-1'
+    },
+    body: {
+      permission_codes: ['platform.member_admin.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 200);
+  const replacePayload = JSON.parse(replacePermissions.body);
+  assert.equal(replacePayload.role_id, 'platform_permission_disabled_role');
+  assert.deepEqual(replacePayload.permission_codes, ['platform.member_admin.view']);
+
+  const getPermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_disabled_role/permissions',
+    method: 'GET',
+    requestId: 'req-platform-role-permission-disabled-read-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(getPermissions.status, 200);
+  const getPayload = JSON.parse(getPermissions.body);
+  assert.equal(getPayload.role_id, 'platform_permission_disabled_role');
+  assert.deepEqual(getPayload.permission_codes, ['platform.member_admin.view']);
+});
+
+test('PUT /platform/roles/:role_id/permissions rejects non-platform or unknown permission code', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-2');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-2',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_reject',
+      code: 'PERMISSION_REJECT',
+      name: '非法权限码测试角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_reject/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-reject-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      permission_codes: ['tenant.member_admin.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 400);
+  const payload = JSON.parse(replacePermissions.body);
+  assert.equal(payload.error_code, 'ROLE-400-INVALID-PAYLOAD');
+});
+
+test('PUT /platform/roles/:role_id/permissions rejects duplicated permission codes (case-insensitive)', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-dup-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-dup-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_duplicate_role',
+      code: 'PERMISSION_DUPLICATE_ROLE',
+      name: '重复权限码测试角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_duplicate_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-dup-replace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      permission_codes: [
+        'platform.member_admin.view',
+        'platform.Member_Admin.View'
+      ]
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 400);
+  const payload = JSON.parse(replacePermissions.body);
+  assert.equal(payload.error_code, 'ROLE-400-INVALID-PAYLOAD');
+});
+
+test('PUT /platform/roles/:role_id/permissions rejects oversized permission_codes payload', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-oversize-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-oversize-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_oversize_role',
+      code: 'PERMISSION_OVERSIZE_ROLE',
+      name: '超大权限列表测试角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const oversizedPermissionCodes = Array.from(
+    { length: 65 },
+    () => 'platform.member_admin.view'
+  );
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_oversize_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-oversize-replace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      permission_codes: oversizedPermissionCodes
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 400);
+  const payload = JSON.parse(replacePermissions.body);
+  assert.equal(payload.error_code, 'ROLE-400-INVALID-PAYLOAD');
+});
+
+test('PUT /platform/roles/:role_id/permissions normalizes accepted permission codes to lowercase canonical form', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-case-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-case-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_case_role',
+      code: 'PERMISSION_CASE_ROLE',
+      name: '权限码大小写规范化测试角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_case_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-case-replace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      permission_codes: [
+        'platform.Member_Admin.View',
+        'platform.MEMBER_admin.operate'
+      ]
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 200);
+  const replacePayload = JSON.parse(replacePermissions.body);
+  assert.deepEqual(
+    replacePayload.permission_codes,
+    ['platform.member_admin.operate', 'platform.member_admin.view']
+  );
+
+  const getPermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_case_role/permissions',
+    method: 'GET',
+    requestId: 'req-platform-role-permission-case-read-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(getPermissions.status, 200);
+  assert.deepEqual(
+    JSON.parse(getPermissions.body).permission_codes,
+    ['platform.member_admin.operate', 'platform.member_admin.view']
+  );
+});
+
+test('PUT /platform/roles/:role_id/permissions fails closed before write when resync capability is unavailable', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-preflight-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-preflight-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_preflight_role',
+      code: 'PERMISSION_PREFLIGHT_ROLE',
+      name: '权限预检测试角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const baselineRead = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_preflight_role/permissions',
+    method: 'GET',
+    requestId: 'req-platform-role-permission-preflight-read-baseline',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(baselineRead.status, 200);
+  assert.deepEqual(JSON.parse(baselineRead.body).permission_codes, []);
+
+  const authStore = harness.authService._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  authStore.listUserIdsByPlatformRoleId = undefined;
+  try {
+    const replacePermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_preflight_role/permissions',
+      method: 'PUT',
+      requestId: 'req-platform-role-permission-preflight-replace-1',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        permission_codes: ['platform.member_admin.view']
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replacePermissions.status, 503);
+    assert.equal(JSON.parse(replacePermissions.body).error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+  }
+
+  const readAfterFailedWrite = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_preflight_role/permissions',
+    method: 'GET',
+    requestId: 'req-platform-role-permission-preflight-read-after-failure',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(readAfterFailedWrite.status, 200);
+  assert.deepEqual(JSON.parse(readAfterFailedWrite.body).permission_codes, []);
+});
+
+test('PUT /platform/roles/:role_id/permissions maps delete-race write miss to ROLE-404-ROLE-NOT-FOUND', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-race-delete');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-race-delete',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_race_deleted_role',
+      code: 'PERMISSION_RACE_DELETED_ROLE',
+      name: '权限删除竞争角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const authStore = harness.authService._internals.authStore;
+  const originalReplacePlatformRolePermissionGrants =
+    authStore.replacePlatformRolePermissionGrants;
+  authStore.replacePlatformRolePermissionGrants = async () => null;
+  try {
+    const replacePermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_race_deleted_role/permissions',
+      method: 'PUT',
+      requestId: 'req-platform-role-permission-race-delete',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        permission_codes: ['platform.member_admin.view']
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replacePermissions.status, 404);
+    assert.equal(JSON.parse(replacePermissions.body).error_code, 'ROLE-404-ROLE-NOT-FOUND');
+  } finally {
+    authStore.replacePlatformRolePermissionGrants = originalReplacePlatformRolePermissionGrants;
+  }
+});
+
+test('role permission grants update converges affected sessions and takes effect immediately for authorization', async () => {
+  const harness = createHarness();
+  const operatorLogin = await loginOperator(harness.authService, 'req-platform-role-login-permission-3-operator');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-3',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      role_id: 'platform_scope_probe_role',
+      code: 'SCOPE_PROBE_ROLE',
+      name: '权限收敛验证角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const grantPermission = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_scope_probe_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-replace-3-1',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      permission_codes: ['platform.member_admin.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(grantPermission.status, 200);
+
+  const assignRole = await dispatchApiRoute({
+    pathname: '/auth/platform/role-facts/replace',
+    method: 'POST',
+    requestId: 'req-platform-role-assign-permission-3',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      user_id: 'platform-role-target-user',
+      roles: [{ role_id: 'platform_scope_probe_role' }]
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(assignRole.status, 200);
+
+  const targetLogin = await loginByPhone(
+    harness.authService,
+    'req-platform-role-login-permission-3-target',
+    TARGET_PHONE
+  );
+  const targetProbeAllowed = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-platform-role-probe-permission-3-allowed',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeAllowed.status, 200);
+
+  const revokePermission = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_scope_probe_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-replace-3-2',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      permission_codes: []
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(revokePermission.status, 200);
+
+  const targetProbeWithOldToken = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-platform-role-probe-permission-3-old-token',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeWithOldToken.status, 401);
+  assert.equal(JSON.parse(targetProbeWithOldToken.body).error_code, 'AUTH-401-INVALID-ACCESS');
+
+  const targetRelogin = await loginByPhone(
+    harness.authService,
+    'req-platform-role-login-permission-3-target-relogin',
+    TARGET_PHONE
+  );
+  const targetProbeDenied = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-platform-role-probe-permission-3-denied',
+    headers: {
+      authorization: `Bearer ${targetRelogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeDenied.status, 403);
+  assert.equal(JSON.parse(targetProbeDenied.body).error_code, 'AUTH-403-FORBIDDEN');
+});
+
+test('POST /auth/platform/role-facts/replace rejects empty role list with AUTH-400-INVALID-PAYLOAD', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-empty-roles');
+
+  const assignEmptyRoles = await dispatchApiRoute({
+    pathname: '/auth/platform/role-facts/replace',
+    method: 'POST',
+    requestId: 'req-platform-role-assign-empty-roles',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      user_id: 'platform-role-target-user',
+      roles: []
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(assignEmptyRoles.status, 400);
+  const payload = JSON.parse(assignEmptyRoles.body);
+  assert.equal(payload.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
 test('POST /auth/platform/role-facts/replace rejects unknown role when only system role catalog exists', async () => {

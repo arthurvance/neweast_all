@@ -1629,6 +1629,177 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/roles/{role_id}/permissions': {
+      get: {
+        summary: 'Get platform role permission grants by role_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Platform role permission grants fetched',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformRolePermissionGrantsReadResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid role_id',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role permission dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      },
+      put: {
+        summary: 'Replace platform role permission grants by role_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ReplacePlatformRolePermissionGrantsRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Platform role permission grants replaced and affected snapshots resynced',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformRolePermissionGrantsWriteResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role permission dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/orgs': {
       post: {
         summary: 'Create organization with required initial owner phone',
@@ -3295,15 +3466,17 @@ const buildOpenApiSpec = () => {
           },
           roles: {
             type: 'array',
+            minItems: 1,
             maxItems: 5,
             uniqueItems: true,
-            description: '最多 5 条角色事实；服务端按 role_id（大小写不敏感）判重并拒绝重复',
+            description: '最少 1 条、最多 5 条角色事实；服务端按 role_id（大小写不敏感）判重并拒绝重复',
             items: { $ref: '#/components/schemas/PlatformRoleFact' }
           }
         }
       },
       PlatformRoleFact: {
         type: 'object',
+        additionalProperties: false,
         required: ['role_id'],
         properties: {
           role_id: {
@@ -3314,10 +3487,9 @@ const buildOpenApiSpec = () => {
           },
           status: {
             type: 'string',
-            enum: ['active', 'enabled', 'disabled'],
+            enum: ['active', 'enabled'],
             default: 'active'
-          },
-          permission: { $ref: '#/components/schemas/PlatformRolePermission' }
+          }
         }
       },
       PlatformRolePermission: {
@@ -3327,6 +3499,94 @@ const buildOpenApiSpec = () => {
           can_operate_member_admin: { type: 'boolean' },
           can_view_billing: { type: 'boolean' },
           can_operate_billing: { type: 'boolean' }
+        }
+      },
+      ReplacePlatformRolePermissionGrantsRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['permission_codes'],
+        properties: {
+          permission_codes: {
+            type: 'array',
+            uniqueItems: true,
+            maxItems: 64,
+            description: '仅允许 platform.* 权限码，按大小写不敏感语义判重',
+            items: {
+              type: 'string',
+              pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          }
+        }
+      },
+      PlatformRolePermissionGrantsReadResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'role_id',
+          'permission_codes',
+          'available_permission_codes',
+          'request_id'
+        ],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformRolePermissionGrantsWriteResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'role_id',
+          'permission_codes',
+          'available_permission_codes',
+          'affected_user_count',
+          'request_id'
+        ],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          affected_user_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          request_id: { type: 'string' }
         }
       },
       PlatformPermissionContext: {

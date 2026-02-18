@@ -104,6 +104,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/platform/roles']);
   assert.ok(payload.paths['/platform/roles/{role_id}']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions']);
   assert.ok(payload.paths['/platform/orgs']);
   assert.ok(payload.paths['/platform/orgs/status']);
   assert.ok(payload.paths['/platform/users']);
@@ -176,6 +177,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     )
   );
   assert.ok(
+    payload.paths['/platform/roles/{role_id}/permissions'].put.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
     payload.paths['/platform/orgs'].post.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
@@ -232,6 +238,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/platform/roles/{role_id}/permissions'].put.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/orgs'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
@@ -269,6 +281,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/platform/roles/{role_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}/permissions'].put.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
     '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
@@ -331,6 +349,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['404']);
   assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['413']);
   assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['503']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].get.responses['400']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].get.responses['401']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].get.responses['403']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].get.responses['404']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].get.responses['503']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['400']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['401']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['403']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['404']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['409']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['413']);
+  assert.ok(payload.paths['/platform/roles/{role_id}/permissions'].put.responses['503']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['400']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['413']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['403']);
@@ -546,8 +576,17 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     'AUTH-403-FORBIDDEN'
   );
   assert.equal(
+    payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.minItems,
+    1
+  );
+  assert.equal(
     payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.maxItems,
     5
+  );
+  assert.equal(
+    payload.components.schemas.ReplacePlatformRolePermissionGrantsRequest
+      .properties.permission_codes.maxItems,
+    64
   );
   assert.equal(
     payload.components.schemas.ReplacePlatformRoleFactsRequest.properties.roles.uniqueItems,
@@ -581,7 +620,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.deepEqual(
     payload.components.schemas.PlatformRoleFact.properties.status.enum,
-    ['active', 'enabled', 'disabled']
+    ['active', 'enabled']
   );
   assert.ok(
     payload.paths['/auth/tenant/member-admin/probe'].get.responses['403'].content[

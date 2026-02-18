@@ -236,6 +236,49 @@ test('0009 down migration drops platform role catalog table', () => {
   assert.match(sql, /DROP TABLE IF EXISTS platform_role_catalog/i);
 });
 
+test('0010 migration defines platform role permission grants table and sys_admin seed', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0010_platform_role_permission_grants.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_role_permission_grants/i);
+  assert.match(sql, /PRIMARY KEY \(role_id, permission_code\)/i);
+  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_role_catalog \(role_id\)/i);
+  assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
+  assert.match(sql, /'sys_admin'/i);
+  assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
+});
+
+test('0011 migration adds role_id leading index for auth_user_platform_roles lookup', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0011_auth_user_platform_roles_role_id_index.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /ALTER TABLE auth_user_platform_roles/i);
+  assert.match(sql, /ADD KEY idx_auth_user_platform_roles_role_id_user_id/i);
+});
+
+test('0011 down migration drops role_id leading index for auth_user_platform_roles lookup', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0011_auth_user_platform_roles_role_id_index.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /ALTER TABLE auth_user_platform_roles/i);
+  assert.match(sql, /DROP INDEX idx_auth_user_platform_roles_role_id_user_id/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

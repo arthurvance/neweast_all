@@ -99,6 +99,14 @@ const REQUIRED_AUTH_SCHEMA = {
     'can_view_billing',
     'can_operate_billing',
     'updated_at'
+  ],
+  platform_role_permission_grants: [
+    'role_id',
+    'permission_code',
+    'created_by_user_id',
+    'updated_by_user_id',
+    'created_at',
+    'updated_at'
   ]
 };
 

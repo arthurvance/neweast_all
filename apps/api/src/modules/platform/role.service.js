@@ -15,6 +15,7 @@ const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const MAX_ROLE_ID_LENGTH = 64;
 const MAX_ROLE_CODE_LENGTH = 64;
 const MAX_ROLE_NAME_LENGTH = 128;
+const MAX_PERMISSION_CODES_PAYLOAD_LENGTH = 64;
 const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const VALID_ROLE_STATUS = new Set(['active', 'disabled']);
@@ -29,6 +30,9 @@ const UPDATE_ROLE_ALLOWED_FIELDS = new Set([
   'code',
   'name',
   'status'
+]);
+const UPDATE_ROLE_PERMISSION_ALLOWED_FIELDS = new Set([
+  'permission_codes'
 ]);
 const PROTECTED_ROLE_ID_SET = new Set(
   PROTECTED_PLATFORM_ROLE_IDS.map((roleId) => String(roleId || '').trim().toLowerCase())
@@ -330,6 +334,50 @@ const parseUpdateRolePayload = (payload) => {
   return updates;
 };
 
+const parseReplaceRolePermissionsPayload = (payload) => {
+  if (!isPlainObject(payload)) {
+    throw roleErrors.invalidPayload();
+  }
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !UPDATE_ROLE_PERMISSION_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw roleErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'permission_codes')) {
+    throw roleErrors.invalidPayload('permission_codes 必填');
+  }
+  if (!Array.isArray(payload.permission_codes)) {
+    throw roleErrors.invalidPayload('permission_codes 必须为数组');
+  }
+  if (payload.permission_codes.length > MAX_PERMISSION_CODES_PAYLOAD_LENGTH) {
+    throw roleErrors.invalidPayload(
+      `permission_codes 数量不能超过 ${MAX_PERMISSION_CODES_PAYLOAD_LENGTH}`
+    );
+  }
+  const dedupedPermissionCodes = new Map();
+  for (const permissionCode of payload.permission_codes) {
+    if (typeof permissionCode !== 'string') {
+      throw roleErrors.invalidPayload('permission_codes 仅允许字符串权限码');
+    }
+    const normalizedPermissionCode = permissionCode.trim();
+    if (!normalizedPermissionCode) {
+      throw roleErrors.invalidPayload('permission_codes 不能为空字符串');
+    }
+    const normalizedPermissionCodeKey = normalizedPermissionCode.toLowerCase();
+    if (dedupedPermissionCodes.has(normalizedPermissionCodeKey)) {
+      throw roleErrors.invalidPayload('permission_codes 不允许重复');
+    }
+    dedupedPermissionCodes.set(
+      normalizedPermissionCodeKey,
+      normalizedPermissionCode
+    );
+  }
+  return {
+    permissionCodes: [...dedupedPermissionCodes.values()]
+  };
+};
+
 const mapRoleCatalogEntry = (role, requestId) => ({
   role_id: String(role?.roleId || role?.role_id || '').trim(),
   code: String(role?.code || '').trim(),
@@ -472,6 +520,246 @@ const createPlatformRoleService = ({ authService } = {}) => {
       .map((role) => mapRoleCatalogEntry(role, resolvedRequestId));
     return {
       roles: mappedRoles,
+      request_id: resolvedRequestId
+    };
+  };
+
+  const getRolePermissions = async ({
+    requestId,
+    accessToken,
+    roleId,
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedRoleId = normalizeRoleId(roleId);
+    if (!normalizedRoleId) {
+      throw roleErrors.invalidPayload('role_id 不能为空');
+    }
+    if (normalizedRoleId.length > MAX_ROLE_ID_LENGTH) {
+      throw roleErrors.invalidPayload(`role_id 长度不能超过 ${MAX_ROLE_ID_LENGTH}`);
+    }
+    assertAddressableRoleId(normalizedRoleId);
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: PLATFORM_ROLE_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      addAuditEvent({
+        type: 'platform.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetRoleId: normalizedRoleId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: String(error?.errorCode || 'AUTH-403-FORBIDDEN')
+        }
+      });
+      throw error;
+    }
+
+    assertAuthServiceMethod('listPlatformRolePermissionGrants');
+    let grants;
+    try {
+      grants = await authService.listPlatformRolePermissionGrants({
+        roleId: normalizedRoleId
+      });
+    } catch (error) {
+      const mappedError = (
+        error?.errorCode === 'AUTH-400-INVALID-PAYLOAD'
+        || error?.errorCode === 'AUTH-404-ROLE-NOT-FOUND'
+      )
+        ? roleErrors.roleNotFound()
+        : roleErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail:
+          mappedError.errorCode === 'ROLE-404-ROLE-NOT-FOUND'
+            ? 'role not found'
+            : 'platform role permission grants dependency unavailable',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    addAuditEvent({
+      type: 'platform.role.permissions.read.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId: operatorContext.operatorUserId,
+      targetRoleId: normalizedRoleId,
+      detail: 'platform role permission grants listed',
+      metadata: {
+        permission_codes_count: Array.isArray(grants?.permission_codes)
+          ? grants.permission_codes.length
+          : 0
+      }
+    });
+
+    return {
+      role_id: normalizedRoleId,
+      permission_codes: Array.isArray(grants?.permission_codes)
+        ? [...grants.permission_codes]
+        : [],
+      available_permission_codes: Array.isArray(grants?.available_permission_codes)
+        ? [...grants.available_permission_codes]
+        : [],
+      request_id: resolvedRequestId
+    };
+  };
+
+  const replaceRolePermissions = async ({
+    requestId,
+    accessToken,
+    roleId,
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedRoleId = normalizeRoleId(roleId);
+    if (!normalizedRoleId) {
+      throw roleErrors.invalidPayload('role_id 不能为空');
+    }
+    if (normalizedRoleId.length > MAX_ROLE_ID_LENGTH) {
+      throw roleErrors.invalidPayload(`role_id 长度不能超过 ${MAX_ROLE_ID_LENGTH}`);
+    }
+    assertAddressableRoleId(normalizedRoleId);
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: PLATFORM_ROLE_OPERATE_PERMISSION_CODE
+      });
+    } catch (error) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetRoleId: normalizedRoleId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: String(error?.errorCode || 'AUTH-403-FORBIDDEN')
+        }
+      });
+      throw error;
+    }
+
+    let parsedPayload;
+    try {
+      parsedPayload = parseReplaceRolePermissionsPayload(payload);
+    } catch (error) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'payload validation failed',
+        metadata: {
+          error_code: String(error?.errorCode || 'ROLE-400-INVALID-PAYLOAD')
+        }
+      });
+      throw error;
+    }
+
+    assertAuthServiceMethod('replacePlatformRolePermissionGrants');
+    assertAuthServiceMethod('listPlatformRolePermissionGrants');
+    assertAuthServiceMethod('listPlatformPermissionCatalog');
+
+    try {
+      await authService.listPlatformRolePermissionGrants({
+        roleId: normalizedRoleId
+      });
+    } catch (error) {
+      const mappedError = (
+        error?.errorCode === 'AUTH-400-INVALID-PAYLOAD'
+        || error?.errorCode === 'AUTH-404-ROLE-NOT-FOUND'
+      )
+        ? roleErrors.roleNotFound()
+        : roleErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail:
+          mappedError.errorCode === 'ROLE-404-ROLE-NOT-FOUND'
+            ? 'role not found'
+            : 'platform role permission grants dependency unavailable',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    let updated;
+    try {
+      updated = await authService.replacePlatformRolePermissionGrants({
+        requestId: resolvedRequestId,
+        roleId: normalizedRoleId,
+        permissionCodes: parsedPayload.permissionCodes,
+        operatorUserId: operatorContext.operatorUserId,
+        operatorSessionId: operatorContext.operatorSessionId
+      });
+    } catch (error) {
+      const mappedError = error?.errorCode === 'AUTH-404-ROLE-NOT-FOUND'
+        ? roleErrors.roleNotFound()
+        : error?.errorCode === 'AUTH-400-INVALID-PAYLOAD'
+          ? roleErrors.invalidPayload('请求参数不完整或格式错误')
+          : roleErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail:
+          mappedError.errorCode === 'ROLE-404-ROLE-NOT-FOUND'
+            ? 'role not found'
+            : mappedError.errorCode === 'ROLE-400-INVALID-PAYLOAD'
+            ? 'payload validation failed'
+            : 'platform role permission grants update failed',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const availablePermissionCodes = authService.listPlatformPermissionCatalog();
+    addAuditEvent({
+      type: 'platform.role.permissions.update.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId: operatorContext.operatorUserId,
+      targetRoleId: normalizedRoleId,
+      detail: 'platform role permission grants replaced',
+      metadata: {
+        permission_codes_count: Array.isArray(updated?.permission_codes)
+          ? updated.permission_codes.length
+          : 0,
+        affected_user_count: Number(updated?.affected_user_count || 0)
+      }
+    });
+
+    return {
+      role_id: normalizedRoleId,
+      permission_codes: Array.isArray(updated?.permission_codes)
+        ? [...updated.permission_codes]
+        : [],
+      available_permission_codes: Array.isArray(availablePermissionCodes)
+        ? [...availablePermissionCodes]
+        : [],
+      affected_user_count: Number(updated?.affected_user_count || 0),
       request_id: resolvedRequestId
     };
   };
@@ -824,6 +1112,8 @@ const createPlatformRoleService = ({ authService } = {}) => {
 
   return {
     listRoles,
+    getRolePermissions,
+    replaceRolePermissions,
     createRole,
     updateRole,
     deleteRole,

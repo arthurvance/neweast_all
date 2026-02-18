@@ -1,10 +1,13 @@
 const PLATFORM_ROLE_BASE_PATH = '/platform/roles';
 const PLATFORM_ROLE_ITEM_PATH = '/platform/roles/:role_id';
+const PLATFORM_ROLE_PERMISSION_PATH = '/platform/roles/:role_id/permissions';
 
 const PLATFORM_ROLE_LIST_ROUTE_KEY = 'GET /platform/roles';
 const PLATFORM_ROLE_CREATE_ROUTE_KEY = 'POST /platform/roles';
 const PLATFORM_ROLE_UPDATE_ROUTE_KEY = 'PATCH /platform/roles/:role_id';
 const PLATFORM_ROLE_DELETE_ROUTE_KEY = 'DELETE /platform/roles/:role_id';
+const PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY = 'GET /platform/roles/:role_id/permissions';
+const PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY = 'PUT /platform/roles/:role_id/permissions';
 
 const PLATFORM_ROLE_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
 const PLATFORM_ROLE_OPERATE_PERMISSION_CODE = 'platform.member_admin.operate';
@@ -15,10 +18,13 @@ const PROTECTED_PLATFORM_ROLE_IDS = Object.freeze(['sys_admin']);
 module.exports = {
   PLATFORM_ROLE_BASE_PATH,
   PLATFORM_ROLE_ITEM_PATH,
+  PLATFORM_ROLE_PERMISSION_PATH,
   PLATFORM_ROLE_LIST_ROUTE_KEY,
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY,
+  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_ROLE_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_SCOPE,

@@ -8,6 +8,7 @@ const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxDelayMs: 200,
   jitterMs: 20
 });
+const DEFAULT_MAX_ATOMIC_ROLE_PERMISSION_AFFECTED_USERS = 100;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
@@ -286,6 +287,33 @@ const isMissingOrgsTableError = (error) =>
   && /\borgs\b/i.test(String(error?.message || ''));
 const buildSqlInPlaceholders = (count) =>
   new Array(Math.max(0, Number(count) || 0)).fill('?').join(', ');
+const normalizePlatformPermissionCode = (permissionCode) =>
+  String(permissionCode || '').trim();
+const normalizePlatformPermissionCodes = (permissionCodes = []) => {
+  const deduped = new Map();
+  for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
+    const normalizedCode = normalizePlatformPermissionCode(permissionCode);
+    if (!normalizedCode) {
+      continue;
+    }
+    const permissionCodeKey = normalizedCode.toLowerCase();
+    deduped.set(permissionCodeKey, permissionCodeKey);
+  }
+  return [...deduped.values()];
+};
+const toPlatformPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
+  const normalizedPermissionCodeSet = new Set(
+    normalizePlatformPermissionCodes(permissionCodes)
+  );
+  return toPlatformPermissionSnapshot({
+    canViewMemberAdmin: normalizedPermissionCodeSet.has('platform.member_admin.view')
+      || normalizedPermissionCodeSet.has('platform.member_admin.operate'),
+    canOperateMemberAdmin: normalizedPermissionCodeSet.has('platform.member_admin.operate'),
+    canViewBilling: normalizedPermissionCodeSet.has('platform.billing.view')
+      || normalizedPermissionCodeSet.has('platform.billing.operate'),
+    canOperateBilling: normalizedPermissionCodeSet.has('platform.billing.operate')
+  });
+};
 
 const createMySqlAuthStore = ({
   dbClient,
@@ -970,7 +998,12 @@ const createMySqlAuthStore = ({
         })
     });
 
-  const replacePlatformRolesAndSyncSnapshotOnce = async ({ userId, roles = [] }) => {
+  const replacePlatformRolesAndSyncSnapshotInTx = async ({
+    txClient,
+    userId,
+    roles = []
+  }) => {
+    const transactionalClient = txClient || dbClient;
     const normalizedUserId = String(userId || '').trim();
     if (!normalizedUserId) {
       return {
@@ -982,155 +1015,161 @@ const createMySqlAuthStore = ({
 
     const normalizedRoles = dedupePlatformRoleFacts(roles);
 
-    return dbClient.inTransaction(async (tx) => {
-      const userRows = await tx.query(
-        `
-          SELECT id
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-          FOR UPDATE
-        `,
-        [normalizedUserId]
-      );
-      if (!userRows?.[0]) {
-        return {
-          synced: false,
-          reason: 'invalid-user-id',
-          permission: null
-        };
-      }
-
-      const previousRoleRows = await tx.query(
-        `
-          SELECT status,
-                 can_view_member_admin,
-                 can_operate_member_admin,
-                 can_view_billing,
-                 can_operate_billing
-          FROM auth_user_platform_roles
-          WHERE user_id = ?
-        `,
-        [normalizedUserId]
-      );
-      const previousPermission = aggregatePlatformPermissionFromRoleRows(previousRoleRows).permission;
-
-      await tx.query(
-        `
-          DELETE FROM auth_user_platform_roles
-          WHERE user_id = ?
-        `,
-        [normalizedUserId]
-      );
-
-      for (const role of normalizedRoles) {
-        await tx.query(
-          `
-            INSERT INTO auth_user_platform_roles (
-              user_id,
-              role_id,
-              status,
-              can_view_member_admin,
-              can_operate_member_admin,
-              can_view_billing,
-              can_operate_billing
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `,
-          [
-            normalizedUserId,
-            role.roleId,
-            role.status,
-            Number(role.canViewMemberAdmin),
-            Number(role.canOperateMemberAdmin),
-            Number(role.canViewBilling),
-            Number(role.canOperateBilling)
-          ]
-        );
-      }
-
-      const permission = aggregatePlatformPermissionFromRoleRows(normalizedRoles).permission;
-      const canViewMemberAdmin = Number(permission.canViewMemberAdmin);
-      const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
-      const canViewBilling = Number(permission.canViewBilling);
-      const canOperateBilling = Number(permission.canOperateBilling);
-
-      if (normalizedRoles.length > 0) {
-        await tx.query(
-          `
-            INSERT INTO auth_user_domain_access (
-              user_id,
-              domain,
-              status,
-              can_view_member_admin,
-              can_operate_member_admin,
-              can_view_billing,
-              can_operate_billing
-            )
-            VALUES (?, 'platform', 'active', ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-              can_view_member_admin = VALUES(can_view_member_admin),
-              can_operate_member_admin = VALUES(can_operate_member_admin),
-              can_view_billing = VALUES(can_view_billing),
-              can_operate_billing = VALUES(can_operate_billing),
-              updated_at = CURRENT_TIMESTAMP(3)
-          `,
-          [
-            normalizedUserId,
-            canViewMemberAdmin,
-            canOperateMemberAdmin,
-            canViewBilling,
-            canOperateBilling
-          ]
-        );
-      } else {
-        await tx.query(
-          `
-            UPDATE auth_user_domain_access
-            SET can_view_member_admin = ?,
-                can_operate_member_admin = ?,
-                can_view_billing = ?,
-                can_operate_billing = ?,
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-              AND (
-                can_view_member_admin <> ?
-                OR can_operate_member_admin <> ?
-                OR can_view_billing <> ?
-                OR can_operate_billing <> ?
-              )
-          `,
-          [
-            canViewMemberAdmin,
-            canOperateMemberAdmin,
-            canViewBilling,
-            canOperateBilling,
-            normalizedUserId,
-            canViewMemberAdmin,
-            canOperateMemberAdmin,
-            canViewBilling,
-            canOperateBilling
-          ]
-        );
-      }
-
-      if (!isSamePlatformPermissionSnapshot(previousPermission, permission)) {
-        await bumpSessionVersionAndConvergeSessionsTx({
-          txClient: tx,
-          userId: normalizedUserId,
-          reason: 'platform-role-facts-changed',
-          revokeRefreshTokens: true,
-          revokeAuthSessions: true
-        });
-      }
-
+    const userRows = await transactionalClient.query(
+      `
+        SELECT id
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [normalizedUserId]
+    );
+    if (!userRows?.[0]) {
       return {
-        synced: true,
-        reason: 'ok',
-        permission
+        synced: false,
+        reason: 'invalid-user-id',
+        permission: null
       };
-    });
+    }
+
+    const previousRoleRows = await transactionalClient.query(
+      `
+        SELECT status,
+               can_view_member_admin,
+               can_operate_member_admin,
+               can_view_billing,
+               can_operate_billing
+        FROM auth_user_platform_roles
+        WHERE user_id = ?
+      `,
+      [normalizedUserId]
+    );
+    const previousPermission = aggregatePlatformPermissionFromRoleRows(previousRoleRows).permission;
+
+    await transactionalClient.query(
+      `
+        DELETE FROM auth_user_platform_roles
+        WHERE user_id = ?
+      `,
+      [normalizedUserId]
+    );
+
+    for (const role of normalizedRoles) {
+      await transactionalClient.query(
+        `
+          INSERT INTO auth_user_platform_roles (
+            user_id,
+            role_id,
+            status,
+            can_view_member_admin,
+            can_operate_member_admin,
+            can_view_billing,
+            can_operate_billing
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          normalizedUserId,
+          role.roleId,
+          role.status,
+          Number(role.canViewMemberAdmin),
+          Number(role.canOperateMemberAdmin),
+          Number(role.canViewBilling),
+          Number(role.canOperateBilling)
+        ]
+      );
+    }
+
+    const permission = aggregatePlatformPermissionFromRoleRows(normalizedRoles).permission;
+    const canViewMemberAdmin = Number(permission.canViewMemberAdmin);
+    const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
+    const canViewBilling = Number(permission.canViewBilling);
+    const canOperateBilling = Number(permission.canOperateBilling);
+
+    if (normalizedRoles.length > 0) {
+      await transactionalClient.query(
+        `
+          INSERT INTO auth_user_domain_access (
+            user_id,
+            domain,
+            status,
+            can_view_member_admin,
+            can_operate_member_admin,
+            can_view_billing,
+            can_operate_billing
+          )
+          VALUES (?, 'platform', 'active', ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            can_view_member_admin = VALUES(can_view_member_admin),
+            can_operate_member_admin = VALUES(can_operate_member_admin),
+            can_view_billing = VALUES(can_view_billing),
+            can_operate_billing = VALUES(can_operate_billing),
+            updated_at = CURRENT_TIMESTAMP(3)
+        `,
+        [
+          normalizedUserId,
+          canViewMemberAdmin,
+          canOperateMemberAdmin,
+          canViewBilling,
+          canOperateBilling
+        ]
+      );
+    } else {
+      await transactionalClient.query(
+        `
+          UPDATE auth_user_domain_access
+          SET can_view_member_admin = ?,
+              can_operate_member_admin = ?,
+              can_view_billing = ?,
+              can_operate_billing = ?,
+              updated_at = CURRENT_TIMESTAMP(3)
+          WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
+            AND (
+              can_view_member_admin <> ?
+              OR can_operate_member_admin <> ?
+              OR can_view_billing <> ?
+              OR can_operate_billing <> ?
+            )
+        `,
+        [
+          canViewMemberAdmin,
+          canOperateMemberAdmin,
+          canViewBilling,
+          canOperateBilling,
+          normalizedUserId,
+          canViewMemberAdmin,
+          canOperateMemberAdmin,
+          canViewBilling,
+          canOperateBilling
+        ]
+      );
+    }
+
+    if (!isSamePlatformPermissionSnapshot(previousPermission, permission)) {
+      await bumpSessionVersionAndConvergeSessionsTx({
+        txClient: transactionalClient,
+        userId: normalizedUserId,
+        reason: 'platform-role-facts-changed',
+        revokeRefreshTokens: true,
+        revokeAuthSessions: true
+      });
+    }
+
+    return {
+      synced: true,
+      reason: 'ok',
+      permission
+    };
   };
+
+  const replacePlatformRolesAndSyncSnapshotOnce = async ({ userId, roles = [] }) =>
+    dbClient.inTransaction(async (tx) =>
+      replacePlatformRolesAndSyncSnapshotInTx({
+        txClient: tx,
+        userId,
+        roles
+      }));
 
   const replacePlatformRolesAndSyncSnapshot = async ({ userId, roles = [] }) =>
     executeWithDeadlockRetry({
@@ -1264,6 +1303,379 @@ const createMySqlAuthStore = ({
       return (Array.isArray(rows) ? rows : [])
         .map((row) => toPlatformRoleCatalogRecord(row))
         .filter(Boolean);
+    },
+
+    listPlatformRolePermissionGrants: async ({ roleId }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        return [];
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT permission_code
+          FROM platform_role_permission_grants
+          WHERE role_id = ?
+          ORDER BY permission_code ASC
+        `,
+        [normalizedRoleId]
+      );
+      return [...new Set(
+        (Array.isArray(rows) ? rows : [])
+          .map((row) => normalizePlatformPermissionCode(row?.permission_code))
+          .filter((permissionCode) => permissionCode.length > 0)
+      )];
+    },
+
+    listPlatformRolePermissionGrantsByRoleIds: async ({ roleIds = [] } = {}) => {
+      const normalizedRoleIds = [...new Set(
+        (Array.isArray(roleIds) ? roleIds : [])
+          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+          .filter((roleId) => roleId.length > 0)
+      )];
+      if (normalizedRoleIds.length === 0) {
+        return [];
+      }
+      const placeholders = buildSqlInPlaceholders(normalizedRoleIds.length);
+      const rows = await dbClient.query(
+        `
+          SELECT role_id, permission_code
+          FROM platform_role_permission_grants
+          WHERE role_id IN (${placeholders})
+          ORDER BY role_id ASC, permission_code ASC
+        `,
+        normalizedRoleIds
+      );
+      const grantsByRoleId = new Map();
+      for (const roleId of normalizedRoleIds) {
+        grantsByRoleId.set(roleId, []);
+      }
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const roleId = normalizePlatformRoleCatalogRoleId(row?.role_id);
+        const permissionCode = normalizePlatformPermissionCode(row?.permission_code);
+        if (!roleId || !permissionCode || !grantsByRoleId.has(roleId)) {
+          continue;
+        }
+        grantsByRoleId.get(roleId).push(permissionCode);
+      }
+      return [...grantsByRoleId.entries()].map(([roleId, permissionCodes]) => ({
+        roleId,
+        permissionCodes: [...new Set(permissionCodes)]
+      }));
+    },
+
+    replacePlatformRolePermissionGrants: async ({
+      roleId,
+      permissionCodes = [],
+      operatorUserId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw new Error('replacePlatformRolePermissionGrants requires roleId');
+      }
+      const normalizedPermissionCodes = normalizePlatformPermissionCodes(permissionCodes);
+      return executeWithDeadlockRetry({
+        operation: 'replacePlatformRolePermissionGrants',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const roleRows = await tx.query(
+              `
+                SELECT role_id
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedRoleId]
+            );
+            if (!roleRows?.[0]) {
+              return null;
+            }
+
+            await tx.query(
+              `
+                DELETE FROM platform_role_permission_grants
+                WHERE role_id = ?
+              `,
+              [normalizedRoleId]
+            );
+
+            for (const permissionCode of normalizedPermissionCodes) {
+              await tx.query(
+                `
+                  INSERT INTO platform_role_permission_grants (
+                    role_id,
+                    permission_code,
+                    created_by_user_id,
+                    updated_by_user_id
+                  )
+                  VALUES (?, ?, ?, ?)
+                `,
+                [
+                  normalizedRoleId,
+                  permissionCode,
+                  operatorUserId ? String(operatorUserId) : null,
+                  operatorUserId ? String(operatorUserId) : null
+                ]
+              );
+            }
+
+            const grantRows = await tx.query(
+              `
+                SELECT permission_code
+                FROM platform_role_permission_grants
+                WHERE role_id = ?
+                ORDER BY permission_code ASC
+              `,
+              [normalizedRoleId]
+            );
+            return [...new Set(
+              (Array.isArray(grantRows) ? grantRows : [])
+                .map((row) => normalizePlatformPermissionCode(row?.permission_code))
+                .filter((permissionCode) => permissionCode.length > 0)
+            )];
+          })
+      });
+    },
+
+    replacePlatformRolePermissionGrantsAndSyncSnapshots: async ({
+      roleId,
+      permissionCodes = [],
+      operatorUserId = null,
+      maxAffectedUsers = DEFAULT_MAX_ATOMIC_ROLE_PERMISSION_AFFECTED_USERS
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw new Error('replacePlatformRolePermissionGrantsAndSyncSnapshots requires roleId');
+      }
+      const normalizedPermissionCodes = normalizePlatformPermissionCodes(permissionCodes);
+      const normalizedMaxAffectedUsers = Math.max(
+        1,
+        Math.floor(Number(maxAffectedUsers || DEFAULT_MAX_ATOMIC_ROLE_PERMISSION_AFFECTED_USERS))
+      );
+      return executeWithDeadlockRetry({
+        operation: 'replacePlatformRolePermissionGrantsAndSyncSnapshots',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const roleRows = await tx.query(
+              `
+                SELECT role_id
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedRoleId]
+            );
+            if (!roleRows?.[0]) {
+              return null;
+            }
+
+            const affectedUserRows = await tx.query(
+              `
+                SELECT user_id
+                FROM auth_user_platform_roles
+                WHERE role_id = ?
+                ORDER BY user_id ASC
+                FOR UPDATE
+              `,
+              [normalizedRoleId]
+            );
+            const affectedUserIds = [
+              ...new Set(
+                (Array.isArray(affectedUserRows) ? affectedUserRows : [])
+                  .map((row) => String(row?.user_id || '').trim())
+                  .filter((userId) => userId.length > 0)
+              )
+            ];
+            if (affectedUserIds.length > normalizedMaxAffectedUsers) {
+              const limitError = new Error('platform role permission affected users exceed limit');
+              limitError.code = 'ERR_PLATFORM_ROLE_PERMISSION_AFFECTED_USERS_OVER_LIMIT';
+              limitError.maxAffectedUsers = normalizedMaxAffectedUsers;
+              limitError.affectedUsers = affectedUserIds.length;
+              throw limitError;
+            }
+
+            await tx.query(
+              `
+                DELETE FROM platform_role_permission_grants
+                WHERE role_id = ?
+              `,
+              [normalizedRoleId]
+            );
+
+            for (const permissionCode of normalizedPermissionCodes) {
+              await tx.query(
+                `
+                  INSERT INTO platform_role_permission_grants (
+                    role_id,
+                    permission_code,
+                    created_by_user_id,
+                    updated_by_user_id
+                  )
+                  VALUES (?, ?, ?, ?)
+                `,
+                [
+                  normalizedRoleId,
+                  permissionCode,
+                  operatorUserId ? String(operatorUserId) : null,
+                  operatorUserId ? String(operatorUserId) : null
+                ]
+              );
+            }
+
+            const grantCodesByRoleId = new Map();
+            grantCodesByRoleId.set(normalizedRoleId, [...normalizedPermissionCodes]);
+
+            for (const affectedUserId of affectedUserIds) {
+              const roleRowsForUser = await tx.query(
+                `
+                  SELECT role_id, status
+                  FROM auth_user_platform_roles
+                  WHERE user_id = ?
+                  ORDER BY role_id ASC
+                  FOR UPDATE
+                `,
+                [affectedUserId]
+              );
+
+              const normalizedRoleIdsForUser = [
+                ...new Set(
+                  (Array.isArray(roleRowsForUser) ? roleRowsForUser : [])
+                    .map((row) => normalizePlatformRoleCatalogRoleId(row?.role_id))
+                    .filter((candidateRoleId) => candidateRoleId.length > 0)
+                )
+              ];
+              const missingGrantRoleIds = normalizedRoleIdsForUser.filter(
+                (candidateRoleId) => !grantCodesByRoleId.has(candidateRoleId)
+              );
+              if (missingGrantRoleIds.length > 0) {
+                const placeholders = buildSqlInPlaceholders(missingGrantRoleIds.length);
+                const grantRows = await tx.query(
+                  `
+                    SELECT role_id, permission_code
+                    FROM platform_role_permission_grants
+                    WHERE role_id IN (${placeholders})
+                    ORDER BY role_id ASC, permission_code ASC
+                  `,
+                  missingGrantRoleIds
+                );
+                for (const roleIdKey of missingGrantRoleIds) {
+                  grantCodesByRoleId.set(roleIdKey, []);
+                }
+                for (const row of Array.isArray(grantRows) ? grantRows : []) {
+                  const roleIdKey = normalizePlatformRoleCatalogRoleId(row?.role_id);
+                  const permissionCode = normalizePlatformPermissionCode(row?.permission_code);
+                  if (!roleIdKey || !permissionCode || !grantCodesByRoleId.has(roleIdKey)) {
+                    continue;
+                  }
+                  grantCodesByRoleId.get(roleIdKey).push(permissionCode);
+                }
+                for (const roleIdKey of missingGrantRoleIds) {
+                  const dedupedCodes = [
+                    ...new Set(normalizePlatformPermissionCodes(grantCodesByRoleId.get(roleIdKey)))
+                  ];
+                  grantCodesByRoleId.set(roleIdKey, dedupedCodes);
+                }
+              }
+
+              const nextRoles = (Array.isArray(roleRowsForUser) ? roleRowsForUser : [])
+                .map((row) => {
+                  const normalizedRoleIdForUser = normalizePlatformRoleCatalogRoleId(row?.role_id);
+                  if (!normalizedRoleIdForUser) {
+                    return null;
+                  }
+                  const permissionSnapshot = toPlatformPermissionSnapshotFromGrantCodes(
+                    grantCodesByRoleId.get(normalizedRoleIdForUser) || []
+                  );
+                  return {
+                    roleId: normalizedRoleIdForUser,
+                    status: normalizePlatformRoleStatus(row?.status),
+                    canViewMemberAdmin: permissionSnapshot.canViewMemberAdmin,
+                    canOperateMemberAdmin: permissionSnapshot.canOperateMemberAdmin,
+                    canViewBilling: permissionSnapshot.canViewBilling,
+                    canOperateBilling: permissionSnapshot.canOperateBilling
+                  };
+                })
+                .filter(Boolean);
+
+              const syncResult = await replacePlatformRolesAndSyncSnapshotInTx({
+                txClient: tx,
+                userId: affectedUserId,
+                roles: nextRoles
+              });
+              const syncReason = String(syncResult?.reason || 'unknown')
+                .trim()
+                .toLowerCase();
+              if (syncReason !== 'ok') {
+                const syncError = new Error(
+                  `platform role permission sync failed: ${syncReason || 'unknown'}`
+                );
+                syncError.code = 'ERR_PLATFORM_ROLE_PERMISSION_SYNC_FAILED';
+                syncError.syncReason = syncReason || 'unknown';
+                throw syncError;
+              }
+            }
+
+            return {
+              roleId: normalizedRoleId,
+              permissionCodes: [...normalizedPermissionCodes],
+              affectedUserIds: [...affectedUserIds]
+            };
+          })
+      });
+    },
+
+    listUserIdsByPlatformRoleId: async ({ roleId }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        return [];
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT user_id
+          FROM auth_user_platform_roles
+          WHERE role_id = ?
+          ORDER BY user_id ASC
+        `,
+        [normalizedRoleId]
+      );
+      return (Array.isArray(rows) ? rows : [])
+        .map((row) => String(row?.user_id || '').trim())
+        .filter((userId) => userId.length > 0);
+    },
+
+    listPlatformRoleFactsByUserId: async ({ userId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return [];
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT role_id,
+                 status,
+                 can_view_member_admin,
+                 can_operate_member_admin,
+                 can_view_billing,
+                 can_operate_billing
+          FROM auth_user_platform_roles
+          WHERE user_id = ?
+          ORDER BY role_id ASC
+        `,
+        [normalizedUserId]
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => ({
+        roleId: String(row?.role_id || '').trim(),
+        role_id: String(row?.role_id || '').trim(),
+        status: String(row?.status || 'active').trim().toLowerCase() || 'active',
+        permission: {
+          canViewMemberAdmin: toBoolean(row?.can_view_member_admin),
+          canOperateMemberAdmin: toBoolean(row?.can_operate_member_admin),
+          canViewBilling: toBoolean(row?.can_view_billing),
+          canOperateBilling: toBoolean(row?.can_operate_billing)
+        }
+      }));
     },
 
     createPlatformRoleCatalogEntry: async ({

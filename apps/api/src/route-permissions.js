@@ -7,6 +7,7 @@ const {
 const {
   PLATFORM_ROLE_BASE_PATH,
   PLATFORM_ROLE_ITEM_PATH,
+  PLATFORM_ROLE_PERMISSION_PATH,
   PLATFORM_ROLE_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_SCOPE
@@ -326,6 +327,20 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   {
     method: 'DELETE',
     path: PLATFORM_ROLE_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_ROLE_SCOPE
+  },
+  {
+    method: 'GET',
+    path: PLATFORM_ROLE_PERMISSION_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ROLE_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_ROLE_SCOPE
+  },
+  {
+    method: 'PUT',
+    path: PLATFORM_ROLE_PERMISSION_PATH,
     access: 'protected',
     permission_code: PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
     scope: PLATFORM_ROLE_SCOPE
