@@ -10,10 +10,14 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const tenantsByUserId = new Map();
   const platformRolesByUserId = new Map();
   const platformPermissionsByUserId = new Map();
+  const platformRoleCatalogById = new Map();
+  const platformRoleCatalogCodeIndex = new Map();
   const orgsById = new Map();
   const orgIdByName = new Map();
   const membershipsByOrgId = new Map();
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+  const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
+  const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const MAX_ORG_NAME_LENGTH = 128;
@@ -61,6 +65,96 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       throw new Error(`invalid platform role status: ${normalizedStatus}`);
     }
     return normalizedStatus;
+  };
+  const normalizePlatformRoleCatalogStatus = (status) => {
+    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    if (normalizedStatus === 'enabled') {
+      return 'active';
+    }
+    if (!VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatus)) {
+      throw new Error(`invalid platform role catalog status: ${normalizedStatus}`);
+    }
+    return normalizedStatus;
+  };
+  const normalizePlatformRoleCatalogScope = (scope) => {
+    const normalizedScope = String(scope || 'platform').trim().toLowerCase();
+    if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+      throw new Error(`invalid platform role catalog scope: ${normalizedScope}`);
+    }
+    return normalizedScope;
+  };
+  const normalizePlatformRoleCatalogRoleId = (roleId) =>
+    String(roleId || '').trim().toLowerCase();
+  const toPlatformRoleCatalogRoleIdKey = (roleId) =>
+    normalizePlatformRoleCatalogRoleId(roleId).toLowerCase();
+  const normalizePlatformRoleCatalogCode = (code) =>
+    String(code || '').trim();
+  const toPlatformRoleCatalogCodeKey = (code) =>
+    normalizePlatformRoleCatalogCode(code).toLowerCase();
+  const createDuplicatePlatformRoleCatalogEntryError = ({ target = 'code' } = {}) => {
+    const normalizedTarget = String(target || '').trim().toLowerCase();
+    const resolvedTarget = normalizedTarget === 'role_id' ? 'role_id' : 'code';
+    const error = new Error(
+      resolvedTarget === 'role_id'
+        ? 'duplicate platform role catalog role_id'
+        : 'duplicate platform role catalog code'
+    );
+    error.code = 'ER_DUP_ENTRY';
+    error.errno = 1062;
+    error.conflictTarget = resolvedTarget;
+    error.platformRoleCatalogConflictTarget = resolvedTarget;
+    return error;
+  };
+  const toPlatformRoleCatalogRecord = (entry = {}) => ({
+    roleId: String(entry.roleId || entry.role_id || '').trim(),
+    code: String(entry.code || '').trim(),
+    name: String(entry.name || '').trim(),
+    status: normalizePlatformRoleCatalogStatus(entry.status),
+    scope: normalizePlatformRoleCatalogScope(entry.scope),
+    isSystem: Boolean(entry.isSystem ?? entry.is_system),
+    createdByUserId: entry.createdByUserId || entry.created_by_user_id || null,
+    updatedByUserId: entry.updatedByUserId || entry.updated_by_user_id || null,
+    createdAt: entry.createdAt || entry.created_at || new Date().toISOString(),
+    updatedAt: entry.updatedAt || entry.updated_at || new Date().toISOString()
+  });
+  const clonePlatformRoleCatalogRecord = (entry = null) =>
+    entry
+      ? {
+        roleId: entry.roleId,
+        code: entry.code,
+        name: entry.name,
+        status: entry.status,
+        scope: entry.scope,
+        isSystem: entry.isSystem,
+        createdByUserId: entry.createdByUserId,
+        updatedByUserId: entry.updatedByUserId,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt
+      }
+      : null;
+
+  const findPlatformRoleCatalogRecordStateByRoleId = (roleId) => {
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+    if (!normalizedRoleId) {
+      return null;
+    }
+    if (platformRoleCatalogById.has(normalizedRoleId)) {
+      return {
+        roleId: normalizedRoleId,
+        record: platformRoleCatalogById.get(normalizedRoleId)
+      };
+    }
+    const normalizedRoleIdKey = toPlatformRoleCatalogRoleIdKey(normalizedRoleId);
+    for (const [existingRoleId, entry] of platformRoleCatalogById.entries()) {
+      if (toPlatformRoleCatalogRoleIdKey(existingRoleId) !== normalizedRoleIdKey) {
+        continue;
+      }
+      return {
+        roleId: existingRoleId,
+        record: entry
+      };
+    }
+    return null;
   };
 
   const normalizePlatformPermission = (
@@ -198,6 +292,63 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       permission: { ...permission }
     };
   };
+
+  const upsertPlatformRoleCatalogRecord = (entry = {}) => {
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(
+      entry.roleId || entry.role_id
+    );
+    const normalizedCode = normalizePlatformRoleCatalogCode(entry.code);
+    const normalizedName = String(entry.name || '').trim();
+    if (!normalizedRoleId || !normalizedCode || !normalizedName) {
+      throw new Error('platform role catalog entry requires roleId, code, and name');
+    }
+    const codeKey = toPlatformRoleCatalogCodeKey(normalizedCode);
+    const existingState = findPlatformRoleCatalogRecordStateByRoleId(
+      normalizedRoleId
+    );
+    const persistedRoleId = existingState?.roleId || normalizedRoleId;
+    const existing = existingState?.record || null;
+    const existingRoleIdForCode = platformRoleCatalogCodeIndex.get(codeKey);
+    if (
+      existingRoleIdForCode
+      && toPlatformRoleCatalogRoleIdKey(existingRoleIdForCode)
+        !== toPlatformRoleCatalogRoleIdKey(persistedRoleId)
+    ) {
+      throw createDuplicatePlatformRoleCatalogEntryError({
+        target: 'code'
+      });
+    }
+    if (existing && toPlatformRoleCatalogCodeKey(existing.code) !== codeKey) {
+      platformRoleCatalogCodeIndex.delete(
+        toPlatformRoleCatalogCodeKey(existing.code)
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const merged = toPlatformRoleCatalogRecord({
+      ...existing,
+      ...entry,
+      roleId: persistedRoleId,
+      code: normalizedCode,
+      name: normalizedName,
+      createdAt: existing?.createdAt || entry.createdAt || nowIso,
+      updatedAt: entry.updatedAt || nowIso
+    });
+    platformRoleCatalogById.set(persistedRoleId, merged);
+    platformRoleCatalogCodeIndex.set(codeKey, persistedRoleId);
+    return clonePlatformRoleCatalogRecord(merged);
+  };
+
+  upsertPlatformRoleCatalogRecord({
+    roleId: 'sys_admin',
+    code: 'sys_admin',
+    name: '系统管理员',
+    status: 'active',
+    scope: 'platform',
+    isSystem: true,
+    createdByUserId: null,
+    updatedByUserId: null
+  });
 
   for (const user of seedUsers) {
     const normalizedUser = {
@@ -847,6 +998,160 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       }
       const permission = platformPermissionsByUserId.get(normalizedUserId);
       return permission ? { ...permission } : null;
+    },
+
+    countPlatformRoleCatalogEntries: async () => platformRoleCatalogById.size,
+
+    listPlatformRoleCatalogEntries: async ({ scope = 'platform' } = {}) => {
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      return [...platformRoleCatalogById.values()]
+        .filter((entry) => normalizePlatformRoleCatalogScope(entry.scope) === normalizedScope)
+        .sort((left, right) => {
+          const leftCreatedAt = new Date(left.createdAt).getTime();
+          const rightCreatedAt = new Date(right.createdAt).getTime();
+          if (leftCreatedAt !== rightCreatedAt) {
+            return leftCreatedAt - rightCreatedAt;
+          }
+          return String(left.roleId || '').localeCompare(String(right.roleId || ''));
+        })
+        .map((entry) => clonePlatformRoleCatalogRecord(entry));
+    },
+
+    findPlatformRoleCatalogEntryByRoleId: async ({ roleId }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        return null;
+      }
+      const existingState = findPlatformRoleCatalogRecordStateByRoleId(
+        normalizedRoleId
+      );
+      return clonePlatformRoleCatalogRecord(existingState?.record || null);
+    },
+
+    findPlatformRoleCatalogEntriesByRoleIds: async ({ roleIds = [] } = {}) => {
+      const normalizedRoleIdKeys = new Set(
+        (Array.isArray(roleIds) ? roleIds : [])
+          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+          .filter((roleId) => roleId.length > 0)
+          .map((roleId) => roleId.toLowerCase())
+      );
+      if (normalizedRoleIdKeys.size === 0) {
+        return [];
+      }
+      const matches = [];
+      for (const [roleId, entry] of platformRoleCatalogById.entries()) {
+        if (!normalizedRoleIdKeys.has(String(roleId).toLowerCase())) {
+          continue;
+        }
+        matches.push(clonePlatformRoleCatalogRecord(entry));
+      }
+      return matches;
+    },
+
+    createPlatformRoleCatalogEntry: async ({
+      roleId,
+      code,
+      name,
+      status = 'active',
+      scope = 'platform',
+      isSystem = false,
+      operatorUserId = null,
+      operatorSessionId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      const normalizedCode = normalizePlatformRoleCatalogCode(code);
+      const normalizedName = String(name || '').trim();
+      if (!normalizedRoleId || !normalizedCode || !normalizedName) {
+        throw new Error('createPlatformRoleCatalogEntry requires roleId, code, and name');
+      }
+      if (findPlatformRoleCatalogRecordStateByRoleId(normalizedRoleId)) {
+        throw createDuplicatePlatformRoleCatalogEntryError({
+          target: 'role_id'
+        });
+      }
+      return upsertPlatformRoleCatalogRecord({
+        roleId: normalizedRoleId,
+        code: normalizedCode,
+        name: normalizedName,
+        status: normalizePlatformRoleCatalogStatus(status),
+        scope: normalizePlatformRoleCatalogScope(scope),
+        isSystem: Boolean(isSystem),
+        createdByUserId: operatorUserId ? String(operatorUserId) : null,
+        updatedByUserId: operatorUserId ? String(operatorUserId) : null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null
+      });
+    },
+
+    updatePlatformRoleCatalogEntry: async ({
+      roleId,
+      code = undefined,
+      name = undefined,
+      status = undefined,
+      operatorUserId = null,
+      operatorSessionId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw new Error('updatePlatformRoleCatalogEntry requires roleId');
+      }
+      const existingState = findPlatformRoleCatalogRecordStateByRoleId(
+        normalizedRoleId
+      );
+      const existing = existingState?.record || null;
+      if (!existing) {
+        return null;
+      }
+      const nextCode = code === undefined
+        ? existing.code
+        : normalizePlatformRoleCatalogCode(code);
+      const nextName = name === undefined
+        ? existing.name
+        : String(name || '').trim();
+      const nextStatus = status === undefined
+        ? existing.status
+        : normalizePlatformRoleCatalogStatus(status);
+      if (!nextCode || !nextName) {
+        throw new Error('updatePlatformRoleCatalogEntry requires non-empty code and name');
+      }
+      return upsertPlatformRoleCatalogRecord({
+        ...existing,
+        roleId: existing.roleId,
+        code: nextCode,
+        name: nextName,
+        status: nextStatus,
+        scope: existing.scope,
+        isSystem: Boolean(existing.isSystem),
+        updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
+        updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
+        updatedAt: new Date().toISOString()
+      });
+    },
+
+    deletePlatformRoleCatalogEntry: async ({
+      roleId,
+      operatorUserId = null,
+      operatorSessionId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw new Error('deletePlatformRoleCatalogEntry requires roleId');
+      }
+      const existingState = findPlatformRoleCatalogRecordStateByRoleId(
+        normalizedRoleId
+      );
+      const existing = existingState?.record || null;
+      if (!existing) {
+        return null;
+      }
+      return upsertPlatformRoleCatalogRecord({
+        ...existing,
+        status: 'disabled',
+        updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
+        updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
+        updatedAt: new Date().toISOString()
+      });
     },
 
     syncPlatformPermissionSnapshotByUserId: async ({

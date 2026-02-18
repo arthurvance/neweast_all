@@ -170,7 +170,8 @@ const createAuthHandlers = (authService = createAuthService()) => {
         accessToken: extractBearerToken(authorization),
         userId: body.user_id,
         roles: body.roles,
-        authorizationContext
+        authorizationContext,
+        enforceRoleCatalogValidation: true
       });
       return {
         synced: Boolean(result?.synced),

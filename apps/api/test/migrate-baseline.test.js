@@ -205,6 +205,37 @@ test('0008 down migration drops memberships and orgs tables in dependency-safe o
   );
 });
 
+test('0009 migration defines platform role catalog table, unique code guard, and sys_admin seed', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0009_platform_role_catalog.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_role_catalog/i);
+  assert.match(sql, /code_normalized/i);
+  assert.match(sql, /UNIQUE KEY uk_platform_role_catalog_code_normalized/i);
+  assert.match(sql, /scope ENUM\('platform', 'tenant'\)/i);
+  assert.match(sql, /is_system/i);
+  assert.match(sql, /INSERT INTO platform_role_catalog/i);
+  assert.match(sql, /'sys_admin'/i);
+  assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
+});
+
+test('0009 down migration drops platform role catalog table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0009_platform_role_catalog.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP TABLE IF EXISTS platform_role_catalog/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

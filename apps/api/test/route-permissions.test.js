@@ -6,6 +6,7 @@ const {
   createRouteDefinitionMap,
   findRouteDefinition,
   findRouteDefinitionInMap,
+  extractRoutePathParams,
   validateRoutePermissionDeclarations
 } = require('../src/route-permissions');
 const {
@@ -139,6 +140,137 @@ test('platform user status route exposes explicit permission declaration', () =>
   assert.equal(updatePlatformUserStatus.access, 'protected');
   assert.equal(updatePlatformUserStatus.scope, 'platform');
   assert.equal(updatePlatformUserStatus.permission_code, 'platform.member_admin.operate');
+});
+
+test('platform role list route exposes explicit permission declaration', () => {
+  const listPlatformRoles = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/roles'
+  });
+
+  assert.ok(listPlatformRoles);
+  assert.equal(listPlatformRoles.access, 'protected');
+  assert.equal(listPlatformRoles.scope, 'platform');
+  assert.equal(listPlatformRoles.permission_code, 'platform.member_admin.view');
+});
+
+test('platform role create route exposes explicit permission declaration', () => {
+  const createPlatformRole = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/roles'
+  });
+
+  assert.ok(createPlatformRole);
+  assert.equal(createPlatformRole.access, 'protected');
+  assert.equal(createPlatformRole.scope, 'platform');
+  assert.equal(createPlatformRole.permission_code, 'platform.member_admin.operate');
+});
+
+test('platform role update route exposes explicit permission declaration', () => {
+  const updatePlatformRole = findRouteDefinition({
+    method: 'PATCH',
+    path: '/platform/roles/demo-role'
+  });
+
+  assert.ok(updatePlatformRole);
+  assert.equal(updatePlatformRole.access, 'protected');
+  assert.equal(updatePlatformRole.scope, 'platform');
+  assert.equal(updatePlatformRole.permission_code, 'platform.member_admin.operate');
+});
+
+test('route parameter extraction decodes URL-encoded path values', () => {
+  const params = extractRoutePathParams(
+    '/platform/roles/:role_id',
+    '/platform/roles/platform%2Eops_admin'
+  );
+  assert.deepEqual(params, {
+    role_id: 'platform.ops_admin'
+  });
+});
+
+test('route parameter extraction rejects malformed URL-encoded path values', () => {
+  const params = extractRoutePathParams(
+    '/platform/roles/:role_id',
+    '/platform/roles/%E0%A4%A'
+  );
+  assert.equal(params, null);
+});
+
+test('route parameter extraction rejects URL-encoded slash path values', () => {
+  const params = extractRoutePathParams(
+    '/platform/roles/:role_id',
+    '/platform/roles/platform%2Fops_admin'
+  );
+  assert.equal(params, null);
+});
+
+test('route parameter extraction rejects URL-encoded leading or trailing whitespace values', () => {
+  const leadingWhitespace = extractRoutePathParams(
+    '/platform/roles/:role_id',
+    '/platform/roles/%20platform_ops_admin'
+  );
+  const trailingWhitespace = extractRoutePathParams(
+    '/platform/roles/:role_id',
+    '/platform/roles/platform_ops_admin%20'
+  );
+
+  assert.equal(leadingWhitespace, null);
+  assert.equal(trailingWhitespace, null);
+});
+
+test('route parameter extraction rejects URL-encoded control character values', () => {
+  const params = extractRoutePathParams(
+    '/platform/roles/:role_id',
+    '/platform/roles/platform%09ops_admin'
+  );
+  assert.equal(params, null);
+});
+
+test('parameterized route matching rejects paths with consecutive slashes', () => {
+  const updatePlatformRole = findRouteDefinition({
+    method: 'PATCH',
+    path: '/platform/roles//demo-role'
+  });
+  const deletePlatformRole = findRouteDefinition({
+    method: 'DELETE',
+    path: '/platform/roles//demo-role'
+  });
+
+  assert.equal(updatePlatformRole, null);
+  assert.equal(deletePlatformRole, null);
+  assert.equal(
+    extractRoutePathParams(
+      '/platform/roles/:role_id',
+      '/platform/roles//demo-role'
+    ),
+    null
+  );
+});
+
+test('route lookup rejects static paths with trailing slash or consecutive slashes', () => {
+  const listTrailingSlash = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/roles/'
+  });
+  const listConsecutiveSlashes = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/roles//'
+  });
+
+  assert.equal(listTrailingSlash, null);
+  assert.equal(listConsecutiveSlashes, null);
+});
+
+test('platform role delete route exposes explicit permission declaration', () => {
+  const deletePlatformRole = findRouteDefinition({
+    method: 'DELETE',
+    path: '/platform/roles/demo-role'
+  });
+
+  assert.ok(deletePlatformRole);
+  assert.equal(deletePlatformRole.access, 'protected');
+  assert.equal(deletePlatformRole.scope, 'platform');
+  assert.equal(deletePlatformRole.permission_code, 'platform.member_admin.operate');
 });
 
 test('protected routes are fail-closed when declaration is missing', () => {

@@ -11,6 +11,8 @@ const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
+const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
+const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
 
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
@@ -35,6 +37,17 @@ const normalizeOrgStatus = (status) => {
   }
   return value;
 };
+const normalizePlatformRoleCatalogStatus = (status) => {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'enabled') {
+    return 'active';
+  }
+  return value;
+};
+const normalizePlatformRoleCatalogScope = (scope) =>
+  String(scope || '').trim().toLowerCase();
+const normalizePlatformRoleCatalogRoleId = (roleId) =>
+  String(roleId || '').trim().toLowerCase();
 const DEFAULT_DEADLOCK_FALLBACK_RESULT = Object.freeze({
   synced: false,
   reason: 'db-deadlock',
@@ -84,6 +97,28 @@ const toUserRecord = (row) => {
     passwordHash: row.password_hash,
     status: normalizeUserStatus(row.status),
     sessionVersion: Number(row.session_version)
+  };
+};
+
+const toPlatformRoleCatalogRecord = (row) => {
+  if (!row) {
+    return null;
+  }
+  return {
+    roleId: String(row.role_id || '').trim(),
+    code: String(row.code || '').trim(),
+    name: String(row.name || '').trim(),
+    status: normalizePlatformRoleCatalogStatus(row.status || 'active'),
+    scope: normalizePlatformRoleCatalogScope(row.scope || 'platform'),
+    isSystem: toBoolean(row.is_system),
+    createdByUserId: row.created_by_user_id ? String(row.created_by_user_id) : null,
+    updatedByUserId: row.updated_by_user_id ? String(row.updated_by_user_id) : null,
+    createdAt: row.created_at instanceof Date
+      ? row.created_at.toISOString()
+      : String(row.created_at || ''),
+    updatedAt: row.updated_at instanceof Date
+      ? row.updated_at.toISOString()
+      : String(row.updated_at || '')
   };
 };
 
@@ -249,6 +284,8 @@ const isDuplicateEntryError = (error) =>
 const isMissingOrgsTableError = (error) =>
   isTableMissingError(error)
   && /\borgs\b/i.test(String(error?.message || ''));
+const buildSqlInPlaceholders = (count) =>
+  new Array(Math.max(0, Number(count) || 0)).fill('?').join(', ');
 
 const createMySqlAuthStore = ({
   dbClient,
@@ -1130,6 +1167,358 @@ const createMySqlAuthStore = ({
         [userId]
       );
       return toUserRecord(rows[0]);
+    },
+
+    countPlatformRoleCatalogEntries: async () => {
+      const rows = await dbClient.query(
+        `
+          SELECT COUNT(*) AS role_count
+          FROM platform_role_catalog
+        `
+      );
+      return Number(rows?.[0]?.role_count || 0);
+    },
+
+    listPlatformRoleCatalogEntries: async ({ scope = 'platform' } = {}) => {
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+        throw new Error('listPlatformRoleCatalogEntries received unsupported scope');
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT role_id,
+                 code,
+                 name,
+                 status,
+                 scope,
+                 is_system,
+                 created_by_user_id,
+                 updated_by_user_id,
+                 created_at,
+                 updated_at
+          FROM platform_role_catalog
+          WHERE scope = ?
+          ORDER BY created_at ASC, role_id ASC
+        `,
+        [normalizedScope]
+      );
+      return (Array.isArray(rows) ? rows : [])
+        .map((row) => toPlatformRoleCatalogRecord(row))
+        .filter(Boolean);
+    },
+
+    findPlatformRoleCatalogEntryByRoleId: async ({ roleId }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT role_id,
+                 code,
+                 name,
+                 status,
+                 scope,
+                 is_system,
+                 created_by_user_id,
+                 updated_by_user_id,
+                 created_at,
+                 updated_at
+          FROM platform_role_catalog
+          WHERE role_id = ?
+          LIMIT 1
+        `,
+        [normalizedRoleId]
+      );
+      return toPlatformRoleCatalogRecord(rows?.[0] || null);
+    },
+
+    findPlatformRoleCatalogEntriesByRoleIds: async ({ roleIds = [] } = {}) => {
+      const normalizedRoleIds = [...new Set(
+        (Array.isArray(roleIds) ? roleIds : [])
+          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+          .filter((roleId) => roleId.length > 0)
+      )];
+      if (normalizedRoleIds.length === 0) {
+        return [];
+      }
+      const placeholders = buildSqlInPlaceholders(normalizedRoleIds.length);
+      const rows = await dbClient.query(
+        `
+          SELECT role_id,
+                 code,
+                 name,
+                 status,
+                 scope,
+                 is_system,
+                 created_by_user_id,
+                 updated_by_user_id,
+                 created_at,
+                 updated_at
+          FROM platform_role_catalog
+          WHERE role_id IN (${placeholders})
+          ORDER BY created_at ASC, role_id ASC
+        `,
+        normalizedRoleIds
+      );
+      return (Array.isArray(rows) ? rows : [])
+        .map((row) => toPlatformRoleCatalogRecord(row))
+        .filter(Boolean);
+    },
+
+    createPlatformRoleCatalogEntry: async ({
+      roleId,
+      code,
+      name,
+      status = 'active',
+      scope = 'platform',
+      isSystem = false,
+      operatorUserId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      const normalizedCode = String(code || '').trim();
+      const normalizedName = String(name || '').trim();
+      const normalizedStatus = normalizePlatformRoleCatalogStatus(status);
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      if (
+        !normalizedRoleId
+        || !normalizedCode
+        || !normalizedName
+        || !VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatus)
+        || !VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)
+      ) {
+        throw new Error('createPlatformRoleCatalogEntry received invalid input');
+      }
+
+      return executeWithDeadlockRetry({
+        operation: 'createPlatformRoleCatalogEntry',
+        onExhausted: 'throw',
+        execute: async () => {
+          await dbClient.query(
+            `
+              INSERT INTO platform_role_catalog (
+                role_id,
+                code,
+                code_normalized,
+                name,
+                status,
+                scope,
+                is_system,
+                created_by_user_id,
+                updated_by_user_id
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [
+              normalizedRoleId,
+              normalizedCode,
+              normalizedCode.toLowerCase(),
+              normalizedName,
+              normalizedStatus,
+              normalizedScope,
+              Number(Boolean(isSystem)),
+              operatorUserId ? String(operatorUserId) : null,
+              operatorUserId ? String(operatorUserId) : null
+            ]
+          );
+          const rows = await dbClient.query(
+            `
+              SELECT role_id,
+                     code,
+                     name,
+                     status,
+                     scope,
+                     is_system,
+                     created_by_user_id,
+                     updated_by_user_id,
+                     created_at,
+                     updated_at
+              FROM platform_role_catalog
+              WHERE role_id = ?
+              LIMIT 1
+            `,
+            [normalizedRoleId]
+          );
+          return toPlatformRoleCatalogRecord(rows?.[0] || null);
+        }
+      });
+    },
+
+    updatePlatformRoleCatalogEntry: async ({
+      roleId,
+      code = undefined,
+      name = undefined,
+      status = undefined,
+      operatorUserId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw new Error('updatePlatformRoleCatalogEntry requires roleId');
+      }
+
+      return executeWithDeadlockRetry({
+        operation: 'updatePlatformRoleCatalogEntry',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const rows = await tx.query(
+              `
+                SELECT role_id,
+                       code,
+                       name,
+                       status,
+                       scope,
+                       is_system,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedRoleId]
+            );
+            const existing = toPlatformRoleCatalogRecord(rows?.[0] || null);
+            if (!existing) {
+              return null;
+            }
+
+            const nextCode = code === undefined
+              ? existing.code
+              : String(code || '').trim();
+            const nextName = name === undefined
+              ? existing.name
+              : String(name || '').trim();
+            const nextStatus = status === undefined
+              ? existing.status
+              : normalizePlatformRoleCatalogStatus(status);
+            if (
+              !nextCode
+              || !nextName
+              || !VALID_PLATFORM_ROLE_CATALOG_STATUS.has(nextStatus)
+            ) {
+              throw new Error('updatePlatformRoleCatalogEntry received invalid update payload');
+            }
+
+            await tx.query(
+              `
+                UPDATE platform_role_catalog
+                SET code = ?,
+                    code_normalized = ?,
+                    name = ?,
+                    status = ?,
+                    updated_by_user_id = ?,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE role_id = ?
+              `,
+              [
+                nextCode,
+                nextCode.toLowerCase(),
+                nextName,
+                nextStatus,
+                operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
+                existing.roleId
+              ]
+            );
+
+            const updatedRows = await tx.query(
+              `
+                SELECT role_id,
+                       code,
+                       name,
+                       status,
+                       scope,
+                       is_system,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+              `,
+              [existing.roleId]
+            );
+            return toPlatformRoleCatalogRecord(updatedRows?.[0] || null);
+          })
+      });
+    },
+
+    deletePlatformRoleCatalogEntry: async ({
+      roleId,
+      operatorUserId = null
+    }) => {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw new Error('deletePlatformRoleCatalogEntry requires roleId');
+      }
+
+      return executeWithDeadlockRetry({
+        operation: 'deletePlatformRoleCatalogEntry',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const rows = await tx.query(
+              `
+                SELECT role_id,
+                       code,
+                       name,
+                       status,
+                       scope,
+                       is_system,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedRoleId]
+            );
+            const existing = toPlatformRoleCatalogRecord(rows?.[0] || null);
+            if (!existing) {
+              return null;
+            }
+
+            await tx.query(
+              `
+                UPDATE platform_role_catalog
+                SET status = 'disabled',
+                    updated_by_user_id = ?,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE role_id = ?
+              `,
+              [
+                operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
+                existing.roleId
+              ]
+            );
+
+            const updatedRows = await tx.query(
+              `
+                SELECT role_id,
+                       code,
+                       name,
+                       status,
+                       scope,
+                       is_system,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+              `,
+              [existing.roleId]
+            );
+            return toPlatformRoleCatalogRecord(updatedRows?.[0] || null);
+          })
+      });
     },
 
     createUserByPhone: async ({ phone, passwordHash, status = 'active' }) => {

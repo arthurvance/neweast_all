@@ -2434,6 +2434,238 @@ test('platform role facts replace rejects authorizationContext mismatch when acc
   );
 });
 
+test('platform role facts replace fails closed when platform role catalog table is unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-catalog-missing-user',
+        phone: '13810000428',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => {
+    const missingTableError = new Error(
+      "Table 'neweast.platform_role_catalog' doesn't exist"
+    );
+    missingTableError.code = 'ER_NO_SUCH_TABLE';
+    missingTableError.errno = 1146;
+    throw missingTableError;
+  };
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-catalog-missing-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-catalog-missing',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-catalog-missing-user',
+        roles: [{ role_id: 'sys_admin', status: 'active' }],
+        enforceRoleCatalogValidation: true
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-catalog-unavailable'
+      );
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace fails closed for empty role set when platform role catalog table is unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-catalog-missing-empty-roles-user',
+        phone: '13810000431',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.countPlatformRoleCatalogEntries = async () => {
+    const missingTableError = new Error(
+      "Table 'neweast.platform_role_catalog' doesn't exist"
+    );
+    missingTableError.code = 'ER_NO_SUCH_TABLE';
+    missingTableError.errno = 1146;
+    throw missingTableError;
+  };
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-catalog-missing-empty-roles-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-catalog-missing-empty-roles',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-catalog-missing-empty-roles-user',
+        roles: [],
+        enforceRoleCatalogValidation: true
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-catalog-unavailable'
+      );
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace fails closed when role catalog lookup capability is unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-catalog-unsupported-user',
+        phone: '13810000429',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  delete service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-catalog-unsupported-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-catalog-unsupported',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-catalog-unsupported-user',
+        roles: [{ role_id: 'sys_admin', status: 'active' }],
+        enforceRoleCatalogValidation: true
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-catalog-lookup-unsupported'
+      );
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace fails closed for empty role set when role catalog lookup capability is unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-catalog-unsupported-empty-roles-user',
+        phone: '13810000432',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.countPlatformRoleCatalogEntries = async () => 1;
+  delete service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-catalog-unsupported-empty-roles-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-catalog-unsupported-empty-roles',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-catalog-unsupported-empty-roles-user',
+        roles: [],
+        enforceRoleCatalogValidation: true
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-catalog-lookup-unsupported'
+      );
+      return true;
+    }
+  );
+});
+
+test('platform role facts replace maps role catalog lookup query failures to AUTH-503-PLATFORM-SNAPSHOT-DEGRADED', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-role-catalog-query-failed-user',
+        phone: '13810000430',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: []
+      }
+    ]
+  });
+
+  service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => {
+    throw new Error('platform role catalog query timeout');
+  };
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-role-catalog-query-failed-operator-login'
+  );
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolesAndSyncSnapshot({
+        requestId: 'req-role-catalog-query-failed',
+        accessToken: operatorLogin.access_token,
+        userId: 'platform-role-catalog-query-failed-user',
+        roles: [{ role_id: 'sys_admin', status: 'active' }],
+        enforceRoleCatalogValidation: true
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-catalog-query-failed'
+      );
+      return true;
+    }
+  );
+});
+
 test('platform role facts replace maps db-deadlock reason to AUTH-503-PLATFORM-SNAPSHOT-DEGRADED', async () => {
   const service = createAuthService({
     seedUsers: [

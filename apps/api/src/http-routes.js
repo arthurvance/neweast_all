@@ -2,6 +2,8 @@ const { authPing, createAuthHandlers } = require('./modules/auth/auth.routes');
 const { createAuthService } = require('./modules/auth/auth.service');
 const { createPlatformOrgHandlers } = require('./modules/platform/org.routes');
 const { createPlatformOrgService } = require('./modules/platform/org.service');
+const { createPlatformRoleHandlers } = require('./modules/platform/role.routes');
+const { createPlatformRoleService } = require('./modules/platform/role.service');
 const { createPlatformUserHandlers } = require('./modules/platform/user.routes');
 const { createPlatformUserService } = require('./modules/platform/user.service');
 const { buildOpenApiSpec } = require('./openapi');
@@ -13,10 +15,21 @@ const DEPENDENCY_PROBE_FAILURE_DETAIL = 'dependency probe failed';
 const assertAlignedPlatformServicesAuthService = ({
   authService,
   platformOrgService,
+  platformRoleService,
   platformUserService
 }) => {
   const platformOrgAuthService = platformOrgService?._internals?.authService;
+  const platformRoleAuthService = platformRoleService?._internals?.authService;
   const platformUserAuthService = platformUserService?._internals?.authService;
+  if (
+    platformOrgAuthService
+    && platformRoleAuthService
+    && platformOrgAuthService !== platformRoleAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformOrgService and platformRoleService to share the same authService instance'
+    );
+  }
   if (
     platformOrgAuthService
     && platformUserAuthService
@@ -27,12 +40,30 @@ const assertAlignedPlatformServicesAuthService = ({
     );
   }
   if (
+    platformRoleAuthService
+    && platformUserAuthService
+    && platformRoleAuthService !== platformUserAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformRoleService and platformUserService to share the same authService instance'
+    );
+  }
+  if (
     authService
     && platformOrgAuthService
     && authService !== platformOrgAuthService
   ) {
     throw new TypeError(
       'createRouteHandlers requires authService and platformOrgService to share the same authService instance'
+    );
+  }
+  if (
+    authService
+    && platformRoleAuthService
+    && authService !== platformRoleAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires authService and platformRoleService to share the same authService instance'
     );
   }
   if (
@@ -116,15 +147,18 @@ const createRouteHandlers = (config, options = {}) => {
     ? options.dependencyProbe
     : checkDependencies;
   const preferredPlatformOrgAuthService = options.platformOrgService?._internals?.authService;
+  const preferredPlatformRoleAuthService = options.platformRoleService?._internals?.authService;
   const preferredPlatformUserAuthService = options.platformUserService?._internals?.authService;
   assertAlignedPlatformServicesAuthService({
     authService: options.authService,
     platformOrgService: options.platformOrgService,
+    platformRoleService: options.platformRoleService,
     platformUserService: options.platformUserService
   });
   const authService =
     options.authService
     || preferredPlatformOrgAuthService
+    || preferredPlatformRoleAuthService
     || preferredPlatformUserAuthService
     || createAuthService();
   const authIdempotencyStore = options.authIdempotencyStore;
@@ -135,6 +169,12 @@ const createRouteHandlers = (config, options = {}) => {
       authService
     });
   const platformOrg = createPlatformOrgHandlers(platformOrgService);
+  const platformRoleService =
+    options.platformRoleService
+    || createPlatformRoleService({
+      authService
+    });
+  const platformRole = createPlatformRoleHandlers(platformRoleService);
   const platformUserService =
     options.platformUserService
     || createPlatformUserService({
@@ -283,6 +323,58 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformListRoles: async (
+      requestId,
+      authorization,
+      authorizationContext
+    ) =>
+      platformRole.listRoles({
+        requestId,
+        authorization,
+        authorizationContext
+      }),
+
+    platformCreateRole: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      platformRole.createRole({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
+    platformUpdateRole: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext
+    ) =>
+      platformRole.updateRole({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        authorizationContext
+      }),
+
+    platformDeleteRole: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext
+    ) =>
+      platformRole.deleteRole({
+        requestId,
+        authorization,
+        params: params || {},
+        authorizationContext
+      }),
+
     platformCreateUser: async (
       requestId,
       authorization,
@@ -386,6 +478,7 @@ const createRouteHandlers = (config, options = {}) => {
   handlers._internals = {
     authService,
     platformOrgService,
+    platformRoleService,
     platformUserService
   };
 

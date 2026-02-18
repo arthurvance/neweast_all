@@ -27,6 +27,7 @@ const IDEMPOTENCY_KEY_SCHEMA = {
   maxLength: 128,
   pattern: '^(?=.*\\S)[^,]{1,128}$'
 };
+const PLATFORM_ROLE_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
 
 const DEPENDENCY_PROBE_STATUS_SCHEMA = {
   type: 'object',
@@ -1192,6 +1193,436 @@ const buildOpenApiSpec = () => {
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/roles': {
+      get: {
+        summary: 'List platform role catalog',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Platform role catalog listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformRoleListResponse' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台角色治理依赖暂不可用，请稍后重试',
+                      error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        summary: 'Create platform role',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CreatePlatformRoleRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Platform role created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformRoleCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'ROLE-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Role code/role_id conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  role_code_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '角色编码冲突，请使用其他 code',
+                      error_code: 'ROLE-409-CODE-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  role_id_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '角色标识冲突，请使用其他 role_id',
+                      error_code: 'ROLE-409-ROLE-ID-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台角色治理依赖暂不可用，请稍后重试',
+                      error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/roles/{role_id}': {
+      patch: {
+        summary: 'Update platform role by role_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/UpdatePlatformRoleRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Platform role updated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformRoleCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks permission or target role is protected',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  system_role_protected: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '受保护系统角色不允许编辑或删除',
+                      error_code: 'ROLE-403-SYSTEM-ROLE-PROTECTED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  role_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标平台角色不存在',
+                      error_code: 'ROLE-404-ROLE-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Role code conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      },
+      delete: {
+        summary: 'Delete platform role by role_id (soft delete)',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Platform role soft deleted',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/DeletePlatformRoleResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid role_id or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks permission or target role is protected',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform role governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
               }
             }
           }
@@ -2547,6 +2978,142 @@ const buildOpenApiSpec = () => {
           first_login_force_password_change: { type: 'boolean', enum: [false] },
           entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
           active_tenant_id: { type: 'string', nullable: true },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformRoleCatalogItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'role_id',
+          'code',
+          'name',
+          'status',
+          'is_system',
+          'created_at',
+          'updated_at',
+          'request_id'
+        ],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '.*\\S.*'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          },
+          is_system: {
+            type: 'boolean'
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updated_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformRoleListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['roles', 'request_id'],
+        properties: {
+          roles: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/PlatformRoleCatalogItem' }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      CreatePlatformRoleRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['role_id', 'code', 'name'],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '.*\\S.*'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled'],
+            default: 'active'
+          },
+          is_system: {
+            type: 'boolean',
+            default: false
+          }
+        }
+      },
+      UpdatePlatformRoleRequest: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '.*\\S.*'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          }
+        }
+      },
+      DeletePlatformRoleResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['role_id', 'status', 'request_id'],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          },
           request_id: { type: 'string' }
         }
       },

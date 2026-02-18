@@ -102,11 +102,29 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
+  assert.ok(payload.paths['/platform/roles']);
+  assert.ok(payload.paths['/platform/roles/{role_id}']);
   assert.ok(payload.paths['/platform/orgs']);
   assert.ok(payload.paths['/platform/orgs/status']);
   assert.ok(payload.paths['/platform/users']);
   assert.ok(payload.paths['/platform/users/status']);
   assert.ok(payload.paths['/smoke']);
+  assert.equal(
+    payload.components.schemas.CreatePlatformRoleRequest.properties.role_id.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'role_id'
+    ).schema.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'role_id'
+    ).schema.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  );
   assert.equal(
     payload.paths['/health'].get.responses['200'].content['application/json'].schema.properties
       .dependencies.properties.db.properties.mode.type,
@@ -139,6 +157,21 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(
     payload.paths['/auth/platform/role-facts/replace'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/roles'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/roles/{role_id}'].patch.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/roles/{role_id}'].delete.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -181,6 +214,24 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/platform/roles'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/orgs'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
@@ -203,6 +254,24 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/roles'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
   );
   assert.equal(
     payload.paths['/platform/orgs'].post.parameters.find(
@@ -245,6 +314,23 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['413']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/platform/roles'].post.responses['400']);
+  assert.ok(payload.paths['/platform/roles'].post.responses['401']);
+  assert.ok(payload.paths['/platform/roles'].post.responses['403']);
+  assert.ok(payload.paths['/platform/roles'].post.responses['409']);
+  assert.ok(payload.paths['/platform/roles'].post.responses['503']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].patch.responses['400']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].patch.responses['401']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].patch.responses['403']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].patch.responses['404']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].patch.responses['409']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].patch.responses['503']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['400']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['401']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['403']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['404']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['413']);
+  assert.ok(payload.paths['/platform/roles/{role_id}'].delete.responses['503']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['400']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['413']);
   assert.ok(payload.paths['/platform/orgs'].post.responses['403']);
@@ -835,7 +921,7 @@ test('createServer enforces json payload limit on /platform/orgs with AUTH-413-P
   }
 });
 
-test('createServer handles auth routes with trailing slash path', async () => {
+test('createServer rejects auth routes with trailing slash path', async () => {
   const harness = await startServer({
     ALLOW_MOCK_BACKENDS: 'true'
   });
@@ -853,8 +939,8 @@ test('createServer handles auth routes with trailing slash path', async () => {
       })
     });
     const payload = await response.json();
-    assert.notEqual(response.status, 404);
-    assert.equal(payload.error_code !== undefined || payload.access_token !== undefined, true);
+    assert.equal(response.status, 404);
+    assert.equal(payload.error_code, 'AUTH-404-NOT-FOUND');
   } finally {
     await harness.close();
   }

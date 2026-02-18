@@ -15,6 +15,8 @@ const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
 const ACCESS_SESSION_CACHE_TTL_MS = 800;
 const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
+const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'enabled', 'disabled']);
+const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
@@ -28,6 +30,7 @@ const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
 const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
 const SENSITIVE_CONFIG_KEY_DERIVATION_SALT = DEFAULT_PASSWORD_CONFIG_KEY;
 const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_ROLE_CATALOG_SCOPE = 'platform';
 const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
   'canViewMemberAdmin',
   'can_view_member_admin',
@@ -92,6 +95,15 @@ const isPlainObject = (value) =>
   && !Array.isArray(value);
 const normalizePlatformRoleIdKey = (roleId) =>
   String(roleId || '').trim().toLowerCase();
+const normalizePlatformRoleCatalogStatus = (status) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  return normalizedStatus;
+};
+const normalizePlatformRoleCatalogScope = (scope) =>
+  String(scope || '').trim().toLowerCase();
 const normalizeRequiredStringField = (candidate, errorFactory) => {
   if (typeof candidate !== 'string') {
     throw errorFactory();
@@ -120,6 +132,12 @@ const isDuplicateRoleFactEntryError = (error) =>
 const isDataTooLongRoleFactError = (error) =>
   String(error?.code || '').trim().toUpperCase() === 'ER_DATA_TOO_LONG'
   || Number(error?.errno || 0) === MYSQL_DATA_TOO_LONG_ERRNO;
+const isMissingTableError = (error) =>
+  String(error?.code || '').trim().toUpperCase() === 'ER_NO_SUCH_TABLE'
+  || Number(error?.errno || 0) === 1146;
+const isMissingPlatformRoleCatalogTableError = (error) =>
+  isMissingTableError(error)
+  && /platform_role_catalog/i.test(String(error?.message || ''));
 const assertOptionalBooleanRolePermission = (candidate, errorFactory) => {
   if (candidate === undefined) {
     return;
@@ -2400,12 +2418,121 @@ const createAuthService = (options = {}) => {
     };
   };
 
+  const assertRoleDefinitionSupportedForPlatformRoleFacts = async ({
+    roles = []
+  }) => {
+    const mapRoleCatalogLookupErrorToProblem = (error) => {
+      if (isMissingPlatformRoleCatalogTableError(error)) {
+        return errors.platformSnapshotDegraded({
+          reason: 'platform-role-catalog-unavailable'
+        });
+      }
+      return errors.platformSnapshotDegraded({
+        reason: 'platform-role-catalog-query-failed'
+      });
+    };
+    const assertRoleCatalogLookupCapability = () => {
+      if (typeof authStore.findPlatformRoleCatalogEntriesByRoleIds !== 'function') {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-catalog-lookup-unsupported'
+        });
+      }
+    };
+    const assertRoleCatalogDependencyAvailable = async () => {
+      // enforceRoleCatalogValidation=true must fail closed when lookup capability is unavailable.
+      assertRoleCatalogLookupCapability();
+      if (typeof authStore.countPlatformRoleCatalogEntries === 'function') {
+        try {
+          await authStore.countPlatformRoleCatalogEntries();
+          return;
+        } catch (error) {
+          throw mapRoleCatalogLookupErrorToProblem(error);
+        }
+      }
+      try {
+        await authStore.findPlatformRoleCatalogEntriesByRoleIds({
+          roleIds: ['__platform_role_catalog_health_probe__']
+        });
+      } catch (error) {
+        throw mapRoleCatalogLookupErrorToProblem(error);
+      }
+    };
+
+    if (!Array.isArray(roles) || roles.length === 0) {
+      await assertRoleCatalogDependencyAvailable();
+      return;
+    }
+    assertRoleCatalogLookupCapability();
+
+    const requestedRoleIds = [];
+    const requestedRoleIdKeys = new Set();
+    for (const role of roles) {
+      const roleId = normalizeRequiredStringField(
+        resolveRawRoleIdCandidate(role),
+        errors.invalidPayload
+      );
+      const roleIdKey = normalizePlatformRoleIdKey(roleId);
+      if (requestedRoleIdKeys.has(roleIdKey)) {
+        continue;
+      }
+      requestedRoleIds.push(roleId);
+      requestedRoleIdKeys.add(roleIdKey);
+    }
+
+    let catalogEntries = [];
+    try {
+      catalogEntries = await authStore.findPlatformRoleCatalogEntriesByRoleIds({
+        roleIds: requestedRoleIds
+      });
+    } catch (error) {
+      throw mapRoleCatalogLookupErrorToProblem(error);
+    }
+    const catalogEntriesByRoleIdKey = new Map();
+    for (const catalogEntry of Array.isArray(catalogEntries) ? catalogEntries : []) {
+      const roleId = String(
+        catalogEntry?.roleId
+        || catalogEntry?.role_id
+        || ''
+      ).trim();
+      if (!roleId) {
+        continue;
+      }
+      catalogEntriesByRoleIdKey.set(
+        normalizePlatformRoleIdKey(roleId),
+        catalogEntry
+      );
+    }
+
+    for (const roleId of requestedRoleIds) {
+      const roleIdKey = normalizePlatformRoleIdKey(roleId);
+      const catalogEntry = catalogEntriesByRoleIdKey.get(roleIdKey);
+      if (!catalogEntry) {
+        throw errors.invalidPayload();
+      }
+
+      const normalizedStatus = normalizePlatformRoleCatalogStatus(
+        catalogEntry?.status
+      );
+      const normalizedScope = normalizePlatformRoleCatalogScope(
+        catalogEntry?.scope
+      );
+      if (
+        !VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatus)
+        || normalizedStatus === 'disabled'
+        || normalizedScope !== PLATFORM_ROLE_CATALOG_SCOPE
+      ) {
+        throw errors.invalidPayload();
+      }
+    }
+  };
+
   const replacePlatformRolesAndSyncSnapshot = async ({
     requestId,
     accessToken = null,
     userId,
     roles,
-    authorizationContext = null
+    authorizationContext = null,
+    enforceRoleCatalogValidation = false
   }) => {
     if (typeof authStore.replacePlatformRolesAndSyncSnapshot !== 'function') {
       throw new Error('authStore.replacePlatformRolesAndSyncSnapshot is required');
@@ -2496,6 +2623,12 @@ const createAuthService = (options = {}) => {
         rolePermissionSource?.canOperateBilling ?? rolePermissionSource?.can_operate_billing,
         errors.invalidPayload
       );
+    }
+
+    if (enforceRoleCatalogValidation) {
+      await assertRoleDefinitionSupportedForPlatformRoleFacts({
+        roles
+      });
     }
 
     const hasUserLookup = typeof authStore.findUserById === 'function';
@@ -2938,6 +3071,118 @@ const createAuthService = (options = {}) => {
       orgName,
       ownerUserId,
       operatorUserId
+    });
+  };
+
+  const createPlatformRoleCatalogEntry = async ({
+    roleId,
+    code,
+    name,
+    status = 'active',
+    scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    isSystem = false,
+    operatorUserId = null,
+    operatorSessionId = null
+  }) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    const normalizedCode = normalizeRequiredStringField(
+      code,
+      errors.invalidPayload
+    );
+    const normalizedName = normalizeRequiredStringField(
+      name,
+      errors.invalidPayload
+    );
+    const normalizedStatus = normalizePlatformRoleCatalogStatus(status);
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    if (
+      !VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatus)
+      || !VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)
+    ) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'createPlatformRoleCatalogEntry', 'authStore');
+    return authStore.createPlatformRoleCatalogEntry({
+      roleId: normalizedRoleId,
+      code: normalizedCode,
+      name: normalizedName,
+      status: normalizedStatus === 'enabled' ? 'active' : normalizedStatus,
+      scope: normalizedScope,
+      isSystem: Boolean(isSystem),
+      operatorUserId,
+      operatorSessionId
+    });
+  };
+
+  const updatePlatformRoleCatalogEntry = async ({
+    roleId,
+    code = undefined,
+    name = undefined,
+    status = undefined,
+    operatorUserId = null,
+    operatorSessionId = null
+  }) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    const updates = {};
+    if (code !== undefined) {
+      updates.code = normalizeRequiredStringField(code, errors.invalidPayload);
+    }
+    if (name !== undefined) {
+      updates.name = normalizeRequiredStringField(name, errors.invalidPayload);
+    }
+    if (status !== undefined) {
+      const normalizedStatus = normalizePlatformRoleCatalogStatus(status);
+      if (!VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatus)) {
+        throw errors.invalidPayload();
+      }
+      updates.status = normalizedStatus === 'enabled'
+        ? 'active'
+        : normalizedStatus;
+    }
+
+    assertStoreMethod(authStore, 'updatePlatformRoleCatalogEntry', 'authStore');
+    return authStore.updatePlatformRoleCatalogEntry({
+      roleId: normalizedRoleId,
+      ...updates,
+      operatorUserId,
+      operatorSessionId
+    });
+  };
+
+  const deletePlatformRoleCatalogEntry = async ({
+    roleId,
+    operatorUserId = null,
+    operatorSessionId = null
+  }) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    assertStoreMethod(authStore, 'deletePlatformRoleCatalogEntry', 'authStore');
+    return authStore.deletePlatformRoleCatalogEntry({
+      roleId: normalizedRoleId,
+      operatorUserId,
+      operatorSessionId
+    });
+  };
+
+  const listPlatformRoleCatalogEntries = async ({
+    scope = PLATFORM_ROLE_CATALOG_SCOPE
+  } = {}) => {
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+      throw errors.invalidPayload();
+    }
+    assertStoreMethod(authStore, 'listPlatformRoleCatalogEntries', 'authStore');
+    return authStore.listPlatformRoleCatalogEntries({
+      scope: normalizedScope
     });
   };
 
@@ -3764,6 +4009,10 @@ const createAuthService = (options = {}) => {
     provisionTenantUserByPhone,
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,
+    createPlatformRoleCatalogEntry,
+    updatePlatformRoleCatalogEntry,
+    deletePlatformRoleCatalogEntry,
+    listPlatformRoleCatalogEntries,
     updateOrganizationStatus,
     updatePlatformUserStatus,
     rollbackProvisionedUserIdentity,

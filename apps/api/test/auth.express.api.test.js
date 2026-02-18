@@ -443,6 +443,29 @@ const resetTestData = async () => {
   await adminConnection.execute('DELETE FROM auth_user_domain_access WHERE user_id = ?', [TEST_USER.id]);
   await adminConnection.execute('DELETE FROM refresh_tokens WHERE user_id = ?', [TEST_USER.id]);
   await adminConnection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [TEST_USER.id]);
+  if (await doesTableExist('memberships')) {
+    await adminConnection.execute(
+      `
+        DELETE FROM memberships
+        WHERE user_id = ?
+           OR org_id IN (
+             SELECT id
+             FROM orgs
+             WHERE owner_user_id = ? OR created_by_user_id = ?
+           )
+      `,
+      [TEST_USER.id, TEST_USER.id, TEST_USER.id]
+    );
+  }
+  if (await doesTableExist('orgs')) {
+    await adminConnection.execute(
+      `
+        DELETE FROM orgs
+        WHERE owner_user_id = ? OR created_by_user_id = ?
+      `,
+      [TEST_USER.id, TEST_USER.id]
+    );
+  }
   await adminConnection.execute('DELETE FROM users WHERE id = ? OR phone = ?', [
     TEST_USER.id,
     TEST_USER.phone
@@ -479,7 +502,58 @@ const seedTenantDomainAccess = async () => {
   );
 };
 
+const doesTableExist = async (tableName) => {
+  const [rows] = await adminConnection.execute(
+    `
+      SELECT 1 AS table_exists
+      FROM information_schema.tables
+      WHERE table_schema = DATABASE()
+        AND table_name = ?
+      LIMIT 1
+    `,
+    [String(tableName || '').trim()]
+  );
+  return Array.isArray(rows) && rows.length > 0;
+};
+
+const ensureActiveOrgsForTenantIds = async (tenantIds = []) => {
+  const normalizedTenantIds = [...new Set(
+    (Array.isArray(tenantIds) ? tenantIds : [])
+      .map((tenantId) => String(tenantId || '').trim())
+      .filter((tenantId) => tenantId.length > 0)
+  )];
+  if (normalizedTenantIds.length === 0) {
+    return;
+  }
+  if (!(await doesTableExist('orgs'))) {
+    return;
+  }
+
+  for (const tenantId of normalizedTenantIds) {
+    await adminConnection.execute(
+      `
+        INSERT INTO orgs (
+          id,
+          name,
+          owner_user_id,
+          status,
+          created_by_user_id
+        )
+        VALUES (?, ?, ?, 'active', ?)
+        ON DUPLICATE KEY UPDATE
+          name = VALUES(name),
+          owner_user_id = VALUES(owner_user_id),
+          status = VALUES(status),
+          created_by_user_id = VALUES(created_by_user_id),
+          updated_at = CURRENT_TIMESTAMP(3)
+      `,
+      [tenantId, `Org ${tenantId}`, TEST_USER.id, TEST_USER.id]
+    );
+  }
+};
+
 const seedTenantOptions = async () => {
+  await ensureActiveOrgsForTenantIds(['tenant-a', 'tenant-b']);
   await adminConnection.execute(
     `
       INSERT INTO auth_user_tenants (
@@ -973,6 +1047,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
     `,
     [TEST_USER.id]
   );
+  await ensureActiveOrgsForTenantIds(['tenant-provision-a']);
 
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'express-tenant-provision-default-password-key';
@@ -1128,6 +1203,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
     `,
     [TEST_USER.id]
   );
+  await ensureActiveOrgsForTenantIds(['tenant-provision-b']);
 
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'express-tenant-provision-name-validation-key';
@@ -2505,6 +2581,9 @@ test('createApiApp boots with auth schema created only from official migrations'
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_platform_roles');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenants');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_domain_access');
+  await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
+  await adminConnection.execute('DROP TABLE IF EXISTS memberships');
+  await adminConnection.execute('DROP TABLE IF EXISTS orgs');
   await adminConnection.execute('DROP TABLE IF EXISTS users');
   await adminConnection.execute(
     `
@@ -2527,6 +2606,8 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0005_auth_domain_tenant_membership.sql');
   await runMigrationSql(adminConnection, '0006_auth_platform_permission_snapshot.sql');
   await runMigrationSql(adminConnection, '0007_auth_platform_role_facts.sql');
+  await runMigrationSql(adminConnection, '0008_platform_org_bootstrap.sql');
+  await runMigrationSql(adminConnection, '0009_platform_role_catalog.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();

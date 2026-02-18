@@ -5,6 +5,13 @@ const {
   PLATFORM_ORG_SCOPE
 } = require('./modules/platform/org.constants');
 const {
+  PLATFORM_ROLE_BASE_PATH,
+  PLATFORM_ROLE_ITEM_PATH,
+  PLATFORM_ROLE_VIEW_PERMISSION_CODE,
+  PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
+  PLATFORM_ROLE_SCOPE
+} = require('./modules/platform/role.constants');
+const {
   PLATFORM_USER_CREATE_PATH,
   PLATFORM_USER_STATUS_PATH,
   PLATFORM_USER_PERMISSION_CODE,
@@ -16,11 +23,95 @@ const normalizeAccess = (access) => String(access || '').trim().toLowerCase();
 const normalizeScope = (scope) => String(scope || '').trim().toLowerCase();
 const normalizePermissionCode = (permissionCode) => String(permissionCode || '').trim();
 
+const toPathnameString = (pathname) => String(pathname || '');
 const normalizePathname = (pathname) => {
   if (!pathname || pathname === '/') {
     return '/';
   }
-  return String(pathname).replace(/\/+$/, '') || '/';
+  return toPathnameString(pathname).replace(/\/+$/, '') || '/';
+};
+const ROUTE_PATH_PARAM_CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
+const hasConsecutiveSlashes = (pathname) =>
+  toPathnameString(pathname).includes('//');
+const hasTrailingSlash = (pathname) => {
+  const raw = toPathnameString(pathname);
+  return raw.length > 1 && raw.endsWith('/');
+};
+const hasNonCanonicalSlashes = (pathname) =>
+  hasConsecutiveSlashes(pathname) || hasTrailingSlash(pathname);
+const toPathSegments = (pathname) =>
+  normalizePathname(pathname)
+    .split('/')
+    .filter((segment) => segment.length > 0);
+const isPathParameterSegment = (segment = '') =>
+  String(segment || '').startsWith(':') && String(segment || '').length > 1;
+const decodeRoutePathParamSegment = (segment = '') => {
+  const raw = String(segment || '');
+  if (!raw) {
+    return raw;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch (_error) {
+    return null;
+  }
+};
+const isSafeDecodedRoutePathParamSegment = (decodedSegment) =>
+  typeof decodedSegment === 'string'
+  && decodedSegment.length > 0
+  && decodedSegment.trim() === decodedSegment
+  && !decodedSegment.includes('/')
+  && !ROUTE_PATH_PARAM_CONTROL_CHAR_PATTERN.test(decodedSegment);
+const isRoutePathMatch = (declaredPath, actualPath) => {
+  if (
+    hasNonCanonicalSlashes(declaredPath)
+    || hasNonCanonicalSlashes(actualPath)
+  ) {
+    return false;
+  }
+  const declaredSegments = toPathSegments(declaredPath);
+  const actualSegments = toPathSegments(actualPath);
+  if (declaredSegments.length !== actualSegments.length) {
+    return false;
+  }
+  for (let index = 0; index < declaredSegments.length; index += 1) {
+    const declaredSegment = declaredSegments[index];
+    const actualSegment = actualSegments[index];
+    if (isPathParameterSegment(declaredSegment)) {
+      if (actualSegment.length === 0) {
+        return false;
+      }
+      const decodedSegment = decodeRoutePathParamSegment(actualSegment);
+      if (!isSafeDecodedRoutePathParamSegment(decodedSegment)) {
+        return false;
+      }
+      continue;
+    }
+    if (declaredSegment !== actualSegment) {
+      return false;
+    }
+  }
+  return true;
+};
+const extractRoutePathParams = (declaredPath, actualPath) => {
+  if (!isRoutePathMatch(declaredPath, actualPath)) {
+    return null;
+  }
+  const declaredSegments = toPathSegments(declaredPath);
+  const actualSegments = toPathSegments(actualPath);
+  const params = {};
+  for (let index = 0; index < declaredSegments.length; index += 1) {
+    const declaredSegment = declaredSegments[index];
+    if (!isPathParameterSegment(declaredSegment)) {
+      continue;
+    }
+    const decodedSegment = decodeRoutePathParamSegment(actualSegments[index]);
+    if (!isSafeDecodedRoutePathParamSegment(decodedSegment)) {
+      return null;
+    }
+    params[declaredSegment.slice(1)] = decodedSegment;
+  }
+  return params;
 };
 
 const asRouteKey = ({ method, path }) => `${asMethod(method)} ${normalizePathname(path)}`;
@@ -212,6 +303,34 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     scope: PLATFORM_ORG_SCOPE
   },
   {
+    method: 'GET',
+    path: PLATFORM_ROLE_BASE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ROLE_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_ROLE_SCOPE
+  },
+  {
+    method: 'POST',
+    path: PLATFORM_ROLE_BASE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_ROLE_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: PLATFORM_ROLE_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_ROLE_SCOPE
+  },
+  {
+    method: 'DELETE',
+    path: PLATFORM_ROLE_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_ROLE_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_ROLE_SCOPE
+  },
+  {
     method: 'POST',
     path: PLATFORM_USER_CREATE_PATH,
     access: 'protected',
@@ -276,7 +395,31 @@ const listDeclaredRoutePaths = (routeDefinitions = ROUTE_DEFINITIONS) =>
 const findRouteDefinitionInMap = (
   routeDefinitionMap,
   { method, path }
-) => routeDefinitionMap.get(asRouteKey({ method, path })) || null;
+) => {
+  if (hasNonCanonicalSlashes(path)) {
+    return null;
+  }
+  const normalizedMethod = asMethod(method);
+  const normalizedPath = normalizePathname(path);
+  const directMatch = routeDefinitionMap.get(
+    asRouteKey({ method: normalizedMethod, path: normalizedPath })
+  );
+  if (directMatch) {
+    return directMatch;
+  }
+  for (const routeDefinition of routeDefinitionMap.values()) {
+    if (routeDefinition.method !== normalizedMethod) {
+      continue;
+    }
+    if (!String(routeDefinition.path || '').includes(':')) {
+      continue;
+    }
+    if (isRoutePathMatch(routeDefinition.path, normalizedPath)) {
+      return routeDefinition;
+    }
+  }
+  return null;
+};
 
 const ROUTE_DEFINITION_MAP = createRouteDefinitionMap(ROUTE_DEFINITIONS);
 
@@ -609,6 +752,8 @@ module.exports = {
   asRouteKey,
   parseRouteKey,
   normalizeRouteKey,
+  isRoutePathMatch,
+  extractRoutePathParams,
   findRouteDefinition,
   validateRoutePermissionDeclarations,
   ensureRoutePermissionDeclarationsOrThrow

@@ -503,7 +503,7 @@ test('platform role-facts replace replays the same Idempotency-Key without dupli
     user_id: 'user-platform-role-target-idempotency-replay',
     roles: [
       {
-        role_id: 'platform-member-admin-target',
+        role_id: 'sys_admin',
         status: 'active',
         permission: {
           can_view_member_admin: true,

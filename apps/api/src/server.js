@@ -13,6 +13,12 @@ const {
   PLATFORM_ORG_STATUS_ROUTE_KEY
 } = require('./modules/platform/org.constants');
 const {
+  PLATFORM_ROLE_LIST_ROUTE_KEY,
+  PLATFORM_ROLE_CREATE_ROUTE_KEY,
+  PLATFORM_ROLE_UPDATE_ROUTE_KEY,
+  PLATFORM_ROLE_DELETE_ROUTE_KEY
+} = require('./modules/platform/role.constants');
+const {
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 } = require('./modules/platform/user.constants');
@@ -26,6 +32,8 @@ const {
   createRouteDefinitionMap,
   listDeclaredRoutePaths,
   findRouteDefinitionInMap,
+  isRoutePathMatch,
+  extractRoutePathParams,
   ensureRoutePermissionDeclarationsOrThrow
 } = require('./route-permissions');
 const ROUTE_DECLARATION_LOOKUP_CACHE = new WeakMap();
@@ -40,18 +48,27 @@ const normalizePathname = (pathname) => {
   }
   return pathname.replace(/\/+$/, '') || '/';
 };
+const hasNonCanonicalRoutePathSlashes = (pathname) => {
+  const raw = String(pathname || '');
+  if (raw.length === 0 || raw === '/') {
+    return false;
+  }
+  return raw.includes('//') || raw.endsWith('/');
+};
 
 const parseRequestPath = (inputPath) => {
   const raw = typeof inputPath === 'string' && inputPath.length > 0 ? inputPath : '/';
   try {
     const parsed = new URL(raw, 'http://localhost');
     return {
+      rawPathname: parsed.pathname || '/',
       pathname: normalizePathname(parsed.pathname),
       search: parsed.search || ''
     };
   } catch (_error) {
     const [pathnameOnly, ...queryParts] = raw.split('?');
     return {
+      rawPathname: pathnameOnly || '/',
       pathname: normalizePathname(pathnameOnly),
       search: queryParts.length > 0 ? `?${queryParts.join('?')}` : ''
     };
@@ -83,26 +100,41 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ROLE_CREATE_ROUTE_KEY,
+  PLATFORM_ROLE_UPDATE_ROUTE_KEY,
+  PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ROLE_CREATE_ROUTE_KEY,
+  PLATFORM_ROLE_UPDATE_ROUTE_KEY,
+  PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
+  PLATFORM_ROLE_CREATE_ROUTE_KEY,
+  PLATFORM_ROLE_UPDATE_ROUTE_KEY,
+  PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_ROLE_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_ROLE_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
+]);
+const IDEMPOTENCY_REQUEST_HASH_IGNORES_BODY_ROUTE_KEYS = new Set([
+  PLATFORM_ROLE_DELETE_ROUTE_KEY
 ]);
 
 const resolveJsonBodyLimitBytes = (value) => {
@@ -466,8 +498,31 @@ const canonicalizeForHash = (value) => {
   return normalized;
 };
 
-const toIdempotencyRequestHash = (body = {}) =>
-  hashFingerprint(JSON.stringify(canonicalizeForHash(body || {})));
+const toIdempotencyRequestHash = (payload = {}) =>
+  hashFingerprint(JSON.stringify(canonicalizeForHash(payload || {})));
+
+const toIdempotencyRouteVariant = (routeParams = {}) =>
+  JSON.stringify(canonicalizeForHash(routeParams || {}));
+
+const normalizeRouteParamsForRoute = ({
+  routeKey = '',
+  routeParams = {}
+} = {}) => {
+  const normalizedRouteParams = {
+    ...(routeParams && typeof routeParams === 'object' && !Array.isArray(routeParams)
+      ? routeParams
+      : {})
+  };
+  if (
+    routeKey === PLATFORM_ROLE_UPDATE_ROUTE_KEY
+    || routeKey === PLATFORM_ROLE_DELETE_ROUTE_KEY
+  ) {
+    normalizedRouteParams.role_id = String(
+      normalizedRouteParams.role_id || ''
+    ).trim().toLowerCase();
+  }
+  return normalizedRouteParams;
+};
 
 const normalizeIdempotencyRequestHash = (requestHash) =>
   String(requestHash || '').trim().toLowerCase();
@@ -527,15 +582,17 @@ const resolveIdempotencyActorScope = ({
 const toIdempotencyScopeKey = ({
   routeKey,
   idempotencyKey,
-  actorScope
+  actorScope,
+  routeVariant = ''
 }) =>
-  `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}:${hashFingerprint(idempotencyKey || '')}`;
+  `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}:${hashFingerprint(routeVariant || '')}:${hashFingerprint(idempotencyKey || '')}`;
 
 const toIdempotencyScopeWindowKey = ({
   routeKey,
-  actorScope
+  actorScope,
+  routeVariant = ''
 }) =>
-  `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}`;
+  `${String(routeKey || '')}:${hashFingerprint(actorScope || '')}:${hashFingerprint(routeVariant || '')}`;
 
 const shouldPersistIdempotencyResponse = ({ routeKey, statusCode }) => {
   const resolvedStatusCode = Number(statusCode);
@@ -1043,7 +1100,8 @@ const createRouteTable = ({
   requestId,
   headers,
   body,
-  getAuthorizationContext = () => null
+  getAuthorizationContext = () => null,
+  getRouteParams = () => ({})
 }) => {
   const idempotencyStore =
     handlers?.authIdempotencyStore
@@ -1082,17 +1140,32 @@ const createRouteTable = ({
       authorizationContext,
       authorization: headers.authorization
     });
+    const routeParams = getRouteParams() || {};
+    const routeVariant = toIdempotencyRouteVariant(routeParams);
+    const shouldIgnoreRequestBodyInHash =
+      IDEMPOTENCY_REQUEST_HASH_IGNORES_BODY_ROUTE_KEYS.has(routeKey);
     const requestHash = normalizeIdempotencyRequestHash(
-      toIdempotencyRequestHash(body || {})
+      toIdempotencyRequestHash(
+        shouldIgnoreRequestBodyInHash
+          ? {
+            route_params: routeParams
+          }
+          : {
+            body: body || {},
+            route_params: routeParams
+          }
+      )
     );
     const scopeKey = toIdempotencyScopeKey({
       routeKey,
       idempotencyKey,
-      actorScope
+      actorScope,
+      routeVariant
     });
     const scopeWindowKey = toIdempotencyScopeWindowKey({
       routeKey,
-      actorScope
+      actorScope,
+      routeVariant
     });
     const respondWithAuditedIdempotencyProblem = async ({
       problem,
@@ -1535,6 +1608,62 @@ const createRouteTable = ({
             requestId
           )
       }),
+    [PLATFORM_ROLE_LIST_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.platformListRoles(
+            requestId,
+            headers.authorization,
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_ROLE_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ROLE_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformCreateRole(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_ROLE_UPDATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ROLE_UPDATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformUpdateRole(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_ROLE_DELETE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_ROLE_DELETE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.platformDeleteRole(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
     [PLATFORM_USER_CREATE_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_USER_CREATE_ROUTE_KEY,
@@ -1748,6 +1877,9 @@ const createRouteDeclarationLookup = (routeDefinitionSnapshot) =>
   (() => {
     const routeDefinitionMap = createRouteDefinitionMap(routeDefinitionSnapshot);
     const declaredRoutePaths = listDeclaredRoutePaths(routeDefinitionSnapshot);
+    const declaredParameterizedRouteDefinitions = routeDefinitionSnapshot.filter(
+      (routeDefinition) => String(routeDefinition?.path || '').includes(':')
+    );
     const declaredMethodsByPath = new Map();
     for (const routeDefinition of routeDefinitionSnapshot) {
       const declaredPath = normalizePathname(routeDefinition.path);
@@ -1767,11 +1899,31 @@ const createRouteDeclarationLookup = (routeDefinitionSnapshot) =>
       routeDefinitions: routeDefinitionSnapshot,
       findRouteDefinition: ({ method, path }) =>
         findRouteDefinitionInMap(routeDefinitionMap, { method, path }),
-      hasDeclaredRoutePath: (path) => declaredRoutePaths.has(path),
+      hasDeclaredRoutePath: (path) => {
+        const normalizedPath = normalizePathname(path);
+        if (declaredRoutePaths.has(normalizedPath)) {
+          return true;
+        }
+        return declaredParameterizedRouteDefinitions.some((routeDefinition) =>
+          isRoutePathMatch(routeDefinition.path, normalizedPath)
+        );
+      },
       listDeclaredMethodsForPath: (path) => {
         const normalizedPath = normalizePathname(path);
-        const declaredMethods = declaredMethodsByPath.get(normalizedPath);
-        return declaredMethods ? [...declaredMethods] : [];
+        const declaredMethods = new Set(
+          declaredMethodsByPath.get(normalizedPath) || []
+        );
+        for (const routeDefinition of declaredParameterizedRouteDefinitions) {
+          if (!isRoutePathMatch(routeDefinition.path, normalizedPath)) {
+            continue;
+          }
+          const declaredMethod = asMethod(routeDefinition.method);
+          declaredMethods.add(declaredMethod);
+          if (declaredMethod === 'GET') {
+            declaredMethods.add('HEAD');
+          }
+        }
+        return [...declaredMethods];
       }
     });
   })();
@@ -1837,7 +1989,9 @@ const dispatchApiRoute = async ({
     corsPolicy,
     requestOrigin: headers.origin
   };
-  const routePath = parseRequestPath(pathname).pathname;
+  const parsedRoutePath = parseRequestPath(pathname);
+  const routePath = parsedRoutePath.pathname;
+  const rawRoutePath = String(parsedRoutePath.rawPathname || routePath);
   const normalizedMethod = asMethod(method);
   const routeDispatchMethod = normalizedMethod === 'HEAD' ? 'GET' : normalizedMethod;
   const finalizeResponse = (routeResponse) => {
@@ -1849,10 +2003,34 @@ const dispatchApiRoute = async ({
       body: ''
     };
   };
+  if (hasNonCanonicalRoutePathSlashes(rawRoutePath)) {
+    return finalizeResponse(responseJson(
+      404,
+      buildProblemDetails({
+        status: 404,
+        title: 'Not Found',
+        detail: `No route for ${rawRoutePath}`,
+        requestId: resolvedRequestId,
+        extensions: { error_code: 'AUTH-404-NOT-FOUND' }
+      }),
+      'application/problem+json',
+      corsOptions
+    ));
+  }
   const routeKey = `${routeDispatchMethod} ${routePath}`;
   const routeDefinition = resolvedRouteDeclarationLookup.findRouteDefinition({
     method: routeDispatchMethod,
     path: routePath
+  });
+  const routeDefinitionRouteKey = routeDefinition
+    ? `${routeDispatchMethod} ${normalizePathname(routeDefinition.path)}`
+    : routeKey;
+  const extractedRouteParams = routeDefinition
+    ? (extractRoutePathParams(routeDefinition.path, routePath) || {})
+    : {};
+  const routeParams = normalizeRouteParamsForRoute({
+    routeKey: routeDefinitionRouteKey,
+    routeParams: extractedRouteParams
   });
   let authorizationContext = null;
 
@@ -1877,9 +2055,10 @@ const dispatchApiRoute = async ({
     requestId: resolvedRequestId,
     headers,
     body,
-    getAuthorizationContext: () => authorizationContext
+    getAuthorizationContext: () => authorizationContext,
+    getRouteParams: () => routeParams
   });
-  const routeHandler = routeTable[routeKey];
+  const routeHandler = routeTable[routeKey] || routeTable[routeDefinitionRouteKey];
   if (routeHandler) {
     if (!routeDefinition) {
       return finalizeResponse(responseJson(
