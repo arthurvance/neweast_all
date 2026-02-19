@@ -1,0 +1,128 @@
+const { extractBearerToken } = require('../auth/auth.routes');
+const {
+  resolveRoutePreauthorizedContext
+} = require('../auth/route-preauthorization');
+const {
+  TENANT_ROLE_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_SCOPE
+} = require('./role.constants');
+
+const hasTrustedPreauthorizedContext = ({
+  authorizationContext = null,
+  permissionCode = ''
+} = {}) =>
+  Boolean(
+    resolveRoutePreauthorizedContext({
+      authorizationContext,
+      expectedPermissionCode: permissionCode,
+      expectedScope: TENANT_ROLE_SCOPE,
+      expectedEntryDomain: TENANT_ROLE_SCOPE
+    })
+  );
+
+const resolveAccessToken = ({
+  authorization,
+  authorizationContext = null,
+  permissionCode = ''
+}) => {
+  if (
+    hasTrustedPreauthorizedContext({
+      authorizationContext,
+      permissionCode
+    })
+  ) {
+    return null;
+  }
+  const normalizedAuthorization = String(authorization || '').trim();
+  if (normalizedAuthorization.length > 0) {
+    return extractBearerToken(normalizedAuthorization);
+  }
+  return extractBearerToken(authorization);
+};
+
+const createTenantRoleHandlers = (tenantRoleService) => {
+  if (
+    !tenantRoleService
+    || typeof tenantRoleService.listRoles !== 'function'
+    || typeof tenantRoleService.createRole !== 'function'
+    || typeof tenantRoleService.updateRole !== 'function'
+    || typeof tenantRoleService.deleteRole !== 'function'
+  ) {
+    throw new TypeError(
+      'createTenantRoleHandlers requires a tenantRoleService with listRoles, createRole, updateRole and deleteRole'
+    );
+  }
+
+  return {
+    listRoles: async ({
+      requestId,
+      authorization,
+      authorizationContext = null
+    }) =>
+      tenantRoleService.listRoles({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_ROLE_VIEW_PERMISSION_CODE
+        }),
+        authorizationContext
+      }),
+
+    createRole: async ({
+      requestId,
+      authorization,
+      body,
+      authorizationContext = null
+    }) =>
+      tenantRoleService.createRole({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
+        }),
+        payload: body || {},
+        authorizationContext
+      }),
+
+    updateRole: async ({
+      requestId,
+      authorization,
+      params = {},
+      body,
+      authorizationContext = null
+    }) =>
+      tenantRoleService.updateRole({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
+        }),
+        roleId: params.role_id,
+        payload: body || {},
+        authorizationContext
+      }),
+
+    deleteRole: async ({
+      requestId,
+      authorization,
+      params = {},
+      authorizationContext = null
+    }) =>
+      tenantRoleService.deleteRole({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
+        }),
+        roleId: params.role_id,
+        authorizationContext
+      })
+  };
+};
+
+module.exports = { createTenantRoleHandlers };

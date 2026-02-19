@@ -153,6 +153,22 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     }
     return normalizedScope;
   };
+  const normalizePlatformRoleCatalogTenantId = (tenantId) =>
+    String(tenantId ?? '').trim();
+  const normalizePlatformRoleCatalogTenantIdForScope = ({
+    scope = 'platform',
+    tenantId
+  } = {}) => {
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantId(tenantId);
+    if (normalizedScope === 'tenant') {
+      if (!normalizedTenantId) {
+        throw new Error('tenant role catalog entry requires tenantId');
+      }
+      return normalizedTenantId;
+    }
+    return '';
+  };
   const normalizePlatformRoleCatalogRoleId = (roleId) =>
     String(roleId || '').trim().toLowerCase();
   const toPlatformRoleCatalogRoleIdKey = (roleId) =>
@@ -161,6 +177,16 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     String(code || '').trim();
   const toPlatformRoleCatalogCodeKey = (code) =>
     normalizePlatformRoleCatalogCode(code).toLowerCase();
+  const toPlatformRoleCatalogCodeIndexKey = ({
+    scope = 'platform',
+    tenantId = '',
+    code = ''
+  } = {}) =>
+    [
+      normalizePlatformRoleCatalogScope(scope),
+      normalizePlatformRoleCatalogTenantIdForScope({ scope, tenantId }),
+      toPlatformRoleCatalogCodeKey(code)
+    ].join('::');
   const normalizePlatformPermissionCode = (permissionCode) =>
     String(permissionCode || '').trim();
   const toPlatformPermissionCodeKey = (permissionCode) =>
@@ -181,6 +207,10 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   };
   const toPlatformRoleCatalogRecord = (entry = {}) => ({
     roleId: String(entry.roleId || entry.role_id || '').trim(),
+    tenantId: normalizePlatformRoleCatalogTenantIdForScope({
+      scope: entry.scope,
+      tenantId: entry.tenantId || entry.tenant_id
+    }),
     code: String(entry.code || '').trim(),
     name: String(entry.name || '').trim(),
     status: normalizePlatformRoleCatalogStatus(entry.status),
@@ -195,6 +225,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     entry
       ? {
         roleId: entry.roleId,
+        tenantId: entry.tenantId,
         code: entry.code,
         name: entry.name,
         status: entry.status,
@@ -464,16 +495,27 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     );
     const normalizedCode = normalizePlatformRoleCatalogCode(entry.code);
     const normalizedName = String(entry.name || '').trim();
+    const normalizedScope = normalizePlatformRoleCatalogScope(
+      entry.scope || 'platform'
+    );
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+      scope: normalizedScope,
+      tenantId: entry.tenantId || entry.tenant_id
+    });
     if (!normalizedRoleId || !normalizedCode || !normalizedName) {
       throw new Error('platform role catalog entry requires roleId, code, and name');
     }
-    const codeKey = toPlatformRoleCatalogCodeKey(normalizedCode);
+    const codeIndexKey = toPlatformRoleCatalogCodeIndexKey({
+      scope: normalizedScope,
+      tenantId: normalizedTenantId,
+      code: normalizedCode
+    });
     const existingState = findPlatformRoleCatalogRecordStateByRoleId(
       normalizedRoleId
     );
     const persistedRoleId = existingState?.roleId || normalizedRoleId;
     const existing = existingState?.record || null;
-    const existingRoleIdForCode = platformRoleCatalogCodeIndex.get(codeKey);
+    const existingRoleIdForCode = platformRoleCatalogCodeIndex.get(codeIndexKey);
     if (
       existingRoleIdForCode
       && toPlatformRoleCatalogRoleIdKey(existingRoleIdForCode)
@@ -483,10 +525,15 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         target: 'code'
       });
     }
-    if (existing && toPlatformRoleCatalogCodeKey(existing.code) !== codeKey) {
-      platformRoleCatalogCodeIndex.delete(
-        toPlatformRoleCatalogCodeKey(existing.code)
-      );
+    if (existing) {
+      const existingCodeIndexKey = toPlatformRoleCatalogCodeIndexKey({
+        scope: existing.scope,
+        tenantId: existing.tenantId,
+        code: existing.code
+      });
+      if (existingCodeIndexKey !== codeIndexKey) {
+        platformRoleCatalogCodeIndex.delete(existingCodeIndexKey);
+      }
     }
 
     const nowIso = new Date().toISOString();
@@ -494,13 +541,15 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       ...existing,
       ...entry,
       roleId: persistedRoleId,
+      scope: normalizedScope,
+      tenantId: normalizedTenantId,
       code: normalizedCode,
       name: normalizedName,
       createdAt: existing?.createdAt || entry.createdAt || nowIso,
       updatedAt: entry.updatedAt || nowIso
     });
     platformRoleCatalogById.set(persistedRoleId, merged);
-    platformRoleCatalogCodeIndex.set(codeKey, persistedRoleId);
+    platformRoleCatalogCodeIndex.set(codeIndexKey, persistedRoleId);
     return clonePlatformRoleCatalogRecord(merged);
   };
 
@@ -1478,10 +1527,25 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     countPlatformRoleCatalogEntries: async () => platformRoleCatalogById.size,
 
-    listPlatformRoleCatalogEntries: async ({ scope = 'platform' } = {}) => {
+    listPlatformRoleCatalogEntries: async ({
+      scope = 'platform',
+      tenantId = null
+    } = {}) => {
       const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
       return [...platformRoleCatalogById.values()]
-        .filter((entry) => normalizePlatformRoleCatalogScope(entry.scope) === normalizedScope)
+        .filter((entry) => {
+          if (normalizePlatformRoleCatalogScope(entry.scope) !== normalizedScope) {
+            return false;
+          }
+          if (normalizedScope === 'tenant') {
+            return String(entry.tenantId || '') === normalizedTenantId;
+          }
+          return String(entry.tenantId || '') === '';
+        })
         .sort((left, right) => {
           const leftCreatedAt = new Date(left.createdAt).getTime();
           const rightCreatedAt = new Date(right.createdAt).getTime();
@@ -1493,15 +1557,53 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         .map((entry) => clonePlatformRoleCatalogRecord(entry));
     },
 
-    findPlatformRoleCatalogEntryByRoleId: async ({ roleId }) => {
+    findPlatformRoleCatalogEntryByRoleId: async ({
+      roleId,
+      scope = undefined,
+      tenantId = null
+    }) => {
       const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
       if (!normalizedRoleId) {
         return null;
       }
+      const hasScopeFilter = scope !== undefined && scope !== null;
+      const normalizedScope = hasScopeFilter
+        ? normalizePlatformRoleCatalogScope(scope)
+        : null;
+      const normalizedTenantId = hasScopeFilter
+        ? normalizePlatformRoleCatalogTenantIdForScope({
+          scope: normalizedScope,
+          tenantId
+        })
+        : null;
       const existingState = findPlatformRoleCatalogRecordStateByRoleId(
         normalizedRoleId
       );
-      return clonePlatformRoleCatalogRecord(existingState?.record || null);
+      const existing = existingState?.record || null;
+      if (!existing) {
+        return null;
+      }
+      if (
+        hasScopeFilter
+        && normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope
+      ) {
+        return null;
+      }
+      if (
+        hasScopeFilter
+        && normalizedScope === 'tenant'
+        && String(existing.tenantId || '') !== normalizedTenantId
+      ) {
+        return null;
+      }
+      if (
+        hasScopeFilter
+        && normalizedScope !== 'tenant'
+        && String(existing.tenantId || '') !== ''
+      ) {
+        return null;
+      }
+      return clonePlatformRoleCatalogRecord(existing);
     },
 
     findPlatformRoleCatalogEntriesByRoleIds: async ({ roleIds = [] } = {}) => {
@@ -1586,6 +1688,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       name,
       status = 'active',
       scope = 'platform',
+      tenantId = null,
       isSystem = false,
       operatorUserId = null,
       operatorSessionId = null
@@ -1593,6 +1696,11 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
       const normalizedCode = normalizePlatformRoleCatalogCode(code);
       const normalizedName = String(name || '').trim();
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
       if (!normalizedRoleId || !normalizedCode || !normalizedName) {
         throw new Error('createPlatformRoleCatalogEntry requires roleId, code, and name');
       }
@@ -1606,7 +1714,8 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         code: normalizedCode,
         name: normalizedName,
         status: normalizePlatformRoleCatalogStatus(status),
-        scope: normalizePlatformRoleCatalogScope(scope),
+        scope: normalizedScope,
+        tenantId: normalizedTenantId,
         isSystem: Boolean(isSystem),
         createdByUserId: operatorUserId ? String(operatorUserId) : null,
         updatedByUserId: operatorUserId ? String(operatorUserId) : null,
@@ -1618,6 +1727,8 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     updatePlatformRoleCatalogEntry: async ({
       roleId,
+      scope = 'platform',
+      tenantId = null,
       code = undefined,
       name = undefined,
       status = undefined,
@@ -1628,11 +1739,28 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       if (!normalizedRoleId) {
         throw new Error('updatePlatformRoleCatalogEntry requires roleId');
       }
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
       const existingState = findPlatformRoleCatalogRecordStateByRoleId(
         normalizedRoleId
       );
       const existing = existingState?.record || null;
       if (!existing) {
+        return null;
+      }
+      if (normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope) {
+        return null;
+      }
+      if (
+        normalizedScope === 'tenant'
+        && String(existing.tenantId || '') !== normalizedTenantId
+      ) {
+        return null;
+      }
+      if (normalizedScope !== 'tenant' && String(existing.tenantId || '') !== '') {
         return null;
       }
       const nextCode = code === undefined
@@ -1654,6 +1782,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         name: nextName,
         status: nextStatus,
         scope: existing.scope,
+        tenantId: existing.tenantId,
         isSystem: Boolean(existing.isSystem),
         updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
         updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
@@ -1663,6 +1792,8 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
 
     deletePlatformRoleCatalogEntry: async ({
       roleId,
+      scope = 'platform',
+      tenantId = null,
       operatorUserId = null,
       operatorSessionId = null
     }) => {
@@ -1670,11 +1801,28 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       if (!normalizedRoleId) {
         throw new Error('deletePlatformRoleCatalogEntry requires roleId');
       }
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
       const existingState = findPlatformRoleCatalogRecordStateByRoleId(
         normalizedRoleId
       );
       const existing = existingState?.record || null;
       if (!existing) {
+        return null;
+      }
+      if (normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope) {
+        return null;
+      }
+      if (
+        normalizedScope === 'tenant'
+        && String(existing.tenantId || '') !== normalizedTenantId
+      ) {
+        return null;
+      }
+      if (normalizedScope !== 'tenant' && String(existing.tenantId || '') !== '') {
         return null;
       }
       return upsertPlatformRoleCatalogRecord({

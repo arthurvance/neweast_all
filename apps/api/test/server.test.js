@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { createRouteHandlers } = require('../src/http-routes');
 const { createPlatformOrgService } = require('../src/modules/platform/org.service');
 const { createTenantMemberService } = require('../src/modules/tenant/member.service');
+const { createTenantRoleService } = require('../src/modules/tenant/role.service');
 const { AuthProblemError } = require('../src/modules/auth/auth.routes');
 const { readConfig } = require('../src/config/env');
 const {
@@ -104,6 +105,8 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/tenant/members']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status']);
+  assert.ok(payload.paths['/tenant/roles']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/platform/roles']);
   assert.ok(payload.paths['/platform/roles/{role_id}']);
@@ -120,6 +123,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/platform/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'role_id'
+    ).schema.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'role_id'
+    ).schema.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].delete.parameters.find(
       (parameter) => parameter.in === 'path' && parameter.name === 'role_id'
     ).schema.pattern,
     '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
@@ -172,6 +187,21 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(
     payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/roles'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/roles/{role_id}'].patch.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/roles/{role_id}'].delete.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -251,6 +281,24 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/tenant/roles'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/roles'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
@@ -315,6 +363,24 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
     '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
   );
   assert.equal(
     payload.paths['/platform/roles'].post.parameters.find(
@@ -475,6 +541,78 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.components.schemas.TenantMemberStatusUpdateResponse.properties.membership_id.pattern,
     '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
   );
+  assert.equal(
+    payload.components.schemas.TenantRoleCatalogItem.required.includes('tenant_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.TenantRoleCatalogItem.properties.role_id.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  );
+  assert.equal(
+    payload.components.schemas.TenantRoleCatalogItem.properties.code.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.TenantRoleCatalogItem.properties.status.enum.includes('active'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.TenantRoleListResponse.required.includes('tenant_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.CreateTenantRoleRequest.required.includes('role_id'),
+    true
+  );
+  assert.equal(
+    payload.components.schemas.CreateTenantRoleRequest.properties.code.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.CreateTenantRoleRequest.properties.is_system,
+    undefined
+  );
+  assert.equal(
+    payload.components.schemas.UpdateTenantRoleRequest.additionalProperties,
+    false
+  );
+  assert.equal(
+    payload.components.schemas.UpdateTenantRoleRequest.properties.code.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.UpdateTenantRoleRequest.minProperties,
+    1
+  );
+  assert.equal(
+    payload.components.schemas.DeleteTenantRoleResponse.required.includes('role_id'),
+    true
+  );
+  assert.deepEqual(
+    payload.components.schemas.DeleteTenantRoleResponse.properties.status.enum,
+    ['disabled']
+  );
+  assert.equal(
+    payload.components.schemas.PlatformRoleCatalogItem.properties.code.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.CreatePlatformRoleRequest.properties.code.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformRoleRequest.properties.code.pattern,
+    '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.equal(
+    payload.components.schemas.UpdatePlatformRoleRequest.minProperties,
+    1
+  );
+  assert.deepEqual(
+    payload.components.schemas.DeletePlatformRoleResponse.properties.status.enum,
+    ['disabled']
+  );
   assert.ok(
     payload.paths['/tenant/members'].get.responses['400'].content['application/problem+json']
       .examples.invalid_query
@@ -535,6 +673,30 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.paths['/tenant/members/{membership_id}/status'].patch.responses['503']
       .content['application/problem+json'].examples.idempotency_store_unavailable
   );
+  assert.ok(payload.paths['/tenant/roles'].get.responses['200']);
+  assert.ok(payload.paths['/tenant/roles'].get.responses['401']);
+  assert.ok(payload.paths['/tenant/roles'].get.responses['403']);
+  assert.ok(payload.paths['/tenant/roles'].get.responses['503']);
+  assert.ok(payload.paths['/tenant/roles'].post.responses['400']);
+  assert.ok(payload.paths['/tenant/roles'].post.responses['401']);
+  assert.ok(payload.paths['/tenant/roles'].post.responses['403']);
+  assert.ok(payload.paths['/tenant/roles'].post.responses['409']);
+  assert.ok(payload.paths['/tenant/roles'].post.responses['413']);
+  assert.ok(payload.paths['/tenant/roles'].post.responses['503']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['400']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['401']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['403']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['404']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['409']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['413']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].patch.responses['503']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['400']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['401']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['403']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['404']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['409']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['413']);
+  assert.ok(payload.paths['/tenant/roles/{role_id}'].delete.responses['503']);
   assert.ok(payload.paths['/platform/roles'].post.responses['400']);
   assert.ok(payload.paths['/platform/roles'].post.responses['401']);
   assert.ok(payload.paths['/platform/roles'].post.responses['403']);
@@ -1320,6 +1482,68 @@ test('createRouteHandlers fails fast when injected authService mismatches tenant
         tenantMemberService
       }),
     /authService and tenantMemberService to share the same authService instance/
+  );
+});
+
+test('createRouteHandlers reuses tenantRoleService authService when authService option is omitted', () => {
+  const sharedAuthService = {
+    authorizeRoute: async () => ({})
+  };
+  const tenantRoleService = createTenantRoleService({
+    authService: sharedAuthService
+  });
+
+  const handlers = createRouteHandlers(config, {
+    dependencyProbe,
+    tenantRoleService
+  });
+
+  assert.equal(handlers._internals.authService, sharedAuthService);
+  assert.equal(handlers._internals.tenantRoleService, tenantRoleService);
+});
+
+test('createRouteHandlers fails fast when injected authService mismatches tenantRoleService authService', () => {
+  const tenantRoleAuthService = {
+    authorizeRoute: async () => ({})
+  };
+  const tenantRoleService = createTenantRoleService({
+    authService: tenantRoleAuthService
+  });
+  const differentAuthService = {
+    authorizeRoute: async () => ({})
+  };
+
+  assert.throws(
+    () =>
+      createRouteHandlers(config, {
+        dependencyProbe,
+        authService: differentAuthService,
+        tenantRoleService
+      }),
+    /authService and tenantRoleService to share the same authService instance/
+  );
+});
+
+test('createRouteHandlers fails fast when tenantMemberService and tenantRoleService authService differ', () => {
+  const tenantMemberService = createTenantMemberService({
+    authService: {
+      authorizeRoute: async () => ({})
+    }
+  });
+  const tenantRoleService = createTenantRoleService({
+    authService: {
+      authorizeRoute: async () => ({})
+    }
+  });
+
+  assert.throws(
+    () =>
+      createRouteHandlers(config, {
+        dependencyProbe,
+        tenantMemberService,
+        tenantRoleService
+      }),
+    /tenantMemberService and tenantRoleService to share the same authService instance/
   );
 });
 

@@ -1599,6 +1599,326 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/tenant/roles': {
+      get: {
+        summary: 'List tenant role catalog under current active tenant context',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Tenant role catalog listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantRoleListResponse' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant role governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织角色治理依赖暂不可用，请稍后重试',
+                      error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        summary: 'Create tenant role',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CreateTenantRoleRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant role created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantRoleCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Tenant role conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant role governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/tenant/roles/{role_id}': {
+      patch: {
+        summary: 'Update tenant role by role_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/UpdateTenantRoleRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant role updated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantRoleCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context, insufficient permission, or protected role constraint',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Tenant role conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant role governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      },
+      delete: {
+        summary: 'Delete tenant role by role_id (soft delete)',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Tenant role soft deleted',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/DeleteTenantRoleResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid role_id or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context, insufficient permission, or protected role constraint',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Tenant role deletion precondition conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant role governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
     '/auth/platform/member-admin/probe': {
       get: {
         summary: 'Probe platform member-admin view permission with unified authorization semantics',
@@ -4308,6 +4628,152 @@ const buildOpenApiSpec = () => {
           request_id: { type: 'string' }
         }
       },
+      TenantRoleCatalogItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'role_id',
+          'tenant_id',
+          'code',
+          'name',
+          'status',
+          'is_system',
+          'created_at',
+          'updated_at',
+          'request_id'
+        ],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          tenant_id: {
+            type: 'string',
+            minLength: 1
+          },
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          },
+          is_system: {
+            type: 'boolean'
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updated_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantRoleListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['tenant_id', 'roles', 'request_id'],
+        properties: {
+          tenant_id: {
+            type: 'string',
+            minLength: 1
+          },
+          roles: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/TenantRoleCatalogItem' }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      CreateTenantRoleRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['role_id', 'code', 'name'],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled'],
+            default: 'active'
+          }
+        }
+      },
+      UpdateTenantRoleRequest: {
+        type: 'object',
+        additionalProperties: false,
+        minProperties: 1,
+        properties: {
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          }
+        }
+      },
+      DeleteTenantRoleResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['role_id', 'tenant_id', 'status', 'request_id'],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          tenant_id: {
+            type: 'string',
+            minLength: 1
+          },
+          status: {
+            type: 'string',
+            enum: ['disabled']
+          },
+          request_id: { type: 'string' }
+        }
+      },
       PlatformRoleCatalogItem: {
         type: 'object',
         additionalProperties: false,
@@ -4332,7 +4798,7 @@ const buildOpenApiSpec = () => {
             type: 'string',
             minLength: 1,
             maxLength: 64,
-            pattern: '.*\\S.*'
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
           },
           name: {
             type: 'string',
@@ -4385,7 +4851,7 @@ const buildOpenApiSpec = () => {
             type: 'string',
             minLength: 1,
             maxLength: 64,
-            pattern: '.*\\S.*'
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
           },
           name: {
             type: 'string',
@@ -4407,12 +4873,13 @@ const buildOpenApiSpec = () => {
       UpdatePlatformRoleRequest: {
         type: 'object',
         additionalProperties: false,
+        minProperties: 1,
         properties: {
           code: {
             type: 'string',
             minLength: 1,
             maxLength: 64,
-            pattern: '.*\\S.*'
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
           },
           name: {
             type: 'string',
@@ -4439,7 +4906,7 @@ const buildOpenApiSpec = () => {
           },
           status: {
             type: 'string',
-            enum: ['active', 'disabled']
+            enum: ['disabled']
           },
           request_id: { type: 'string' }
         }

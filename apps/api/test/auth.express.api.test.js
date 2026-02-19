@@ -467,6 +467,7 @@ const ensureTables = async () => {
   );
 
   await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
+  await runMigrationSql(adminConnection, '0013_platform_role_catalog_tenant_isolation.sql');
 };
 
 const resetTestData = async () => {
@@ -2660,6 +2661,7 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0010_platform_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0011_auth_user_platform_roles_role_id_index.sql');
   await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
+  await runMigrationSql(adminConnection, '0013_platform_role_catalog_tenant_isolation.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();

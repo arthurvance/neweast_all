@@ -756,6 +756,24 @@ const normalizeTenantId = (tenantId) => {
   const normalized = String(tenantId).trim();
   return normalized.length > 0 ? normalized : null;
 };
+const normalizePlatformRoleCatalogTenantIdForScope = ({
+  scope = PLATFORM_ROLE_CATALOG_SCOPE,
+  tenantId,
+  allowEmptyForPlatform = true
+} = {}) => {
+  const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+  const normalizedTenantId = normalizeTenantId(tenantId);
+  if (normalizedScope === 'tenant') {
+    if (!normalizedTenantId) {
+      throw errors.invalidPayload();
+    }
+    return normalizedTenantId;
+  }
+  if (allowEmptyForPlatform) {
+    return null;
+  }
+  return normalizedTenantId;
+};
 const normalizeOrgStatus = (status) => {
   const normalizedStatus = String(status || '').trim().toLowerCase();
   if (normalizedStatus === 'enabled') {
@@ -3645,6 +3663,7 @@ const createAuthService = (options = {}) => {
     name,
     status = 'active',
     scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    tenantId = null,
     isSystem = false,
     operatorUserId = null,
     operatorSessionId = null
@@ -3669,6 +3688,10 @@ const createAuthService = (options = {}) => {
     ) {
       throw errors.invalidPayload();
     }
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+      scope: normalizedScope,
+      tenantId
+    });
 
     assertStoreMethod(authStore, 'createPlatformRoleCatalogEntry', 'authStore');
     return authStore.createPlatformRoleCatalogEntry({
@@ -3677,6 +3700,7 @@ const createAuthService = (options = {}) => {
       name: normalizedName,
       status: normalizedStatus === 'enabled' ? 'active' : normalizedStatus,
       scope: normalizedScope,
+      tenantId: normalizedTenantId,
       isSystem: Boolean(isSystem),
       operatorUserId,
       operatorSessionId
@@ -3685,6 +3709,8 @@ const createAuthService = (options = {}) => {
 
   const updatePlatformRoleCatalogEntry = async ({
     roleId,
+    scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    tenantId = null,
     code = undefined,
     name = undefined,
     status = undefined,
@@ -3695,6 +3721,14 @@ const createAuthService = (options = {}) => {
       roleId,
       errors.invalidPayload
     ).toLowerCase();
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+      throw errors.invalidPayload();
+    }
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+      scope: normalizedScope,
+      tenantId
+    });
     const updates = {};
     if (code !== undefined) {
       updates.code = normalizeRequiredStringField(code, errors.invalidPayload);
@@ -3715,6 +3749,8 @@ const createAuthService = (options = {}) => {
     assertStoreMethod(authStore, 'updatePlatformRoleCatalogEntry', 'authStore');
     return authStore.updatePlatformRoleCatalogEntry({
       roleId: normalizedRoleId,
+      scope: normalizedScope,
+      tenantId: normalizedTenantId,
       ...updates,
       operatorUserId,
       operatorSessionId
@@ -3723,6 +3759,8 @@ const createAuthService = (options = {}) => {
 
   const deletePlatformRoleCatalogEntry = async ({
     roleId,
+    scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    tenantId = null,
     operatorUserId = null,
     operatorSessionId = null
   }) => {
@@ -3730,24 +3768,65 @@ const createAuthService = (options = {}) => {
       roleId,
       errors.invalidPayload
     ).toLowerCase();
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+      throw errors.invalidPayload();
+    }
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+      scope: normalizedScope,
+      tenantId
+    });
     assertStoreMethod(authStore, 'deletePlatformRoleCatalogEntry', 'authStore');
     return authStore.deletePlatformRoleCatalogEntry({
       roleId: normalizedRoleId,
+      scope: normalizedScope,
+      tenantId: normalizedTenantId,
       operatorUserId,
       operatorSessionId
     });
   };
 
   const listPlatformRoleCatalogEntries = async ({
-    scope = PLATFORM_ROLE_CATALOG_SCOPE
+    scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    tenantId = null
   } = {}) => {
     const normalizedScope = normalizePlatformRoleCatalogScope(scope);
     if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
       throw errors.invalidPayload();
     }
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+      scope: normalizedScope,
+      tenantId
+    });
     assertStoreMethod(authStore, 'listPlatformRoleCatalogEntries', 'authStore');
     return authStore.listPlatformRoleCatalogEntries({
-      scope: normalizedScope
+      scope: normalizedScope,
+      tenantId: normalizedTenantId
+    });
+  };
+
+  const findPlatformRoleCatalogEntryByRoleId = async ({
+    roleId,
+    scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    tenantId = null
+  } = {}) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+      throw errors.invalidPayload();
+    }
+    const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+      scope: normalizedScope,
+      tenantId
+    });
+    assertStoreMethod(authStore, 'findPlatformRoleCatalogEntryByRoleId', 'authStore');
+    return authStore.findPlatformRoleCatalogEntryByRoleId({
+      roleId: normalizedRoleId,
+      scope: normalizedScope,
+      tenantId: normalizedTenantId
     });
   };
 
@@ -5381,6 +5460,7 @@ const createAuthService = (options = {}) => {
     updatePlatformRoleCatalogEntry,
     deletePlatformRoleCatalogEntry,
     listPlatformRoleCatalogEntries,
+    findPlatformRoleCatalogEntryByRoleId,
     listPlatformRolePermissionGrants,
     replacePlatformRolePermissionGrants,
     listPlatformPermissionCatalog,

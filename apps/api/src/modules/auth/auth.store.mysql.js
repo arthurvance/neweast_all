@@ -70,6 +70,22 @@ const normalizePlatformRoleCatalogStatus = (status) => {
 };
 const normalizePlatformRoleCatalogScope = (scope) =>
   String(scope || '').trim().toLowerCase();
+const normalizePlatformRoleCatalogTenantId = (tenantId) =>
+  String(tenantId ?? '').trim();
+const normalizePlatformRoleCatalogTenantIdForScope = ({
+  scope = 'platform',
+  tenantId
+} = {}) => {
+  const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+  const normalizedTenantId = normalizePlatformRoleCatalogTenantId(tenantId);
+  if (normalizedScope === 'tenant') {
+    if (!normalizedTenantId) {
+      throw new Error('tenant role catalog entry requires tenantId');
+    }
+    return normalizedTenantId;
+  }
+  return '';
+};
 const normalizePlatformRoleCatalogRoleId = (roleId) =>
   String(roleId || '').trim().toLowerCase();
 const normalizeOwnerTransferLockTimeoutSeconds = (timeoutSeconds) => {
@@ -154,6 +170,7 @@ const toPlatformRoleCatalogRecord = (row) => {
   }
   return {
     roleId: String(row.role_id || '').trim(),
+    tenantId: normalizePlatformRoleCatalogTenantId(row.tenant_id) || null,
     code: String(row.code || '').trim(),
     name: String(row.name || '').trim(),
     status: normalizePlatformRoleCatalogStatus(row.status || 'active'),
@@ -1431,14 +1448,28 @@ const createMySqlAuthStore = ({
       return Number(rows?.[0]?.role_count || 0);
     },
 
-    listPlatformRoleCatalogEntries: async ({ scope = 'platform' } = {}) => {
+    listPlatformRoleCatalogEntries: async ({
+      scope = 'platform',
+      tenantId = null
+    } = {}) => {
       const normalizedScope = normalizePlatformRoleCatalogScope(scope);
       if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
         throw new Error('listPlatformRoleCatalogEntries received unsupported scope');
       }
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
+      const whereClause = normalizedScope === 'tenant'
+        ? 'scope = ? AND tenant_id = ?'
+        : "scope = ? AND tenant_id = ''";
+      const queryArgs = normalizedScope === 'tenant'
+        ? [normalizedScope, normalizedTenantId]
+        : [normalizedScope];
       const rows = await dbClient.query(
         `
           SELECT role_id,
+                 tenant_id,
                  code,
                  name,
                  status,
@@ -1449,24 +1480,55 @@ const createMySqlAuthStore = ({
                  created_at,
                  updated_at
           FROM platform_role_catalog
-          WHERE scope = ?
+          WHERE ${whereClause}
           ORDER BY created_at ASC, role_id ASC
         `,
-        [normalizedScope]
+        queryArgs
       );
       return (Array.isArray(rows) ? rows : [])
         .map((row) => toPlatformRoleCatalogRecord(row))
         .filter(Boolean);
     },
 
-    findPlatformRoleCatalogEntryByRoleId: async ({ roleId }) => {
+    findPlatformRoleCatalogEntryByRoleId: async ({
+      roleId,
+      scope = undefined,
+      tenantId = null
+    }) => {
       const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
       if (!normalizedRoleId) {
         return null;
       }
+      const hasScopeFilter = scope !== undefined && scope !== null;
+      const normalizedScope = hasScopeFilter
+        ? normalizePlatformRoleCatalogScope(scope)
+        : null;
+      if (
+        hasScopeFilter
+        && !VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)
+      ) {
+        throw new Error('findPlatformRoleCatalogEntryByRoleId received unsupported scope');
+      }
+      const normalizedTenantId = hasScopeFilter
+        ? normalizePlatformRoleCatalogTenantIdForScope({
+          scope: normalizedScope,
+          tenantId
+        })
+        : null;
+      const whereClause = !hasScopeFilter
+        ? 'role_id = ?'
+        : normalizedScope === 'tenant'
+          ? 'role_id = ? AND scope = ? AND tenant_id = ?'
+          : "role_id = ? AND scope = ? AND tenant_id = ''";
+      const queryArgs = !hasScopeFilter
+        ? [normalizedRoleId]
+        : normalizedScope === 'tenant'
+          ? [normalizedRoleId, normalizedScope, normalizedTenantId]
+          : [normalizedRoleId, normalizedScope];
       const rows = await dbClient.query(
         `
           SELECT role_id,
+                 tenant_id,
                  code,
                  name,
                  status,
@@ -1477,10 +1539,10 @@ const createMySqlAuthStore = ({
                  created_at,
                  updated_at
           FROM platform_role_catalog
-          WHERE role_id = ?
+          WHERE ${whereClause}
           LIMIT 1
         `,
-        [normalizedRoleId]
+        queryArgs
       );
       return toPlatformRoleCatalogRecord(rows?.[0] || null);
     },
@@ -1498,6 +1560,7 @@ const createMySqlAuthStore = ({
       const rows = await dbClient.query(
         `
           SELECT role_id,
+                 tenant_id,
                  code,
                  name,
                  status,
@@ -1897,6 +1960,7 @@ const createMySqlAuthStore = ({
       name,
       status = 'active',
       scope = 'platform',
+      tenantId = null,
       isSystem = false,
       operatorUserId = null
     }) => {
@@ -1905,6 +1969,10 @@ const createMySqlAuthStore = ({
       const normalizedName = String(name || '').trim();
       const normalizedStatus = normalizePlatformRoleCatalogStatus(status);
       const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
       if (
         !normalizedRoleId
         || !normalizedCode
@@ -1923,6 +1991,7 @@ const createMySqlAuthStore = ({
             `
               INSERT INTO platform_role_catalog (
                 role_id,
+                tenant_id,
                 code,
                 code_normalized,
                 name,
@@ -1932,10 +2001,11 @@ const createMySqlAuthStore = ({
                 created_by_user_id,
                 updated_by_user_id
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               normalizedRoleId,
+              normalizedTenantId,
               normalizedCode,
               normalizedCode.toLowerCase(),
               normalizedName,
@@ -1949,6 +2019,7 @@ const createMySqlAuthStore = ({
           const rows = await dbClient.query(
             `
               SELECT role_id,
+                     tenant_id,
                      code,
                      name,
                      status,
@@ -1971,6 +2042,8 @@ const createMySqlAuthStore = ({
 
     updatePlatformRoleCatalogEntry: async ({
       roleId,
+      scope = 'platform',
+      tenantId = null,
       code = undefined,
       name = undefined,
       status = undefined,
@@ -1980,6 +2053,20 @@ const createMySqlAuthStore = ({
       if (!normalizedRoleId) {
         throw new Error('updatePlatformRoleCatalogEntry requires roleId');
       }
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+        throw new Error('updatePlatformRoleCatalogEntry received unsupported scope');
+      }
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
+      const whereClause = normalizedScope === 'tenant'
+        ? 'role_id = ? AND scope = ? AND tenant_id = ?'
+        : "role_id = ? AND scope = ? AND tenant_id = ''";
+      const lookupArgs = normalizedScope === 'tenant'
+        ? [normalizedRoleId, normalizedScope, normalizedTenantId]
+        : [normalizedRoleId, normalizedScope];
 
       return executeWithDeadlockRetry({
         operation: 'updatePlatformRoleCatalogEntry',
@@ -1989,6 +2076,7 @@ const createMySqlAuthStore = ({
             const rows = await tx.query(
               `
                 SELECT role_id,
+                       tenant_id,
                        code,
                        name,
                        status,
@@ -1999,11 +2087,11 @@ const createMySqlAuthStore = ({
                        created_at,
                        updated_at
                 FROM platform_role_catalog
-                WHERE role_id = ?
+                WHERE ${whereClause}
                 LIMIT 1
                 FOR UPDATE
               `,
-              [normalizedRoleId]
+              lookupArgs
             );
             const existing = toPlatformRoleCatalogRecord(rows?.[0] || null);
             if (!existing) {
@@ -2051,6 +2139,7 @@ const createMySqlAuthStore = ({
             const updatedRows = await tx.query(
               `
                 SELECT role_id,
+                       tenant_id,
                        code,
                        name,
                        status,
@@ -2073,12 +2162,28 @@ const createMySqlAuthStore = ({
 
     deletePlatformRoleCatalogEntry: async ({
       roleId,
+      scope = 'platform',
+      tenantId = null,
       operatorUserId = null
     }) => {
       const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
       if (!normalizedRoleId) {
         throw new Error('deletePlatformRoleCatalogEntry requires roleId');
       }
+      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+      if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+        throw new Error('deletePlatformRoleCatalogEntry received unsupported scope');
+      }
+      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+        scope: normalizedScope,
+        tenantId
+      });
+      const whereClause = normalizedScope === 'tenant'
+        ? 'role_id = ? AND scope = ? AND tenant_id = ?'
+        : "role_id = ? AND scope = ? AND tenant_id = ''";
+      const lookupArgs = normalizedScope === 'tenant'
+        ? [normalizedRoleId, normalizedScope, normalizedTenantId]
+        : [normalizedRoleId, normalizedScope];
 
       return executeWithDeadlockRetry({
         operation: 'deletePlatformRoleCatalogEntry',
@@ -2088,6 +2193,7 @@ const createMySqlAuthStore = ({
             const rows = await tx.query(
               `
                 SELECT role_id,
+                       tenant_id,
                        code,
                        name,
                        status,
@@ -2098,11 +2204,11 @@ const createMySqlAuthStore = ({
                        created_at,
                        updated_at
                 FROM platform_role_catalog
-                WHERE role_id = ?
+                WHERE ${whereClause}
                 LIMIT 1
                 FOR UPDATE
               `,
-              [normalizedRoleId]
+              lookupArgs
             );
             const existing = toPlatformRoleCatalogRecord(rows?.[0] || null);
             if (!existing) {
@@ -2126,6 +2232,7 @@ const createMySqlAuthStore = ({
             const updatedRows = await tx.query(
               `
                 SELECT role_id,
+                       tenant_id,
                        code,
                        name,
                        status,

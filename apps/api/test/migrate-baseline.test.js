@@ -279,6 +279,42 @@ test('0011 down migration drops role_id leading index for auth_user_platform_rol
   assert.match(sql, /DROP INDEX idx_auth_user_platform_roles_role_id_user_id/i);
 });
 
+test('0013 migration adds tenant isolation fields and scoped unique key for role catalog', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0013_platform_role_catalog_tenant_isolation.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /table_name = 'platform_role_catalog'/i);
+  assert.match(sql, /column_name = 'tenant_id'/i);
+  assert.match(sql, /ADD COLUMN tenant_id VARCHAR\(64\) NOT NULL DEFAULT ''/i);
+  assert.match(sql, /DROP INDEX uk_platform_role_catalog_code_normalized/i);
+  assert.match(sql, /uk_platform_role_catalog_scope_tenant_code_normalized/i);
+  assert.match(
+    sql,
+    /ADD UNIQUE KEY uk_platform_role_catalog_scope_tenant_code_normalized \(scope, tenant_id, code_normalized\)/i
+  );
+});
+
+test('0013 down migration drops tenant scoped role catalog indexes and tenant_id column', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0013_platform_role_catalog_tenant_isolation.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP INDEX uk_platform_role_catalog_scope_tenant_code_normalized/i);
+  assert.match(sql, /DROP INDEX idx_platform_role_catalog_scope_tenant_status/i);
+  assert.match(sql, /DELETE FROM platform_role_catalog\s+WHERE scope = 'tenant'/i);
+  assert.match(sql, /ADD UNIQUE KEY uk_platform_role_catalog_code_normalized/i);
+  assert.match(sql, /DROP COLUMN IF EXISTS tenant_id/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

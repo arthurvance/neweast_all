@@ -27,6 +27,13 @@ const {
   TENANT_MEMBER_OPERATE_PERMISSION_CODE,
   TENANT_MEMBER_SCOPE
 } = require('./modules/tenant/member.constants');
+const {
+  TENANT_ROLE_BASE_PATH,
+  TENANT_ROLE_ITEM_PATH,
+  TENANT_ROLE_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_SCOPE
+} = require('./modules/tenant/role.constants');
 
 const asMethod = (method) => String(method || 'GET').trim().toUpperCase();
 const normalizeAccess = (access) => String(access || '').trim().toLowerCase();
@@ -304,6 +311,34 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
     scope: TENANT_MEMBER_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_ROLE_BASE_PATH,
+    access: 'protected',
+    permission_code: TENANT_ROLE_VIEW_PERMISSION_CODE,
+    scope: TENANT_ROLE_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_ROLE_BASE_PATH,
+    access: 'protected',
+    permission_code: TENANT_ROLE_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ROLE_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_ROLE_ITEM_PATH,
+    access: 'protected',
+    permission_code: TENANT_ROLE_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ROLE_SCOPE
+  },
+  {
+    method: 'DELETE',
+    path: TENANT_ROLE_ITEM_PATH,
+    access: 'protected',
+    permission_code: TENANT_ROLE_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ROLE_SCOPE
   },
   {
     method: 'GET',

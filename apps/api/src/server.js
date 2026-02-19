@@ -32,6 +32,12 @@ const {
   TENANT_MEMBER_STATUS_ROUTE_KEY
 } = require('./modules/tenant/member.constants');
 const {
+  TENANT_ROLE_LIST_ROUTE_KEY,
+  TENANT_ROLE_CREATE_ROUTE_KEY,
+  TENANT_ROLE_UPDATE_ROUTE_KEY,
+  TENANT_ROLE_DELETE_ROUTE_KEY
+} = require('./modules/tenant/role.constants');
+const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
 } = require('./modules/auth/auth.service');
@@ -135,6 +141,9 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/platform/member-admin/provision-user',
   TENANT_MEMBER_CREATE_ROUTE_KEY,
   TENANT_MEMBER_STATUS_ROUTE_KEY,
+  TENANT_ROLE_CREATE_ROUTE_KEY,
+  TENANT_ROLE_UPDATE_ROUTE_KEY,
+  TENANT_ROLE_DELETE_ROUTE_KEY,
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
@@ -149,6 +158,9 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_MEMBER_CREATE_ROUTE_KEY,
   TENANT_MEMBER_STATUS_ROUTE_KEY,
+  TENANT_ROLE_CREATE_ROUTE_KEY,
+  TENANT_ROLE_UPDATE_ROUTE_KEY,
+  TENANT_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
@@ -173,6 +185,9 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [TENANT_MEMBER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_ROLE_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [TENANT_ROLE_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [TENANT_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [
@@ -187,6 +202,7 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
 ]);
 const IDEMPOTENCY_REQUEST_HASH_IGNORES_BODY_ROUTE_KEYS = new Set([
+  TENANT_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY
 ]);
 
@@ -569,6 +585,14 @@ const normalizeRouteParamsForRoute = ({
       : {})
   };
   if (
+    routeKey === TENANT_ROLE_UPDATE_ROUTE_KEY
+    || routeKey === TENANT_ROLE_DELETE_ROUTE_KEY
+  ) {
+    normalizedRouteParams.role_id = String(
+      normalizedRouteParams.role_id || ''
+    ).trim().toLowerCase();
+  }
+  if (
     routeKey === PLATFORM_ROLE_UPDATE_ROUTE_KEY
     || routeKey === PLATFORM_ROLE_DELETE_ROUTE_KEY
     || routeKey === PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY
@@ -713,6 +737,12 @@ const shouldPersistIdempotencyResponse = ({
 }) => {
   const resolvedStatusCode = Number(statusCode);
   if (!Number.isFinite(resolvedStatusCode) || resolvedStatusCode >= 500) {
+    return false;
+  }
+  if (
+    resolvedStatusCode === 409
+    && parseProblemRetryableFromResponse(response) === true
+  ) {
     return false;
   }
   const nonCacheableStatuses = IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE.get(
@@ -1900,6 +1930,62 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [TENANT_ROLE_LIST_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.tenantListRoles(
+            requestId,
+            headers.authorization,
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_ROLE_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_ROLE_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.tenantCreateRole(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [TENANT_ROLE_UPDATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_ROLE_UPDATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.tenantUpdateRole(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [TENANT_ROLE_DELETE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_ROLE_DELETE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.tenantDeleteRole(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
                 getAuthorizationContext()
               ),
             requestId

@@ -91,6 +91,45 @@ test('tenant member governance routes expose explicit permission declarations', 
   assert.equal(tenantMemberStatusUpdate.permission_code, 'tenant.member_admin.operate');
 });
 
+test('tenant role governance routes expose explicit permission declarations', () => {
+  const tenantRoleList = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/roles'
+  });
+  const tenantRoleCreate = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/roles'
+  });
+  const tenantRoleUpdate = findRouteDefinition({
+    method: 'PATCH',
+    path: '/tenant/roles/demo-role'
+  });
+  const tenantRoleDelete = findRouteDefinition({
+    method: 'DELETE',
+    path: '/tenant/roles/demo-role'
+  });
+
+  assert.ok(tenantRoleList);
+  assert.equal(tenantRoleList.access, 'protected');
+  assert.equal(tenantRoleList.scope, 'tenant');
+  assert.equal(tenantRoleList.permission_code, 'tenant.member_admin.view');
+
+  assert.ok(tenantRoleCreate);
+  assert.equal(tenantRoleCreate.access, 'protected');
+  assert.equal(tenantRoleCreate.scope, 'tenant');
+  assert.equal(tenantRoleCreate.permission_code, 'tenant.member_admin.operate');
+
+  assert.ok(tenantRoleUpdate);
+  assert.equal(tenantRoleUpdate.access, 'protected');
+  assert.equal(tenantRoleUpdate.scope, 'tenant');
+  assert.equal(tenantRoleUpdate.permission_code, 'tenant.member_admin.operate');
+
+  assert.ok(tenantRoleDelete);
+  assert.equal(tenantRoleDelete.access, 'protected');
+  assert.equal(tenantRoleDelete.scope, 'tenant');
+  assert.equal(tenantRoleDelete.permission_code, 'tenant.member_admin.operate');
+});
+
 test('platform protected auth route exposes explicit permission declaration', () => {
   const platformMemberAdminProbe = findRouteDefinition({
     method: 'GET',

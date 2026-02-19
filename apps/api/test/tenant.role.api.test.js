@@ -1,0 +1,1707 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { createRouteHandlers } = require('../src/http-routes');
+const { createAuthService } = require('../src/modules/auth/auth.service');
+const { AuthProblemError } = require('../src/modules/auth/auth.routes');
+const { dispatchApiRoute } = require('../src/server');
+const { readConfig } = require('../src/config/env');
+
+const config = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+const dependencyProbe = async () => ({
+  db: { ok: true },
+  redis: { ok: true }
+});
+
+const TENANT_OPERATOR_A_PHONE = '13831000001';
+const TENANT_OPERATOR_B_PHONE = '13831000002';
+
+const createHarness = () => {
+  const authService = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-role-operator-a',
+        phone: TENANT_OPERATOR_A_PHONE,
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-tenant-role-a',
+            tenantId: 'tenant-a',
+            tenantName: 'Tenant A',
+            status: 'active',
+            permission: {
+              scopeLabel: '组织权限（Tenant A）',
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-role-operator-b',
+        phone: TENANT_OPERATOR_B_PHONE,
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-tenant-role-b',
+            tenantId: 'tenant-b',
+            tenantName: 'Tenant B',
+            status: 'active',
+            permission: {
+              scopeLabel: '组织权限（Tenant B）',
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const handlers = createRouteHandlers(config, {
+    dependencyProbe,
+    authService
+  });
+
+  return {
+    authService,
+    handlers
+  };
+};
+
+const loginByPhone = async (authService, requestId, phone) =>
+  authService.login({
+    requestId,
+    phone,
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+test('POST /tenant/roles creates role and GET /tenant/roles returns tenant-scoped catalog entries', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-create-list',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_ops_admin',
+      code: 'OPS_ADMIN',
+      name: '租户A运维管理员',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 200);
+  const createPayload = JSON.parse(createRoute.body);
+  assert.equal(createPayload.role_id, 'tenant_a_ops_admin');
+  assert.equal(createPayload.tenant_id, 'tenant-a');
+  assert.equal(createPayload.code, 'OPS_ADMIN');
+  assert.equal(createPayload.name, '租户A运维管理员');
+  assert.equal(createPayload.status, 'active');
+  assert.equal(createPayload.is_system, false);
+  assert.equal(createPayload.request_id, 'req-tenant-role-create-1');
+  assert.ok(typeof createPayload.created_at === 'string' && createPayload.created_at.length > 0);
+  assert.ok(typeof createPayload.updated_at === 'string' && createPayload.updated_at.length > 0);
+
+  const listRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'GET',
+    requestId: 'req-tenant-role-list-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(listRoute.status, 200);
+  const listPayload = JSON.parse(listRoute.body);
+  assert.equal(listPayload.request_id, 'req-tenant-role-list-1');
+  assert.equal(listPayload.tenant_id, 'tenant-a');
+  assert.ok(Array.isArray(listPayload.roles));
+  const role = listPayload.roles.find((item) => item.role_id === 'tenant_a_ops_admin');
+  assert.ok(role);
+  assert.equal(role.tenant_id, 'tenant-a');
+  assert.equal(role.code, 'OPS_ADMIN');
+});
+
+test('GET /tenant/roles fails closed when downstream catalog entry omits status', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-list-missing-status',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const now = new Date().toISOString();
+  harness.authService.listPlatformRoleCatalogEntries = async () => ([
+    {
+      roleId: 'tenant_role_missing_status',
+      tenantId: 'tenant-a',
+      code: 'ROLE_MISSING_STATUS',
+      name: '缺失状态字段角色',
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now
+    }
+  ]);
+
+  const listRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'GET',
+    requestId: 'req-tenant-role-list-missing-status',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(listRoute.status, 503);
+  const payload = JSON.parse(listRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('GET /tenant/roles fails closed when downstream catalog entry omits is_system', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-list-missing-is-system',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const now = new Date().toISOString();
+  harness.authService.listPlatformRoleCatalogEntries = async () => ([
+    {
+      roleId: 'tenant_role_missing_is_system',
+      tenantId: 'tenant-a',
+      code: 'ROLE_MISSING_IS_SYSTEM',
+      name: '缺失系统标记字段角色',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now
+    }
+  ]);
+
+  const listRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'GET',
+    requestId: 'req-tenant-role-list-missing-is-system',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(listRoute.status, 503);
+  const payload = JSON.parse(listRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('GET /tenant/roles fails closed when downstream catalog entry scope is not tenant', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-list-invalid-scope',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const now = new Date().toISOString();
+  harness.authService.listPlatformRoleCatalogEntries = async () => ([
+    {
+      roleId: 'tenant_role_invalid_scope',
+      tenantId: 'tenant-a',
+      code: 'ROLE_INVALID_SCOPE',
+      name: '非法作用域角色',
+      status: 'active',
+      scope: 'platform',
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now
+    }
+  ]);
+
+  const listRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'GET',
+    requestId: 'req-tenant-role-list-invalid-scope',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(listRoute.status, 503);
+  const payload = JSON.parse(listRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('GET /tenant/roles fails closed when downstream catalog entry code contains control chars', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-list-control-char-code',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const now = new Date().toISOString();
+  harness.authService.listPlatformRoleCatalogEntries = async () => ([
+    {
+      roleId: 'tenant_role_control_char_code',
+      tenantId: 'tenant-a',
+      code: 'ROLE_CONTROL_\u0007_CHAR',
+      name: '控制字符编码角色',
+      status: 'active',
+      scope: 'tenant',
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now
+    }
+  ]);
+
+  const listRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'GET',
+    requestId: 'req-tenant-role-list-control-char-code',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(listRoute.status, 503);
+  const payload = JSON.parse(listRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('POST /tenant/roles rejects case-insensitive duplicate code inside the same tenant', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-code-duplicate',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const first = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-dup-1',
+    headers,
+    body: {
+      role_id: 'tenant_a_finance_admin',
+      code: 'FINANCE_ADMIN',
+      name: '财务管理员A',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-dup-2',
+    headers,
+    body: {
+      role_id: 'tenant_a_finance_admin_2',
+      code: 'finance_admin',
+      name: '财务管理员A-2',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  assert.equal(second.headers['content-type'], 'application/problem+json');
+  const payload = JSON.parse(second.body);
+  assert.equal(payload.error_code, 'TROLE-409-CODE-CONFLICT');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /tenant/roles rejects duplicate role_id inside the same tenant', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-role-id-duplicate',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const first = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-role-id-dup-1',
+    headers,
+    body: {
+      role_id: 'tenant_a_same_role_id',
+      code: 'TENANT_A_SAME_ROLE_ID_A',
+      name: '角色标识冲突-A',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-role-id-dup-2',
+    headers,
+    body: {
+      role_id: 'tenant_a_same_role_id',
+      code: 'TENANT_A_SAME_ROLE_ID_B',
+      name: '角色标识冲突-B',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  assert.equal(second.headers['content-type'], 'application/problem+json');
+  const payload = JSON.parse(second.body);
+  assert.equal(payload.error_code, 'TROLE-409-ROLE-ID-CONFLICT');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /tenant/roles rejects duplicate role_id across different tenants (shared catalog key guard)', async () => {
+  const harness = createHarness();
+  const loginA = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-cross-tenant-role-id-a',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const loginB = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-cross-tenant-role-id-b',
+    TENANT_OPERATOR_B_PHONE
+  );
+
+  const createInTenantA = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-cross-tenant-role-id-a',
+    headers: {
+      authorization: `Bearer ${loginA.access_token}`
+    },
+    body: {
+      role_id: 'tenant_shared_role_id',
+      code: 'TENANT_A_SHARED_ROLE_ID',
+      name: '租户A共享 role_id',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const createInTenantB = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-cross-tenant-role-id-b',
+    headers: {
+      authorization: `Bearer ${loginB.access_token}`
+    },
+    body: {
+      role_id: 'tenant_shared_role_id',
+      code: 'TENANT_B_SHARED_ROLE_ID',
+      name: '租户B共享 role_id',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createInTenantA.status, 200);
+  assert.equal(createInTenantB.status, 409);
+  const payload = JSON.parse(createInTenantB.body);
+  assert.equal(payload.error_code, 'TROLE-409-ROLE-ID-CONFLICT');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /tenant/roles allows same code across different tenants', async () => {
+  const harness = createHarness();
+  const loginA = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-cross-tenant-a',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const loginB = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-cross-tenant-b',
+    TENANT_OPERATOR_B_PHONE
+  );
+
+  const createInTenantA = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-cross-tenant-a',
+    headers: {
+      authorization: `Bearer ${loginA.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_shared_code',
+      code: 'SHARED_ROLE',
+      name: '租户A共享编码角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const createInTenantB = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-cross-tenant-b',
+    headers: {
+      authorization: `Bearer ${loginB.access_token}`
+    },
+    body: {
+      role_id: 'tenant_b_shared_code',
+      code: 'shared_role',
+      name: '租户B共享编码角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createInTenantA.status, 200);
+  assert.equal(createInTenantB.status, 200);
+  assert.equal(JSON.parse(createInTenantA.body).tenant_id, 'tenant-a');
+  assert.equal(JSON.parse(createInTenantB.body).tenant_id, 'tenant-b');
+});
+
+test('PATCH/DELETE /tenant/roles/:role_id keep tenant isolation and reject cross-tenant mutation', async () => {
+  const harness = createHarness();
+  const loginA = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-cross-tenant-mutation-a',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const loginB = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-cross-tenant-mutation-b',
+    TENANT_OPERATOR_B_PHONE
+  );
+
+  const createInTenantB = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-cross-tenant-mutation-b',
+    headers: {
+      authorization: `Bearer ${loginB.access_token}`
+    },
+    body: {
+      role_id: 'tenant_b_mutation_target',
+      code: 'TENANT_B_MUTATION_TARGET',
+      name: '租户B变更目标',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createInTenantB.status, 200);
+
+  const patchFromTenantA = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_b_mutation_target',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-cross-tenant-patch-forbidden',
+    headers: {
+      authorization: `Bearer ${loginA.access_token}`
+    },
+    body: {
+      name: '租户A非法改租户B角色'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(patchFromTenantA.status, 404);
+  assert.equal(
+    JSON.parse(patchFromTenantA.body).error_code,
+    'TROLE-404-ROLE-NOT-FOUND'
+  );
+
+  const deleteFromTenantA = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_b_mutation_target',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-cross-tenant-delete-forbidden',
+    headers: {
+      authorization: `Bearer ${loginA.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(deleteFromTenantA.status, 404);
+  assert.equal(
+    JSON.parse(deleteFromTenantA.body).error_code,
+    'TROLE-404-ROLE-NOT-FOUND'
+  );
+});
+
+test('POST /tenant/roles fails closed when client payload includes forged tenant_id', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-forged-tenant',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-forged-tenant',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      tenant_id: 'tenant-b',
+      role_id: 'tenant_context_forged',
+      code: 'TENANT_CONTEXT_FORGED',
+      name: '伪造租户上下文',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 400);
+  assert.equal(
+    JSON.parse(createRoute.body).error_code,
+    'TROLE-400-INVALID-PAYLOAD'
+  );
+});
+
+test('POST /tenant/roles rejects forged system role marker is_system=true', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-forged-system-marker',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-forged-system-marker',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_illegal_system_marker',
+      code: 'TENANT_A_ILLEGAL_SYSTEM_MARKER',
+      name: '伪造系统角色标记',
+      status: 'active',
+      is_system: true
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 400);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-400-INVALID-PAYLOAD');
+});
+
+test('POST /tenant/roles rejects forged system role marker is_system=false', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-forged-system-marker-false',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-forged-system-marker-false',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_illegal_system_marker_false',
+      code: 'TENANT_A_ILLEGAL_SYSTEM_MARKER_FALSE',
+      name: '伪造系统角色标记-布尔假',
+      status: 'active',
+      is_system: false
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 400);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-400-INVALID-PAYLOAD');
+});
+
+test('PATCH/DELETE /tenant/roles/:role_id reject protected tenant role mutation', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-protected',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const patchRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_owner',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-protected-patch',
+    headers,
+    body: {
+      name: '租户负责人(非法修改)'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(patchRoute.status, 403);
+  const patchPayload = JSON.parse(patchRoute.body);
+  assert.equal(patchPayload.error_code, 'TROLE-403-SYSTEM-ROLE-PROTECTED');
+  assert.equal(patchPayload.retryable, false);
+
+  const deleteRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_owner',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-protected-delete',
+    headers,
+    handlers: harness.handlers
+  });
+  assert.equal(deleteRoute.status, 403);
+  const deletePayload = JSON.parse(deleteRoute.body);
+  assert.equal(deletePayload.error_code, 'TROLE-403-SYSTEM-ROLE-PROTECTED');
+  assert.equal(deletePayload.retryable, false);
+});
+
+test('POST /tenant/roles rejects protected tenant role creation by reserved role_id', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-protected-create',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-protected-create',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_owner',
+      code: 'TENANT_OWNER_RESERVED',
+      name: '非法创建受保护角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 403);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-403-SYSTEM-ROLE-PROTECTED');
+  assert.equal(payload.retryable, false);
+});
+
+test('POST /tenant/roles fails closed when downstream created role omits timestamps', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-create-missing-timestamp',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  harness.authService.createPlatformRoleCatalogEntry = async (payload = {}) => ({
+    roleId: payload.roleId,
+    tenantId: payload.tenantId,
+    code: payload.code,
+    name: payload.name,
+    status: payload.status,
+    scope: payload.scope,
+    isSystem: false
+  });
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-missing-timestamp',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_missing_timestamp',
+      code: 'TENANT_A_MISSING_TIMESTAMP',
+      name: '缺失时间戳下游返回',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 503);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('POST /tenant/roles fails closed when downstream created role mismatches requested role_id', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-create-mismatch-role-id',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const originalCreate = harness.authService.createPlatformRoleCatalogEntry.bind(
+    harness.authService
+  );
+  harness.authService.createPlatformRoleCatalogEntry = async (payload = {}) => {
+    await originalCreate(payload);
+    return originalCreate({
+      roleId: 'tenant_a_create_mismatch_actual',
+      code: 'TENANT_A_CREATE_MISMATCH_ACTUAL',
+      name: '创建返回错配角色',
+      status: payload.status,
+      scope: payload.scope,
+      tenantId: payload.tenantId,
+      isSystem: false,
+      operatorUserId: payload.operatorUserId,
+      operatorSessionId: payload.operatorSessionId
+    });
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-mismatch-role-id',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_create_mismatch_expected',
+      code: 'TENANT_A_CREATE_MISMATCH_EXPECTED',
+      name: '创建返回错配目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 503);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('POST /tenant/roles fails closed when downstream created role returns control-char code', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-create-control-char-code',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const now = new Date().toISOString();
+  harness.authService.createPlatformRoleCatalogEntry = async (payload = {}) => ({
+    roleId: payload.roleId,
+    tenantId: payload.tenantId,
+    code: 'CREATE_\u0007_CONTROL_CHAR',
+    name: payload.name,
+    status: payload.status,
+    scope: payload.scope,
+    isSystem: false,
+    createdAt: now,
+    updatedAt: now
+  });
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-control-char-code',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_create_control_char_code',
+      code: 'TENANT_A_CREATE_CONTROL_CHAR_CODE',
+      name: '创建返回控制字符编码',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 503);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('POST /tenant/roles fails closed when downstream created role is marked is_system=true', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-create-downstream-system-role',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const now = new Date().toISOString();
+  harness.authService.createPlatformRoleCatalogEntry = async (payload = {}) => ({
+    roleId: payload.roleId,
+    tenantId: payload.tenantId,
+    code: payload.code,
+    name: payload.name,
+    status: payload.status,
+    scope: payload.scope,
+    isSystem: true,
+    createdAt: now,
+    updatedAt: now
+  });
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-downstream-system-role',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_create_downstream_system_role',
+      code: 'TENANT_A_CREATE_DOWNSTREAM_SYSTEM_ROLE',
+      name: '下游错误回传系统角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 503);
+  const payload = JSON.parse(createRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('PATCH /tenant/roles/:role_id rejects is_system role even when role_id is outside protected constant list', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-protected-by-is-system',
+    TENANT_OPERATOR_A_PHONE
+  );
+  await harness.authService.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_a_custom_system_role',
+    code: 'TENANT_A_CUSTOM_SYSTEM_ROLE',
+    name: '租户A自定义系统角色',
+    status: 'active',
+    scope: 'tenant',
+    tenantId: 'tenant-a',
+    isSystem: true,
+    operatorUserId: 'seed-user',
+    operatorSessionId: 'seed-session'
+  });
+
+  const patchRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_custom_system_role',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-protected-by-is-system-patch',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      name: '非法修改系统角色'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(patchRoute.status, 403);
+  const payload = JSON.parse(patchRoute.body);
+  assert.equal(payload.error_code, 'TROLE-403-SYSTEM-ROLE-PROTECTED');
+  assert.equal(payload.retryable, false);
+});
+
+test('PATCH /tenant/roles/:role_id fails closed when downstream update returns mismatched role identity', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-update-mismatch',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+  const createA = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-update-mismatch-a',
+    headers,
+    body: {
+      role_id: 'tenant_a_update_mismatch_a',
+      code: 'TENANT_A_UPDATE_MISMATCH_A',
+      name: '更新错配A',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const createB = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-update-mismatch-b',
+    headers,
+    body: {
+      role_id: 'tenant_a_update_mismatch_b',
+      code: 'TENANT_A_UPDATE_MISMATCH_B',
+      name: '更新错配B',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createA.status, 200);
+  assert.equal(createB.status, 200);
+
+  const originalUpdate = harness.authService.updatePlatformRoleCatalogEntry.bind(
+    harness.authService
+  );
+  harness.authService.updatePlatformRoleCatalogEntry = async (payload = {}) => {
+    if (String(payload.roleId || '').trim() === 'tenant_a_update_mismatch_a') {
+      return harness.authService.findPlatformRoleCatalogEntryByRoleId({
+        roleId: 'tenant_a_update_mismatch_b',
+        scope: 'tenant',
+        tenantId: 'tenant-a'
+      });
+    }
+    return originalUpdate(payload);
+  };
+
+  const patchRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_update_mismatch_a',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-update-mismatch',
+    headers,
+    body: {
+      name: '非法错配更新'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(patchRoute.status, 503);
+  const payload = JSON.parse(patchRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('PATCH /tenant/roles/:role_id fails closed when downstream update result is marked is_system=true', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-update-downstream-system-role',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-update-downstream-system-role',
+    headers,
+    body: {
+      role_id: 'tenant_a_update_downstream_system_role',
+      code: 'TENANT_A_UPDATE_DOWNSTREAM_SYSTEM_ROLE',
+      name: '更新下游系统角色结果',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalUpdate = harness.authService.updatePlatformRoleCatalogEntry.bind(
+    harness.authService
+  );
+  harness.authService.updatePlatformRoleCatalogEntry = async (payload = {}) => {
+    const updated = await originalUpdate(payload);
+    if (!updated) {
+      return updated;
+    }
+    return {
+      ...updated,
+      isSystem: true,
+      updatedAt: new Date().toISOString()
+    };
+  };
+
+  const patchRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_update_downstream_system_role',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-update-downstream-system-role',
+    headers,
+    body: {
+      name: '非法下游系统角色回传'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(patchRoute.status, 503);
+  const payload = JSON.parse(patchRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('PATCH /tenant/roles/:role_id fails closed when downstream lookup scope is not tenant', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-update-invalid-scope',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-update-invalid-scope',
+    headers,
+    body: {
+      role_id: 'tenant_a_update_invalid_scope',
+      code: 'TENANT_A_UPDATE_INVALID_SCOPE',
+      name: '更新作用域错配目标',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalFindByRoleId = harness.authService.findPlatformRoleCatalogEntryByRoleId.bind(
+    harness.authService
+  );
+  harness.authService.findPlatformRoleCatalogEntryByRoleId = async (payload = {}) => {
+    const found = await originalFindByRoleId(payload);
+    if (!found) {
+      return found;
+    }
+    if (String(payload.roleId || '').trim() !== 'tenant_a_update_invalid_scope') {
+      return found;
+    }
+    return {
+      ...found,
+      scope: 'platform'
+    };
+  };
+
+  const patchRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_update_invalid_scope',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-update-invalid-scope',
+    headers,
+    body: {
+      name: '非法作用域更新'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(patchRoute.status, 503);
+  const payload = JSON.parse(patchRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('POST /tenant/roles rejects malformed active_tenant_id from authorization context', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-invalid-tenant-context',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const originalAuthorizeRoute = harness.handlers.authorizeRoute.bind(harness.handlers);
+  harness.handlers.authorizeRoute = async (payload = {}) => {
+    const authorized = await originalAuthorizeRoute(payload);
+    const activeTenantId = String(
+      authorized?.active_tenant_id
+      || authorized?.activeTenantId
+      || authorized?.session_context?.active_tenant_id
+      || 'tenant-a'
+    ).trim() || 'tenant-a';
+    return {
+      ...(authorized || {}),
+      active_tenant_id: `${activeTenantId}\u0007`
+    };
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-invalid-tenant-context',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_invalid_tenant_context',
+      code: 'TENANT_A_INVALID_TENANT_CONTEXT',
+      name: '非法租户上下文',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 403);
+  assert.equal(
+    JSON.parse(createRoute.body).error_code,
+    'AUTH-403-NO-DOMAIN'
+  );
+});
+
+test('POST /tenant/roles rejects preauthorized context with unresolved operator identifiers', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-unknown-operator-create',
+    TENANT_OPERATOR_A_PHONE
+  );
+  harness.handlers.authorizeRoute = async () => ({
+    user_id: 'unknown',
+    session_id: 'unknown',
+    active_tenant_id: 'tenant-a',
+    entry_domain: 'tenant'
+  });
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-unknown-operator',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'tenant_a_unknown_operator_create',
+      code: 'TENANT_A_UNKNOWN_OPERATOR_CREATE',
+      name: '未知操作者创建',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 403);
+  assert.equal(
+    JSON.parse(createRoute.body).error_code,
+    'AUTH-403-FORBIDDEN'
+  );
+});
+
+test('PATCH /tenant/roles/:role_id rejects preauthorized context with unresolved operator identifiers', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-unknown-operator-patch',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-for-unknown-operator-patch',
+    headers,
+    body: {
+      role_id: 'tenant_a_unknown_operator_patch',
+      code: 'TENANT_A_UNKNOWN_OPERATOR_PATCH',
+      name: '未知操作者更新',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  harness.handlers.authorizeRoute = async () => ({
+    user_id: 'unknown',
+    session_id: 'unknown',
+    active_tenant_id: 'tenant-a',
+    entry_domain: 'tenant'
+  });
+
+  const patchRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_unknown_operator_patch',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-patch-unknown-operator',
+    headers,
+    body: {
+      name: '未知操作者更新-非法'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(patchRoute.status, 403);
+  assert.equal(
+    JSON.parse(patchRoute.body).error_code,
+    'AUTH-403-FORBIDDEN'
+  );
+});
+
+test('DELETE /tenant/roles/:role_id rejects preauthorized context with unresolved operator identifiers', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-unknown-operator-delete',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-for-unknown-operator-delete',
+    headers,
+    body: {
+      role_id: 'tenant_a_unknown_operator_delete',
+      code: 'TENANT_A_UNKNOWN_OPERATOR_DELETE',
+      name: '未知操作者删除',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  harness.handlers.authorizeRoute = async () => ({
+    user_id: 'unknown',
+    session_id: 'unknown',
+    active_tenant_id: 'tenant-a',
+    entry_domain: 'tenant'
+  });
+
+  const deleteRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_unknown_operator_delete',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-unknown-operator',
+    headers,
+    handlers: harness.handlers
+  });
+
+  assert.equal(deleteRoute.status, 403);
+  assert.equal(
+    JSON.parse(deleteRoute.body).error_code,
+    'AUTH-403-FORBIDDEN'
+  );
+});
+
+test('DELETE /tenant/roles/:role_id fails closed when downstream delete result is not target disabled role', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-delete-mismatch',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+  const createA = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-delete-mismatch-a',
+    headers,
+    body: {
+      role_id: 'tenant_a_delete_mismatch_a',
+      code: 'TENANT_A_DELETE_MISMATCH_A',
+      name: '删除错配A',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const createB = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-delete-mismatch-b',
+    headers,
+    body: {
+      role_id: 'tenant_a_delete_mismatch_b',
+      code: 'TENANT_A_DELETE_MISMATCH_B',
+      name: '删除错配B',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createA.status, 200);
+  assert.equal(createB.status, 200);
+
+  const originalDelete = harness.authService.deletePlatformRoleCatalogEntry.bind(
+    harness.authService
+  );
+  harness.authService.deletePlatformRoleCatalogEntry = async (payload = {}) => {
+    if (String(payload.roleId || '').trim() === 'tenant_a_delete_mismatch_a') {
+      return harness.authService.findPlatformRoleCatalogEntryByRoleId({
+        roleId: 'tenant_a_delete_mismatch_b',
+        scope: 'tenant',
+        tenantId: 'tenant-a'
+      });
+    }
+    return originalDelete(payload);
+  };
+
+  const deleteRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_delete_mismatch_a',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-mismatch',
+    headers,
+    handlers: harness.handlers
+  });
+
+  assert.equal(deleteRoute.status, 503);
+  const payload = JSON.parse(deleteRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('DELETE /tenant/roles/:role_id fails closed when downstream delete result is marked is_system=true', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-delete-downstream-system-role',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-delete-downstream-system-role',
+    headers,
+    body: {
+      role_id: 'tenant_a_delete_downstream_system_role',
+      code: 'TENANT_A_DELETE_DOWNSTREAM_SYSTEM_ROLE',
+      name: '删除下游系统角色结果',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalDelete = harness.authService.deletePlatformRoleCatalogEntry.bind(
+    harness.authService
+  );
+  harness.authService.deletePlatformRoleCatalogEntry = async (payload = {}) => {
+    const deleted = await originalDelete(payload);
+    if (!deleted) {
+      return deleted;
+    }
+    return {
+      ...deleted,
+      isSystem: true,
+      status: 'disabled',
+      updatedAt: new Date().toISOString()
+    };
+  };
+
+  const deleteRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_delete_downstream_system_role',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-downstream-system-role',
+    headers,
+    handlers: harness.handlers
+  });
+
+  assert.equal(deleteRoute.status, 503);
+  const payload = JSON.parse(deleteRoute.body);
+  assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('DELETE /tenant/roles/:role_id rejects disabled role deletion precondition', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-delete-disabled',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-disabled-for-delete',
+    headers,
+    body: {
+      role_id: 'tenant_a_disabled_for_delete',
+      code: 'DISABLED_FOR_DELETE',
+      name: '禁用删除前置校验',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const deleteRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_disabled_for_delete',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-disabled',
+    headers,
+    handlers: harness.handlers
+  });
+  assert.equal(deleteRoute.status, 409);
+  const payload = JSON.parse(deleteRoute.body);
+  assert.equal(payload.error_code, 'TROLE-409-DELETE-CONDITION-NOT-MET');
+  assert.equal(payload.retryable, false);
+});
+
+test('PATCH/DELETE /tenant/roles/:role_id decode URL-encoded path params before service lookup', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-url-encoded',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-url-encoded',
+    headers,
+    body: {
+      role_id: 'tenant.role.encoded',
+      code: 'TENANT_ROLE_ENCODED',
+      name: '租户编码路径参数角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const encodedPath = '/tenant/roles/tenant%2Erole%2Eencoded';
+  const patchRoute = await dispatchApiRoute({
+    pathname: encodedPath,
+    method: 'PATCH',
+    requestId: 'req-tenant-role-patch-url-encoded',
+    headers,
+    body: {
+      name: '租户编码路径参数角色-更新'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(patchRoute.status, 200);
+  assert.equal(JSON.parse(patchRoute.body).role_id, 'tenant.role.encoded');
+
+  const deleteRoute = await dispatchApiRoute({
+    pathname: encodedPath,
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-url-encoded',
+    headers,
+    handlers: harness.handlers
+  });
+  assert.equal(deleteRoute.status, 200);
+  assert.equal(JSON.parse(deleteRoute.body).role_id, 'tenant.role.encoded');
+});
+
+test('PATCH /tenant/roles/:role_id enforces idempotency across canonicalized role_id path variants', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-idem-canonicalized',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-idem-canonicalized',
+    headers,
+    body: {
+      role_id: 'tenant_idem_target',
+      code: 'TENANT_IDEM_TARGET',
+      name: '租户幂等规范化目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const firstPatch = await dispatchApiRoute({
+    pathname: '/tenant/roles/Tenant_Idem_Target',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-patch-idem-canonicalized-1',
+    headers: {
+      ...headers,
+      'idempotency-key': 'idem-tenant-role-canonicalized-path'
+    },
+    body: {
+      name: '版本A'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(firstPatch.status, 200);
+
+  const secondPatch = await dispatchApiRoute({
+    pathname: '/tenant/roles/TENANT_IDEM_TARGET',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-patch-idem-canonicalized-2',
+    headers: {
+      ...headers,
+      'idempotency-key': 'idem-tenant-role-canonicalized-path'
+    },
+    body: {
+      name: '版本B'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(secondPatch.status, 409);
+  assert.equal(
+    JSON.parse(secondPatch.body).error_code,
+    'AUTH-409-IDEMPOTENCY-CONFLICT'
+  );
+});
+
+test('PATCH /tenant/roles/:role_id does not cache retryable 409 responses under idempotency key', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-idem-retryable-conflict',
+    TENANT_OPERATOR_A_PHONE
+  );
+  let updateCalls = 0;
+  harness.handlers.tenantUpdateRole = async () => {
+    updateCalls += 1;
+    throw new AuthProblemError({
+      status: 409,
+      title: 'Conflict',
+      detail: '可重试冲突',
+      errorCode: 'TROLE-409-RETRYABLE-CONFLICT',
+      extensions: {
+        retryable: true
+      }
+    });
+  };
+
+  const request = (requestId) =>
+    dispatchApiRoute({
+      pathname: '/tenant/roles/tenant_idem_retryable_conflict',
+      method: 'PATCH',
+      requestId,
+      headers: {
+        authorization: `Bearer ${login.access_token}`,
+        'idempotency-key': 'idem-tenant-role-retryable-conflict'
+      },
+      body: {
+        name: '可重试冲突'
+      },
+      handlers: harness.handlers
+    });
+
+  const firstPatch = await request('req-tenant-role-patch-idem-retryable-conflict-1');
+  const secondPatch = await request('req-tenant-role-patch-idem-retryable-conflict-2');
+
+  assert.equal(firstPatch.status, 409);
+  assert.equal(secondPatch.status, 409);
+  assert.equal(updateCalls, 2);
+  assert.equal(
+    JSON.parse(secondPatch.body).error_code,
+    'TROLE-409-RETRYABLE-CONFLICT'
+  );
+});
+
+test('PATCH /tenant/roles/:role_id caches non-retryable 409 responses under idempotency key', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-idem-non-retryable-conflict',
+    TENANT_OPERATOR_A_PHONE
+  );
+  let updateCalls = 0;
+  harness.handlers.tenantUpdateRole = async () => {
+    updateCalls += 1;
+    throw new AuthProblemError({
+      status: 409,
+      title: 'Conflict',
+      detail: '不可重试冲突',
+      errorCode: 'TROLE-409-NON-RETRYABLE-CONFLICT',
+      extensions: {
+        retryable: false
+      }
+    });
+  };
+
+  const request = (requestId) =>
+    dispatchApiRoute({
+      pathname: '/tenant/roles/tenant_idem_non_retryable_conflict',
+      method: 'PATCH',
+      requestId,
+      headers: {
+        authorization: `Bearer ${login.access_token}`,
+        'idempotency-key': 'idem-tenant-role-non-retryable-conflict'
+      },
+      body: {
+        name: '不可重试冲突'
+      },
+      handlers: harness.handlers
+    });
+
+  const firstPatch = await request('req-tenant-role-patch-idem-non-retryable-conflict-1');
+  const secondPatch = await request('req-tenant-role-patch-idem-non-retryable-conflict-2');
+
+  assert.equal(firstPatch.status, 409);
+  assert.equal(secondPatch.status, 409);
+  assert.equal(updateCalls, 1);
+  assert.equal(
+    JSON.parse(secondPatch.body).error_code,
+    'TROLE-409-NON-RETRYABLE-CONFLICT'
+  );
+});
+
+test('DELETE /tenant/roles/:role_id keeps idempotency scope isolated by route params', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-idem-isolated',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createA = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-idem-isolated-a',
+    headers,
+    body: {
+      role_id: 'tenant_idem_isolated_a',
+      code: 'TENANT_IDEM_ISOLATED_A',
+      name: '租户幂等隔离A',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  const createB = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-idem-isolated-b',
+    headers,
+    body: {
+      role_id: 'tenant_idem_isolated_b',
+      code: 'TENANT_IDEM_ISOLATED_B',
+      name: '租户幂等隔离B',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createA.status, 200);
+  assert.equal(createB.status, 200);
+
+  const deleteA = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_idem_isolated_a',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-idem-isolated-a',
+    headers: {
+      ...headers,
+      'idempotency-key': 'idem-tenant-role-delete-isolated'
+    },
+    handlers: harness.handlers
+  });
+  const deleteB = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_idem_isolated_b',
+    method: 'DELETE',
+    requestId: 'req-tenant-role-delete-idem-isolated-b',
+    headers: {
+      ...headers,
+      'idempotency-key': 'idem-tenant-role-delete-isolated'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(deleteA.status, 200);
+  assert.equal(deleteB.status, 200);
+  assert.equal(JSON.parse(deleteA.body).role_id, 'tenant_idem_isolated_a');
+  assert.equal(JSON.parse(deleteB.body).role_id, 'tenant_idem_isolated_b');
+});
