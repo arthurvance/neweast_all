@@ -19,6 +19,14 @@ const {
   PLATFORM_USER_PERMISSION_CODE,
   PLATFORM_USER_SCOPE
 } = require('./modules/platform/user.constants');
+const {
+  TENANT_MEMBER_LIST_PATH,
+  TENANT_MEMBER_CREATE_PATH,
+  TENANT_MEMBER_STATUS_PATH,
+  TENANT_MEMBER_VIEW_PERMISSION_CODE,
+  TENANT_MEMBER_OPERATE_PERMISSION_CODE,
+  TENANT_MEMBER_SCOPE
+} = require('./modules/tenant/member.constants');
 
 const asMethod = (method) => String(method || 'GET').trim().toUpperCase();
 const normalizeAccess = (access) => String(access || '').trim().toLowerCase();
@@ -275,6 +283,27 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: 'tenant.member_admin.operate',
     scope: 'tenant'
+  },
+  {
+    method: 'GET',
+    path: TENANT_MEMBER_LIST_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_VIEW_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_MEMBER_CREATE_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_MEMBER_STATUS_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
   },
   {
     method: 'GET',

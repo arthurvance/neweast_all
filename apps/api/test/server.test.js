@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createRouteHandlers } = require('../src/http-routes');
 const { createPlatformOrgService } = require('../src/modules/platform/org.service');
+const { createTenantMemberService } = require('../src/modules/tenant/member.service');
 const { AuthProblemError } = require('../src/modules/auth/auth.routes');
 const { readConfig } = require('../src/config/env');
 const {
@@ -101,6 +102,8 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/probe']);
   assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
+  assert.ok(payload.paths['/tenant/members']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace']);
   assert.ok(payload.paths['/platform/roles']);
   assert.ok(payload.paths['/platform/roles/{role_id}']);
@@ -159,6 +162,16 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(
     payload.paths['/auth/platform/role-facts/replace'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -226,6 +239,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/tenant/members'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/platform/roles'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
@@ -278,6 +303,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/members'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突'
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突'
   );
   assert.equal(
     payload.paths['/platform/roles'].post.parameters.find(
@@ -350,6 +387,154 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['413']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['200']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['400']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['401']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['403']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['404']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['409']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['413']);
+  assert.ok(payload.paths['/tenant/members'].get.responses['503']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['400']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['401']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['403']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['404']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['409']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['413']);
+  assert.ok(payload.paths['/tenant/members'].post.responses['503']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['400']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['401']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['403']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['404']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['409']);
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.responses['409'].description,
+    'Membership status conflict or idempotency payload mismatch'
+  );
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['413']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['503']);
+  assert.ok(
+    payload.paths['/tenant/members'].get.parameters.some(
+      (parameter) => parameter.in === 'query' && parameter.name === 'page'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.parameters.some(
+      (parameter) => parameter.in === 'query' && parameter.name === 'page_size'
+    )
+  );
+  assert.equal(
+    payload.paths['/tenant/members'].get.parameters.find(
+      (parameter) => parameter.in === 'query' && parameter.name === 'page'
+    ).schema.minimum,
+    1
+  );
+  assert.equal(
+    payload.paths['/tenant/members'].get.parameters.find(
+      (parameter) => parameter.in === 'query' && parameter.name === 'page_size'
+    ).schema.maximum,
+    200
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'membership_id'
+    ).schema.maxLength,
+    64
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'membership_id'
+    ).schema.pattern,
+    '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
+  );
+  assert.ok(payload.components.schemas.TenantMemberListResponse.required.includes('page'));
+  assert.ok(payload.components.schemas.TenantMemberListResponse.required.includes('page_size'));
+  assert.equal(payload.components.schemas.TenantMemberListResponse.properties.page.minimum, 1);
+  assert.equal(payload.components.schemas.TenantMemberListResponse.properties.page_size.maximum, 200);
+  assert.equal(
+    payload.components.schemas.TenantMemberRecord.properties.membership_id.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberRecord.properties.membership_id.pattern,
+    '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberCreateResponse.properties.membership_id.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberCreateResponse.properties.membership_id.pattern,
+    '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberStatusUpdateResponse.properties.membership_id.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberStatusUpdateResponse.properties.membership_id.pattern,
+    '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['400'].content['application/problem+json']
+      .examples.invalid_query
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['401'].content['application/problem+json']
+      .examples.invalid_access_token
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['403'].content['application/problem+json']
+      .examples.no_domain
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['404'].content['application/problem+json']
+      .examples.org_not_found
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['409'].content['application/problem+json']
+      .examples.org_not_active
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['413'].content['application/problem+json']
+      .examples.payload_too_large
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].get.responses['503'].content['application/problem+json']
+      .examples.dependency_unavailable
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].post.responses['400'].content['application/problem+json']
+      .examples.invalid_payload
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].post.responses['404'].content['application/problem+json']
+      .examples.org_not_found
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].post.responses['409'].content['application/problem+json']
+      .examples.idempotency_conflict
+  );
+  assert.ok(
+    payload.paths['/tenant/members'].post.responses['503'].content['application/problem+json']
+      .examples.idempotency_store_unavailable
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.responses['400']
+      .content['application/problem+json'].examples.invalid_payload
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.responses['404']
+      .content['application/problem+json'].examples.membership_not_found
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.responses['409']
+      .content['application/problem+json'].examples.idempotency_conflict
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/status'].patch.responses['503']
+      .content['application/problem+json'].examples.idempotency_store_unavailable
+  );
   assert.ok(payload.paths['/platform/roles'].post.responses['400']);
   assert.ok(payload.paths['/platform/roles'].post.responses['401']);
   assert.ok(payload.paths['/platform/roles'].post.responses['403']);
@@ -1096,6 +1281,45 @@ test('createRouteHandlers fails fast when platformOrgService and platformUserSer
         platformUserService
       }),
     /platformOrgService and platformUserService to share the same authService instance/
+  );
+});
+
+test('createRouteHandlers reuses tenantMemberService authService when authService option is omitted', () => {
+  const sharedAuthService = {
+    authorizeRoute: async () => ({})
+  };
+  const tenantMemberService = createTenantMemberService({
+    authService: sharedAuthService
+  });
+
+  const handlers = createRouteHandlers(config, {
+    dependencyProbe,
+    tenantMemberService
+  });
+
+  assert.equal(handlers._internals.authService, sharedAuthService);
+  assert.equal(handlers._internals.tenantMemberService, tenantMemberService);
+});
+
+test('createRouteHandlers fails fast when injected authService mismatches tenantMemberService authService', () => {
+  const tenantMemberAuthService = {
+    authorizeRoute: async () => ({})
+  };
+  const tenantMemberService = createTenantMemberService({
+    authService: tenantMemberAuthService
+  });
+  const differentAuthService = {
+    authorizeRoute: async () => ({})
+  };
+
+  assert.throws(
+    () =>
+      createRouteHandlers(config, {
+        dependencyProbe,
+        authService: differentAuthService,
+        tenantMemberService
+      }),
+    /authService and tenantMemberService to share the same authService instance/
   );
 });
 

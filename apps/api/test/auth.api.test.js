@@ -2762,6 +2762,134 @@ test('platform member-admin provision-user endpoint is fail-closed when default 
   assert.equal(provisionFailed.body.retryable, true);
 });
 
+test('platform member-admin provision-user endpoint maps unexpected dependency failures to stable 503 problem details', async () => {
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'platform-provision-operator-unexpected-failure',
+          phone: '13846660032',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform'],
+          platformRoles: [
+            {
+              roleId: 'platform-member-admin-operator',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ]
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660032',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  context.authService.provisionPlatformUserByPhone = async () => {
+    throw new Error('provision dependency timeout');
+  };
+
+  const provisionFailed = await callRoute(
+    {
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660033'
+      }
+    },
+    context
+  );
+  assert.equal(provisionFailed.status, 503);
+  assert.equal(provisionFailed.body.error_code, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
+  assert.equal(provisionFailed.body.retryable, true);
+});
+
+test('tenant member-admin provision-user endpoint maps unexpected dependency failures to stable 503 problem details', async () => {
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-provision-operator-unexpected-failure',
+          phone: '13846660034',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              tenantId: 'tenant-unexpected-failure-a',
+              tenantName: 'Tenant Unexpected Failure A',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: true,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ]
+    }),
+    dependencyProbe
+  };
+
+  const operatorLogin = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13846660034',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(operatorLogin.status, 200);
+
+  context.authService.provisionTenantUserByPhone = async () => {
+    throw new Error('provision dependency timeout');
+  };
+
+  const provisionFailed = await callRoute(
+    {
+      pathname: '/auth/tenant/member-admin/provision-user',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${operatorLogin.body.access_token}`
+      },
+      body: {
+        phone: '13846660035'
+      }
+    },
+    context
+  );
+  assert.equal(provisionFailed.status, 503);
+  assert.equal(provisionFailed.body.error_code, 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE');
+  assert.equal(provisionFailed.body.retryable, true);
+});
+
 test('platform member-admin provision-user replays the same Idempotency-Key with stable semantics', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-idempotency-key';

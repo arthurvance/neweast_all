@@ -28,6 +28,7 @@ const IDEMPOTENCY_KEY_SCHEMA = {
   pattern: '^(?=.*\\S)[^,]{1,128}$'
 };
 const PLATFORM_ROLE_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
+const TENANT_MEMBERSHIP_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]{1,64}$';
 
 const DEPENDENCY_PROBE_STATUS_SCHEMA = {
   type: 'object',
@@ -924,6 +925,671 @@ const buildOpenApiSpec = () => {
                       retryable: true,
                       degradation_reason: 'default-password-config-unavailable',
                       request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/tenant/members': {
+      get: {
+        summary: 'List tenant members under current active tenant context',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'query',
+            name: 'page',
+            required: false,
+            description: '页码（从 1 开始，默认 1）',
+            schema: { type: 'integer', minimum: 1, maximum: 100000, default: 1 }
+          },
+          {
+            in: 'query',
+            name: 'page_size',
+            required: false,
+            description: '每页条数（默认 50，最大 200）',
+            schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Tenant members listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantMemberListResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid request parameters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_query: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'page 必须为正整数',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  org_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标组织不存在',
+                      error_code: 'AUTH-404-ORG-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Request conflict with tenant membership state',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  org_not_active: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '当前组织不可用',
+                      error_code: 'AUTH-409-ORG-NOT-ACTIVE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant member dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织成员治理依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        summary: 'Create tenant member by phone with identity reuse first',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TenantMemberCreateRequest' },
+              examples: {
+                create_member: {
+                  value: {
+                    phone: '13800000012'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant member created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantMemberCreateResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'phone 格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  org_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标组织不存在',
+                      error_code: 'AUTH-404-ORG-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Relationship conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  relationship_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '用户关系已存在，请勿重复提交',
+                      error_code: 'AUTH-409-PROVISION-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant member dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织成员治理依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/tenant/members/{membership_id}/status': {
+      patch: {
+        summary: 'Update tenant member status (active|disabled|left)',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'membership_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: TENANT_MEMBERSHIP_ID_PATTERN
+            },
+            description: '成员关系主键'
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TenantMemberStatusUpdateRequest' },
+              examples: {
+                disable_member: {
+                  value: {
+                    status: 'disabled',
+                    reason: '离职停用'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant member status updated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantMemberStatusUpdateResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'membership_id 不能为空',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant membership not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  membership_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标成员关系不存在',
+                      error_code: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Membership status conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  status_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '成员状态冲突，请刷新后重试',
+                      error_code: 'AUTH-409-PROVISION-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant member dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织成员治理依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
                     }
                   }
                 }
@@ -3489,6 +4155,156 @@ const buildOpenApiSpec = () => {
           first_login_force_password_change: { type: 'boolean', enum: [false] },
           entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
           active_tenant_id: { type: 'string', nullable: true },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantMemberRecord: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'membership_id',
+          'user_id',
+          'tenant_id',
+          'phone',
+          'status'
+        ],
+        properties: {
+          membership_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: TENANT_MEMBERSHIP_ID_PATTERN,
+            description: '成员关系主键（跨故事稳定锚点）'
+          },
+          user_id: { type: 'string' },
+          tenant_id: { type: 'string' },
+          tenant_name: { type: 'string', nullable: true },
+          phone: {
+            type: 'string',
+            minLength: 11,
+            maxLength: 11,
+            pattern: '^1\\d{10}$'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled', 'left']
+          },
+          joined_at: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          },
+          left_at: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          }
+        }
+      },
+      TenantMemberListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['tenant_id', 'page', 'page_size', 'members', 'request_id'],
+        properties: {
+          tenant_id: { type: 'string' },
+          page: { type: 'integer', minimum: 1 },
+          page_size: { type: 'integer', minimum: 1, maximum: 200 },
+          members: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/TenantMemberRecord' }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantMemberCreateRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['phone'],
+        properties: {
+          phone: {
+            type: 'string',
+            minLength: 11,
+            maxLength: 11,
+            pattern: '^1\\d{10}$',
+            description: '成员手机号（11位）'
+          }
+        }
+      },
+      TenantMemberCreateResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'membership_id',
+          'user_id',
+          'tenant_id',
+          'status',
+          'created_user',
+          'reused_existing_user',
+          'request_id'
+        ],
+        properties: {
+          membership_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: TENANT_MEMBERSHIP_ID_PATTERN
+          },
+          user_id: { type: 'string' },
+          tenant_id: { type: 'string' },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled', 'left']
+          },
+          created_user: { type: 'boolean' },
+          reused_existing_user: { type: 'boolean' },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantMemberStatusUpdateRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['status'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['active', 'enabled', 'disabled', 'left']
+          },
+          reason: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+          }
+        }
+      },
+      TenantMemberStatusUpdateResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'membership_id',
+          'user_id',
+          'tenant_id',
+          'previous_status',
+          'current_status',
+          'request_id'
+        ],
+        properties: {
+          membership_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: TENANT_MEMBERSHIP_ID_PATTERN
+          },
+          user_id: { type: 'string' },
+          tenant_id: { type: 'string' },
+          previous_status: {
+            type: 'string',
+            enum: ['active', 'disabled', 'left']
+          },
+          current_status: {
+            type: 'string',
+            enum: ['active', 'disabled', 'left']
+          },
           request_id: { type: 'string' }
         }
       },

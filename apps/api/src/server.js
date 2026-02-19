@@ -27,6 +27,11 @@ const {
   PLATFORM_USER_STATUS_ROUTE_KEY
 } = require('./modules/platform/user.constants');
 const {
+  TENANT_MEMBER_LIST_ROUTE_KEY,
+  TENANT_MEMBER_CREATE_ROUTE_KEY,
+  TENANT_MEMBER_STATUS_ROUTE_KEY
+} = require('./modules/tenant/member.constants');
+const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
 } = require('./modules/auth/auth.service');
@@ -79,6 +84,28 @@ const parseRequestPath = (inputPath) => {
   }
 };
 
+const parseRequestQuery = (search = '') => {
+  const rawSearch = String(search || '');
+  if (!rawSearch || rawSearch === '?') {
+    return {};
+  }
+  const searchValue = rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch;
+  const searchParams = new URLSearchParams(searchValue);
+  const query = Object.create(null);
+  for (const [key, value] of searchParams.entries()) {
+    if (!Object.prototype.hasOwnProperty.call(query, key)) {
+      query[key] = value;
+      continue;
+    }
+    if (Array.isArray(query[key])) {
+      query[key].push(value);
+    } else {
+      query[key] = [query[key], value];
+    }
+  }
+  return query;
+};
+
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
@@ -106,6 +133,8 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT = new Set([
 const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/tenant/member-admin/provision-user',
   'POST /auth/platform/member-admin/provision-user',
+  TENANT_MEMBER_CREATE_ROUTE_KEY,
+  TENANT_MEMBER_STATUS_ROUTE_KEY,
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
@@ -118,6 +147,8 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
+  TENANT_MEMBER_CREATE_ROUTE_KEY,
+  TENANT_MEMBER_STATUS_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
@@ -140,6 +171,8 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_USER_STATUS_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
+  [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_MEMBER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [
@@ -567,18 +600,27 @@ const resolveIdempotencyActorScope = ({
     && IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT.has(normalizedRouteKey);
   const resolvedSessionId = String(
     authorizationContext?.session_id
+    || authorizationContext?.sessionId
     || authorizationContext?.session?.sessionId
     || authorizationContext?.session?.session_id
     || ''
   ).trim();
   const resolvedUserId = String(
     authorizationContext?.user_id
+    || authorizationContext?.userId
     || authorizationContext?.user?.id
+    || authorizationContext?.user?.user_id
     || ''
   ).trim();
   const resolvedTenantId = String(
     authorizationContext?.active_tenant_id
+    || authorizationContext?.activeTenantId
     || authorizationContext?.session_context?.active_tenant_id
+    || authorizationContext?.session_context?.activeTenantId
+    || authorizationContext?.session?.sessionContext?.active_tenant_id
+    || authorizationContext?.session?.sessionContext?.activeTenantId
+    || authorizationContext?.session?.session_context?.active_tenant_id
+    || authorizationContext?.session?.session_context?.activeTenantId
     || ''
   ).trim();
   const tenantScopeSuffix = ignoreTenantInScope
@@ -639,6 +681,31 @@ const parseProblemErrorCodeFromResponse = (response = {}) => {
   }
 };
 
+const parseProblemRetryableFromResponse = (response = {}) => {
+  if (!response || typeof response !== 'object') {
+    return null;
+  }
+  if (typeof response.body !== 'string') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(response.body);
+    if (
+      !parsed
+      || typeof parsed !== 'object'
+      || Array.isArray(parsed)
+    ) {
+      return null;
+    }
+    if (typeof parsed.retryable !== 'boolean') {
+      return null;
+    }
+    return parsed.retryable;
+  } catch (_error) {
+    return null;
+  }
+};
+
 const shouldPersistIdempotencyResponse = ({
   routeKey,
   statusCode,
@@ -651,11 +718,19 @@ const shouldPersistIdempotencyResponse = ({
   const nonCacheableStatuses = IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE.get(
     String(routeKey || '').trim()
   );
+  const normalizedRouteKey = String(routeKey || '').trim();
+  if (
+    (normalizedRouteKey === TENANT_MEMBER_CREATE_ROUTE_KEY
+      || normalizedRouteKey === TENANT_MEMBER_STATUS_ROUTE_KEY)
+    && resolvedStatusCode === 409
+  ) {
+    return parseProblemRetryableFromResponse(response) !== true;
+  }
   if (!(nonCacheableStatuses instanceof Set)) {
     return true;
   }
   if (
-    String(routeKey || '').trim() === PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY
+    normalizedRouteKey === PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY
     && resolvedStatusCode === 409
   ) {
     const errorCode = parseProblemErrorCodeFromResponse(response);
@@ -1289,7 +1364,8 @@ const createRouteTable = ({
   headers,
   body,
   getAuthorizationContext = () => null,
-  getRouteParams = () => ({})
+  getRouteParams = () => ({}),
+  getRouteQuery = () => ({})
 }) => {
   const idempotencyStore =
     handlers?.authIdempotencyStore
@@ -1781,6 +1857,48 @@ const createRouteTable = ({
               handlers.authTenantMemberAdminProvisionUser(
                 requestId,
                 headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [TENANT_MEMBER_LIST_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.tenantListMembers(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_MEMBER_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_MEMBER_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.tenantCreateMember(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [TENANT_MEMBER_STATUS_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_MEMBER_STATUS_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.tenantUpdateMemberStatus(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
                 body || {},
                 getAuthorizationContext()
               ),
@@ -2303,6 +2421,7 @@ const dispatchApiRoute = async ({
     routeKey: routeDefinitionRouteKey,
     routeParams: extractedRouteParams
   });
+  const routeQuery = parseRequestQuery(parsedRoutePath.search);
   let authorizationContext = null;
 
   if (
@@ -2327,7 +2446,8 @@ const dispatchApiRoute = async ({
     headers,
     body,
     getAuthorizationContext: () => authorizationContext,
-    getRouteParams: () => routeParams
+    getRouteParams: () => routeParams,
+    getRouteQuery: () => routeQuery
   });
   const routeHandler = routeTable[routeKey] || routeTable[routeDefinitionRouteKey];
   if (routeHandler) {

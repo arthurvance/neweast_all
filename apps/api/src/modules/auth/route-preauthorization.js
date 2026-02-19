@@ -14,21 +14,27 @@ const resolveRoutePreauthorizedEntryDomain = (authorizationContext = null) => {
     return '';
   }
   const directEntryDomain = normalizeRequiredString(
-    authorizationContext.entry_domain
+    authorizationContext.entry_domain || authorizationContext.entryDomain
   ).toLowerCase();
   if (directEntryDomain) {
     return directEntryDomain;
   }
   const sessionContextEntryDomain = normalizeRequiredString(
     authorizationContext.session_context?.entry_domain
+      || authorizationContext.session_context?.entryDomain
+      || authorizationContext.sessionContext?.entry_domain
+      || authorizationContext.sessionContext?.entryDomain
   ).toLowerCase();
   if (sessionContextEntryDomain) {
     return sessionContextEntryDomain;
   }
   return normalizeRequiredString(
     authorizationContext.session?.sessionContext?.entry_domain
+      || authorizationContext.session?.sessionContext?.entryDomain
       || authorizationContext.session?.session_context?.entry_domain
+      || authorizationContext.session?.session_context?.entryDomain
       || authorizationContext.session?.entry_domain
+      || authorizationContext.session?.entryDomain
   ).toLowerCase();
 };
 
@@ -99,11 +105,14 @@ const resolveRoutePreauthorizedContext = ({
 
   const userId = normalizeRequiredString(
     authorizationContext.user_id
+      || authorizationContext.userId
       || authorizationContext.user?.id
       || authorizationContext.user?.user_id
+      || authorizationContext.user?.userId
   );
   const sessionId = normalizeRequiredString(
     authorizationContext.session_id
+      || authorizationContext.sessionId
       || authorizationContext.session?.sessionId
       || authorizationContext.session?.session_id
   );

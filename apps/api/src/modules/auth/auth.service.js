@@ -27,10 +27,12 @@ const MAX_TENANT_NAME_LENGTH = 128;
 const MAX_OWNER_TRANSFER_ORG_ID_LENGTH = 64;
 const MAX_OWNER_TRANSFER_REASON_LENGTH = 256;
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
+const MAX_TENANT_MEMBERSHIP_ID_LENGTH = 64;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const WHITESPACE_PATTERN = /\s/;
+const TENANT_MEMBERSHIP_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
 const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
 const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
@@ -436,6 +438,29 @@ const errors = {
       title: 'Conflict',
       detail: '用户关系已存在，请勿重复提交',
       errorCode: 'AUTH-409-PROVISION-CONFLICT'
+    }),
+
+  tenantMembershipNotFound: () =>
+    authError({
+      status: 404,
+      title: 'Not Found',
+      detail: '目标成员关系不存在',
+      errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND',
+      extensions: {
+        retryable: false
+      }
+    }),
+
+  tenantMemberDependencyUnavailable: ({ reason = 'dependency-unavailable' } = {}) =>
+    authError({
+      status: 503,
+      title: 'Service Unavailable',
+      detail: '组织成员治理依赖暂不可用，请稍后重试',
+      errorCode: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+      extensions: {
+        retryable: true,
+        degradation_reason: String(reason || 'dependency-unavailable').trim()
+      }
     })
 };
 
@@ -740,6 +765,48 @@ const normalizeOrgStatus = (status) => {
     return normalizedStatus;
   }
   return '';
+};
+const normalizeTenantMembershipStatus = (status) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  if (
+    normalizedStatus === 'active'
+    || normalizedStatus === 'disabled'
+    || normalizedStatus === 'left'
+  ) {
+    return normalizedStatus;
+  }
+  return '';
+};
+const isValidTenantMembershipId = (membershipId) =>
+  TENANT_MEMBERSHIP_ID_PATTERN.test(String(membershipId || ''))
+  && String(membershipId || '').length <= MAX_TENANT_MEMBERSHIP_ID_LENGTH;
+const normalizeMemberListInteger = ({
+  value,
+  fallback,
+  min = 1,
+  max = Number.MAX_SAFE_INTEGER
+}) => {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  if (parsed < min) {
+    return min;
+  }
+  if (parsed > max) {
+    return max;
+  }
+  return parsed;
 };
 const parseOptionalTenantName = (tenantName) => {
   if (tenantName === null || tenantName === undefined) {
@@ -4736,8 +4803,42 @@ const createAuthService = (options = {}) => {
           requestId,
           userId: provisionedUser.id
         });
+        addAuditEvent({
+          type: 'auth.user.provision.rejected',
+          requestId,
+          userId: operatorUserId || 'unknown',
+          sessionId: operatorSessionId || 'unknown',
+          detail: 'user provisioning rejected after rollback',
+          metadata: {
+            operator_user_id: operatorUserId,
+            phone_masked: maskPhone(normalizedPhone),
+            entry_domain: sessionEntryDomain,
+            tenant_id: activeTenantId,
+            error_code:
+              error instanceof AuthProblemError
+                ? error.errorCode
+                : 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+          }
+        });
         throw error;
       } else {
+        addAuditEvent({
+          type: 'auth.user.provision.rejected',
+          requestId,
+          userId: operatorUserId || 'unknown',
+          sessionId: operatorSessionId || 'unknown',
+          detail: 'user provisioning rejected',
+          metadata: {
+            operator_user_id: operatorUserId,
+            phone_masked: maskPhone(normalizedPhone),
+            entry_domain: sessionEntryDomain,
+            tenant_id: activeTenantId,
+            error_code:
+              error instanceof AuthProblemError
+                ? error.errorCode
+                : 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+          }
+        });
         throw error;
       }
     }
@@ -4812,6 +4913,320 @@ const createAuthService = (options = {}) => {
       authorizationContext,
       authorizedRoute
     });
+
+  const findTenantMembershipByUserAndTenantId = async ({
+    userId,
+    tenantId
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    if (!normalizedUserId || !normalizedTenantId) {
+      return null;
+    }
+
+    assertStoreMethod(authStore, 'findTenantMembershipByUserAndTenantId', 'authStore');
+    let membership = null;
+    try {
+      membership = await authStore.findTenantMembershipByUserAndTenantId({
+        userId: normalizedUserId,
+        tenantId: normalizedTenantId
+      });
+    } catch (error) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'query-failed')
+      });
+    }
+    if (!membership) {
+      return null;
+    }
+    const normalizedStatus = normalizeTenantMembershipStatus(membership.status);
+    if (!normalizedStatus) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-status-invalid'
+      });
+    }
+    const normalizedMembership = {
+      membership_id: String(
+        membership.membership_id
+        || membership.membershipId
+        || ''
+      ).trim(),
+      user_id: String(membership.user_id || membership.userId || '').trim(),
+      tenant_id: String(membership.tenant_id || membership.tenantId || '').trim(),
+      tenant_name: membership.tenant_name || membership.tenantName || null,
+      phone: String(membership.phone || '').trim(),
+      status: normalizedStatus,
+      joined_at: membership.joined_at || membership.joinedAt || null,
+      left_at: membership.left_at || membership.leftAt || null
+    };
+    const hasTenantMismatch =
+      normalizedMembership.tenant_id.length > 0
+      && normalizedMembership.tenant_id !== normalizedTenantId;
+    const hasUserMismatch =
+      normalizedMembership.user_id.length > 0
+      && normalizedMembership.user_id !== normalizedUserId;
+    if (
+      !isValidTenantMembershipId(normalizedMembership.membership_id)
+      || !normalizedMembership.user_id
+      || !normalizedMembership.tenant_id
+      || !normalizePhone(normalizedMembership.phone)
+      || hasTenantMismatch
+      || hasUserMismatch
+    ) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason:
+          hasTenantMismatch
+          || hasUserMismatch
+            ? 'tenant-membership-identity-mismatch'
+            : 'tenant-membership-record-invalid'
+      });
+    }
+    return normalizedMembership;
+  };
+
+  const listTenantMembers = async ({
+    requestId,
+    tenantId,
+    page = 1,
+    pageSize = 50
+  }) => {
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    if (!normalizedTenantId) {
+      throw errors.noDomainAccess();
+    }
+    const normalizedPage = normalizeMemberListInteger({
+      value: page,
+      fallback: 1,
+      min: 1,
+      max: 100000
+    });
+    const normalizedPageSize = normalizeMemberListInteger({
+      value: pageSize,
+      fallback: 50,
+      min: 1,
+      max: 200
+    });
+    assertStoreMethod(authStore, 'listTenantMembersByTenantId', 'authStore');
+    let members = [];
+    try {
+      members = await authStore.listTenantMembersByTenantId({
+        tenantId: normalizedTenantId,
+        page: normalizedPage,
+        pageSize: normalizedPageSize
+      });
+    } catch (error) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'query-failed')
+      });
+    }
+    if (!Array.isArray(members)) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-members-list-shape-invalid'
+      });
+    }
+    const normalizedMembers = [];
+    for (const member of members) {
+      const normalizedStatus = normalizeTenantMembershipStatus(member?.status);
+      if (!normalizedStatus) {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'tenant-membership-status-invalid'
+        });
+      }
+      const normalizedMember = {
+        membership_id: String(
+          member?.membership_id
+          || member?.membershipId
+          || ''
+        ).trim(),
+        user_id: String(member?.user_id || member?.userId || '').trim(),
+        tenant_id: String(member?.tenant_id || member?.tenantId || '').trim(),
+        tenant_name: member?.tenant_name || member?.tenantName || null,
+        phone: String(member?.phone || '').trim(),
+        status: normalizedStatus,
+        joined_at: member?.joined_at || member?.joinedAt || null,
+        left_at: member?.left_at || member?.leftAt || null
+      };
+      const hasTenantMismatch =
+        normalizedMember.tenant_id.length > 0
+        && normalizedMember.tenant_id !== normalizedTenantId;
+      if (
+        !isValidTenantMembershipId(normalizedMember.membership_id)
+        || !normalizedMember.user_id
+        || !normalizedMember.tenant_id
+        || !normalizePhone(normalizedMember.phone)
+        || hasTenantMismatch
+      ) {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: hasTenantMismatch
+            ? 'tenant-membership-tenant-mismatch'
+            : 'tenant-membership-record-invalid'
+        });
+      }
+      normalizedMembers.push(normalizedMember);
+    }
+    return normalizedMembers;
+  };
+
+  const updateTenantMemberStatus = async ({
+    requestId,
+    accessToken,
+    membershipId,
+    nextStatus,
+    reason = null,
+    authorizationContext = null,
+    authorizedRoute = null
+  }) => {
+    const rawMembershipId = String(membershipId || '');
+    const normalizedMembershipId = rawMembershipId.trim();
+    const normalizedNextStatus = normalizeTenantMembershipStatus(nextStatus);
+    let normalizedReason = null;
+    if (reason !== null && reason !== undefined) {
+      if (typeof reason !== 'string') {
+        throw errors.invalidPayload();
+      }
+      const normalizedReasonCandidate = String(reason).trim();
+      if (
+        !normalizedReasonCandidate
+        || normalizedReasonCandidate.length > MAX_OWNER_TRANSFER_REASON_LENGTH
+        || CONTROL_CHAR_PATTERN.test(normalizedReasonCandidate)
+      ) {
+        throw errors.invalidPayload();
+      }
+      normalizedReason = normalizedReasonCandidate;
+    }
+    if (
+      !normalizedMembershipId
+      || rawMembershipId !== normalizedMembershipId
+      || !normalizedNextStatus
+      || !isValidTenantMembershipId(normalizedMembershipId)
+    ) {
+      throw errors.invalidPayload();
+    }
+
+    const normalizedAuthorizedRoute =
+      authorizedRoute && typeof authorizedRoute === 'object'
+        ? {
+          user_id: String(
+            authorizedRoute.user_id
+            || authorizedRoute.userId
+            || ''
+          ).trim(),
+          session_id: String(
+            authorizedRoute.session_id
+            || authorizedRoute.sessionId
+            || ''
+          ).trim(),
+          entry_domain: normalizeEntryDomain(
+            authorizedRoute.entry_domain
+            || authorizedRoute.entryDomain
+          ),
+          active_tenant_id: normalizeTenantId(
+            authorizedRoute.active_tenant_id
+            || authorizedRoute.activeTenantId
+          )
+        }
+        : null;
+    let resolvedAuthorizedRoute = null;
+    if (normalizedAuthorizedRoute) {
+      if (
+        !normalizedAuthorizedRoute.user_id
+        || !normalizedAuthorizedRoute.session_id
+        || normalizedAuthorizedRoute.entry_domain !== 'tenant'
+      ) {
+        throw errors.forbidden();
+      }
+      resolvedAuthorizedRoute = normalizedAuthorizedRoute;
+    } else {
+      resolvedAuthorizedRoute = await authorizeRoute({
+        requestId,
+        accessToken,
+        permissionCode: 'tenant.member_admin.operate',
+        scope: 'tenant',
+        authorizationContext
+      });
+    }
+
+    const operatorUserId = String(resolvedAuthorizedRoute?.user_id || '').trim();
+    const operatorSessionId = String(resolvedAuthorizedRoute?.session_id || '').trim();
+    const activeTenantId = normalizeTenantId(resolvedAuthorizedRoute?.active_tenant_id);
+    if (!operatorUserId || !operatorSessionId || !activeTenantId) {
+      throw errors.noDomainAccess();
+    }
+
+    assertStoreMethod(authStore, 'updateTenantMembershipStatus', 'authStore');
+    let result = null;
+    try {
+      result = await authStore.updateTenantMembershipStatus({
+        membershipId: normalizedMembershipId,
+        tenantId: activeTenantId,
+        nextStatus: normalizedNextStatus,
+        operatorUserId,
+        reason: normalizedReason
+      });
+    } catch (error) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'write-failed')
+      });
+    }
+    if (!result) {
+      throw errors.tenantMembershipNotFound();
+    }
+
+    const previousStatus = normalizeTenantMembershipStatus(result.previous_status);
+    const currentStatus = normalizeTenantMembershipStatus(result.current_status);
+    if (!previousStatus || !currentStatus) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-status-result-invalid'
+      });
+    }
+    const resolvedMembershipId = String(
+      result.membership_id || normalizedMembershipId
+    ).trim();
+    const resolvedTenantId = String(result.tenant_id || activeTenantId).trim();
+    const isRejoinTransition =
+      previousStatus === 'left'
+      && normalizedNextStatus === 'active'
+      && currentStatus === 'active';
+    const hasMembershipIdMismatch = resolvedMembershipId !== normalizedMembershipId;
+    if (
+      !isValidTenantMembershipId(resolvedMembershipId)
+      || !resolvedTenantId
+      || resolvedTenantId !== activeTenantId
+      || (isRejoinTransition && !hasMembershipIdMismatch)
+      || (!isRejoinTransition && hasMembershipIdMismatch)
+    ) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-result-shape-invalid'
+      });
+    }
+    if (previousStatus !== currentStatus) {
+      invalidateSessionCacheByUserId(String(result.user_id || '').trim());
+    }
+    addAuditEvent({
+      type: 'auth.tenant.member.status.updated',
+      requestId,
+      userId: operatorUserId || 'unknown',
+      sessionId: operatorSessionId || 'unknown',
+      detail: previousStatus === currentStatus
+        ? 'tenant membership status update treated as no-op'
+        : 'tenant membership status updated',
+      metadata: {
+        membership_id: resolvedMembershipId,
+        target_user_id: String(result.user_id || '').trim() || null,
+        tenant_id: resolvedTenantId,
+        previous_status: previousStatus,
+        current_status: currentStatus,
+        reason: normalizedReason
+      }
+    });
+    return {
+      membership_id: resolvedMembershipId,
+      user_id: String(result.user_id || '').trim(),
+      tenant_id: resolvedTenantId,
+      previous_status: previousStatus,
+      current_status: currentStatus
+    };
+  };
 
   const selectOrSwitchTenant = async ({
     requestId,
@@ -4954,6 +5369,9 @@ const createAuthService = (options = {}) => {
     changePassword,
     provisionPlatformUserByPhone,
     provisionTenantUserByPhone,
+    findTenantMembershipByUserAndTenantId,
+    listTenantMembers,
+    updateTenantMemberStatus,
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,
     acquireOwnerTransferLock,

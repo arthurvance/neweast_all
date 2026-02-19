@@ -61,6 +61,36 @@ test('tenant protected auth routes expose explicit permission declarations', () 
   assert.equal(memberAdminProvisionUser.permission_code, 'tenant.member_admin.operate');
 });
 
+test('tenant member governance routes expose explicit permission declarations', () => {
+  const tenantMemberList = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/members'
+  });
+  const tenantMemberCreate = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/members'
+  });
+  const tenantMemberStatusUpdate = findRouteDefinition({
+    method: 'PATCH',
+    path: '/tenant/members/:membership_id/status'
+  });
+
+  assert.ok(tenantMemberList);
+  assert.equal(tenantMemberList.access, 'protected');
+  assert.equal(tenantMemberList.scope, 'tenant');
+  assert.equal(tenantMemberList.permission_code, 'tenant.member_admin.view');
+
+  assert.ok(tenantMemberCreate);
+  assert.equal(tenantMemberCreate.access, 'protected');
+  assert.equal(tenantMemberCreate.scope, 'tenant');
+  assert.equal(tenantMemberCreate.permission_code, 'tenant.member_admin.operate');
+
+  assert.ok(tenantMemberStatusUpdate);
+  assert.equal(tenantMemberStatusUpdate.access, 'protected');
+  assert.equal(tenantMemberStatusUpdate.scope, 'tenant');
+  assert.equal(tenantMemberStatusUpdate.permission_code, 'tenant.member_admin.operate');
+});
+
 test('platform protected auth route exposes explicit permission declaration', () => {
   const platformMemberAdminProbe = findRouteDefinition({
     method: 'GET',

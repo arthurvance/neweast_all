@@ -5260,6 +5260,301 @@ test('provisionTenantUserByPhone reuses existing user without mutating password 
   assert.equal(currentUser.passwordHash, previousPasswordHash);
 });
 
+test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active tenant name', async () => {
+  const defaultPassword = 'InitPass!2026';
+  const decryptionKey = 'provision-tenant-rejoin-name-key';
+  const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
+    plainText: defaultPassword,
+    decryptionKey
+  });
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-provision-operator-rejoin-name',
+        phone: '13835550041',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            tenantId: 'tenant-provision-rejoin-name-a',
+            tenantName: 'Tenant Provision Rejoin Name A',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-provision-rejoin-name-target',
+        phone: '13835550042',
+        password: 'LegacyPass!2026',
+        status: 'active',
+        domains: [],
+        tenants: [
+          {
+            membershipId: 'membership-rejoin-name-old',
+            tenantId: 'tenant-provision-rejoin-name-a',
+            tenantName: 'Tenant Provision Rejoin Name OLD',
+            status: 'left',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: true,
+              canOperateBilling: true
+            }
+          }
+        ]
+      }
+    ],
+    sensitiveConfigProvider: createSensitiveConfigProvider({
+      encryptedDefaultPassword
+    }),
+    sensitiveConfigDecryptionKey: decryptionKey
+  });
+
+  const operatorLogin = await service.login({
+    requestId: 'req-provision-tenant-rejoin-name-operator-login',
+    phone: '13835550041',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  const provisioned = await service.provisionTenantUserByPhone({
+    requestId: 'req-provision-tenant-rejoin-name',
+    accessToken: operatorLogin.access_token,
+    phone: '13835550042',
+    tenantName: 'Tenant Provision Rejoin Name A'
+  });
+  assert.equal(provisioned.created_user, false);
+  assert.equal(provisioned.reused_existing_user, true);
+
+  const membership = await service.findTenantMembershipByUserAndTenantId({
+    userId: 'tenant-provision-rejoin-name-target',
+    tenantId: 'tenant-provision-rejoin-name-a'
+  });
+  assert.ok(membership);
+  assert.notEqual(membership.membership_id, 'membership-rejoin-name-old');
+  assert.equal(membership.status, 'active');
+  assert.equal(membership.tenant_name, 'Tenant Provision Rejoin Name A');
+});
+
+test('findTenantMembershipByUserAndTenantId fails closed when store returns unsupported membership status', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.findTenantMembershipByUserAndTenantId = async () => ({
+    membership_id: 'membership-invalid-status',
+    user_id: 'tenant-user-invalid-status',
+    tenant_id: 'tenant-invalid-status',
+    tenant_name: 'Tenant Invalid Status',
+    phone: '13835559991',
+    status: 'archived',
+    joined_at: '2026-02-19T00:00:00.000Z',
+    left_at: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.findTenantMembershipByUserAndTenantId({
+        userId: 'tenant-user-invalid-status',
+        tenantId: 'tenant-invalid-status'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('findTenantMembershipByUserAndTenantId fails closed when store returns malformed membership identity', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.findTenantMembershipByUserAndTenantId = async () => ({
+    membership_id: 'membership-bad\u0000',
+    user_id: 'tenant-user-malformed-find',
+    tenant_id: 'tenant-malformed-find',
+    tenant_name: 'Tenant Malformed Find',
+    phone: '13835559990',
+    status: 'active',
+    joined_at: '2026-02-19T00:00:00.000Z',
+    left_at: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.findTenantMembershipByUserAndTenantId({
+        userId: 'tenant-user-malformed-find',
+        tenantId: 'tenant-malformed-find'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembers fails closed when store returns unsupported membership status', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.listTenantMembersByTenantId = async () => ([
+    {
+      membership_id: 'membership-invalid-status-list',
+      user_id: 'tenant-user-invalid-status-list',
+      tenant_id: 'tenant-invalid-status-list',
+      tenant_name: 'Tenant Invalid Status List',
+      phone: '13835559992',
+      status: 'archived',
+      joined_at: '2026-02-19T00:00:00.000Z',
+      left_at: null
+    }
+  ]);
+
+  await assert.rejects(
+    () =>
+      service.listTenantMembers({
+        tenantId: 'tenant-invalid-status-list'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembers fails closed when store returns membership_id with control characters', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.listTenantMembersByTenantId = async () => ([
+    {
+      membership_id: 'membership-invalid\u0000id',
+      user_id: 'tenant-user-invalid-membership-id',
+      tenant_id: 'tenant-invalid-membership-id',
+      tenant_name: 'Tenant Invalid Membership Id',
+      phone: '13835559995',
+      status: 'active',
+      joined_at: '2026-02-19T00:00:00.000Z',
+      left_at: null
+    }
+  ]);
+
+  await assert.rejects(
+    () =>
+      service.listTenantMembers({
+        tenantId: 'tenant-invalid-membership-id'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembers fails closed when store returns malformed membership record', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.listTenantMembersByTenantId = async () => ([
+    {
+      membership_id: '',
+      user_id: 'tenant-user-malformed',
+      tenant_id: 'tenant-malformed',
+      tenant_name: 'Tenant Malformed',
+      phone: '13835559993',
+      status: 'active',
+      joined_at: '2026-02-19T00:00:00.000Z',
+      left_at: null
+    }
+  ]);
+
+  await assert.rejects(
+    () =>
+      service.listTenantMembers({
+        tenantId: 'tenant-malformed'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembers fails closed when store returns cross-tenant record', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.listTenantMembersByTenantId = async () => ([
+    {
+      membership_id: 'membership-cross-tenant',
+      user_id: 'tenant-user-cross-tenant',
+      tenant_id: 'tenant-cross-tenant-other',
+      tenant_name: 'Tenant Cross Tenant Other',
+      phone: '13835559994',
+      status: 'active',
+      joined_at: '2026-02-19T00:00:00.000Z',
+      left_at: null
+    }
+  ]);
+
+  await assert.rejects(
+    () =>
+      service.listTenantMembers({
+        tenantId: 'tenant-cross-tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembers fails closed when store returns non-array payload', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.listTenantMembersByTenantId = async () => ({
+    membership_id: 'membership-invalid-shape'
+  });
+
+  await assert.rejects(
+    () =>
+      service.listTenantMembers({
+        tenantId: 'tenant-invalid-shape'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
 test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even when existing membership is inactive', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'provision-tenant-inactive-relationship-key';
@@ -7791,4 +8086,293 @@ test('extractBearerToken rejects missing or malformed authorization', () => {
     assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
     return true;
   });
+});
+
+test('updateTenantMemberStatus preserves tenant permission snapshot across disabled-to-active transition', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      ...seedUsers,
+      {
+        id: 'tenant-status-operator',
+        phone: '13818880001',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-operator-1',
+            tenantId: 'tenant-permission-restore',
+            tenantName: 'Tenant Permission Restore',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-status-target',
+        phone: '13818880002',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-target-restore-1',
+            tenantId: 'tenant-permission-restore',
+            tenantName: 'Tenant Permission Restore',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: true,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const disabled = await service.updateTenantMemberStatus({
+    requestId: 'req-tenant-permission-restore-disable',
+    membershipId: 'membership-target-restore-1',
+    nextStatus: 'disabled',
+    reason: 'manual-governance',
+    authorizedRoute: {
+      user_id: 'tenant-status-operator',
+      session_id: 'tenant-status-session',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-permission-restore'
+    }
+  });
+  assert.equal(disabled.current_status, 'disabled');
+
+  const disabledPermission = await service._internals.authStore.findTenantPermissionByUserAndTenantId({
+    userId: 'tenant-status-target',
+    tenantId: 'tenant-permission-restore'
+  });
+  assert.equal(disabledPermission, null);
+
+  const reactivated = await service.updateTenantMemberStatus({
+    requestId: 'req-tenant-permission-restore-reactivate',
+    membershipId: 'membership-target-restore-1',
+    nextStatus: 'active',
+    reason: 'manual-reactivate',
+    authorizedRoute: {
+      user_id: 'tenant-status-operator',
+      session_id: 'tenant-status-session',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-permission-restore'
+    }
+  });
+  assert.equal(reactivated.previous_status, 'disabled');
+  assert.equal(reactivated.current_status, 'active');
+
+  const restoredPermission = await service._internals.authStore.findTenantPermissionByUserAndTenantId({
+    userId: 'tenant-status-target',
+    tenantId: 'tenant-permission-restore'
+  });
+  assert.ok(restoredPermission);
+  assert.equal(restoredPermission.canViewMemberAdmin, true);
+  assert.equal(restoredPermission.canOperateMemberAdmin, false);
+  assert.equal(restoredPermission.canViewBilling, true);
+  assert.equal(restoredPermission.canOperateBilling, false);
+});
+
+test('updateTenantMemberStatus clears tenant permission snapshot across left-to-active rejoin transition', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      ...seedUsers,
+      {
+        id: 'tenant-status-operator-left',
+        phone: '13818880011',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-operator-left-1',
+            tenantId: 'tenant-permission-rejoin',
+            tenantName: 'Tenant Permission Rejoin',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: 'tenant-status-target-left',
+        phone: '13818880012',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-target-left-1',
+            tenantId: 'tenant-permission-rejoin',
+            tenantName: 'Tenant Permission Rejoin',
+            status: 'left',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: true,
+              canOperateBilling: true
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const reactivated = await service.updateTenantMemberStatus({
+    requestId: 'req-tenant-permission-rejoin-reactivate',
+    membershipId: 'membership-target-left-1',
+    nextStatus: 'active',
+    reason: 'manual-rejoin',
+    authorizedRoute: {
+      user_id: 'tenant-status-operator-left',
+      session_id: 'tenant-status-session-left',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-permission-rejoin'
+    }
+  });
+  assert.equal(reactivated.previous_status, 'left');
+  assert.equal(reactivated.current_status, 'active');
+  assert.notEqual(reactivated.membership_id, 'membership-target-left-1');
+
+  const restoredPermission = await service._internals.authStore.findTenantPermissionByUserAndTenantId({
+    userId: 'tenant-status-target-left',
+    tenantId: 'tenant-permission-rejoin'
+  });
+  assert.ok(restoredPermission);
+  assert.equal(restoredPermission.canViewMemberAdmin, false);
+  assert.equal(restoredPermission.canOperateMemberAdmin, false);
+  assert.equal(restoredPermission.canViewBilling, false);
+  assert.equal(restoredPermission.canOperateBilling, false);
+});
+
+test('updateTenantMemberStatus fails closed when rejoin result reuses original membership_id', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  service._internals.authStore.updateTenantMembershipStatus = async () => ({
+    membership_id: 'membership-rejoin-old',
+    user_id: 'tenant-status-target-rejoin',
+    tenant_id: 'tenant-a',
+    previous_status: 'left',
+    current_status: 'active'
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberStatus({
+        requestId: 'req-tenant-member-status-rejoin-old-membership',
+        membershipId: 'membership-rejoin-old',
+        nextStatus: 'active',
+        reason: 'manual-rejoin',
+        authorizedRoute: {
+          user_id: 'platform-role-facts-operator',
+          session_id: 'platform-role-facts-session',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberStatus rejects membershipId containing control characters', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberStatus({
+        requestId: 'req-tenant-member-status-invalid-membership-id',
+        membershipId: 'membership-invalid\u0000id',
+        nextStatus: 'disabled',
+        authorizedRoute: {
+          user_id: 'platform-role-facts-operator',
+          session_id: 'platform-role-facts-session',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberStatus rejects membershipId with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberStatus({
+        requestId: 'req-tenant-member-status-membership-id-whitespace',
+        membershipId: ' membership-valid-id ',
+        nextStatus: 'disabled',
+        authorizedRoute: {
+          user_id: 'platform-role-facts-operator',
+          session_id: 'platform-role-facts-session',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberStatus rejects reason containing control characters', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberStatus({
+        requestId: 'req-tenant-member-status-invalid-reason',
+        membershipId: 'membership-valid-reason-check',
+        nextStatus: 'disabled',
+        reason: 'manual\nreason',
+        authorizedRoute: {
+          user_id: 'platform-role-facts-operator',
+          session_id: 'platform-role-facts-session',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
 });

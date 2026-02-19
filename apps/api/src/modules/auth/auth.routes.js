@@ -49,6 +49,25 @@ const toPlatformPermissionContextResponse = (permissionContext = null) => ({
   )
 });
 
+const toProvisionDependencyUnavailable = () =>
+  new AuthProblemError({
+    status: 503,
+    title: 'Service Unavailable',
+    detail: '默认密码配置不可用，请稍后重试',
+    errorCode: 'AUTH-503-PROVISION-CONFIG-UNAVAILABLE',
+    extensions: {
+      retryable: true,
+      degradation_reason: 'provision-dependency-unavailable'
+    }
+  });
+
+const mapProvisionUnexpectedError = (error) => {
+  if (error instanceof AuthProblemError) {
+    throw error;
+  }
+  throw toProvisionDependencyUnavailable();
+};
+
 const createAuthHandlers = (authService = createAuthService()) => {
   const handlers = {
     login: async ({ requestId, body }) =>
@@ -111,26 +130,36 @@ const createAuthHandlers = (authService = createAuthService()) => {
       authorization,
       body,
       authorizationContext = null
-    }) =>
-      authService.provisionPlatformUserByPhone({
-        requestId,
-        accessToken: extractBearerToken(authorization),
-        payload: body,
-        authorizationContext
-      }),
+    }) => {
+      try {
+        return await authService.provisionPlatformUserByPhone({
+          requestId,
+          accessToken: extractBearerToken(authorization),
+          payload: body,
+          authorizationContext
+        });
+      } catch (error) {
+        mapProvisionUnexpectedError(error);
+      }
+    },
 
     tenantProvisionUser: async ({
       requestId,
       authorization,
       body,
       authorizationContext = null
-    }) =>
-      authService.provisionTenantUserByPhone({
-        requestId,
-        accessToken: extractBearerToken(authorization),
-        payload: body,
-        authorizationContext
-      }),
+    }) => {
+      try {
+        return await authService.provisionTenantUserByPhone({
+          requestId,
+          accessToken: extractBearerToken(authorization),
+          payload: body,
+          authorizationContext
+        });
+      } catch (error) {
+        mapProvisionUnexpectedError(error);
+      }
+    },
 
     refresh: async ({ requestId, body }) =>
       authService.refresh({

@@ -412,6 +412,12 @@ test('createTenantMembershipForUser inserts tenant relationship and returns crea
   let insertSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+    ) {
+      return [];
+    }
     if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
       insertSql = normalizedSql;
       return { affectedRows: 1 };
@@ -433,8 +439,14 @@ test('createTenantMembershipForUser normalizes blank tenant name to null', async
   let insertedTenantName = 'unset';
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+    ) {
+      return [];
+    }
     if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
-      insertedTenantName = params?.[2];
+      insertedTenantName = params?.[3];
       return { affectedRows: 1 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -454,10 +466,24 @@ test('createTenantMembershipForUser returns created=false on duplicate relations
   const duplicateError = new Error('Duplicate entry for auth_user_tenants');
   duplicateError.code = 'ER_DUP_ENTRY';
   duplicateError.errno = 1062;
+  let legacyStatusLookupCount = 0;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+    ) {
+      return [];
+    }
     if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
       throw duplicateError;
+    }
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_tenants')
+    ) {
+      legacyStatusLookupCount += 1;
+      return [{ status: 'active' }];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
@@ -467,7 +493,123 @@ test('createTenantMembershipForUser returns created=false on duplicate relations
     userId: 'u-tenant-duplicate',
     tenantId: 'tenant-2'
   });
+  assert.equal(legacyStatusLookupCount, 0);
   assert.deepEqual(result, { created: false });
+});
+
+test('createTenantMembershipForUser fails closed when lifecycle columns are missing', async () => {
+  let lifecycleSelectAttempts = 0;
+  let legacyStatusLookupCount = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      lifecycleSelectAttempts += 1;
+      const error = new Error("Unknown column 'membership_id' in 'field list'");
+      error.code = 'ER_BAD_FIELD_ERROR';
+      error.errno = 1054;
+      throw error;
+    }
+    if (
+      normalizedSql.includes('SELECT status')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+    ) {
+      legacyStatusLookupCount += 1;
+      return [{ status: 'left' }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: true });
+
+  await assert.rejects(
+    () =>
+      store.createTenantMembershipForUser({
+        userId: 'u-tenant-lifecycle-required',
+        tenantId: 'tenant-lifecycle-required',
+        tenantName: 'Tenant Lifecycle Required'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_BAD_FIELD_ERROR');
+      return true;
+    }
+  );
+  assert.equal(lifecycleSelectAttempts, 1);
+  assert.equal(legacyStatusLookupCount, 0);
+});
+
+test('createTenantMembershipForUser fails closed when existing membership status is blank', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        {
+          membership_id: 'membership-empty-status',
+          user_id: 'u-tenant-empty-status',
+          tenant_id: 'tenant-empty-status',
+          tenant_name: 'Tenant Empty Status',
+          status: '',
+          can_view_member_admin: 0,
+          can_operate_member_admin: 0,
+          can_view_billing: 0,
+          can_operate_billing: 0,
+          joined_at: null,
+          left_at: null
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, { userExists: true });
+
+  await assert.rejects(
+    () =>
+      store.createTenantMembershipForUser({
+        userId: 'u-tenant-empty-status',
+        tenantId: 'tenant-empty-status',
+        tenantName: 'Tenant Empty Status'
+      }),
+    /unsupported existing status/
+  );
+});
+
+test('findTenantMembershipByUserAndTenantId does not coerce blank status to active', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('JOIN users u')
+    ) {
+      return [
+        {
+          membership_id: 'membership-blank-status',
+          user_id: 'u-tenant-blank-status',
+          tenant_id: 'tenant-blank-status',
+          tenant_name: 'Tenant Blank Status',
+          status: '',
+          joined_at: null,
+          left_at: null,
+          phone: '13835550000'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const membership = await store.findTenantMembershipByUserAndTenantId({
+    userId: 'u-tenant-blank-status',
+    tenantId: 'tenant-blank-status'
+  });
+  assert.ok(membership);
+  assert.equal(membership.status, '');
 });
 
 test('createTenantMembershipForUser returns created=false when user does not exist', async () => {
@@ -2932,4 +3074,384 @@ test('updatePlatformUserStatus returns null when target user does not exist', as
 
   assert.equal(result, null);
   assert.equal(updateCalled, false);
+});
+
+test('updateTenantMembershipStatus fails closed when lifecycle columns are missing', async () => {
+  let lifecycleSelectAttempts = 0;
+  let legacySelectAttempts = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      lifecycleSelectAttempts += 1;
+      const error = new Error("Unknown column 'membership_id' in 'field list'");
+      error.code = 'ER_BAD_FIELD_ERROR';
+      error.errno = 1054;
+      throw error;
+    }
+    if (
+      normalizedSql.includes('SELECT user_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+    ) {
+      legacySelectAttempts += 1;
+      return [];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-lifecycle-required',
+        tenantId: 'tenant-lifecycle-required',
+        nextStatus: 'disabled',
+        operatorUserId: 'tenant-operator-lifecycle-required'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_BAD_FIELD_ERROR');
+      return true;
+    }
+  );
+  assert.equal(lifecycleSelectAttempts, 1);
+  assert.equal(legacySelectAttempts, 0);
+});
+
+test('updateTenantMembershipStatus rejects blank nextStatus before executing SQL', async () => {
+  let queryCount = 0;
+  const store = createStore(async (sql) => {
+    queryCount += 1;
+    assert.fail(`unexpected query: ${String(sql)}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-reject-empty-next-status',
+        tenantId: 'tenant-reject-empty-next-status',
+        nextStatus: '',
+        operatorUserId: 'operator-reject-empty-next-status'
+      }),
+    /requires membershipId, tenantId, nextStatus and operatorUserId/
+  );
+  assert.equal(queryCount, 0);
+});
+
+test('updateTenantMembershipStatus does not execute legacy left-to-active reactivation fallback', async () => {
+  let lifecycleSelectAttempts = 0;
+  let legacySelectAttempts = 0;
+  let lifecycleUpdateAttempts = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      lifecycleSelectAttempts += 1;
+      const error = new Error("Unknown column 'membership_id' in 'field list'");
+      error.code = 'ER_BAD_FIELD_ERROR';
+      error.errno = 1054;
+      throw error;
+    }
+    if (
+      normalizedSql.includes('SELECT user_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+    ) {
+      legacySelectAttempts += 1;
+      return [];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      lifecycleUpdateAttempts += 1;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-lifecycle-left-active',
+        tenantId: 'tenant-lifecycle-left-active',
+        nextStatus: 'active',
+        operatorUserId: 'tenant-operator-lifecycle-left-active'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_BAD_FIELD_ERROR');
+      return true;
+    }
+  );
+  assert.equal(lifecycleSelectAttempts, 1);
+  assert.equal(legacySelectAttempts, 0);
+  assert.equal(lifecycleUpdateAttempts, 0);
+});
+
+test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeated missing-column failures', async () => {
+  let lifecycleSelectAttempts = 0;
+  let legacySelectAttempts = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      lifecycleSelectAttempts += 1;
+      const error = new Error("Unknown column 'membership_id' in 'field list'");
+      error.code = 'ER_BAD_FIELD_ERROR';
+      error.errno = 1054;
+      throw error;
+    }
+    if (
+      normalizedSql.includes('SELECT user_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+    ) {
+      legacySelectAttempts += 1;
+      return [];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-lifecycle-latched',
+        tenantId: 'tenant-lifecycle-latched',
+        nextStatus: 'disabled',
+        operatorUserId: 'tenant-operator-lifecycle-latched'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_BAD_FIELD_ERROR');
+      return true;
+    }
+  );
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-lifecycle-latched',
+        tenantId: 'tenant-lifecycle-latched',
+        nextStatus: 'disabled',
+        operatorUserId: 'tenant-operator-lifecycle-latched'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_BAD_FIELD_ERROR');
+      return true;
+    }
+  );
+  assert.equal(lifecycleSelectAttempts, 2);
+  assert.equal(legacySelectAttempts, 0);
+});
+
+test('updateTenantMembershipStatus fails closed when membership history table is unavailable', async () => {
+  let historyInsertAttempts = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-history-missing',
+        user_id: 'tenant-user-history',
+        tenant_id: 'tenant-history',
+        tenant_name: 'Tenant History',
+        status: 'left',
+        can_view_member_admin: 1,
+        can_operate_member_admin: 1,
+        can_view_billing: 1,
+        can_operate_billing: 0,
+        joined_at: '2026-02-01T00:00:00.000Z',
+        left_at: '2026-02-10T00:00:00.000Z'
+      }];
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_tenant_membership_history')) {
+      historyInsertAttempts += 1;
+      const error = new Error(
+        "Table 'neweast.auth_user_tenant_membership_history' doesn't exist"
+      );
+      error.code = 'ER_NO_SUCH_TABLE';
+      error.errno = 1146;
+      throw error;
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-history-missing',
+        tenantId: 'tenant-history',
+        nextStatus: 'active',
+        operatorUserId: 'tenant-operator-history',
+        reason: 'reactivate'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'AUTH-503-TENANT-MEMBER-HISTORY-UNAVAILABLE');
+      return true;
+    }
+  );
+  assert.equal(historyInsertAttempts, 1);
+});
+
+test('updateTenantMembershipStatus keeps permission snapshot when re-activating from disabled', async () => {
+  let updateSql = '';
+  let updateParams = [];
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-reactivate',
+        user_id: 'tenant-user-reactivate',
+        tenant_id: 'tenant-reactivate',
+        tenant_name: 'Tenant Reactivate',
+        status: 'disabled',
+        can_view_member_admin: 1,
+        can_operate_member_admin: 0,
+        can_view_billing: 1,
+        can_operate_billing: 0,
+        joined_at: '2026-02-01T00:00:00.000Z',
+        left_at: null
+      }];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      updateSql = normalizedSql;
+      updateParams = params;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT COUNT(*) AS tenant_count')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+    ) {
+      return [{ tenant_count: 1 }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_domain_access')
+      && normalizedSql.includes("VALUES (?, 'tenant', 'active')")
+    ) {
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.updateTenantMembershipStatus({
+    membershipId: 'membership-reactivate',
+    tenantId: 'tenant-reactivate',
+    nextStatus: 'active',
+    operatorUserId: 'tenant-operator-reactivate',
+    reason: 'manual-reactivate'
+  });
+
+  assert.deepEqual(result, {
+    membership_id: 'membership-reactivate',
+    user_id: 'tenant-user-reactivate',
+    tenant_id: 'tenant-reactivate',
+    previous_status: 'disabled',
+    current_status: 'active'
+  });
+  assert.match(updateSql, /can_view_member_admin\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_operate_member_admin\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_view_billing\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_operate_billing\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.equal(updateParams.length, 9);
+  assert.deepEqual(
+    updateParams.slice(0, 7),
+    ['active', 'active', 'active', 'active', 'active', 'active', 'active']
+  );
+});
+
+test('updateTenantMembershipStatus clears permission snapshot when re-activating from left', async () => {
+  let updateSql = '';
+  let updateParams = [];
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-reactivate-left',
+        user_id: 'tenant-user-reactivate-left',
+        tenant_id: 'tenant-reactivate-left',
+        tenant_name: 'Tenant Reactivate Left',
+        status: 'left',
+        can_view_member_admin: 1,
+        can_operate_member_admin: 1,
+        can_view_billing: 1,
+        can_operate_billing: 1,
+        joined_at: '2026-02-01T00:00:00.000Z',
+        left_at: '2026-02-10T00:00:00.000Z'
+      }];
+    }
+    if (normalizedSql.includes('INSERT INTO auth_user_tenant_membership_history')) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      updateSql = normalizedSql;
+      updateParams = params;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT COUNT(*) AS tenant_count')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+    ) {
+      return [{ tenant_count: 1 }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_domain_access')
+      && normalizedSql.includes("VALUES (?, 'tenant', 'active')")
+    ) {
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.updateTenantMembershipStatus({
+    membershipId: 'membership-reactivate-left',
+    tenantId: 'tenant-reactivate-left',
+    nextStatus: 'active',
+    operatorUserId: 'tenant-operator-reactivate-left',
+    reason: 'manual-reactivate-left'
+  });
+
+  assert.equal(result.previous_status, 'left');
+  assert.equal(result.current_status, 'active');
+  assert.notEqual(result.membership_id, 'membership-reactivate-left');
+  assert.match(updateSql, /can_view_member_admin\s*=\s*0/i);
+  assert.match(updateSql, /can_operate_member_admin\s*=\s*0/i);
+  assert.match(updateSql, /can_view_billing\s*=\s*0/i);
+  assert.match(updateSql, /can_operate_billing\s*=\s*0/i);
+  assert.equal(updateParams.length, 3);
 });

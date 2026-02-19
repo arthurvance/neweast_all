@@ -6,6 +6,8 @@ const { createPlatformRoleHandlers } = require('./modules/platform/role.routes')
 const { createPlatformRoleService } = require('./modules/platform/role.service');
 const { createPlatformUserHandlers } = require('./modules/platform/user.routes');
 const { createPlatformUserService } = require('./modules/platform/user.service');
+const { createTenantMemberHandlers } = require('./modules/tenant/member.routes');
+const { createTenantMemberService } = require('./modules/tenant/member.service');
 const { buildOpenApiSpec } = require('./openapi');
 const { checkDependencies } = require('./infrastructure/connectivity');
 const { log } = require('./common/logger');
@@ -16,11 +18,13 @@ const assertAlignedPlatformServicesAuthService = ({
   authService,
   platformOrgService,
   platformRoleService,
-  platformUserService
+  platformUserService,
+  tenantMemberService
 }) => {
   const platformOrgAuthService = platformOrgService?._internals?.authService;
   const platformRoleAuthService = platformRoleService?._internals?.authService;
   const platformUserAuthService = platformUserService?._internals?.authService;
+  const tenantMemberAuthService = tenantMemberService?._internals?.authService;
   if (
     platformOrgAuthService
     && platformRoleAuthService
@@ -73,6 +77,42 @@ const assertAlignedPlatformServicesAuthService = ({
   ) {
     throw new TypeError(
       'createRouteHandlers requires authService and platformUserService to share the same authService instance'
+    );
+  }
+  if (
+    authService
+    && tenantMemberAuthService
+    && authService !== tenantMemberAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires authService and tenantMemberService to share the same authService instance'
+    );
+  }
+  if (
+    platformOrgAuthService
+    && tenantMemberAuthService
+    && platformOrgAuthService !== tenantMemberAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformOrgService and tenantMemberService to share the same authService instance'
+    );
+  }
+  if (
+    platformRoleAuthService
+    && tenantMemberAuthService
+    && platformRoleAuthService !== tenantMemberAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformRoleService and tenantMemberService to share the same authService instance'
+    );
+  }
+  if (
+    platformUserAuthService
+    && tenantMemberAuthService
+    && platformUserAuthService !== tenantMemberAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformUserService and tenantMemberService to share the same authService instance'
     );
   }
 };
@@ -149,17 +189,20 @@ const createRouteHandlers = (config, options = {}) => {
   const preferredPlatformOrgAuthService = options.platformOrgService?._internals?.authService;
   const preferredPlatformRoleAuthService = options.platformRoleService?._internals?.authService;
   const preferredPlatformUserAuthService = options.platformUserService?._internals?.authService;
+  const preferredTenantMemberAuthService = options.tenantMemberService?._internals?.authService;
   assertAlignedPlatformServicesAuthService({
     authService: options.authService,
     platformOrgService: options.platformOrgService,
     platformRoleService: options.platformRoleService,
-    platformUserService: options.platformUserService
+    platformUserService: options.platformUserService,
+    tenantMemberService: options.tenantMemberService
   });
   const authService =
     options.authService
     || preferredPlatformOrgAuthService
     || preferredPlatformRoleAuthService
     || preferredPlatformUserAuthService
+    || preferredTenantMemberAuthService
     || createAuthService();
   const authIdempotencyStore = options.authIdempotencyStore;
   const auth = createAuthHandlers(authService);
@@ -181,6 +224,12 @@ const createRouteHandlers = (config, options = {}) => {
       authService
     });
   const platformUser = createPlatformUserHandlers(platformUserService);
+  const tenantMemberService =
+    options.tenantMemberService
+    || createTenantMemberService({
+      authService
+    });
+  const tenantMember = createTenantMemberHandlers(tenantMemberService);
   const authorizeRouteHandler =
     typeof auth.authorizeRoute === 'function'
       ? async ({ requestId, authorization, permissionCode, scope }) =>
@@ -455,6 +504,47 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    tenantListMembers: async (
+      requestId,
+      authorization,
+      query,
+      authorizationContext
+    ) =>
+      tenantMember.listMembers({
+        requestId,
+        authorization,
+        query: query || {},
+        authorizationContext
+      }),
+
+    tenantCreateMember: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext
+    ) =>
+      tenantMember.createMember({
+        requestId,
+        authorization,
+        body: body || {},
+        authorizationContext
+      }),
+
+    tenantUpdateMemberStatus: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext
+    ) =>
+      tenantMember.updateMemberStatus({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        authorizationContext
+      }),
+
     authRefresh: async (requestId, body) =>
       auth.refresh({
         requestId,
@@ -520,7 +610,8 @@ const createRouteHandlers = (config, options = {}) => {
     authService,
     platformOrgService,
     platformRoleService,
-    platformUserService
+    platformUserService,
+    tenantMemberService
   };
 
   return handlers;

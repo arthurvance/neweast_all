@@ -465,6 +465,8 @@ const ensureTables = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `
   );
+
+  await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
 };
 
 const resetTestData = async () => {
@@ -589,6 +591,7 @@ const seedTenantOptions = async () => {
   await adminConnection.execute(
     `
       INSERT INTO auth_user_tenants (
+        membership_id,
         user_id,
         tenant_id,
         tenant_name,
@@ -599,8 +602,8 @@ const seedTenantOptions = async () => {
         can_operate_billing
       )
       VALUES
-        (?, 'tenant-a', 'Tenant A', 'active', 1, 1, 1, 0),
-        (?, 'tenant-b', 'Tenant B', 'active', 0, 0, 1, 1)
+        (?, ?, 'tenant-a', 'Tenant A', 'active', 1, 1, 1, 0),
+        (?, ?, 'tenant-b', 'Tenant B', 'active', 0, 0, 1, 1)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
@@ -609,8 +612,13 @@ const seedTenantOptions = async () => {
         can_view_billing = VALUES(can_view_billing),
         can_operate_billing = VALUES(can_operate_billing),
         updated_at = CURRENT_TIMESTAMP(3)
-    `,
-    [TEST_USER.id, TEST_USER.id]
+      `,
+    [
+      'membership-seed-tenant-a',
+      TEST_USER.id,
+      'membership-seed-tenant-b',
+      TEST_USER.id
+    ]
   );
 };
 
@@ -1058,6 +1066,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
   await adminConnection.execute(
     `
       INSERT INTO auth_user_tenants (
+        membership_id,
         user_id,
         tenant_id,
         tenant_name,
@@ -1067,7 +1076,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
         can_view_billing,
         can_operate_billing
       )
-      VALUES (?, 'tenant-provision-a', 'Tenant Provision A', 'active', 1, 1, 0, 0)
+      VALUES (?, ?, 'tenant-provision-a', 'Tenant Provision A', 'active', 1, 1, 0, 0)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
@@ -1077,7 +1086,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
         can_operate_billing = VALUES(can_operate_billing),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
-    [TEST_USER.id]
+    ['membership-tenant-provision-a', TEST_USER.id]
   );
   await ensureActiveOrgsForTenantIds(['tenant-provision-a']);
 
@@ -1214,6 +1223,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
   await adminConnection.execute(
     `
       INSERT INTO auth_user_tenants (
+        membership_id,
         user_id,
         tenant_id,
         tenant_name,
@@ -1223,7 +1233,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
         can_view_billing,
         can_operate_billing
       )
-      VALUES (?, 'tenant-provision-b', 'Tenant Provision B', 'active', 1, 1, 0, 0)
+      VALUES (?, ?, 'tenant-provision-b', 'Tenant Provision B', 'active', 1, 1, 0, 0)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
@@ -1233,7 +1243,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
         can_operate_billing = VALUES(can_operate_billing),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
-    [TEST_USER.id]
+    ['membership-tenant-provision-b', TEST_USER.id]
   );
   await ensureActiveOrgsForTenantIds(['tenant-provision-b']);
 
@@ -2431,6 +2441,7 @@ test('express platform login rejects users with disabled tenant relationships an
   await adminConnection.execute(
     `
       INSERT INTO auth_user_tenants (
+        membership_id,
         user_id,
         tenant_id,
         tenant_name,
@@ -2440,7 +2451,7 @@ test('express platform login rejects users with disabled tenant relationships an
         can_view_billing,
         can_operate_billing
       )
-      VALUES (?, ?, ?, 'disabled', 1, 0, 0, 0)
+      VALUES (?, ?, ?, ?, 'disabled', 1, 0, 0, 0)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
@@ -2450,7 +2461,12 @@ test('express platform login rejects users with disabled tenant relationships an
         can_operate_billing = VALUES(can_operate_billing),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
-    [TEST_USER.id, 'tenant-disabled', 'Tenant Disabled']
+    [
+      'membership-tenant-disabled',
+      TEST_USER.id,
+      'tenant-disabled',
+      'Tenant Disabled'
+    ]
   );
 
   const harness = await createExpressHarness();
@@ -2611,6 +2627,7 @@ test('createApiApp boots with auth schema created only from official migrations'
   await adminConnection.execute('DROP TABLE IF EXISTS auth_sessions');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_platform_roles');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenants');
+  await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenant_membership_history');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_domain_access');
   await adminConnection.execute('DROP TABLE IF EXISTS platform_role_permission_grants');
   await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
@@ -2642,6 +2659,7 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0009_platform_role_catalog.sql');
   await runMigrationSql(adminConnection, '0010_platform_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0011_auth_user_platform_roles_role_id_index.sql');
+  await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();

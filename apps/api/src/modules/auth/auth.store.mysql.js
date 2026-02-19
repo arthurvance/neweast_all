@@ -14,6 +14,7 @@ const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
+const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
 const OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX = 30;
 const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
 
@@ -39,6 +40,26 @@ const normalizeOrgStatus = (status) => {
     return 'active';
   }
   return value;
+};
+const normalizeTenantMembershipStatus = (status) => {
+  const value = String(status ?? '').trim().toLowerCase();
+  if (!value) {
+    return 'active';
+  }
+  if (value === 'enabled') {
+    return 'active';
+  }
+  return VALID_TENANT_MEMBERSHIP_STATUS.has(value) ? value : '';
+};
+const normalizeTenantMembershipStatusForRead = (status) => {
+  const value = String(status ?? '').trim().toLowerCase();
+  if (!value) {
+    return '';
+  }
+  if (value === 'enabled') {
+    return 'active';
+  }
+  return VALID_TENANT_MEMBERSHIP_STATUS.has(value) ? value : '';
 };
 const normalizePlatformRoleCatalogStatus = (status) => {
   const value = String(status || '').trim().toLowerCase();
@@ -308,9 +329,21 @@ const isDeadlockError = (error) =>
 const isDuplicateEntryError = (error) =>
   String(error?.code || '').toUpperCase() === 'ER_DUP_ENTRY'
   || Number(error?.errno || 0) === MYSQL_DUP_ENTRY_ERRNO;
+const isMissingTenantMembershipHistoryTableError = (error) =>
+  isTableMissingError(error)
+  && /auth_user_tenant_membership_history/i.test(String(error?.message || ''));
 const isMissingOrgsTableError = (error) =>
   isTableMissingError(error)
   && /\borgs\b/i.test(String(error?.message || ''));
+const TENANT_MEMBERSHIP_HISTORY_UNAVAILABLE_CODE =
+  'AUTH-503-TENANT-MEMBER-HISTORY-UNAVAILABLE';
+const createTenantMembershipHistoryUnavailableError = () => {
+  const error = new Error(
+    'tenant membership history table is required but unavailable'
+  );
+  error.code = TENANT_MEMBERSHIP_HISTORY_UNAVAILABLE_CODE;
+  return error;
+};
 const buildSqlInPlaceholders = (count) =>
   new Array(Math.max(0, Number(count) || 0)).fill('?').join(', ');
 const normalizePlatformPermissionCode = (permissionCode) =>
@@ -565,6 +598,7 @@ const createMySqlAuthStore = ({
     }
   };
   let orgStatusGuardAvailable = true;
+  let tenantMembershipHistoryTableAvailable = true;
 
   const runTenantMembershipQuery = async ({
     txClient = dbClient,
@@ -585,6 +619,159 @@ const createMySqlAuthStore = ({
       orgStatusGuardAvailable = false;
       return queryClient.query(sqlWithoutOrgGuard, params);
     }
+  };
+
+  const insertTenantMembershipHistoryTx = async ({
+    txClient,
+    row,
+    archivedReason = null,
+    archivedByUserId = null
+  }) => {
+    if (!tenantMembershipHistoryTableAvailable) {
+      throw createTenantMembershipHistoryUnavailableError();
+    }
+    const normalizedRowStatus = normalizeTenantMembershipStatusForRead(row?.status);
+    if (!VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedRowStatus)) {
+      throw new Error('insertTenantMembershipHistoryTx encountered unsupported status');
+    }
+    try {
+      await txClient.query(
+        `
+          INSERT INTO auth_user_tenant_membership_history (
+            membership_id,
+            user_id,
+            tenant_id,
+            tenant_name,
+            status,
+            can_view_member_admin,
+            can_operate_member_admin,
+            can_view_billing,
+            can_operate_billing,
+            joined_at,
+            left_at,
+            archived_reason,
+            archived_by_user_id
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          String(row?.membership_id || '').trim(),
+          String(row?.user_id || '').trim(),
+          String(row?.tenant_id || '').trim(),
+          row?.tenant_name === null || row?.tenant_name === undefined
+            ? null
+            : String(row.tenant_name || '').trim() || null,
+          normalizedRowStatus,
+          toBoolean(row?.can_view_member_admin) ? 1 : 0,
+          toBoolean(row?.can_operate_member_admin) ? 1 : 0,
+          toBoolean(row?.can_view_billing) ? 1 : 0,
+          toBoolean(row?.can_operate_billing) ? 1 : 0,
+          row?.joined_at || row?.created_at || null,
+          row?.left_at || null,
+          archivedReason === null || archivedReason === undefined
+            ? null
+            : String(archivedReason || '').trim() || null,
+          archivedByUserId === null || archivedByUserId === undefined
+            ? null
+            : String(archivedByUserId || '').trim() || null
+        ]
+      );
+    } catch (error) {
+      if (isMissingTenantMembershipHistoryTableError(error)) {
+        tenantMembershipHistoryTableAvailable = false;
+        throw createTenantMembershipHistoryUnavailableError();
+      }
+      throw error;
+    }
+  };
+
+  const ensureTenantDomainAccessForUserTx = async ({
+    txClient,
+    userId
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return { inserted: false };
+    }
+    const tenantCountRows = await runTenantMembershipQuery({
+      txClient,
+      sqlWithOrgGuard: `
+        SELECT COUNT(*) AS tenant_count
+        FROM auth_user_tenants ut
+        LEFT JOIN orgs o ON o.id = ut.tenant_id
+        WHERE ut.user_id = ?
+          AND ut.status IN ('active', 'enabled')
+          AND o.status IN ('active', 'enabled')
+      `,
+      sqlWithoutOrgGuard: `
+        SELECT COUNT(*) AS tenant_count
+        FROM auth_user_tenants ut
+        WHERE ut.user_id = ?
+          AND ut.status IN ('active', 'enabled')
+      `,
+      params: [normalizedUserId]
+    });
+    const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
+    if (tenantCount <= 0) {
+      return { inserted: false };
+    }
+
+    const result = await txClient.query(
+      `
+        INSERT INTO auth_user_domain_access (user_id, domain, status)
+        VALUES (?, 'tenant', 'active')
+        ON DUPLICATE KEY UPDATE
+          status = CASE
+            WHEN status IN ('active', 'enabled') THEN status
+            ELSE 'active'
+          END,
+          updated_at = CASE
+            WHEN status IN ('active', 'enabled') THEN updated_at
+            ELSE CURRENT_TIMESTAMP(3)
+          END
+      `,
+      [normalizedUserId]
+    );
+    return { inserted: Number(result?.affectedRows || 0) > 0 };
+  };
+
+  const removeTenantDomainAccessForUserTx = async ({
+    txClient,
+    userId
+  }) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return { removed: false };
+    }
+    const result = await runTenantMembershipQuery({
+      txClient,
+      sqlWithOrgGuard: `
+        DELETE FROM auth_user_domain_access
+        WHERE user_id = ?
+          AND domain = 'tenant'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM auth_user_tenants ut
+            LEFT JOIN orgs o ON o.id = ut.tenant_id
+            WHERE ut.user_id = ?
+              AND ut.status IN ('active', 'enabled')
+              AND o.status IN ('active', 'enabled')
+          )
+      `,
+      sqlWithoutOrgGuard: `
+        DELETE FROM auth_user_domain_access
+        WHERE user_id = ?
+          AND domain = 'tenant'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM auth_user_tenants ut
+            WHERE ut.user_id = ?
+              AND ut.status IN ('active', 'enabled')
+          )
+      `,
+      params: [normalizedUserId, normalizedUserId]
+    });
+    return { removed: Number(result?.affectedRows || 0) > 0 };
   };
 
   const bumpSessionVersionAndConvergeSessionsTx = async ({
@@ -2402,36 +2589,131 @@ const createMySqlAuthStore = ({
       if (!normalizedUserId || !normalizedTenantId) {
         throw new Error('createTenantMembershipForUser requires userId and tenantId');
       }
-      const userRows = await dbClient.query(
-        `
-          SELECT id
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-        `,
-        [normalizedUserId]
-      );
-      if (!Array.isArray(userRows) || userRows.length === 0) {
-        return { created: false };
-      }
       const normalizedTenantName = tenantName === null || tenantName === undefined
         ? null
         : String(tenantName).trim() || null;
-      try {
-        const result = await dbClient.query(
-          `
-            INSERT INTO auth_user_tenants (user_id, tenant_id, tenant_name, status)
-            VALUES (?, ?, ?, 'active')
-          `,
-          [normalizedUserId, normalizedTenantId, normalizedTenantName]
-        );
-        return { created: Number(result?.affectedRows || 0) > 0 };
-      } catch (error) {
-        if (isDuplicateEntryError(error)) {
-          return { created: false };
-        }
-        throw error;
-      }
+      return executeWithDeadlockRetry({
+        operation: 'createTenantMembershipForUser',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const userRows = await tx.query(
+              `
+                SELECT id
+                FROM users
+                WHERE id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedUserId]
+            );
+            if (!Array.isArray(userRows) || userRows.length === 0) {
+              return { created: false };
+            }
+
+            const existingRows = await tx.query(
+              `
+                SELECT membership_id,
+                       user_id,
+                       tenant_id,
+                       tenant_name,
+                       status,
+                       can_view_member_admin,
+                       can_operate_member_admin,
+                       can_view_billing,
+                       can_operate_billing,
+                       joined_at,
+                       left_at
+                FROM auth_user_tenants
+                WHERE user_id = ? AND tenant_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedUserId, normalizedTenantId]
+            );
+            const existing = existingRows?.[0] || null;
+            if (!existing) {
+              const membershipId = randomUUID();
+              let result;
+              try {
+                result = await tx.query(
+                  `
+                    INSERT INTO auth_user_tenants (
+                      membership_id,
+                      user_id,
+                      tenant_id,
+                      tenant_name,
+                      status,
+                      joined_at,
+                      left_at
+                    )
+                    VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP(3), NULL)
+                  `,
+                  [
+                    membershipId,
+                    normalizedUserId,
+                    normalizedTenantId,
+                    normalizedTenantName
+                  ]
+                );
+              } catch (error) {
+                if (isDuplicateEntryError(error)) {
+                  return { created: false };
+                }
+                throw error;
+              }
+              return { created: Number(result?.affectedRows || 0) > 0 };
+            }
+
+            const existingStatus = normalizeTenantMembershipStatusForRead(existing.status);
+            if (!VALID_TENANT_MEMBERSHIP_STATUS.has(existingStatus)) {
+              throw new Error(
+                'createTenantMembershipForUser encountered unsupported existing status'
+              );
+            }
+            if (existingStatus !== 'left') {
+              return { created: false };
+            }
+
+            const previousMembershipId = String(existing.membership_id || '').trim();
+            await insertTenantMembershipHistoryTx({
+              txClient: tx,
+              row: {
+                ...existing,
+                membership_id: previousMembershipId,
+                user_id: normalizedUserId,
+                tenant_id: normalizedTenantId
+              },
+              archivedReason: 'rejoin',
+              archivedByUserId: null
+            });
+
+            const nextMembershipId = randomUUID();
+            const updateResult = await tx.query(
+              `
+                UPDATE auth_user_tenants
+                SET membership_id = ?,
+                    tenant_name = ?,
+                    status = 'active',
+                    can_view_member_admin = 0,
+                    can_operate_member_admin = 0,
+                    can_view_billing = 0,
+                    can_operate_billing = 0,
+                    joined_at = CURRENT_TIMESTAMP(3),
+                    left_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ? AND tenant_id = ?
+              `,
+              [
+                nextMembershipId,
+                normalizedTenantName,
+                normalizedUserId,
+                normalizedTenantId
+              ]
+            );
+            return { created: Number(updateResult?.affectedRows || 0) > 0 };
+          })
+      });
     },
 
     removeTenantMembershipForUser: async ({ userId, tenantId }) => {
@@ -2743,6 +3025,271 @@ const createMySqlAuthStore = ({
         throw error;
       }
     },
+
+    findTenantMembershipByUserAndTenantId: async ({ userId, tenantId }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedUserId || !normalizedTenantId) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT ut.membership_id,
+                 ut.user_id,
+                 ut.tenant_id,
+                 ut.tenant_name,
+                 ut.status,
+                 ut.joined_at,
+                 ut.left_at,
+                 u.phone
+          FROM auth_user_tenants ut
+          JOIN users u ON u.id = ut.user_id
+          WHERE ut.user_id = ? AND ut.tenant_id = ?
+          LIMIT 1
+        `,
+        [normalizedUserId, normalizedTenantId]
+      );
+      const row = rows?.[0];
+      if (!row) {
+        return null;
+      }
+      return {
+        membership_id: String(row.membership_id || '').trim(),
+        user_id: String(row.user_id || '').trim(),
+        tenant_id: String(row.tenant_id || '').trim(),
+        tenant_name: row.tenant_name ? String(row.tenant_name) : null,
+        phone: String(row.phone || ''),
+        status: normalizeTenantMembershipStatusForRead(row.status),
+        joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
+        left_at: row.left_at ? new Date(row.left_at).toISOString() : null
+      };
+    },
+
+    listTenantMembersByTenantId: async ({ tenantId, page = 1, pageSize = 50 }) => {
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedTenantId) {
+        return [];
+      }
+      const normalizedPage = Number.parseInt(String(page || '1'), 10);
+      const normalizedPageSize = Number.parseInt(String(pageSize || '50'), 10);
+      const resolvedPage = Number.isFinite(normalizedPage) && normalizedPage > 0
+        ? normalizedPage
+        : 1;
+      const resolvedPageSize = Number.isFinite(normalizedPageSize) && normalizedPageSize > 0
+        ? Math.min(normalizedPageSize, 200)
+        : 50;
+      const offset = (resolvedPage - 1) * resolvedPageSize;
+
+      const rows = await dbClient.query(
+        `
+          SELECT ut.membership_id,
+                 ut.user_id,
+                 ut.tenant_id,
+                 ut.tenant_name,
+                 ut.status,
+                 ut.joined_at,
+                 ut.left_at,
+                 u.phone
+          FROM auth_user_tenants ut
+          JOIN users u ON u.id = ut.user_id
+          WHERE ut.tenant_id = ?
+          ORDER BY ut.joined_at DESC, ut.membership_id DESC
+          LIMIT ? OFFSET ?
+        `,
+        [normalizedTenantId, resolvedPageSize, offset]
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => ({
+        membership_id: String(row.membership_id || '').trim(),
+        user_id: String(row.user_id || '').trim(),
+        tenant_id: String(row.tenant_id || '').trim(),
+        tenant_name: row.tenant_name ? String(row.tenant_name) : null,
+        phone: String(row.phone || ''),
+        status: normalizeTenantMembershipStatusForRead(row.status),
+        joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
+        left_at: row.left_at ? new Date(row.left_at).toISOString() : null
+      }));
+    },
+
+    updateTenantMembershipStatus: async ({
+      membershipId,
+      tenantId,
+      nextStatus,
+      operatorUserId,
+      reason = null
+    }) =>
+      executeWithDeadlockRetry({
+        operation: 'updateTenantMembershipStatus',
+        onExhausted: 'throw',
+        execute: async () => {
+          const normalizedMembershipId = String(membershipId || '').trim();
+          const normalizedTenantId = String(tenantId || '').trim();
+          const normalizedNextStatus = normalizeTenantMembershipStatusForRead(nextStatus);
+          const normalizedOperatorUserId = String(operatorUserId || '').trim();
+          const normalizedReason = reason === null || reason === undefined
+            ? null
+            : String(reason).trim() || null;
+          if (
+            !normalizedMembershipId
+            || !normalizedTenantId
+            || !normalizedOperatorUserId
+            || !VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedNextStatus)
+          ) {
+            throw new Error(
+              'updateTenantMembershipStatus requires membershipId, tenantId, nextStatus and operatorUserId'
+            );
+          }
+          return dbClient.inTransaction(async (tx) => {
+            const rows = await tx.query(
+              `
+                SELECT membership_id,
+                       user_id,
+                       tenant_id,
+                       tenant_name,
+                       status,
+                       can_view_member_admin,
+                       can_operate_member_admin,
+                       can_view_billing,
+                       can_operate_billing,
+                       joined_at,
+                       left_at
+                FROM auth_user_tenants
+                WHERE membership_id = ? AND tenant_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedMembershipId, normalizedTenantId]
+            );
+            const row = rows?.[0] || null;
+            if (!row) {
+              return null;
+            }
+            const previousStatus = normalizeTenantMembershipStatusForRead(row.status);
+            if (!VALID_TENANT_MEMBERSHIP_STATUS.has(previousStatus)) {
+              throw new Error(
+                'updateTenantMembershipStatus encountered unsupported existing status'
+              );
+            }
+            let finalMembershipId = String(row.membership_id || '').trim() || normalizedMembershipId;
+            if (previousStatus !== normalizedNextStatus) {
+              if (previousStatus === 'left' && normalizedNextStatus === 'active') {
+                await insertTenantMembershipHistoryTx({
+                  txClient: tx,
+                  row,
+                  archivedReason: normalizedReason || 'reactivate',
+                  archivedByUserId: normalizedOperatorUserId
+                });
+                finalMembershipId = randomUUID();
+                await tx.query(
+                  `
+                    UPDATE auth_user_tenants
+                    SET membership_id = ?,
+                        status = 'active',
+                        can_view_member_admin = 0,
+                        can_operate_member_admin = 0,
+                        can_view_billing = 0,
+                        can_operate_billing = 0,
+                        left_at = NULL,
+                        joined_at = CURRENT_TIMESTAMP(3),
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE membership_id = ? AND tenant_id = ?
+                  `,
+                  [finalMembershipId, normalizedMembershipId, normalizedTenantId]
+                );
+              } else {
+                if (normalizedNextStatus === 'left') {
+                  await insertTenantMembershipHistoryTx({
+                    txClient: tx,
+                    row,
+                    archivedReason: normalizedReason || 'left',
+                    archivedByUserId: normalizedOperatorUserId
+                  });
+                }
+                await tx.query(
+                  `
+                    UPDATE auth_user_tenants
+                    SET status = ?,
+                        can_view_member_admin = CASE WHEN ? = 'left' THEN 0 ELSE can_view_member_admin END,
+                        can_operate_member_admin = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_member_admin END,
+                        can_view_billing = CASE WHEN ? = 'left' THEN 0 ELSE can_view_billing END,
+                        can_operate_billing = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_billing END,
+                        left_at = CASE
+                          WHEN ? = 'left' THEN CURRENT_TIMESTAMP(3)
+                          WHEN ? = 'active' THEN NULL
+                          ELSE left_at
+                        END,
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE membership_id = ? AND tenant_id = ?
+                  `,
+                  [
+                    normalizedNextStatus,
+                    normalizedNextStatus,
+                    normalizedNextStatus,
+                    normalizedNextStatus,
+                    normalizedNextStatus,
+                    normalizedNextStatus,
+                    normalizedNextStatus,
+                    finalMembershipId,
+                    normalizedTenantId
+                  ]
+                );
+              }
+
+              if (normalizedNextStatus === 'active') {
+                await ensureTenantDomainAccessForUserTx({
+                  txClient: tx,
+                  userId: row.user_id
+                });
+              } else {
+                await tx.query(
+                  `
+                    UPDATE auth_sessions
+                    SET status = 'revoked',
+                        revoked_reason = ?,
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE user_id = ?
+                      AND entry_domain = 'tenant'
+                      AND active_tenant_id = ?
+                      AND status = 'active'
+                  `,
+                  [
+                    'tenant-membership-status-changed',
+                    row.user_id,
+                    normalizedTenantId
+                  ]
+                );
+                await tx.query(
+                  `
+                    UPDATE refresh_tokens
+                    SET status = 'revoked',
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE status = 'active'
+                      AND session_id IN (
+                        SELECT session_id
+                        FROM auth_sessions
+                        WHERE user_id = ?
+                          AND entry_domain = 'tenant'
+                          AND active_tenant_id = ?
+                      )
+                  `,
+                  [row.user_id, normalizedTenantId]
+                );
+                await removeTenantDomainAccessForUserTx({
+                  txClient: tx,
+                  userId: row.user_id
+                });
+              }
+            }
+
+            return {
+              membership_id: finalMembershipId,
+              user_id: String(row.user_id || '').trim(),
+              tenant_id: String(row.tenant_id || '').trim(),
+              previous_status: previousStatus,
+              current_status: normalizedNextStatus
+            };
+          });
+        }
+      }),
 
     hasAnyTenantRelationshipByUserId: async (userId) => {
       const normalizedUserId = String(userId);
