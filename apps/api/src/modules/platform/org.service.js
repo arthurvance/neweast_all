@@ -549,6 +549,26 @@ const resolveRequestedOwnerTransferOrgId = (payload = {}) => {
 const createPlatformOrgService = ({ authService } = {}) => {
   const auditTrail = [];
   const ownerTransferLocksByOrgId = new Map();
+  const hasExternalOwnerTransferLockAcquire =
+    authService && typeof authService.acquireOwnerTransferLock === 'function';
+  const hasExternalOwnerTransferLockRelease =
+    authService && typeof authService.releaseOwnerTransferLock === 'function';
+  const useExternalOwnerTransferLockBackend =
+    hasExternalOwnerTransferLockAcquire && hasExternalOwnerTransferLockRelease;
+
+  if (
+    authService
+    && hasExternalOwnerTransferLockAcquire !== hasExternalOwnerTransferLockRelease
+  ) {
+    log(
+      'warn',
+      'Owner transfer lock backend partially configured; falling back to in-process lock backend',
+      {
+        has_acquire_owner_transfer_lock: hasExternalOwnerTransferLockAcquire,
+        has_release_owner_transfer_lock: hasExternalOwnerTransferLockRelease
+      }
+    );
+  }
 
   const addAuditEvent = ({
     type,
@@ -589,7 +609,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     if (!normalizedOrgId) {
       return false;
     }
-    if (authService && typeof authService.acquireOwnerTransferLock === 'function') {
+    if (useExternalOwnerTransferLockBackend) {
       return (
         await authService.acquireOwnerTransferLock({
           orgId: normalizedOrgId,
@@ -615,7 +635,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     if (!normalizedOrgId) {
       return false;
     }
-    if (authService && typeof authService.releaseOwnerTransferLock === 'function') {
+    if (useExternalOwnerTransferLockBackend) {
       return (
         await authService.releaseOwnerTransferLock({
           orgId: normalizedOrgId
@@ -1137,7 +1157,10 @@ const createPlatformOrgService = ({ authService } = {}) => {
           result_status: String(
             ownerTransferMappedError.extensions?.result_status || 'rejected'
           ),
-          retryable: Boolean(ownerTransferMappedError.extensions?.retryable)
+          retryable: Boolean(ownerTransferMappedError.extensions?.retryable),
+          upstream_error_code: String(
+            error?.errorCode || error?.code || 'unknown'
+          ).trim() || 'unknown'
         }
       });
       throw ownerTransferMappedError;
@@ -1167,7 +1190,10 @@ const createPlatformOrgService = ({ authService } = {}) => {
             result_status: String(
               mappedPayloadError.extensions?.result_status || 'rejected'
             ),
-            retryable: Boolean(mappedPayloadError.extensions?.retryable)
+            retryable: Boolean(mappedPayloadError.extensions?.retryable),
+            upstream_error_code: String(
+              error?.errorCode || error?.code || 'unknown'
+            ).trim() || 'unknown'
           }
         });
       }
@@ -1234,7 +1260,8 @@ const createPlatformOrgService = ({ authService } = {}) => {
         metadata: {
           error_code: mappedConflictError.errorCode,
           retryable: true,
-          result_status: 'conflict'
+          result_status: 'conflict',
+          upstream_error_code: 'AUTH-409-OWNER-TRANSFER-CONFLICT'
         }
       });
       throw mappedConflictError;
@@ -1253,8 +1280,8 @@ const createPlatformOrgService = ({ authService } = {}) => {
         }
       });
 
-      assertAuthServiceMethod('validateOwnerTransferRequest');
-      const validationResult = await authService.validateOwnerTransferRequest({
+      assertAuthServiceMethod('executeOwnerTransferTakeover');
+      const takeoverResult = await authService.executeOwnerTransferTakeover({
         requestId: resolvedRequestId,
         orgId: parsedPayload.orgId,
         newOwnerPhone: parsedPayload.newOwnerPhone,
@@ -1263,12 +1290,12 @@ const createPlatformOrgService = ({ authService } = {}) => {
         reason: parsedPayload.reason
       });
 
-      const resolvedOrgId = String(validationResult?.org_id || '').trim();
+      const resolvedOrgId = String(takeoverResult?.org_id || '').trim();
       const oldOwnerUserId = String(
-        validationResult?.old_owner_user_id || ''
+        takeoverResult?.old_owner_user_id || ''
       ).trim();
       const newOwnerUserId = String(
-        validationResult?.new_owner_user_id || ''
+        takeoverResult?.new_owner_user_id || ''
       ).trim();
       if (
         !resolvedOrgId
@@ -1276,22 +1303,11 @@ const createPlatformOrgService = ({ authService } = {}) => {
         || !newOwnerUserId
         || resolvedOrgId !== parsedPayload.orgId
       ) {
-        addAuditEvent({
-          type: 'org.owner_transfer.rejected',
-          requestId: resolvedRequestId,
-          operatorUserId,
-          orgId: parsedPayload.orgId,
-          detail: 'owner transfer validation dependency returned invalid payload',
-          metadata: {
-            error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
-            result_status: 'rejected',
-            upstream_error_code: 'ORG-OWNER-TRANSFER-VALIDATION-RESULT-INVALID'
-          }
-        });
-        throw withOwnerTransferContractProblem({
-          problem: orgErrors.dependencyUnavailable(),
-          orgId: parsedPayload.orgId
-        });
+        const takeoverResultInvalidError = new Error(
+          'owner transfer takeover dependency returned invalid payload'
+        );
+        takeoverResultInvalidError.code = 'ORG-OWNER-TRANSFER-TAKEOVER-RESULT-INVALID';
+        throw takeoverResultInvalidError;
       }
 
       addAuditEvent({
@@ -1299,7 +1315,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
         requestId: resolvedRequestId,
         operatorUserId,
         orgId: resolvedOrgId,
-        detail: 'owner transfer request submitted for downstream orchestration',
+        detail: 'owner transfer takeover transaction committed',
         metadata: {
           old_owner_user_id: oldOwnerUserId,
           new_owner_user_id: newOwnerUserId,
@@ -1364,10 +1380,17 @@ const createPlatformOrgService = ({ authService } = {}) => {
         requestId: resolvedRequestId,
         operatorUserId,
         orgId: parsedPayload.orgId,
-        detail: 'owner transfer dependency unavailable',
+        detail:
+          String(error?.code || '').trim() === 'ORG-OWNER-TRANSFER-TAKEOVER-RESULT-INVALID'
+            ? 'owner transfer takeover dependency returned invalid payload'
+            : 'owner transfer dependency unavailable',
         metadata: {
           error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
-          result_status: 'rejected'
+          result_status: 'rejected',
+          retryable: true,
+          upstream_error_code: String(
+            error?.errorCode || error?.code || 'unknown'
+          ).trim() || 'unknown'
         }
       });
       throw withOwnerTransferContractProblem({

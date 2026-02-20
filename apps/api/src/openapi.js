@@ -4349,8 +4349,8 @@ const buildOpenApiSpec = () => {
     },
     '/platform/orgs/owner-transfer': {
       post: {
-        summary: 'Submit organization owner-transfer request (entry + precheck only)',
-        description: '仅交付发起入口与前置校验，不在本接口执行 owner 真正切换与自动接管。',
+        summary: 'Submit organization owner-transfer request and complete takeover convergence',
+        description: '完成负责人变更事务提交，并在同一链路内收敛新负责人成员关系、角色绑定与最小治理权限。',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -4380,7 +4380,7 @@ const buildOpenApiSpec = () => {
         },
         responses: {
           200: {
-            description: 'Owner-transfer request accepted for downstream orchestration.',
+            description: 'Owner-transfer request accepted with takeover transaction committed.',
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/PlatformOrgOwnerTransferResponse' }

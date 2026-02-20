@@ -47,6 +47,8 @@ const createHarness = ({
     old_owner_user_id: 'owner-user-current',
     new_owner_user_id: 'owner-user-next'
   }),
+  executeOwnerTransferTakeover = async (payload) =>
+    validateOwnerTransferRequest(payload),
   acquireOwnerTransferLock = null,
   releaseOwnerTransferLock = null,
   recordIdempotencyEvent = async () => {},
@@ -73,9 +75,11 @@ const createHarness = ({
       statusStoreCalls.push(payload);
       return updateOrganizationStatus(payload);
     },
-    validateOwnerTransferRequest: async (payload) => {
+    validateOwnerTransferRequest: async (payload) =>
+      validateOwnerTransferRequest(payload),
+    executeOwnerTransferTakeover: async (payload) => {
       ownerTransferCalls.push(payload);
-      return validateOwnerTransferRequest(payload);
+      return executeOwnerTransferTakeover(payload);
     },
     acquireOwnerTransferLock: async (payload = {}) => {
       if (typeof acquireOwnerTransferLock === 'function') {
@@ -149,6 +153,48 @@ test('createPlatformOrgHandlers fails fast when platform org service capability 
     () => createPlatformOrgHandlers({}),
     /requires a platformOrgService with createOrg/
   );
+});
+
+test('platformOrgService owner transfer falls back to in-process lock when authService lock backend methods are not paired', async () => {
+  const externalReleaseCalls = [];
+  const service = createPlatformOrgService({
+    authService: {
+      authorizeRoute: async () => ({
+        user_id: 'platform-operator',
+        session_id: 'platform-session'
+      }),
+      executeOwnerTransferTakeover: async ({ requestId, orgId }) => ({
+        org_id: orgId,
+        old_owner_user_id: `old-owner-${requestId}`,
+        new_owner_user_id: `new-owner-${requestId}`
+      }),
+      releaseOwnerTransferLock: async (payload = {}) => {
+        externalReleaseCalls.push(payload);
+        return true;
+      }
+    }
+  });
+
+  const first = await service.ownerTransfer({
+    requestId: 'req-platform-org-owner-transfer-lock-backend-unpaired-1',
+    accessToken: 'Bearer fake-access-token',
+    payload: {
+      org_id: 'org-owner-transfer-lock-backend-unpaired',
+      new_owner_phone: '13800000063'
+    }
+  });
+  const second = await service.ownerTransfer({
+    requestId: 'req-platform-org-owner-transfer-lock-backend-unpaired-2',
+    accessToken: 'Bearer fake-access-token',
+    payload: {
+      org_id: 'org-owner-transfer-lock-backend-unpaired',
+      new_owner_phone: '13800000064'
+    }
+  });
+
+  assert.equal(first.result_status, 'accepted');
+  assert.equal(second.result_status, 'accepted');
+  assert.equal(externalReleaseCalls.length, 0);
 });
 
 test('POST /platform/orgs rejects missing initial_owner_phone with standard problem details', async () => {
@@ -1593,6 +1639,7 @@ test('POST /platform/orgs/owner-transfer rejects invalid payload with standard p
   assert.equal(harness.ownerTransferCalls.length, 0);
   const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
   assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.upstream_error_code, 'ORG-400-INVALID-PAYLOAD');
 });
 
 test('POST /platform/orgs/owner-transfer rejects reason with leading or trailing whitespace', async () => {
@@ -1832,6 +1879,53 @@ test('POST /platform/orgs/owner-transfer maps unexpected validation dependency f
   assert.equal(payload.new_owner_user_id, null);
   assert.equal(payload.result_status, 'rejected');
   assert.equal(payload.retryable, true);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(lastAuditEvent.retryable, true);
+  assert.equal(lastAuditEvent.upstream_error_code, 'unknown');
+});
+
+test('POST /platform/orgs/owner-transfer fails closed when takeover dependency returns malformed payload', async () => {
+  const harness = createHarness({
+    executeOwnerTransferTakeover: async ({ orgId }) => ({
+      org_id: orgId
+    })
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-takeover-malformed-result',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-takeover-malformed-result',
+      new_owner_phone: '13800000094'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-takeover-malformed-result');
+  assert.equal(payload.org_id, 'org-owner-transfer-takeover-malformed-result');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'rejected');
+  assert.equal(payload.retryable, true);
+  const rejectedAuditEvents = harness.platformOrgService._internals.auditTrail.filter(
+    (event) =>
+      event.request_id === 'req-platform-org-owner-transfer-takeover-malformed-result'
+      && event.type === 'org.owner_transfer.rejected'
+  );
+  assert.equal(rejectedAuditEvents.length, 1);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(lastAuditEvent.retryable, true);
+  assert.equal(lastAuditEvent.upstream_error_code, 'ORG-OWNER-TRANSFER-TAKEOVER-RESULT-INVALID');
 });
 
 test('POST /platform/orgs/owner-transfer maps disabled candidate owner to ORG-409-NEW-OWNER-INACTIVE', async () => {
@@ -1955,6 +2049,40 @@ test('POST /platform/orgs/owner-transfer returns ORG-409-OWNER-TRANSFER-CONFLICT
   const conflictPayload = JSON.parse(conflictRoute.body);
   assert.equal(conflictPayload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
   assert.equal(conflictPayload.retryable, true);
+});
+
+test('POST /platform/orgs/owner-transfer returns conflict contract when lock backend reports already-held via false', async () => {
+  const harness = createHarness({
+    acquireOwnerTransferLock: async () => false
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/owner-transfer',
+    method: 'POST',
+    requestId: 'req-platform-org-owner-transfer-lock-false-conflict',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-owner-transfer-lock-false-conflict',
+      new_owner_phone: '13800000065'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 409);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-org-owner-transfer-lock-false-conflict');
+  assert.equal(payload.org_id, 'org-owner-transfer-lock-false-conflict');
+  assert.equal(payload.old_owner_user_id, null);
+  assert.equal(payload.new_owner_user_id, null);
+  assert.equal(payload.result_status, 'conflict');
+  assert.equal(payload.retryable, true);
+  assert.equal(harness.ownerTransferCalls.length, 0);
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.owner_transfer.conflict');
+  assert.equal(lastAuditEvent.error_code, 'ORG-409-OWNER-TRANSFER-CONFLICT');
+  assert.equal(lastAuditEvent.upstream_error_code, 'AUTH-409-OWNER-TRANSFER-CONFLICT');
 });
 
 test('POST /platform/orgs/owner-transfer maps lock dependency unavailable to ORG-503 with stable transfer contract fields', async () => {

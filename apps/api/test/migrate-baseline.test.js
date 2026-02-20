@@ -378,6 +378,49 @@ test('0016 down migration drops tenant member profile columns', () => {
   assert.match(sql, /DROP COLUMN IF EXISTS display_name/i);
 });
 
+test('0017 migration migrates legacy tenant_owner bindings to tenant-scoped takeover role ids and cleans stale legacy rows', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0017_owner_transfer_takeover_role_cleanup.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP TEMPORARY TABLE IF EXISTS tmp_owner_takeover_legacy_membership_targets/i);
+  assert.match(sql, /DROP TEMPORARY TABLE IF EXISTS tmp_owner_takeover_legacy_tenants/i);
+  assert.match(sql, /DROP TEMPORARY TABLE IF EXISTS tmp_owner_takeover_legacy_memberships/i);
+  assert.match(sql, /tmp_owner_takeover_legacy_memberships/i);
+  assert.match(sql, /tmp_owner_takeover_legacy_tenants/i);
+  assert.match(sql, /CONCAT\('tenant_owner__', SUBSTRING\(SHA2\(legacy\.tenant_id, 256\), 1, 24\)\)/i);
+  assert.match(sql, /SIGNAL SQLSTATE '45000'/i);
+  assert.match(sql, /owner_takeover_tenant_code_collision_count/i);
+  assert.match(sql, /tenant code collision detected/i);
+  assert.match(sql, /INSERT INTO platform_role_catalog/i);
+  assert.match(sql, /INSERT IGNORE INTO tenant_role_permission_grants/i);
+  assert.match(sql, /LOWER\(TRIM\(permission_code\)\) IN/i);
+  assert.match(sql, /tenant\.billing\.view/i);
+  assert.match(sql, /tenant\.billing\.operate/i);
+  assert.match(sql, /INSERT IGNORE INTO auth_tenant_membership_roles/i);
+  assert.match(sql, /DELETE mr\s+FROM auth_tenant_membership_roles/i);
+  assert.match(sql, /UPDATE auth_user_tenants ut/i);
+  assert.match(sql, /DELETE FROM platform_role_catalog/i);
+  assert.match(sql, /role_id = 'tenant_owner'/i);
+});
+
+test('0017 down migration is an explicit no-op rollback marker', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0017_owner_transfer_takeover_role_cleanup.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /rollback is intentionally no-op/i);
+  assert.match(sql, /SELECT/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

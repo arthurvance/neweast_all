@@ -3066,6 +3066,1064 @@ test('updateOrganizationStatus returns null when target org does not exist', asy
   assert.equal(updateCalled, false);
 });
 
+test('executeOwnerTransferTakeover atomically switches owner and converges tenant takeover bindings', async () => {
+  let membershipLookupCount = 0;
+  let roleCatalogInsertCalled = false;
+  let roleGrantInsertCount = 0;
+  let membershipInsertCalled = false;
+  let tenantDomainAccessUpsertCalled = false;
+  let ownerSwitchCalled = false;
+  let roleBindingInsertCount = 0;
+  let snapshotSyncCalled = false;
+
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id, status, owner_user_id')
+      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-org-success',
+        status: 'active',
+        owner_user_id: 'owner-transfer-store-old-owner'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT id, status')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-new-owner',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO platform_role_catalog')
+      && normalizedSql.includes('code_normalized')
+    ) {
+      roleCatalogInsertCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO tenant_role_permission_grants')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      roleGrantInsertCount += 1;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      membershipLookupCount += 1;
+      if (membershipLookupCount === 1) {
+        return [];
+      }
+      return [{
+        membership_id: 'membership-owner-transfer-store-new-owner',
+        user_id: 'owner-transfer-store-new-owner',
+        tenant_id: 'owner-transfer-store-org-success',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_tenants')
+      && normalizedSql.includes("VALUES (?, ?, ?, ?, 'active'")
+    ) {
+      membershipInsertCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_domain_access (user_id, domain, status)')
+      && normalizedSql.includes("VALUES (?, 'tenant', 'active')")
+      && normalizedSql.includes('ON DUPLICATE KEY UPDATE')
+      && normalizedSql.includes("WHEN status IN ('active', 'enabled') THEN status")
+    ) {
+      tenantDomainAccessUpsertCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE orgs')
+      && normalizedSql.includes('SET owner_user_id = ?')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+    ) {
+      ownerSwitchCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      roleBindingInsertCount += 1;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-owner-transfer-store-new-owner',
+        user_id: 'owner-transfer-store-new-owner',
+        tenant_id: 'owner-transfer-store-org-success',
+        status: 'active',
+        can_view_member_admin: 0,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        status: 'active',
+        scope: 'tenant',
+        tenant_id: 'owner-transfer-store-org-success'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        {
+          role_id: 'tenant_owner',
+          permission_code: 'tenant.member_admin.view'
+        },
+        {
+          role_id: 'tenant_owner',
+          permission_code: 'tenant.member_admin.operate'
+        }
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      snapshotSyncCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_sessions')
+      && normalizedSql.includes("entry_domain = 'tenant'")
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('UPDATE refresh_tokens')
+      && normalizedSql.includes('session_id IN')
+      && normalizedSql.includes('entry_domain = \'tenant\'')
+    ) {
+      return { affectedRows: 0 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.executeOwnerTransferTakeover({
+    requestId: 'req-owner-transfer-store-success',
+    orgId: 'owner-transfer-store-org-success',
+    oldOwnerUserId: 'owner-transfer-store-old-owner',
+    newOwnerUserId: 'owner-transfer-store-new-owner',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交',
+    takeoverRoleId: 'tenant_owner',
+    takeoverRoleCode: 'TENANT_OWNER',
+    takeoverRoleName: '组织负责人',
+    requiredPermissionCodes: [
+      'tenant.member_admin.view',
+      'tenant.member_admin.operate'
+    ]
+  });
+
+  assert.deepEqual(result, {
+    org_id: 'owner-transfer-store-org-success',
+    old_owner_user_id: 'owner-transfer-store-old-owner',
+    new_owner_user_id: 'owner-transfer-store-new-owner',
+    membership_id: 'membership-owner-transfer-store-new-owner',
+    role_ids: ['tenant_owner'],
+    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view']
+  });
+  assert.equal(roleCatalogInsertCalled, true);
+  assert.equal(roleGrantInsertCount, 2);
+  assert.equal(membershipInsertCalled, true);
+  assert.equal(tenantDomainAccessUpsertCalled, true);
+  assert.equal(ownerSwitchCalled, true);
+  assert.equal(roleBindingInsertCount, 1);
+  assert.equal(snapshotSyncCalled, true);
+});
+
+test('executeOwnerTransferTakeover archives full membership snapshot when rejoining a left membership', async () => {
+  let membershipLookupCount = 0;
+  let resolvedMembershipId = null;
+  let historyInsertParams = null;
+
+  const store = createStore(async (sql, params = []) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id, status, owner_user_id')
+      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-left-rejoin',
+        status: 'active',
+        owner_user_id: 'owner-transfer-store-left-rejoin-old-owner'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT id, status')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-left-rejoin-new-owner',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        tenant_id: 'owner-transfer-store-left-rejoin',
+        code: 'TENANT_OWNER',
+        status: 'active',
+        scope: 'tenant'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        { permission_code: 'tenant.member_admin.view' },
+        { permission_code: 'tenant.member_admin.operate' }
+      ];
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      membershipLookupCount += 1;
+      if (membershipLookupCount === 1) {
+        return [{
+          membership_id: 'membership-owner-transfer-store-left-rejoin-old',
+          user_id: 'owner-transfer-store-left-rejoin-new-owner',
+          tenant_id: 'owner-transfer-store-left-rejoin',
+          status: 'left',
+          tenant_name: '历史组织',
+          can_view_member_admin: 1,
+          can_operate_member_admin: 0,
+          can_view_billing: 1,
+          can_operate_billing: 0,
+          joined_at: '2025-01-01T00:00:00.000Z',
+          left_at: '2025-01-31T00:00:00.000Z'
+        }];
+      }
+      return [{
+        membership_id: resolvedMembershipId || 'membership-owner-transfer-store-left-rejoin-new',
+        user_id: 'owner-transfer-store-left-rejoin-new-owner',
+        tenant_id: 'owner-transfer-store-left-rejoin',
+        status: 'active',
+        tenant_name: '历史组织',
+        can_view_member_admin: 0,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0,
+        joined_at: '2026-02-20T00:00:00.000Z',
+        left_at: null
+      }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_tenant_membership_history')
+      && normalizedSql.includes('archived_reason')
+    ) {
+      historyInsertParams = [...params];
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET membership_id = ?')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+    ) {
+      resolvedMembershipId = String(params?.[0] || '').trim();
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_domain_access (user_id, domain, status)')
+      && normalizedSql.includes("VALUES (?, 'tenant', 'active')")
+      && normalizedSql.includes('ON DUPLICATE KEY UPDATE')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE orgs')
+      && normalizedSql.includes('SET owner_user_id = ?')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: resolvedMembershipId,
+        user_id: 'owner-transfer-store-left-rejoin-new-owner',
+        tenant_id: 'owner-transfer-store-left-rejoin',
+        status: 'active',
+        can_view_member_admin: 0,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        status: 'active',
+        scope: 'tenant',
+        tenant_id: 'owner-transfer-store-left-rejoin'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        {
+          role_id: 'tenant_owner',
+          permission_code: 'tenant.member_admin.view'
+        },
+        {
+          role_id: 'tenant_owner',
+          permission_code: 'tenant.member_admin.operate'
+        }
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_sessions')
+      && normalizedSql.includes("entry_domain = 'tenant'")
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('UPDATE refresh_tokens')
+      && normalizedSql.includes('session_id IN')
+      && normalizedSql.includes('entry_domain = \'tenant\'')
+    ) {
+      return { affectedRows: 0 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await store.executeOwnerTransferTakeover({
+    requestId: 'req-owner-transfer-store-left-rejoin',
+    orgId: 'owner-transfer-store-left-rejoin',
+    oldOwnerUserId: 'owner-transfer-store-left-rejoin-old-owner',
+    newOwnerUserId: 'owner-transfer-store-left-rejoin-new-owner',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交',
+    takeoverRoleId: 'tenant_owner',
+    takeoverRoleCode: 'TENANT_OWNER',
+    takeoverRoleName: '组织负责人',
+    requiredPermissionCodes: [
+      'tenant.member_admin.view',
+      'tenant.member_admin.operate'
+    ]
+  });
+
+  assert.ok(Array.isArray(historyInsertParams));
+  assert.equal(historyInsertParams[0], 'membership-owner-transfer-store-left-rejoin-old');
+  assert.equal(historyInsertParams[1], 'owner-transfer-store-left-rejoin-new-owner');
+  assert.equal(historyInsertParams[2], 'owner-transfer-store-left-rejoin');
+  assert.equal(historyInsertParams[3], '历史组织');
+  assert.equal(historyInsertParams[4], 'left');
+  assert.equal(historyInsertParams[5], 1);
+  assert.equal(historyInsertParams[6], 0);
+  assert.equal(historyInsertParams[7], 1);
+  assert.equal(historyInsertParams[8], 0);
+  assert.equal(historyInsertParams[9], '2025-01-01T00:00:00.000Z');
+  assert.equal(historyInsertParams[10], '2025-01-31T00:00:00.000Z');
+  assert.equal(historyInsertParams[11], 'rejoin');
+  assert.equal(historyInsertParams[12], 'platform-role-facts-operator');
+});
+
+test('executeOwnerTransferTakeover rejects existing takeover role with mismatched role code', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id, status, owner_user_id')
+      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-role-code-invalid',
+        status: 'active',
+        owner_user_id: 'owner-transfer-store-role-code-old-owner'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT id, status')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-role-code-new-owner',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner__aaaaaaaaaaaaaaaaaaaaaaaa',
+        tenant_id: 'owner-transfer-store-role-code-invalid',
+        code: 'TENANT_BILLING_GUARD',
+        status: 'active',
+        scope: 'tenant'
+      }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-store-role-code-invalid',
+        orgId: 'owner-transfer-store-role-code-invalid',
+        oldOwnerUserId: 'owner-transfer-store-role-code-old-owner',
+        newOwnerUserId: 'owner-transfer-store-role-code-new-owner',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交',
+        takeoverRoleId: 'tenant_owner__aaaaaaaaaaaaaaaaaaaaaaaa',
+        takeoverRoleCode: 'TENANT_OWNER',
+        takeoverRoleName: '组织负责人',
+        requiredPermissionCodes: [
+          'tenant.member_admin.view',
+          'tenant.member_admin.operate'
+        ]
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_INVALID');
+      return true;
+    }
+  );
+});
+
+test('executeOwnerTransferTakeover rejects duplicate takeover role insert when role id cannot be resolved', async () => {
+  let roleLookupCount = 0;
+  const duplicateRoleInsertError = new Error(
+    'Duplicate entry for platform_role_catalog'
+  );
+  duplicateRoleInsertError.code = 'ER_DUP_ENTRY';
+  duplicateRoleInsertError.errno = 1062;
+
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id, status, owner_user_id')
+      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-role-unresolved',
+        status: 'active',
+        owner_user_id: 'owner-transfer-store-role-unresolved-old-owner'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT id, status')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-role-unresolved-new-owner',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      roleLookupCount += 1;
+      return [];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO platform_role_catalog')
+      && normalizedSql.includes('code_normalized')
+    ) {
+      throw duplicateRoleInsertError;
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-store-role-unresolved',
+        orgId: 'owner-transfer-store-role-unresolved',
+        oldOwnerUserId: 'owner-transfer-store-role-unresolved-old-owner',
+        newOwnerUserId: 'owner-transfer-store-role-unresolved-new-owner',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交',
+        takeoverRoleId: 'tenant_owner__bbbbbbbbbbbbbbbbbbbbbbbb',
+        takeoverRoleCode: 'TENANT_OWNER',
+        takeoverRoleName: '组织负责人',
+        requiredPermissionCodes: [
+          'tenant.member_admin.view',
+          'tenant.member_admin.operate'
+        ]
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_INVALID');
+      return true;
+    }
+  );
+  assert.equal(roleLookupCount, 2);
+});
+
+test('executeOwnerTransferTakeover resolves membership after duplicate membership insert race', async () => {
+  let membershipLookupCount = 0;
+  let membershipInsertAttemptCount = 0;
+  let ownerSwitchCalled = false;
+  let roleBindingInsertCount = 0;
+  let snapshotSyncCalled = false;
+  const duplicateMembershipInsertError = new Error(
+    'Duplicate entry for auth_user_tenants'
+  );
+  duplicateMembershipInsertError.code = 'ER_DUP_ENTRY';
+  duplicateMembershipInsertError.errno = 1062;
+
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id, status, owner_user_id')
+      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-membership-race',
+        status: 'active',
+        owner_user_id: 'owner-transfer-store-membership-race-old-owner'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT id, status')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-membership-race-new-owner',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO platform_role_catalog')
+      && normalizedSql.includes('code_normalized')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO tenant_role_permission_grants')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      membershipLookupCount += 1;
+      if (membershipLookupCount === 1) {
+        return [];
+      }
+      return [{
+        membership_id: 'membership-owner-transfer-store-membership-race',
+        user_id: 'owner-transfer-store-membership-race-new-owner',
+        tenant_id: 'owner-transfer-store-membership-race',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_tenants')
+      && normalizedSql.includes("VALUES (?, ?, ?, ?, 'active'")
+    ) {
+      membershipInsertAttemptCount += 1;
+      throw duplicateMembershipInsertError;
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_domain_access (user_id, domain, status)')
+      && normalizedSql.includes("VALUES (?, 'tenant', 'active')")
+      && normalizedSql.includes('ON DUPLICATE KEY UPDATE')
+      && normalizedSql.includes("WHEN status IN ('active', 'enabled') THEN status")
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE orgs')
+      && normalizedSql.includes('SET owner_user_id = ?')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+    ) {
+      ownerSwitchCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      roleBindingInsertCount += 1;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-owner-transfer-store-membership-race',
+        user_id: 'owner-transfer-store-membership-race-new-owner',
+        tenant_id: 'owner-transfer-store-membership-race',
+        status: 'active',
+        can_view_member_admin: 0,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        status: 'active',
+        scope: 'tenant',
+        tenant_id: 'owner-transfer-store-membership-race'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        {
+          role_id: 'tenant_owner',
+          permission_code: 'tenant.member_admin.view'
+        },
+        {
+          role_id: 'tenant_owner',
+          permission_code: 'tenant.member_admin.operate'
+        }
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      snapshotSyncCalled = true;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_sessions')
+      && normalizedSql.includes("entry_domain = 'tenant'")
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('UPDATE refresh_tokens')
+      && normalizedSql.includes('session_id IN')
+      && normalizedSql.includes('entry_domain = \'tenant\'')
+    ) {
+      return { affectedRows: 0 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.executeOwnerTransferTakeover({
+    requestId: 'req-owner-transfer-store-membership-race',
+    orgId: 'owner-transfer-store-membership-race',
+    oldOwnerUserId: 'owner-transfer-store-membership-race-old-owner',
+    newOwnerUserId: 'owner-transfer-store-membership-race-new-owner',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交',
+    takeoverRoleId: 'tenant_owner',
+    takeoverRoleCode: 'TENANT_OWNER',
+    takeoverRoleName: '组织负责人',
+    requiredPermissionCodes: [
+      'tenant.member_admin.view',
+      'tenant.member_admin.operate'
+    ]
+  });
+
+  assert.deepEqual(result, {
+    org_id: 'owner-transfer-store-membership-race',
+    old_owner_user_id: 'owner-transfer-store-membership-race-old-owner',
+    new_owner_user_id: 'owner-transfer-store-membership-race-new-owner',
+    membership_id: 'membership-owner-transfer-store-membership-race',
+    role_ids: ['tenant_owner'],
+    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view']
+  });
+  assert.equal(membershipInsertAttemptCount, 1);
+  assert.equal(membershipLookupCount, 2);
+  assert.equal(ownerSwitchCalled, true);
+  assert.equal(roleBindingInsertCount, 1);
+  assert.equal(snapshotSyncCalled, true);
+});
+
+test('executeOwnerTransferTakeover rejects malformed effective permission snapshot after sync', async () => {
+  let tenantDomainAccessUpsertCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT id, status, owner_user_id')
+      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-permission-invalid',
+        status: 'active',
+        owner_user_id: 'owner-transfer-store-permission-old-owner'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT id, status')
+      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        id: 'owner-transfer-store-permission-new-owner',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        tenant_id: 'owner-transfer-store-permission-invalid',
+        code: 'TENANT_OWNER',
+        status: 'active',
+        scope: 'tenant'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        permission_code: 'tenant.member_admin.view'
+      }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO tenant_role_permission_grants')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-owner-transfer-permission-invalid',
+        user_id: 'owner-transfer-store-permission-new-owner',
+        tenant_id: 'owner-transfer-store-permission-invalid',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_user_domain_access (user_id, domain, status)')
+      && normalizedSql.includes("VALUES (?, 'tenant', 'active')")
+      && normalizedSql.includes('ON DUPLICATE KEY UPDATE')
+      && normalizedSql.includes("WHEN status IN ('active', 'enabled') THEN status")
+    ) {
+      tenantDomainAccessUpsertCalled = true;
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('UPDATE orgs')
+      && normalizedSql.includes('SET owner_user_id = ?')
+      && normalizedSql.includes('WHERE BINARY id = ?')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (
+      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      && normalizedSql.includes('VALUES (?, ?, ?, ?)')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-owner-transfer-permission-invalid',
+        user_id: 'owner-transfer-store-permission-new-owner',
+        tenant_id: 'owner-transfer-store-permission-invalid',
+        status: 'active',
+        can_view_member_admin: 0,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        status: 'active',
+        scope: 'tenant',
+        tenant_id: 'owner-transfer-store-permission-invalid'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_owner',
+        permission_code: 'tenant.member_admin.view'
+      }];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_sessions')
+      && normalizedSql.includes("entry_domain = 'tenant'")
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('UPDATE refresh_tokens')
+      && normalizedSql.includes('session_id IN')
+      && normalizedSql.includes('entry_domain = \'tenant\'')
+    ) {
+      return { affectedRows: 0 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-store-permission-invalid',
+        orgId: 'owner-transfer-store-permission-invalid',
+        oldOwnerUserId: 'owner-transfer-store-permission-old-owner',
+        newOwnerUserId: 'owner-transfer-store-permission-new-owner',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交',
+        takeoverRoleId: 'tenant_owner',
+        takeoverRoleCode: 'TENANT_OWNER',
+        takeoverRoleName: '组织负责人',
+        requiredPermissionCodes: [
+          'tenant.member_admin.view',
+          'tenant.member_admin.operate'
+        ]
+      }),
+    (error) => {
+      assert.equal(
+        error?.code,
+        'ERR_OWNER_TRANSFER_TAKEOVER_PERMISSION_INSUFFICIENT'
+      );
+      return true;
+    }
+  );
+  assert.equal(tenantDomainAccessUpsertCalled, true);
+});
+
 test('updatePlatformUserStatus updates platform domain status and converges platform sessions only', async () => {
   let inTransactionCalls = 0;
   let updatePlatformDomainCalled = false;

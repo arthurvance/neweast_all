@@ -46,6 +46,11 @@ const tenantPermissionB = {
 };
 
 const createService = () => createAuthService({ seedUsers });
+const toOwnerTransferTakeoverRoleIdForOrg = (orgId) =>
+  `tenant_owner__${createHash('sha256')
+    .update(String(orgId || '').trim())
+    .digest('hex')
+    .slice(0, 24)}`;
 const TENANT_GRANT_SYNC_FAILURE_TENANT_ID = 'tenant-grant-sync-failure';
 const TENANT_GRANT_SYNC_FAILURE_ROLE_ID = 'tenant_grant_sync_failure_role';
 const TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID = 'tenant-grant-sync-operator';
@@ -7747,6 +7752,540 @@ test('validateOwnerTransferRequest returns normalized transfer context for activ
   });
 });
 
+test('executeOwnerTransferTakeover completes owner switch and takeover convergence with minimum tenant governance permissions', async () => {
+  const orgId = 'owner-transfer-org-execute-success';
+  const takeoverRoleId = toOwnerTransferTakeoverRoleIdForOrg(orgId);
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-execute-old-owner',
+        phone: '13835550210',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-execute-new-owner',
+        phone: '13835550211',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId,
+    orgName: '负责人变更执行闭环-成功路径',
+    ownerUserId: 'owner-transfer-execute-old-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await service._internals.authStore.createTenantMembershipForUser({
+    userId: 'owner-transfer-execute-old-owner',
+    tenantId: orgId,
+    tenantName: '负责人变更执行闭环-成功路径'
+  });
+  await service._internals.authStore.ensureTenantDomainAccessForUser(
+    'owner-transfer-execute-old-owner'
+  );
+  const oldMembership = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+    userId: 'owner-transfer-execute-old-owner',
+    tenantId: orgId
+  });
+  assert.ok(oldMembership);
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'owner_transfer_execute_old_role',
+    code: 'OWNER_TRANSFER_EXECUTE_OLD_ROLE',
+    name: '负责人变更旧负责人角色',
+    scope: 'tenant',
+    tenantId: orgId,
+    status: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+  await service.replaceTenantRolePermissionGrants({
+    requestId: 'req-owner-transfer-execute-old-role-grants',
+    tenantId: orgId,
+    roleId: 'owner_transfer_execute_old_role',
+    permissionCodes: ['tenant.member_admin.operate'],
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+  await service.replaceTenantMemberRoleBindings({
+    requestId: 'req-owner-transfer-execute-old-role-bindings',
+    tenantId: orgId,
+    membershipId: oldMembership.membership_id,
+    roleIds: ['owner_transfer_execute_old_role'],
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+
+  const oldPermissionBefore = await service._internals.authStore.findTenantPermissionByUserAndTenantId({
+    userId: 'owner-transfer-execute-old-owner',
+    tenantId: orgId
+  });
+  assert.equal(oldPermissionBefore.canViewMemberAdmin, true);
+  assert.equal(oldPermissionBefore.canOperateMemberAdmin, true);
+
+  const takeoverResult = await service.executeOwnerTransferTakeover({
+    requestId: 'req-owner-transfer-execute-success',
+    orgId,
+    newOwnerPhone: '13835550211',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交'
+  });
+
+  assert.deepEqual(takeoverResult, {
+    org_id: orgId,
+    old_owner_user_id: 'owner-transfer-execute-old-owner',
+    new_owner_user_id: 'owner-transfer-execute-new-owner'
+  });
+
+  const orgAfterTransfer = await service._internals.authStore.findOrganizationById({
+    orgId
+  });
+  assert.equal(
+    orgAfterTransfer.owner_user_id,
+    'owner-transfer-execute-new-owner'
+  );
+
+  const tenantOwnerRole = await service._internals.authStore.findPlatformRoleCatalogEntryByRoleId({
+    roleId: takeoverRoleId,
+    scope: 'tenant',
+    tenantId: orgId
+  });
+  assert.ok(tenantOwnerRole);
+  assert.equal(tenantOwnerRole.status, 'active');
+  const tenantOwnerRolePermissionCodes =
+    await service._internals.authStore.listTenantRolePermissionGrants({
+      roleId: takeoverRoleId
+    });
+  assert.ok(
+    tenantOwnerRolePermissionCodes.includes('tenant.member_admin.view')
+  );
+  assert.ok(
+    tenantOwnerRolePermissionCodes.includes('tenant.member_admin.operate')
+  );
+
+  const newMembership = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+    userId: 'owner-transfer-execute-new-owner',
+    tenantId: orgId
+  });
+  assert.ok(newMembership);
+  assert.equal(newMembership.status, 'active');
+  const newRoleBindings = await service._internals.authStore.listTenantMembershipRoleBindings({
+    membershipId: newMembership.membership_id,
+    tenantId: orgId
+  });
+  assert.ok(newRoleBindings.includes(takeoverRoleId));
+  const newPermission = await service._internals.authStore.findTenantPermissionByUserAndTenantId({
+    userId: 'owner-transfer-execute-new-owner',
+    tenantId: orgId
+  });
+  assert.equal(newPermission.canViewMemberAdmin, true);
+  assert.equal(newPermission.canOperateMemberAdmin, true);
+
+  const oldMembershipAfter = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+    userId: 'owner-transfer-execute-old-owner',
+    tenantId: orgId
+  });
+  assert.ok(oldMembershipAfter);
+  const oldPermissionAfter = await service._internals.authStore.findTenantPermissionByUserAndTenantId({
+    userId: 'owner-transfer-execute-old-owner',
+    tenantId: orgId
+  });
+  assert.equal(oldPermissionAfter.canViewMemberAdmin, true);
+  assert.equal(oldPermissionAfter.canOperateMemberAdmin, true);
+});
+
+test('executeOwnerTransferTakeover uses tenant-scoped takeover role ids so cross-org transfers do not collide', async () => {
+  const orgIdA = 'owner-transfer-role-scope-org-a';
+  const orgIdB = 'owner-transfer-role-scope-org-b';
+  const takeoverRoleIdA = toOwnerTransferTakeoverRoleIdForOrg(orgIdA);
+  const takeoverRoleIdB = toOwnerTransferTakeoverRoleIdForOrg(orgIdB);
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-role-scope-old-owner-a',
+        phone: '13835550220',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-role-scope-new-owner-a',
+        phone: '13835550221',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'owner-transfer-role-scope-old-owner-b',
+        phone: '13835550222',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant']
+      },
+      {
+        id: 'owner-transfer-role-scope-new-owner-b',
+        phone: '13835550223',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: orgIdA,
+    orgName: '负责人变更角色隔离-A',
+    ownerUserId: 'owner-transfer-role-scope-old-owner-a',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+  await service.createOrganizationWithOwner({
+    orgId: orgIdB,
+    orgName: '负责人变更角色隔离-B',
+    ownerUserId: 'owner-transfer-role-scope-old-owner-b',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await service.executeOwnerTransferTakeover({
+    requestId: 'req-owner-transfer-role-scope-a',
+    orgId: orgIdA,
+    newOwnerPhone: '13835550221',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交-A'
+  });
+  await service.executeOwnerTransferTakeover({
+    requestId: 'req-owner-transfer-role-scope-b',
+    orgId: orgIdB,
+    newOwnerPhone: '13835550223',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session',
+    reason: '治理责任移交-B'
+  });
+
+  assert.notEqual(takeoverRoleIdA, takeoverRoleIdB);
+
+  const roleA = await service._internals.authStore.findPlatformRoleCatalogEntryByRoleId({
+    roleId: takeoverRoleIdA,
+    scope: 'tenant',
+    tenantId: orgIdA
+  });
+  const roleB = await service._internals.authStore.findPlatformRoleCatalogEntryByRoleId({
+    roleId: takeoverRoleIdB,
+    scope: 'tenant',
+    tenantId: orgIdB
+  });
+  assert.ok(roleA);
+  assert.ok(roleB);
+
+  const membershipA = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+    userId: 'owner-transfer-role-scope-new-owner-a',
+    tenantId: orgIdA
+  });
+  const membershipB = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+    userId: 'owner-transfer-role-scope-new-owner-b',
+    tenantId: orgIdB
+  });
+  assert.ok(membershipA);
+  assert.ok(membershipB);
+  const roleBindingsA = await service._internals.authStore.listTenantMembershipRoleBindings({
+    membershipId: membershipA.membership_id,
+    tenantId: orgIdA
+  });
+  const roleBindingsB = await service._internals.authStore.listTenantMembershipRoleBindings({
+    membershipId: membershipB.membership_id,
+    tenantId: orgIdB
+  });
+  assert.ok(roleBindingsA.includes(takeoverRoleIdA));
+  assert.ok(roleBindingsB.includes(takeoverRoleIdB));
+});
+
+test('executeOwnerTransferTakeover fails closed when takeover dependency returns malformed payload', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-malformed-old-owner',
+        phone: '13835550212',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'owner-transfer-malformed-new-owner',
+        phone: '13835550213',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId: 'owner-transfer-org-malformed-result',
+    orgName: '负责人变更执行闭环-畸形回包',
+    ownerUserId: 'owner-transfer-malformed-old-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  service._internals.authStore.executeOwnerTransferTakeover = async () => ({
+    org_id: 'owner-transfer-org-malformed-result',
+    old_owner_user_id: 'owner-transfer-malformed-old-owner'
+  });
+
+  await assert.rejects(
+    () =>
+      service.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-malformed-result',
+        orgId: 'owner-transfer-org-malformed-result',
+        newOwnerPhone: '13835550213',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(
+        error.errorCode,
+        'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+      );
+      assert.equal(
+        error.extensions.degradation_reason,
+        'owner-transfer-takeover-result-invalid'
+      );
+      return true;
+    }
+  );
+});
+
+test('executeOwnerTransferTakeover fails closed when takeover role definition is poisoned with mismatched code', async () => {
+  const orgId = 'owner-transfer-org-role-invalid';
+  const takeoverRoleId = toOwnerTransferTakeoverRoleIdForOrg(orgId);
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-role-invalid-old-owner',
+        phone: '13835550216',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'owner-transfer-role-invalid-new-owner',
+        phone: '13835550217',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId,
+    orgName: '负责人变更执行闭环-角色定义异常',
+    ownerUserId: 'owner-transfer-role-invalid-old-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: takeoverRoleId,
+    code: 'TENANT_BILLING_GUARD',
+    name: '异常接管角色定义',
+    scope: 'tenant',
+    tenantId: orgId,
+    status: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+
+  await assert.rejects(
+    () =>
+      service.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-role-invalid-definition',
+        orgId,
+        newOwnerPhone: '13835550217',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(
+        error.errorCode,
+        'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+      );
+      assert.equal(
+        error.extensions.degradation_reason,
+        'owner-transfer-takeover-role-invalid'
+      );
+      return true;
+    }
+  );
+
+  const orgAfterFailure = await service._internals.authStore.findOrganizationById({
+    orgId
+  });
+  assert.equal(
+    orgAfterFailure.owner_user_id,
+    'owner-transfer-role-invalid-old-owner'
+  );
+});
+
+test('executeOwnerTransferTakeover fails closed when takeover role code is already occupied by another role id', async () => {
+  const orgId = 'owner-transfer-org-role-code-occupied';
+  const takeoverRoleId = toOwnerTransferTakeoverRoleIdForOrg(orgId);
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-role-code-occupied-old-owner',
+        phone: '13835550218',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'owner-transfer-role-code-occupied-new-owner',
+        phone: '13835550219',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ]
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId,
+    orgName: '负责人变更执行闭环-接管角色编码冲突',
+    ownerUserId: 'owner-transfer-role-code-occupied-old-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'owner_transfer_conflict_existing_role',
+    code: 'TENANT_OWNER',
+    name: '冲突接管角色定义',
+    scope: 'tenant',
+    tenantId: orgId,
+    status: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+
+  await assert.rejects(
+    () =>
+      service.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-role-code-occupied',
+        orgId,
+        newOwnerPhone: '13835550219',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(
+        error.errorCode,
+        'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+      );
+      assert.equal(
+        error.extensions.degradation_reason,
+        'owner-transfer-takeover-role-invalid'
+      );
+      return true;
+    }
+  );
+
+  const orgAfterFailure = await service._internals.authStore.findOrganizationById({
+    orgId
+  });
+  assert.equal(
+    orgAfterFailure.owner_user_id,
+    'owner-transfer-role-code-occupied-old-owner'
+  );
+  const takeoverRole = await service._internals.authStore.findPlatformRoleCatalogEntryByRoleId({
+    roleId: takeoverRoleId,
+    scope: 'tenant',
+    tenantId: orgId
+  });
+  assert.equal(takeoverRole, null);
+});
+
+test('executeOwnerTransferTakeover rolls back in-memory owner switch when takeover transaction fails mid-way', async () => {
+  const orgId = 'owner-transfer-org-memory-rollback';
+  const authStore = createInMemoryAuthStore({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'owner-transfer-memory-rollback-old-owner',
+        phone: '13835550214',
+        password: 'Passw0rd!',
+        status: 'active'
+      },
+      {
+        id: 'owner-transfer-memory-rollback-new-owner',
+        phone: '13835550215',
+        password: 'Passw0rd!',
+        status: 'active'
+      }
+    ],
+    hashPassword: (password) =>
+      createHash('sha256').update(String(password || '')).digest('hex'),
+    faultInjector: {
+      afterOwnerTransferTakeoverOwnerSwitch: () => {
+        throw new Error('injected-owner-transfer-takeover-midway-failure');
+      }
+    }
+  });
+  const service = createAuthService({
+    authStore,
+    otpStore: noOpOtpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  await service.createOrganizationWithOwner({
+    orgId,
+    orgName: '负责人变更执行闭环-回滚验证',
+    ownerUserId: 'owner-transfer-memory-rollback-old-owner',
+    operatorUserId: 'platform-role-facts-operator'
+  });
+
+  await assert.rejects(
+    () =>
+      service.executeOwnerTransferTakeover({
+        requestId: 'req-owner-transfer-memory-rollback',
+        orgId,
+        newOwnerPhone: '13835550215',
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session',
+        reason: '治理责任移交'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(
+        error.errorCode,
+        'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+      );
+      return true;
+    }
+  );
+
+  const orgAfterFailure = await authStore.findOrganizationById({ orgId });
+  assert.equal(
+    orgAfterFailure.owner_user_id,
+    'owner-transfer-memory-rollback-old-owner'
+  );
+  const newOwnerMembership = await authStore.findTenantMembershipByUserAndTenantId({
+    userId: 'owner-transfer-memory-rollback-new-owner',
+    tenantId: orgId
+  });
+  assert.equal(newOwnerMembership, null);
+});
+
 test('validateOwnerTransferRequest rejects orgId with leading or trailing whitespace', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -8427,6 +8966,43 @@ test('acquireOwnerTransferLock maps store errors to AUTH-503-OWNER-TRANSFER-LOCK
       assert.equal(error.extensions.retryable, true);
       return true;
     }
+  );
+});
+
+test('acquireOwnerTransferLock fails closed when authStore lock methods are not paired', async () => {
+  let acquireCalled = false;
+  const service = createAuthService({
+    allowInMemoryOtpStores: true,
+    authStore: {
+      acquireOwnerTransferLock: async () => {
+        acquireCalled = true;
+        return true;
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      service.acquireOwnerTransferLock({
+        orgId: 'owner-transfer-lock-unpaired-store-methods',
+        requestId: 'req-owner-transfer-lock-unpaired-store-methods',
+        operatorUserId: 'platform-role-facts-operator'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-OWNER-TRANSFER-LOCK-UNAVAILABLE');
+      assert.equal(error.extensions.retryable, true);
+      return true;
+    }
+  );
+
+  assert.equal(acquireCalled, false);
+  assert.equal(
+    await service.releaseOwnerTransferLock({
+      orgId: 'owner-transfer-lock-unpaired-store-methods'
+    }),
+    false
   );
 });
 

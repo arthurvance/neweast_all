@@ -1001,15 +1001,15 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/platform/orgs/owner-transfer'].post.summary,
-    'Submit organization owner-transfer request (entry + precheck only)'
+    'Submit organization owner-transfer request and complete takeover convergence'
   );
   assert.equal(
     payload.paths['/platform/orgs/owner-transfer'].post.description,
-    '仅交付发起入口与前置校验，不在本接口执行 owner 真正切换与自动接管。'
+    '完成负责人变更事务提交，并在同一链路内收敛新负责人成员关系、角色绑定与最小治理权限。'
   );
   assert.equal(
     payload.paths['/platform/orgs/owner-transfer'].post.responses['200'].description,
-    'Owner-transfer request accepted for downstream orchestration.'
+    'Owner-transfer request accepted with takeover transaction committed.'
   );
   assert.equal(
     payload.paths['/platform/users/status'].post.summary,
