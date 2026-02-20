@@ -3835,6 +3835,11 @@ const createMySqlAuthStore = ({
             }
 
             const previousStatus = normalizeOrgStatus(org.status);
+            let affectedMembershipCount = 0;
+            let affectedRoleCount = 0;
+            let affectedRoleBindingCount = 0;
+            let revokedSessionCount = 0;
+            let revokedRefreshTokenCount = 0;
             if (previousStatus !== normalizedNextStatus) {
               const updateResult = await tx.query(
                 `
@@ -3858,17 +3863,95 @@ const createMySqlAuthStore = ({
                   `,
                   [normalizedOrgId]
                 );
-                const affectedUserIds = new Set(
+                const affectedMembershipUserIds = new Set(
                   (Array.isArray(membershipRows) ? membershipRows : [])
                     .map((row) => String(row?.user_id || '').trim())
                     .filter((userId) => userId.length > 0)
+                );
+                const affectedUserIds = new Set(affectedMembershipUserIds);
+                await tx.query(
+                  `
+                    UPDATE memberships
+                    SET status = 'disabled',
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE org_id = ?
+                      AND status IN ('active', 'enabled')
+                  `,
+                  [normalizedOrgId]
+                );
+
+                const tenantMembershipRows = await tx.query(
+                  `
+                    SELECT membership_id, user_id, status
+                    FROM auth_user_tenants
+                    WHERE tenant_id = ?
+                    FOR UPDATE
+                  `,
+                  [normalizedOrgId]
+                );
+                const activeTenantMembershipUserIds = (Array.isArray(tenantMembershipRows)
+                  ? tenantMembershipRows
+                  : [])
+                  .filter((row) =>
+                    isActiveLikeStatus(
+                      normalizeTenantMembershipStatusForRead(row?.status)
+                    )
+                  )
+                  .map((row) => String(row?.user_id || '').trim())
+                  .filter((userId) => userId.length > 0);
+                for (const activeTenantMembershipUserId of activeTenantMembershipUserIds) {
+                  affectedMembershipUserIds.add(activeTenantMembershipUserId);
+                  affectedUserIds.add(activeTenantMembershipUserId);
+                }
+                await tx.query(
+                  `
+                    UPDATE auth_user_tenants
+                    SET status = 'disabled',
+                        can_view_member_admin = 0,
+                        can_operate_member_admin = 0,
+                        can_view_billing = 0,
+                        can_operate_billing = 0,
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE tenant_id = ?
+                      AND status IN ('active', 'enabled')
+                  `,
+                  [normalizedOrgId]
+                );
+                const disableTenantRolesResult = await tx.query(
+                  `
+                    UPDATE platform_role_catalog
+                    SET status = 'disabled',
+                        updated_by_user_id = ?,
+                        updated_at = CURRENT_TIMESTAMP(3)
+                    WHERE scope = 'tenant'
+                      AND tenant_id = ?
+                      AND status IN ('active', 'enabled')
+                  `,
+                  [normalizedOperatorUserId, normalizedOrgId]
+                );
+                const deleteTenantRoleBindingsResult = await tx.query(
+                  `
+                    DELETE amr
+                    FROM auth_tenant_membership_roles amr
+                    INNER JOIN auth_user_tenants ut
+                      ON ut.membership_id = amr.membership_id
+                    WHERE ut.tenant_id = ?
+                  `,
+                  [normalizedOrgId]
                 );
                 const ownerUserId = String(org.owner_user_id || '').trim();
                 if (ownerUserId.length > 0) {
                   affectedUserIds.add(ownerUserId);
                 }
+                affectedMembershipCount = affectedMembershipUserIds.size;
+                affectedRoleCount = Number(
+                  disableTenantRolesResult?.affectedRows || 0
+                );
+                affectedRoleBindingCount = Number(
+                  deleteTenantRoleBindingsResult?.affectedRows || 0
+                );
                 for (const affectedUserId of affectedUserIds) {
-                  await tx.query(
+                  const revokeSessionsResult = await tx.query(
                     `
                       UPDATE auth_sessions
                       SET status = 'revoked',
@@ -3876,11 +3959,15 @@ const createMySqlAuthStore = ({
                           updated_at = CURRENT_TIMESTAMP(3)
                       WHERE user_id = ?
                         AND entry_domain = 'tenant'
+                        AND active_tenant_id = ?
                         AND status = 'active'
                     `,
-                    ['org-status-changed', affectedUserId]
+                    ['org-status-changed', affectedUserId, normalizedOrgId]
                   );
-                  await tx.query(
+                  revokedSessionCount += Number(
+                    revokeSessionsResult?.affectedRows || 0
+                  );
+                  const revokeRefreshTokensResult = await tx.query(
                     `
                       UPDATE refresh_tokens
                       SET status = 'revoked',
@@ -3891,10 +3978,18 @@ const createMySqlAuthStore = ({
                           FROM auth_sessions
                           WHERE user_id = ?
                             AND entry_domain = 'tenant'
+                            AND active_tenant_id = ?
                         )
                     `,
-                    [affectedUserId]
+                    [affectedUserId, normalizedOrgId]
                   );
+                  revokedRefreshTokenCount += Number(
+                    revokeRefreshTokensResult?.affectedRows || 0
+                  );
+                  await removeTenantDomainAccessForUserTx({
+                    txClient: tx,
+                    userId: affectedUserId
+                  });
                 }
               }
             }
@@ -3902,7 +3997,12 @@ const createMySqlAuthStore = ({
             return {
               org_id: normalizedOrgId,
               previous_status: previousStatus,
-              current_status: normalizedNextStatus
+              current_status: normalizedNextStatus,
+              affected_membership_count: affectedMembershipCount,
+              affected_role_count: affectedRoleCount,
+              affected_role_binding_count: affectedRoleBindingCount,
+              revoked_session_count: revokedSessionCount,
+              revoked_refresh_token_count: revokedRefreshTokenCount
             };
           })
       }),

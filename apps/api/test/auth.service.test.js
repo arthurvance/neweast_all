@@ -7423,7 +7423,7 @@ test('in-memory createOrganizationWithOwner mirrors mysql data-too-long error fo
   );
 });
 
-test('updateOrganizationStatus disables tenant-domain access only and restores tenant access after re-enable', async () => {
+test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant access removed after re-enable', async () => {
   const service = createAuthService({
     seedUsers: [
       buildPlatformRoleFactsOperatorSeed(),
@@ -7493,8 +7493,20 @@ test('updateOrganizationStatus disables tenant-domain access only and restores t
   assert.deepEqual(disabled, {
     org_id: 'org-status-governance-1',
     previous_status: 'active',
-    current_status: 'disabled'
+    current_status: 'disabled',
+    affected_membership_count: 1,
+    affected_role_count: 0,
+    affected_role_binding_count: 0,
+    revoked_session_count: 1,
+    revoked_refresh_token_count: 1
   });
+  const disableAuditEvent = service._internals.auditTrail.at(-1);
+  assert.equal(disableAuditEvent.type, 'auth.org.status.updated');
+  assert.equal(disableAuditEvent.affected_membership_count, 1);
+  assert.equal(disableAuditEvent.affected_role_count, 0);
+  assert.equal(disableAuditEvent.affected_role_binding_count, 0);
+  assert.equal(disableAuditEvent.revoked_session_count, 1);
+  assert.equal(disableAuditEvent.revoked_refresh_token_count, 1);
 
   await assert.rejects(
     () =>
@@ -7561,16 +7573,29 @@ test('updateOrganizationStatus disables tenant-domain access only and restores t
   assert.deepEqual(reenabled, {
     org_id: 'org-status-governance-1',
     previous_status: 'disabled',
-    current_status: 'active'
+    current_status: 'active',
+    affected_membership_count: 0,
+    affected_role_count: 0,
+    affected_role_binding_count: 0,
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0
   });
 
-  const loginAfterEnable = await service.login({
-    requestId: 'req-org-status-login-enabled',
-    phone: '13835550121',
-    password: 'Passw0rd!',
-    entryDomain: 'tenant'
-  });
-  assert.equal(loginAfterEnable.active_tenant_id, 'org-status-governance-1');
+  await assert.rejects(
+    () =>
+      service.login({
+        requestId: 'req-org-status-login-enabled',
+        phone: '13835550121',
+        password: 'Passw0rd!',
+        entryDomain: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
 });
 
 test('in-memory tenant access is fail-closed when membership points to missing org', async () => {
@@ -7675,7 +7700,12 @@ test('updateOrganizationStatus treats same-status update as no-op and keeps exis
   assert.deepEqual(result, {
     org_id: 'org-status-governance-noop',
     previous_status: 'active',
-    current_status: 'active'
+    current_status: 'active',
+    affected_membership_count: 0,
+    affected_role_count: 0,
+    affected_role_binding_count: 0,
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0
   });
 
   const options = await service.tenantOptions({

@@ -2888,12 +2888,18 @@ test('releaseOwnerTransferLock uses mysql RELEASE_LOCK and returns release state
   assert.match(queryHistory[0].params[0], /^neweast:owner-transfer:[0-9a-f]{40}$/);
 });
 
-test('updateOrganizationStatus updates org status and converges active member tenant sessions only', async () => {
+test('updateOrganizationStatus cascades soft-delete state to memberships, tenant roles, role bindings, and tenant sessions', async () => {
   let inTransactionCalls = 0;
   const revokeTenantSessionParams = [];
   const revokeTenantRefreshParams = [];
+  const removeTenantDomainParams = [];
+  const disableTenantRolesParams = [];
   const orgSelectSql = [];
   const orgUpdateSql = [];
+  let updateMembershipCalled = false;
+  let updateTenantMembershipCalled = false;
+  let disableTenantRolesCalled = false;
+  let deleteTenantRoleBindingsCalled = false;
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -2922,20 +2928,84 @@ test('updateOrganizationStatus updates org status and converges active member te
               return [{ user_id: 'u-owner' }, { user_id: 'u-member' }];
             }
             if (
+              normalizedSql.includes('UPDATE memberships')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE org_id = ?')
+            ) {
+              updateMembershipCalled = true;
+              return { affectedRows: 2 };
+            }
+            if (
+              normalizedSql.includes('SELECT membership_id, user_id, status')
+              && normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('WHERE tenant_id = ?')
+            ) {
+              return [
+                {
+                  membership_id: 'membership-owner',
+                  user_id: 'u-owner',
+                  status: 'active'
+                },
+                {
+                  membership_id: 'membership-member',
+                  user_id: 'u-member',
+                  status: 'active'
+                }
+              ];
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE tenant_id = ?')
+            ) {
+              updateTenantMembershipCalled = true;
+              return { affectedRows: 2 };
+            }
+            if (
+              normalizedSql.includes('UPDATE platform_role_catalog')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('updated_by_user_id = ?')
+              && normalizedSql.includes("scope = 'tenant'")
+              && normalizedSql.includes('tenant_id = ?')
+            ) {
+              disableTenantRolesCalled = true;
+              disableTenantRolesParams.push(params);
+              return { affectedRows: 3 };
+            }
+            if (
+              normalizedSql.includes('DELETE amr')
+              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('INNER JOIN auth_user_tenants')
+              && normalizedSql.includes('ut.tenant_id = ?')
+            ) {
+              deleteTenantRoleBindingsCalled = true;
+              return { affectedRows: 4 };
+            }
+            if (
               normalizedSql.includes('UPDATE auth_sessions')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes("entry_domain = 'tenant'")
+              && normalizedSql.includes('active_tenant_id = ?')
             ) {
               revokeTenantSessionParams.push(params);
-              return { affectedRows: 1 };
+              return { affectedRows: params?.[1] === 'u-owner' ? 2 : 1 };
             }
             if (
               normalizedSql.includes('UPDATE refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes("entry_domain = 'tenant'")
+              && normalizedSql.includes('active_tenant_id = ?')
             ) {
               revokeTenantRefreshParams.push(params);
-              return { affectedRows: 1 };
+              return { affectedRows: params?.[0] === 'u-owner' ? 2 : 1 };
+            }
+            if (
+              normalizedSql.includes('DELETE FROM auth_user_domain_access')
+              && normalizedSql.includes("domain = 'tenant'")
+              && normalizedSql.includes('NOT EXISTS')
+            ) {
+              removeTenantDomainParams.push(params);
+              return { affectedRows: params?.[0] === 'u-member' ? 1 : 0 };
             }
             if (normalizedSql.includes('UPDATE users')) {
               assert.fail(`unexpected session version update query: ${normalizedSql}`);
@@ -2958,25 +3028,161 @@ test('updateOrganizationStatus updates org status and converges active member te
   assert.deepEqual(result, {
     org_id: 'org-status-1',
     previous_status: 'active',
-    current_status: 'disabled'
+    current_status: 'disabled',
+    affected_membership_count: 2,
+    affected_role_count: 3,
+    affected_role_binding_count: 4,
+    revoked_session_count: 3,
+    revoked_refresh_token_count: 3
   });
+  assert.equal(updateMembershipCalled, true);
+  assert.equal(updateTenantMembershipCalled, true);
+  assert.equal(disableTenantRolesCalled, true);
+  assert.deepEqual(disableTenantRolesParams, [['u-operator', 'org-status-1']]);
+  assert.equal(deleteTenantRoleBindingsCalled, true);
   assert.equal(revokeTenantSessionParams.length, 2);
   assert.deepEqual(
     revokeTenantSessionParams.map((params) => params?.[1]).sort(),
     ['u-member', 'u-owner']
+  );
+  assert.equal(
+    revokeTenantSessionParams.every((params) => params?.[2] === 'org-status-1'),
+    true
   );
   assert.equal(revokeTenantRefreshParams.length, 2);
   assert.deepEqual(
     revokeTenantRefreshParams.map((params) => params?.[0]).sort(),
     ['u-member', 'u-owner']
   );
+  assert.equal(
+    revokeTenantRefreshParams.every((params) => params?.[1] === 'org-status-1'),
+    true
+  );
+  assert.equal(removeTenantDomainParams.length, 2);
+  assert.deepEqual(
+    removeTenantDomainParams.map((params) => params?.[0]).sort(),
+    ['u-member', 'u-owner']
+  );
   assert.equal(orgSelectSql.some((sql) => sql.includes('WHERE BINARY id = ?')), true);
   assert.equal(orgUpdateSql.some((sql) => sql.includes('WHERE BINARY id = ?')), true);
+});
+
+test('updateOrganizationStatus does not count owner-only revocation target as affected membership', async () => {
+  const revokeTenantSessionUsers = [];
+  const revokeTenantRefreshUsers = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id, status, owner_user_id')
+              && normalizedSql.includes('FROM orgs')
+            ) {
+              return [{ id: 'org-status-owner-count', status: 'active', owner_user_id: 'u-owner' }];
+            }
+            if (normalizedSql.includes('UPDATE orgs')) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('SELECT DISTINCT user_id')
+              && normalizedSql.includes('FROM memberships')
+            ) {
+              return [{ user_id: 'u-member' }];
+            }
+            if (
+              normalizedSql.includes('UPDATE memberships')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('SELECT membership_id, user_id, status')
+              && normalizedSql.includes('FROM auth_user_tenants')
+            ) {
+              return [
+                {
+                  membership_id: 'membership-member',
+                  user_id: 'u-member',
+                  status: 'active'
+                }
+              ];
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE platform_role_catalog')
+              && normalizedSql.includes('updated_by_user_id = ?')
+            ) {
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('DELETE amr')
+              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+            ) {
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes("entry_domain = 'tenant'")
+            ) {
+              revokeTenantSessionUsers.push(params?.[1]);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes('active_tenant_id = ?')
+            ) {
+              revokeTenantRefreshUsers.push(params?.[0]);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('DELETE FROM auth_user_domain_access')
+              && normalizedSql.includes("domain = 'tenant'")
+            ) {
+              return { affectedRows: 0 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.updateOrganizationStatus({
+    orgId: 'org-status-owner-count',
+    nextStatus: 'disabled',
+    operatorUserId: 'u-operator'
+  });
+
+  assert.deepEqual(result, {
+    org_id: 'org-status-owner-count',
+    previous_status: 'active',
+    current_status: 'disabled',
+    affected_membership_count: 1,
+    affected_role_count: 0,
+    affected_role_binding_count: 0,
+    revoked_session_count: 2,
+    revoked_refresh_token_count: 2
+  });
+  assert.deepEqual(revokeTenantSessionUsers.sort(), ['u-member', 'u-owner']);
+  assert.deepEqual(revokeTenantRefreshUsers.sort(), ['u-member', 'u-owner']);
 });
 
 test('updateOrganizationStatus treats same-status change as no-op without session convergence', async () => {
   let updateOrgCalled = false;
   let readMembershipCalled = false;
+  let readTenantMembershipCalled = false;
+  let disableTenantRolesCalled = false;
+  let removeTenantDomainCalled = false;
   let convergeSessionCalled = false;
   const store = createMySqlAuthStore({
     dbClient: {
@@ -2999,6 +3205,21 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
             }
             if (normalizedSql.includes('FROM memberships')) {
               readMembershipCalled = true;
+              return [];
+            }
+            if (normalizedSql.includes('FROM auth_user_tenants')) {
+              readTenantMembershipCalled = true;
+              return [];
+            }
+            if (
+              normalizedSql.includes('UPDATE platform_role_catalog')
+              || normalizedSql.includes('DELETE amr')
+            ) {
+              disableTenantRolesCalled = true;
+              return [];
+            }
+            if (normalizedSql.includes('DELETE FROM auth_user_domain_access')) {
+              removeTenantDomainCalled = true;
               return [];
             }
             if (
@@ -3024,10 +3245,18 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
   assert.deepEqual(result, {
     org_id: 'org-status-noop',
     previous_status: 'disabled',
-    current_status: 'disabled'
+    current_status: 'disabled',
+    affected_membership_count: 0,
+    affected_role_count: 0,
+    affected_role_binding_count: 0,
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0
   });
   assert.equal(updateOrgCalled, false);
   assert.equal(readMembershipCalled, false);
+  assert.equal(readTenantMembershipCalled, false);
+  assert.equal(disableTenantRolesCalled, false);
+  assert.equal(removeTenantDomainCalled, false);
   assert.equal(convergeSessionCalled, false);
 });
 

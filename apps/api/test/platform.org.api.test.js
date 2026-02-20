@@ -40,7 +40,12 @@ const createHarness = ({
   updateOrganizationStatus = async ({ orgId, nextStatus }) => ({
     org_id: orgId,
     previous_status: nextStatus === 'disabled' ? 'active' : 'disabled',
-    current_status: nextStatus
+    current_status: nextStatus,
+    affected_membership_count: nextStatus === 'disabled' ? 2 : 0,
+    affected_role_count: nextStatus === 'disabled' ? 1 : 0,
+    affected_role_binding_count: nextStatus === 'disabled' ? 3 : 0,
+    revoked_session_count: nextStatus === 'disabled' ? 2 : 0,
+    revoked_refresh_token_count: nextStatus === 'disabled' ? 2 : 0
   }),
   validateOwnerTransferRequest = async ({ orgId }) => ({
     org_id: orgId,
@@ -1367,6 +1372,11 @@ test('POST /platform/orgs/status succeeds and records status update audit fields
   assert.equal(lastAuditEvent.org_id, 'org-status-success');
   assert.equal(lastAuditEvent.previous_status, 'active');
   assert.equal(lastAuditEvent.next_status, 'disabled');
+  assert.equal(lastAuditEvent.affected_membership_count, 2);
+  assert.equal(lastAuditEvent.affected_role_count, 1);
+  assert.equal(lastAuditEvent.affected_role_binding_count, 3);
+  assert.equal(lastAuditEvent.revoked_session_count, 2);
+  assert.equal(lastAuditEvent.revoked_refresh_token_count, 2);
 });
 
 test('POST /platform/orgs/status fails closed when dependency returns malformed status values', async () => {
@@ -1399,6 +1409,47 @@ test('POST /platform/orgs/status fails closed when dependency returns malformed 
   assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
   assert.equal(lastAuditEvent.upstream_error_code, 'ORG-STATUS-RESULT-INVALID');
   assert.equal(lastAuditEvent.previous_status, null);
+  assert.equal(lastAuditEvent.next_status, 'disabled');
+});
+
+test('POST /platform/orgs/status fails closed when dependency returns malformed cascade counts', async () => {
+  const harness = createHarness({
+    updateOrganizationStatus: async ({ orgId }) => ({
+      org_id: orgId,
+      previous_status: 'active',
+      current_status: 'disabled',
+      affected_membership_count: '2',
+      affected_role_count: 1,
+      affected_role_binding_count: 0,
+      revoked_session_count: 1,
+      revoked_refresh_token_count: 1
+    })
+  });
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs/status',
+    method: 'POST',
+    requestId: 'req-platform-org-status-malformed-cascade-count',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_id: 'org-status-malformed-count',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  const lastAuditEvent = harness.platformOrgService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'org.status.rejected');
+  assert.equal(lastAuditEvent.error_code, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(
+    lastAuditEvent.upstream_error_code,
+    'ORG-STATUS-CASCADE-COUNT-INVALID:affected_membership_count'
+  );
+  assert.equal(lastAuditEvent.previous_status, 'active');
   assert.equal(lastAuditEvent.next_status, 'disabled');
 });
 

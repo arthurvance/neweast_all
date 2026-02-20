@@ -18,6 +18,7 @@ const MAX_ORG_NAME_LENGTH = 128;
 const MAX_ORG_ID_LENGTH = 64;
 const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
+const MAX_ORG_STATUS_CASCADE_COUNT = 100000;
 const CREATE_ORG_ALLOWED_FIELDS = new Set(['org_name', 'initial_owner_phone']);
 const UPDATE_ORG_STATUS_ALLOWED_FIELDS = new Set(['org_id', 'status', 'reason']);
 const OWNER_TRANSFER_ALLOWED_FIELDS = new Set(['org_id', 'new_owner_phone', 'reason']);
@@ -544,6 +545,26 @@ const resolveRequestedOwnerTransferOrgId = (payload = {}) => {
     return null;
   }
   return normalizedOrgId;
+};
+
+const toNormalizedOrgStatusCascadeCount = ({
+  value,
+  field
+} = {}) => {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < 0
+  ) {
+    const error = new Error('org status cascade count invalid');
+    error.code = 'ORG-STATUS-CASCADE-COUNT-INVALID';
+    error.field = String(field || '').trim() || 'unknown';
+    throw error;
+  }
+  return Math.min(value, MAX_ORG_STATUS_CASCADE_COUNT);
 };
 
 const createPlatformOrgService = ({ authService } = {}) => {
@@ -1102,6 +1123,53 @@ const createPlatformOrgService = ({ authService } = {}) => {
       throw orgErrors.dependencyUnavailable();
     }
     const isNoOp = previousStatus === currentStatus;
+    let affectedMembershipCount;
+    let affectedRoleCount;
+    let affectedRoleBindingCount;
+    let revokedSessionCount;
+    let revokedRefreshTokenCount;
+    try {
+      affectedMembershipCount = toNormalizedOrgStatusCascadeCount({
+        value: statusUpdateResult.affected_membership_count
+          ?? statusUpdateResult.affectedMembershipCount,
+        field: 'affected_membership_count'
+      });
+      affectedRoleCount = toNormalizedOrgStatusCascadeCount({
+        value: statusUpdateResult.affected_role_count
+          ?? statusUpdateResult.affectedRoleCount,
+        field: 'affected_role_count'
+      });
+      affectedRoleBindingCount = toNormalizedOrgStatusCascadeCount({
+        value: statusUpdateResult.affected_role_binding_count
+          ?? statusUpdateResult.affectedRoleBindingCount,
+        field: 'affected_role_binding_count'
+      });
+      revokedSessionCount = toNormalizedOrgStatusCascadeCount({
+        value: statusUpdateResult.revoked_session_count
+          ?? statusUpdateResult.revokedSessionCount,
+        field: 'revoked_session_count'
+      });
+      revokedRefreshTokenCount = toNormalizedOrgStatusCascadeCount({
+        value: statusUpdateResult.revoked_refresh_token_count
+          ?? statusUpdateResult.revokedRefreshTokenCount,
+        field: 'revoked_refresh_token_count'
+      });
+    } catch (error) {
+      addAuditEvent({
+        type: 'org.status.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        orgId: parsedPayload.orgId,
+        detail: 'organization status dependency returned invalid cascade counts',
+        metadata: {
+          previous_status: previousStatus,
+          next_status: parsedPayload.nextStatus,
+          error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: `${String(error?.code || 'unknown').trim()}:${String(error?.field || 'unknown').trim()}`
+        }
+      });
+      throw orgErrors.dependencyUnavailable();
+    }
     addAuditEvent({
       type: 'org.status.updated',
       requestId: resolvedRequestId,
@@ -1112,7 +1180,12 @@ const createPlatformOrgService = ({ authService } = {}) => {
         : 'organization status updated',
       metadata: {
         previous_status: previousStatus,
-        next_status: currentStatus
+        next_status: currentStatus,
+        affected_membership_count: affectedMembershipCount,
+        affected_role_count: affectedRoleCount,
+        affected_role_binding_count: affectedRoleBindingCount,
+        revoked_session_count: revokedSessionCount,
+        revoked_refresh_token_count: revokedRefreshTokenCount
       }
     });
 

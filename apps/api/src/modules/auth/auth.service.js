@@ -26,6 +26,7 @@ const MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS = 100;
 const MAX_TENANT_NAME_LENGTH = 128;
 const MAX_OWNER_TRANSFER_ORG_ID_LENGTH = 64;
 const MAX_OWNER_TRANSFER_REASON_LENGTH = 256;
+const MAX_ORG_STATUS_CASCADE_COUNT = 100000;
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'tenant_owner__';
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
 const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'TENANT_OWNER';
@@ -4629,6 +4630,25 @@ const createAuthService = (options = {}) => {
     return value;
   };
 
+  const normalizeOrgStatusCascadeCountFromDependency = ({
+    value,
+    dependencyReason = 'org-status-cascade-count-invalid'
+  } = {}) => {
+    if (value === undefined || value === null) {
+      return 0;
+    }
+    if (
+      typeof value !== 'number'
+      || !Number.isInteger(value)
+      || value < 0
+    ) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: dependencyReason
+      });
+    }
+    return Math.min(value, MAX_ORG_STATUS_CASCADE_COUNT);
+  };
+
   const normalizeStoredRoleFactsForPermissionResync = (roleFacts = []) => {
     const normalizedStoredRoleFacts = [];
     for (const roleFact of Array.isArray(roleFacts) ? roleFacts : []) {
@@ -5736,6 +5756,46 @@ const createAuthService = (options = {}) => {
     if (!previousStatus || !currentStatus) {
       throw errors.invalidPayload();
     }
+    const affectedMembershipCount = normalizeOrgStatusCascadeCountFromDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'affectedMembershipCount',
+        'affected_membership_count'
+      ),
+      dependencyReason: 'org-status-cascade-affected-membership-count-invalid'
+    });
+    const affectedRoleCount = normalizeOrgStatusCascadeCountFromDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'affectedRoleCount',
+        'affected_role_count'
+      ),
+      dependencyReason: 'org-status-cascade-affected-role-count-invalid'
+    });
+    const affectedRoleBindingCount = normalizeOrgStatusCascadeCountFromDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'affectedRoleBindingCount',
+        'affected_role_binding_count'
+      ),
+      dependencyReason: 'org-status-cascade-affected-role-binding-count-invalid'
+    });
+    const revokedSessionCount = normalizeOrgStatusCascadeCountFromDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'revokedSessionCount',
+        'revoked_session_count'
+      ),
+      dependencyReason: 'org-status-cascade-revoked-session-count-invalid'
+    });
+    const revokedRefreshTokenCount = normalizeOrgStatusCascadeCountFromDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'revokedRefreshTokenCount',
+        'revoked_refresh_token_count'
+      ),
+      dependencyReason: 'org-status-cascade-revoked-refresh-token-count-invalid'
+    });
     if (previousStatus !== currentStatus) {
       invalidateAllAccessSessionCache();
     }
@@ -5751,14 +5811,24 @@ const createAuthService = (options = {}) => {
         org_id: normalizedOrgId,
         previous_status: previousStatus,
         current_status: currentStatus,
-        reason: normalizedReason
+        reason: normalizedReason,
+        affected_membership_count: affectedMembershipCount,
+        affected_role_count: affectedRoleCount,
+        affected_role_binding_count: affectedRoleBindingCount,
+        revoked_session_count: revokedSessionCount,
+        revoked_refresh_token_count: revokedRefreshTokenCount
       }
     });
 
     return {
       org_id: normalizedOrgId,
       previous_status: previousStatus,
-      current_status: currentStatus
+      current_status: currentStatus,
+      affected_membership_count: affectedMembershipCount,
+      affected_role_count: affectedRoleCount,
+      affected_role_binding_count: affectedRoleBindingCount,
+      revoked_session_count: revokedSessionCount,
+      revoked_refresh_token_count: revokedRefreshTokenCount
     };
   };
 

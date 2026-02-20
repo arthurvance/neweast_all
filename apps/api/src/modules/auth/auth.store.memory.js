@@ -944,10 +944,16 @@ const createInMemoryAuthStore = ({
       ? null
       : String(activeTenantId).trim() || null;
     if (!normalizedUserId) {
-      return;
+      return {
+        revokedSessionCount: 0,
+        revokedRefreshTokenCount: 0
+      };
     }
     if (!normalizedEntryDomain) {
-      return;
+      return {
+        revokedSessionCount: 0,
+        revokedRefreshTokenCount: 0
+      };
     }
 
     const revokedSessionIds = new Set();
@@ -969,9 +975,13 @@ const createInMemoryAuthStore = ({
     }
 
     if (revokedSessionIds.size === 0) {
-      return;
+      return {
+        revokedSessionCount: 0,
+        revokedRefreshTokenCount: 0
+      };
     }
 
+    let revokedRefreshTokenCount = 0;
     for (const refreshRecord of refreshTokensByHash.values()) {
       if (
         refreshRecord.status === 'active'
@@ -979,8 +989,13 @@ const createInMemoryAuthStore = ({
       ) {
         refreshRecord.status = 'revoked';
         refreshRecord.updatedAt = Date.now();
+        revokedRefreshTokenCount += 1;
       }
     }
+    return {
+      revokedSessionCount: revokedSessionIds.size,
+      revokedRefreshTokenCount
+    };
   };
 
   const revokePlatformSessionsForUser = ({
@@ -1815,30 +1830,119 @@ const createInMemoryAuthStore = ({
       }
 
       const previousStatus = normalizeOrgStatus(existingOrg.status);
+      let affectedMembershipCount = 0;
+      let affectedRoleCount = 0;
+      let affectedRoleBindingCount = 0;
+      let revokedSessionCount = 0;
+      let revokedRefreshTokenCount = 0;
       if (previousStatus !== normalizedNextStatus) {
         existingOrg.status = normalizedNextStatus;
         existingOrg.updatedAt = Date.now();
         orgsById.set(normalizedOrgId, existingOrg);
 
         if (normalizedNextStatus === 'disabled') {
+          const affectedMembershipUserIds = new Set();
           const affectedUserIds = new Set();
           const orgMemberships = membershipsByOrgId.get(normalizedOrgId) || [];
           for (const membership of orgMemberships) {
             const membershipUserId = String(membership?.userId || '').trim();
-            if (!membershipUserId || !isActiveLikeStatus(membership?.status)) {
+            if (
+              !membershipUserId
+              || !isActiveLikeStatus(normalizeOrgStatus(membership?.status))
+            ) {
               continue;
             }
+            membership.status = 'disabled';
+            affectedMembershipUserIds.add(membershipUserId);
             affectedUserIds.add(membershipUserId);
           }
+
+          const tenantMembershipIdsByOrg = new Set();
+          for (const [userId, tenantMemberships] of tenantsByUserId.entries()) {
+            const normalizedUserId = String(userId || '').trim();
+            let hasMutation = false;
+            for (const membership of Array.isArray(tenantMemberships) ? tenantMemberships : []) {
+              const membershipTenantId = String(membership?.tenantId || '').trim();
+              if (membershipTenantId !== normalizedOrgId) {
+                continue;
+              }
+              const membershipId = String(membership?.membershipId || '').trim();
+              if (membershipId) {
+                tenantMembershipIdsByOrg.add(membershipId);
+              }
+              if (
+                !isActiveLikeStatus(
+                  normalizeTenantMembershipStatusForRead(membership?.status)
+                )
+              ) {
+                continue;
+              }
+              membership.status = 'disabled';
+              membership.permission = buildEmptyTenantPermission(
+                toTenantMembershipScopeLabel(membership)
+              );
+              affectedMembershipUserIds.add(normalizedUserId);
+              affectedUserIds.add(normalizedUserId);
+              hasMutation = true;
+            }
+            if (hasMutation) {
+              tenantsByUserId.set(normalizedUserId, tenantMemberships);
+            }
+          }
+
+          for (const membershipId of tenantMembershipIdsByOrg) {
+            const existingRoleIds = tenantMembershipRolesByMembershipId.get(membershipId) || [];
+            affectedRoleBindingCount += existingRoleIds.length;
+            tenantMembershipRolesByMembershipId.delete(membershipId);
+          }
+
+          for (const [roleId, roleCatalogEntry] of platformRoleCatalogById.entries()) {
+            if (
+              normalizePlatformRoleCatalogScope(roleCatalogEntry?.scope) !== 'tenant'
+              || normalizePlatformRoleCatalogTenantId(roleCatalogEntry?.tenantId)
+                !== normalizedOrgId
+            ) {
+              continue;
+            }
+            if (
+              !isActiveLikeStatus(
+                normalizePlatformRoleCatalogStatus(roleCatalogEntry?.status)
+              )
+            ) {
+              continue;
+            }
+            roleCatalogEntry.status = 'disabled';
+            roleCatalogEntry.updatedByUserId = normalizedOperatorUserId;
+            roleCatalogEntry.updatedAt = new Date().toISOString();
+            platformRoleCatalogById.set(roleId, roleCatalogEntry);
+            affectedRoleCount += 1;
+          }
+
           const ownerUserId = String(existingOrg.ownerUserId || '').trim();
           if (ownerUserId) {
             affectedUserIds.add(ownerUserId);
           }
+
+          affectedMembershipCount = affectedMembershipUserIds.size;
           for (const userId of affectedUserIds) {
-            revokeTenantSessionsForUser({
+            const revoked = revokeTenantSessionsForUser({
               userId,
-              reason: 'org-status-changed'
+              reason: 'org-status-changed',
+              activeTenantId: normalizedOrgId
             });
+            revokedSessionCount += Number(revoked?.revokedSessionCount || 0);
+            revokedRefreshTokenCount += Number(
+              revoked?.revokedRefreshTokenCount || 0
+            );
+
+            const userDomains = domainsByUserId.get(userId) || new Set();
+            const hasAnyActiveMembership = (tenantsByUserId.get(userId) || []).some(
+              (membership) => isTenantMembershipActiveForAuth(membership)
+            );
+            if (!hasAnyActiveMembership) {
+              userDomains.delete('tenant');
+            }
+            domainsByUserId.set(userId, userDomains);
           }
         }
       }
@@ -1846,7 +1950,12 @@ const createInMemoryAuthStore = ({
       return {
         org_id: normalizedOrgId,
         previous_status: previousStatus,
-        current_status: normalizedNextStatus
+        current_status: normalizedNextStatus,
+        affected_membership_count: affectedMembershipCount,
+        affected_role_count: affectedRoleCount,
+        affected_role_binding_count: affectedRoleBindingCount,
+        revoked_session_count: revokedSessionCount,
+        revoked_refresh_token_count: revokedRefreshTokenCount
       };
     },
 
