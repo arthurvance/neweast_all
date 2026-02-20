@@ -12,6 +12,7 @@ const {
   AuthProblemError,
   REFRESH_TTL_SECONDS
 } = require('../src/modules/auth/auth.service');
+const { createInMemoryAuthStore } = require('../src/modules/auth/auth.store.memory');
 
 const seedUsers = [
   {
@@ -45,6 +46,146 @@ const tenantPermissionB = {
 };
 
 const createService = () => createAuthService({ seedUsers });
+const TENANT_GRANT_SYNC_FAILURE_TENANT_ID = 'tenant-grant-sync-failure';
+const TENANT_GRANT_SYNC_FAILURE_ROLE_ID = 'tenant_grant_sync_failure_role';
+const TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID = 'tenant-grant-sync-operator';
+const TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_A = 'membership-sync-target-a';
+const TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_B = 'membership-sync-target-b';
+const TENANT_GRANT_SYNC_FAILURE_USER_A = 'tenant-sync-target-a';
+const TENANT_GRANT_SYNC_FAILURE_USER_B = 'tenant-sync-target-b';
+const createTenantGrantSyncFailureService = () => {
+  const authStore = createInMemoryAuthStore({
+    seedUsers: [
+      ...seedUsers,
+      {
+        id: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+        phone: '13817770101',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-sync-operator',
+            tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+            tenantName: 'Tenant Grant Sync Failure',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: TENANT_GRANT_SYNC_FAILURE_USER_A,
+        phone: '13817770102',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_A,
+            tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+            tenantName: 'Tenant Grant Sync Failure',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      },
+      {
+        id: TENANT_GRANT_SYNC_FAILURE_USER_B,
+        phone: '13817770103',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_B,
+            tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+            tenantName: 'Tenant Grant Sync Failure',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ],
+    hashPassword: (password) =>
+      createHash('sha256').update(String(password || '')).digest('hex'),
+    faultInjector: {
+      beforeTenantRolePermissionSnapshotSync: ({ membershipId }) => {
+        if (membershipId === TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_B) {
+          const error = new Error('injected-tenant-role-permission-sync-failure');
+          error.code = 'ERR_TENANT_ROLE_PERMISSION_SYNC_FAILED';
+          error.syncReason = 'injected-mid-sync';
+          throw error;
+        }
+      }
+    }
+  });
+  const service = createAuthService({
+    authStore,
+    otpStore: noOpOtpStore,
+    rateLimitStore: passRateLimitStore
+  });
+  return {
+    service,
+    authStore
+  };
+};
+const setupTenantGrantSyncFailureScenario = async () => {
+  const { service, authStore } = createTenantGrantSyncFailureService();
+  await service.createPlatformRoleCatalogEntry({
+    roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
+    code: 'TENANT_GRANT_SYNC_FAILURE_ROLE',
+    name: 'Tenant Grant Sync Failure Role',
+    status: 'active',
+    scope: 'tenant',
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+    isSystem: false,
+    operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+    operatorSessionId: 'tenant-grant-sync-operator-session'
+  });
+  await service.replaceTenantRolePermissionGrants({
+    requestId: 'req-tenant-grant-sync-prime-grants',
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+    roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
+    permissionCodes: ['tenant.member_admin.view'],
+    operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+    operatorSessionId: 'tenant-grant-sync-operator-session'
+  });
+  await service.replaceTenantMemberRoleBindings({
+    requestId: 'req-tenant-grant-sync-prime-bindings-a',
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+    membershipId: TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_A,
+    roleIds: [TENANT_GRANT_SYNC_FAILURE_ROLE_ID],
+    operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+    operatorSessionId: 'tenant-grant-sync-operator-session'
+  });
+  await service.replaceTenantMemberRoleBindings({
+    requestId: 'req-tenant-grant-sync-prime-bindings-b',
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+    membershipId: TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_B,
+    roleIds: [TENANT_GRANT_SYNC_FAILURE_ROLE_ID],
+    operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+    operatorSessionId: 'tenant-grant-sync-operator-session'
+  });
+  return {
+    service,
+    authStore
+  };
+};
 const noOpOtpStore = {
   upsertOtp: async () => ({ sent_at_ms: Date.now() }),
   getSentAt: async () => null,
@@ -3178,6 +3319,84 @@ test('replacePlatformRolePermissionGrants maps invalid stored role facts to snap
   }
 });
 
+test('replacePlatformRolePermissionGrants accepts snake_case stored role_id when camelCase shadow key is undefined', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-role-grants-shadow-role-id-target',
+        phone: '13810000437',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'role_alpha',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'role_alpha',
+    code: 'ROLE_ALPHA_SHADOW_ROLE_ID',
+    name: 'Role Alpha Shadow Role Id'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListUserIdsByPlatformRoleId = authStore.listUserIdsByPlatformRoleId;
+  const originalListPlatformRoleFactsByUserId = authStore.listPlatformRoleFactsByUserId;
+  const originalReplacePlatformRolesAndSyncSnapshot =
+    authStore.replacePlatformRolesAndSyncSnapshot;
+
+  authStore.listUserIdsByPlatformRoleId = async ({ roleId }) =>
+    String(roleId || '').trim().toLowerCase() === 'role_alpha'
+      ? ['platform-role-grants-shadow-role-id-target']
+      : [];
+  authStore.listPlatformRoleFactsByUserId = async () => [
+    {
+      roleId: undefined,
+      role_id: 'role_alpha',
+      status: 'active',
+      permission: {
+        canViewMemberAdmin: true,
+        canOperateMemberAdmin: false,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ];
+  authStore.replacePlatformRolesAndSyncSnapshot = async () => ({
+    synced: true,
+    reason: 'ok'
+  });
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-role-permission-grants-shadow-role-id',
+      roleId: 'role_alpha',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-grants-operator',
+      operatorSessionId: 'platform-role-grants-operator-session'
+    });
+
+    assert.equal(result.role_id, 'role_alpha');
+    assert.equal(result.affected_user_count, 1);
+  } finally {
+    authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
+    authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
+    authStore.replacePlatformRolesAndSyncSnapshot =
+      originalReplacePlatformRolesAndSyncSnapshot;
+  }
+});
+
 test('listPlatformRolePermissionGrants fails closed when grants dependency returns malformed shape', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
@@ -3189,6 +3408,44 @@ test('listPlatformRolePermissionGrants fails closed when grants dependency retur
   authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
     {
       permissionCodes: ['platform.member_admin.view']
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.listPlatformRolePermissionGrants({
+          roleId: 'sys_admin'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+        assert.equal(
+          error.extensions.degradation_reason,
+          'platform-role-permission-grants-invalid'
+        );
+        return true;
+      }
+    );
+  } finally {
+    authStore.listPlatformRolePermissionGrantsByRoleIds =
+      originalListPlatformRolePermissionGrantsByRoleIds;
+  }
+});
+
+test('listPlatformRolePermissionGrants fails closed when grants dependency contains empty permission code', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListPlatformRolePermissionGrantsByRoleIds =
+    authStore.listPlatformRolePermissionGrantsByRoleIds;
+  authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'sys_admin',
+      permissionCodes: ['']
     }
   ];
 
@@ -3569,6 +3826,207 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
     authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
     authStore.replacePlatformRolesAndSyncSnapshot = originalReplacePlatformRolesAndSyncSnapshot;
   }
+});
+
+test('replacePlatformRolePermissionGrants fails closed when atomic write result role_id mismatches request', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_role_mismatch_target',
+    code: 'PLATFORM_ATOMIC_ROLE_MISMATCH_TARGET',
+    name: 'Platform Atomic Role Mismatch Target'
+  });
+
+  service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'platform_atomic_role_mismatch_other',
+    permissionCodes: ['platform.member_admin.view'],
+    affectedUserIds: [],
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolePermissionGrants({
+        requestId: 'req-platform-role-permission-atomic-role-mismatch',
+        roleId: 'platform_atomic_role_mismatch_target',
+        permissionCodes: ['platform.member_admin.view'],
+        operatorUserId: 'platform-role-grants-operator',
+        operatorSessionId: 'platform-role-grants-operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-permission-grants-update-role-mismatch'
+      );
+      return true;
+    }
+  );
+});
+
+test('replacePlatformRolePermissionGrants accepts snake_case atomic write fields when camelCase shadow keys are undefined', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_shadow_fields_target',
+    code: 'PLATFORM_ATOMIC_SHADOW_FIELDS_TARGET',
+    name: 'Platform Atomic Shadow Fields Target'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalReplaceAtomic =
+    authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots;
+  authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: undefined,
+    role_id: 'platform_atomic_shadow_fields_target',
+    permissionCodes: undefined,
+    permission_codes: ['platform.member_admin.view'],
+    affectedUserIds: undefined,
+    affected_user_ids: [],
+    affectedUserCount: undefined,
+    affected_user_count: 0
+  });
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-platform-role-permission-atomic-shadow-fields',
+      roleId: 'platform_atomic_shadow_fields_target',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-grants-operator',
+      operatorSessionId: 'platform-role-grants-operator-session'
+    });
+
+    assert.equal(result.role_id, 'platform_atomic_shadow_fields_target');
+    assert.deepEqual(result.permission_codes, ['platform.member_admin.view']);
+    assert.equal(result.affected_user_count, 0);
+  } finally {
+    authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots =
+      originalReplaceAtomic;
+  }
+});
+
+test('replacePlatformRolePermissionGrants fails closed when atomic write result permission codes contain surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_permission_whitespace_target',
+    code: 'PLATFORM_ATOMIC_PERMISSION_WHITESPACE_TARGET',
+    name: 'Platform Atomic Permission Whitespace Target'
+  });
+
+  service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'platform_atomic_permission_whitespace_target',
+    permissionCodes: [' platform.member_admin.view'],
+    affectedUserIds: [],
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolePermissionGrants({
+        requestId: 'req-platform-role-permission-atomic-permission-whitespace',
+        roleId: 'platform_atomic_permission_whitespace_target',
+        permissionCodes: ['platform.member_admin.view'],
+        operatorUserId: 'platform-role-grants-operator',
+        operatorSessionId: 'platform-role-grants-operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-permission-grants-update-invalid'
+      );
+      return true;
+    }
+  );
+});
+
+test('replacePlatformRolePermissionGrants fails closed when atomic write result omits affected user metadata', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_missing_affected_metadata_target',
+    code: 'PLATFORM_ATOMIC_MISSING_AFFECTED_METADATA_TARGET',
+    name: 'Platform Atomic Missing Affected Metadata Target'
+  });
+
+  service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'platform_atomic_missing_affected_metadata_target',
+    permissionCodes: ['platform.member_admin.view']
+  });
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolePermissionGrants({
+        requestId: 'req-platform-role-permission-atomic-affected-metadata-missing',
+        roleId: 'platform_atomic_missing_affected_metadata_target',
+        permissionCodes: ['platform.member_admin.view'],
+        operatorUserId: 'platform-role-grants-operator',
+        operatorSessionId: 'platform-role-grants-operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-permission-grants-update-affected-user-metadata-missing'
+      );
+      return true;
+    }
+  );
+});
+
+test('replacePlatformRolePermissionGrants fails closed when atomic write result affected user count mismatches affected user ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_affected_count_mismatch_target',
+    code: 'PLATFORM_ATOMIC_AFFECTED_COUNT_MISMATCH_TARGET',
+    name: 'Platform Atomic Affected Count Mismatch Target'
+  });
+
+  service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'platform_atomic_affected_count_mismatch_target',
+    permissionCodes: ['platform.member_admin.view'],
+    affectedUserIds: ['platform-role-grants-user-a'],
+    affectedUserCount: 2
+  });
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolePermissionGrants({
+        requestId: 'req-platform-role-permission-atomic-affected-count-mismatch',
+        roleId: 'platform_atomic_affected_count_mismatch_target',
+        permissionCodes: ['platform.member_admin.view'],
+        operatorUserId: 'platform-role-grants-operator',
+        operatorSessionId: 'platform-role-grants-operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions.degradation_reason,
+        'platform-role-permission-grants-update-affected-user-count-invalid'
+      );
+      return true;
+    }
+  );
 });
 
 test('platform role facts replace canonicalizes role_id to lowercase under role catalog validation', async () => {
@@ -8137,6 +8595,34 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
     ]
   });
 
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_permission_restore_role',
+    code: 'TENANT_PERMISSION_RESTORE_ROLE',
+    name: 'Tenant Permission Restore Role',
+    scope: 'tenant',
+    tenantId: 'tenant-permission-restore',
+    isSystem: false
+  });
+  await service.replaceTenantRolePermissionGrants({
+    requestId: 'req-tenant-permission-restore-grants',
+    tenantId: 'tenant-permission-restore',
+    roleId: 'tenant_permission_restore_role',
+    permissionCodes: [
+      'tenant.member_admin.view',
+      'tenant.billing.view'
+    ],
+    operatorUserId: 'tenant-status-operator',
+    operatorSessionId: 'tenant-status-session'
+  });
+  await service.replaceTenantMemberRoleBindings({
+    requestId: 'req-tenant-permission-restore-bindings',
+    tenantId: 'tenant-permission-restore',
+    membershipId: 'membership-target-restore-1',
+    roleIds: ['tenant_permission_restore_role'],
+    operatorUserId: 'tenant-status-operator',
+    operatorSessionId: 'tenant-status-session'
+  });
+
   const disabled = await service.updateTenantMemberStatus({
     requestId: 'req-tenant-permission-restore-disable',
     membershipId: 'membership-target-restore-1',
@@ -8375,4 +8861,2120 @@ test('updateTenantMemberStatus rejects reason containing control characters', as
       return true;
     }
   );
+});
+
+const buildTenantRoleBindingSeed = ({ membershipStatus = 'active' } = {}) => ({
+  id: 'tenant-role-binding-user',
+  phone: '13818889901',
+  password: 'Passw0rd!',
+  status: 'active',
+  domains: ['tenant'],
+  tenants: [
+    {
+      membershipId: 'membership-role-binding-1',
+      tenantId: 'tenant-role-binding',
+      tenantName: 'Tenant Role Binding',
+      status: membershipStatus,
+      permission: {
+        canViewMemberAdmin: true,
+        canOperateMemberAdmin: true,
+        canViewBilling: false,
+        canOperateBilling: false
+      }
+    }
+  ]
+});
+
+test('replaceTenantMemberRoleBindings rejects non-active memberships', async () => {
+  for (const membershipStatus of ['disabled', 'left']) {
+    const service = createAuthService({
+      seedUsers: [buildTenantRoleBindingSeed({ membershipStatus })]
+    });
+
+    await service.createPlatformRoleCatalogEntry({
+      roleId: 'tenant_role_binding_non_active_target',
+      code: 'TENANT_ROLE_BINDING_NON_ACTIVE_TARGET',
+      name: 'Tenant Role Binding Non Active Target',
+      scope: 'tenant',
+      tenantId: 'tenant-role-binding',
+      isSystem: false
+    });
+
+    await assert.rejects(
+      () =>
+        service.replaceTenantMemberRoleBindings({
+          requestId: `req-tenant-role-binding-non-active-${membershipStatus}`,
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1',
+          roleIds: ['tenant_role_binding_non_active_target'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 404);
+        assert.equal(error.errorCode, 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND');
+        return true;
+      }
+    );
+  }
+});
+
+test('replaceTenantMemberRoleBindings maps store-level non-active membership race to tenant membership not found', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_race_membership_target',
+    code: 'TENANT_ROLE_BINDING_RACE_MEMBERSHIP_TARGET',
+    name: 'Tenant Role Binding Race Membership Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  await service.updateTenantMemberStatus({
+    requestId: 'req-tenant-role-binding-race-membership-disable',
+    membershipId: 'membership-role-binding-1',
+    nextStatus: 'disabled',
+    reason: 'manual-disable',
+    authorizedRoute: {
+      user_id: 'tenant-role-binding-user',
+      session_id: 'tenant-role-binding-session',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-role-binding'
+    }
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindMembership =
+    authStore.findTenantMembershipByMembershipIdAndTenantId;
+  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    membership_id: 'membership-role-binding-1',
+    user_id: 'tenant-role-binding-user',
+    tenant_id: 'tenant-role-binding',
+    status: 'active'
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantMemberRoleBindings({
+          requestId: 'req-tenant-role-binding-race-membership-write',
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1',
+          roleIds: ['tenant_role_binding_race_membership_target'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 404);
+        assert.equal(error.errorCode, 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findTenantMembershipByMembershipIdAndTenantId =
+      originalFindMembership;
+  }
+});
+
+test('replaceTenantMemberRoleBindings maps store-level role catalog race to role not found', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_race_role_target',
+    code: 'TENANT_ROLE_BINDING_RACE_ROLE_TARGET',
+    name: 'Tenant Role Binding Race Role Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+  await service.updatePlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_race_role_target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    status: 'disabled',
+    operatorUserId: 'tenant-role-binding-user',
+    operatorSessionId: 'tenant-role-binding-session'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindRoleCatalogEntries =
+    authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  authStore.findPlatformRoleCatalogEntriesByRoleIds = async ({
+    roleIds = []
+  } = {}) =>
+    (Array.isArray(roleIds) ? roleIds : []).map((roleId) => ({
+      roleId: String(roleId || '').trim().toLowerCase(),
+      tenantId: 'tenant-role-binding',
+      status: 'active',
+      scope: 'tenant'
+    }));
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantMemberRoleBindings({
+          requestId: 'req-tenant-role-binding-race-role-write',
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1',
+          roleIds: ['tenant_role_binding_race_role_target'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 404);
+        assert.equal(error.errorCode, 'AUTH-404-ROLE-NOT-FOUND');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findPlatformRoleCatalogEntriesByRoleIds =
+      originalFindRoleCatalogEntries;
+  }
+});
+
+test('replaceTenantMemberRoleBindings fails closed when role catalog lookup returns role ids with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_catalog_whitespace_write_target',
+    code: 'TENANT_ROLE_BINDING_CATALOG_WHITESPACE_WRITE_TARGET',
+    name: 'Tenant Role Binding Catalog Whitespace Write Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindRoleCatalogEntries =
+    authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: ' tenant_role_binding_catalog_whitespace_write_target',
+      tenant_id: 'tenant-role-binding',
+      status: 'active',
+      scope: 'tenant'
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantMemberRoleBindings({
+          requestId: 'req-tenant-role-binding-catalog-roleid-whitespace-write',
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1',
+          roleIds: ['tenant_role_binding_catalog_whitespace_write_target'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findPlatformRoleCatalogEntriesByRoleIds =
+      originalFindRoleCatalogEntries;
+  }
+});
+
+test('replaceTenantMemberRoleBindings fails closed when role catalog lookup returns scopes with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_catalog_scope_whitespace_write_target',
+    code: 'TENANT_ROLE_BINDING_CATALOG_SCOPE_WHITESPACE_WRITE_TARGET',
+    name: 'Tenant Role Binding Catalog Scope Whitespace Write Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindRoleCatalogEntries =
+    authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: 'tenant_role_binding_catalog_scope_whitespace_write_target',
+      tenant_id: 'tenant-role-binding',
+      status: 'active',
+      scope: ' tenant'
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantMemberRoleBindings({
+          requestId: 'req-tenant-role-binding-catalog-scope-whitespace-write',
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1',
+          roleIds: ['tenant_role_binding_catalog_scope_whitespace_write_target'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findPlatformRoleCatalogEntriesByRoleIds =
+      originalFindRoleCatalogEntries;
+  }
+});
+
+test('replaceTenantMemberRoleBindings maps store-level sync failure to tenant dependency unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_sync_failure_target',
+    code: 'TENANT_ROLE_BINDING_SYNC_FAILURE_TARGET',
+    name: 'Tenant Role Binding Sync Failure Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => {
+    const syncError = new Error('tenant membership role bindings sync failed: unknown');
+    syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
+    syncError.syncReason = 'unknown';
+    throw syncError;
+  };
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-sync-failed',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_sync_failure_target'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when grants dependency contains empty permission code', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_list_permission_target',
+    code: 'TENANT_ROLE_BINDING_LIST_PERMISSION_TARGET',
+    name: 'Tenant Role Binding List Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'tenant_role_binding_list_permission_target',
+      permissionCodes: ['']
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_list_permission_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when grants dependency contains permission codes with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_list_permission_whitespace_target',
+    code: 'TENANT_ROLE_BINDING_LIST_PERMISSION_WHITESPACE_TARGET',
+    name: 'Tenant Role Binding List Permission Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'tenant_role_binding_list_permission_whitespace_target',
+      permissionCodes: [' tenant.member_admin.view']
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_list_permission_whitespace_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when role catalog lookup returns duplicate role entries', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_catalog_duplicate_target',
+    code: 'TENANT_ROLE_BINDING_CATALOG_DUPLICATE_TARGET',
+    name: 'Tenant Role Binding Catalog Duplicate Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: 'tenant_role_binding_catalog_duplicate_target',
+      status: 'active',
+      scope: 'tenant',
+      tenant_id: 'tenant-role-binding'
+    },
+    {
+      role_id: 'tenant_role_binding_catalog_duplicate_target',
+      status: 'active',
+      scope: 'tenant',
+      tenant_id: 'tenant-role-binding'
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_catalog_duplicate_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants accepts snake_case catalog fields when camelCase shadow keys are undefined', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_catalog_shadow_fallback_target',
+    code: 'TENANT_ROLE_BINDING_CATALOG_SHADOW_FALLBACK_TARGET',
+    name: 'Tenant Role Binding Catalog Shadow Fallback Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindCatalogEntries =
+    authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      roleId: undefined,
+      role_id: 'tenant_role_binding_catalog_shadow_fallback_target',
+      status: 'active',
+      scope: 'tenant',
+      tenantId: undefined,
+      tenant_id: 'tenant-role-binding'
+    }
+  ];
+
+  try {
+    const result = await service.listTenantRolePermissionGrants({
+      tenantId: 'tenant-role-binding',
+      roleId: 'tenant_role_binding_catalog_shadow_fallback_target'
+    });
+    assert.equal(result.role_id, 'tenant_role_binding_catalog_shadow_fallback_target');
+    assert.deepEqual(result.permission_codes, []);
+    assert.ok(Array.isArray(result.available_permission_codes));
+  } finally {
+    authStore.findPlatformRoleCatalogEntriesByRoleIds =
+      originalFindCatalogEntries;
+  }
+});
+
+test('listTenantRolePermissionGrants fails closed when role catalog lookup returns role ids with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_catalog_whitespace_target',
+    code: 'TENANT_ROLE_BINDING_CATALOG_WHITESPACE_TARGET',
+    name: 'Tenant Role Binding Catalog Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: ' tenant_role_binding_catalog_whitespace_target',
+      status: 'active',
+      scope: 'tenant',
+      tenant_id: 'tenant-role-binding'
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_catalog_whitespace_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when role catalog lookup returns status with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_catalog_status_whitespace_target',
+    code: 'TENANT_ROLE_BINDING_CATALOG_STATUS_WHITESPACE_TARGET',
+    name: 'Tenant Role Binding Catalog Status Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: 'tenant_role_binding_catalog_status_whitespace_target',
+      status: ' active',
+      scope: 'tenant',
+      tenant_id: 'tenant-role-binding'
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_catalog_status_whitespace_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when grants dependency role ids contain surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_grant_role_whitespace_target',
+    code: 'TENANT_ROLE_BINDING_GRANT_ROLE_WHITESPACE_TARGET',
+    name: 'Tenant Role Binding Grant Role Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: ' tenant_role_binding_grant_role_whitespace_target',
+      permissionCodes: ['tenant.member_admin.view']
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_grant_role_whitespace_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when grants dependency returns duplicate role entries', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_grant_duplicate_target',
+    code: 'TENANT_ROLE_BINDING_GRANT_DUPLICATE_TARGET',
+    name: 'Tenant Role Binding Grant Duplicate Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'tenant_role_binding_grant_duplicate_target',
+      permissionCodes: ['tenant.member_admin.view']
+    },
+    {
+      roleId: 'tenant_role_binding_grant_duplicate_target',
+      permissionCodes: ['tenant.billing.view']
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_grant_duplicate_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings fails closed when store returns malformed role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+    'tenant_role_valid',
+    'tenant role invalid'
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings fails closed when store returns role ids with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+    ' tenant_role_valid'
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings fails closed when store returns more than 5 role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+    'tenant_role_1',
+    'tenant_role_2',
+    'tenant_role_3',
+    'tenant_role_4',
+    'tenant_role_5',
+    'tenant_role_6'
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings fails closed when store returns cross-tenant role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_other_tenant',
+    code: 'TENANT_ROLE_BINDING_OTHER_TENANT',
+    name: 'Tenant Role Binding Other Tenant',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding-other',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+    'tenant_role_binding_other_tenant'
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings accepts snake_case write result fields when camelCase shadow keys are undefined', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_shadow_fallback_target',
+    code: 'TENANT_ROLE_BINDING_SHADOW_FALLBACK_TARGET',
+    name: 'Tenant Role Binding Shadow Fallback Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalReplaceBindings =
+    authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot;
+  authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: undefined,
+    membership_id: 'membership-role-binding-1',
+    roleIds: undefined,
+    role_ids: ['tenant_role_binding_shadow_fallback_target'],
+    affectedUserIds: undefined,
+    affected_user_ids: ['tenant-role-binding-user'],
+    affectedUserCount: undefined,
+    affected_user_count: 1
+  });
+
+  try {
+    const result = await service.replaceTenantMemberRoleBindings({
+      requestId: 'req-tenant-role-binding-write-shadow-fallback',
+      tenantId: 'tenant-role-binding',
+      membershipId: 'membership-role-binding-1',
+      roleIds: ['tenant_role_binding_shadow_fallback_target'],
+      operatorUserId: 'tenant-role-binding-user',
+      operatorSessionId: 'tenant-role-binding-session'
+    });
+
+    assert.equal(result.membership_id, 'membership-role-binding-1');
+    assert.deepEqual(result.role_ids, ['tenant_role_binding_shadow_fallback_target']);
+  } finally {
+    authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot =
+      originalReplaceBindings;
+  }
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result contains malformed role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_b',
+    code: 'TENANT_ROLE_BINDING_B',
+    name: 'Tenant Role Binding B',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a', 'tenant role invalid'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-malformed-result',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a', 'tenant_role_binding_b'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result role ids contain surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_ws_a',
+    code: 'TENANT_ROLE_BINDING_WS_A',
+    name: 'Tenant Role Binding WS A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: [' tenant_role_binding_ws_a'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-role-ids-whitespace',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_ws_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result mismatches requested role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_b',
+    code: 'TENANT_ROLE_BINDING_B',
+    name: 'Tenant Role Binding B',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-mismatch-result',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a', 'tenant_role_binding_b'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants rolls back grants and snapshots when sync fails mid-flight', async () => {
+  const { service, authStore } = await setupTenantGrantSyncFailureScenario();
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-grant-sync-failure-write',
+        tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+        roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
+        permissionCodes: ['tenant.member_admin.operate'],
+        operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+        operatorSessionId: 'tenant-grant-sync-operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+
+  const grants = await service.listTenantRolePermissionGrants({
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+    roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID
+  });
+  assert.deepEqual(grants.permission_codes, ['tenant.member_admin.view']);
+
+  const permissionA = await authStore.findTenantPermissionByUserAndTenantId({
+    userId: TENANT_GRANT_SYNC_FAILURE_USER_A,
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID
+  });
+  const permissionB = await authStore.findTenantPermissionByUserAndTenantId({
+    userId: TENANT_GRANT_SYNC_FAILURE_USER_B,
+    tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID
+  });
+  assert.ok(permissionA);
+  assert.ok(permissionB);
+  assert.equal(permissionA.canViewMemberAdmin, true);
+  assert.equal(permissionA.canOperateMemberAdmin, false);
+  assert.equal(permissionB.canViewMemberAdmin, true);
+  assert.equal(permissionB.canOperateMemberAdmin, false);
+});
+
+test('replaceTenantRolePermissionGrants failed rollback keeps tenant session active', async () => {
+  const { service, authStore } = await setupTenantGrantSyncFailureScenario();
+  const userA = await authStore.findUserById(TENANT_GRANT_SYNC_FAILURE_USER_A);
+  const sessionId = 'tenant-grant-sync-session-a';
+  await authStore.createSession({
+    sessionId,
+    userId: TENANT_GRANT_SYNC_FAILURE_USER_A,
+    sessionVersion: Number(userA?.sessionVersion || 1),
+    entryDomain: 'tenant',
+    activeTenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-grant-sync-failure-session-write',
+        tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
+        roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
+        permissionCodes: ['tenant.member_admin.operate'],
+        operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
+        operatorSessionId: 'tenant-grant-sync-operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+
+  const session = await authStore.findSessionById(sessionId);
+  assert.ok(session);
+  assert.equal(session.status, 'active');
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result mismatches requested permission codes', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.billing.view'],
+    affectedUserIds: [],
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-mismatch-result',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants accepts snake_case write result fields when camelCase shadow keys are undefined', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_shadow_fallback_target',
+    code: 'TENANT_ROLE_PERMISSION_SHADOW_FALLBACK_TARGET',
+    name: 'Tenant Role Permission Shadow Fallback Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalReplaceAtomic =
+    authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots;
+  authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: undefined,
+    role_id: 'tenant_role_permission_shadow_fallback_target',
+    permissionCodes: undefined,
+    permission_codes: ['tenant.member_admin.view'],
+    affectedUserIds: undefined,
+    affected_user_ids: ['tenant-role-binding-user'],
+    affectedUserCount: undefined,
+    affected_user_count: 1
+  });
+
+  try {
+    const result = await service.replaceTenantRolePermissionGrants({
+      requestId: 'req-tenant-role-permission-write-shadow-fallback',
+      tenantId: 'tenant-role-binding',
+      roleId: 'tenant_role_permission_shadow_fallback_target',
+      permissionCodes: ['tenant.member_admin.view'],
+      operatorUserId: 'tenant-role-binding-user',
+      operatorSessionId: 'tenant-role-binding-session'
+    });
+
+    assert.equal(result.role_id, 'tenant_role_permission_shadow_fallback_target');
+    assert.deepEqual(result.permission_codes, ['tenant.member_admin.view']);
+    assert.equal(result.affected_user_count, 1);
+  } finally {
+    authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots =
+      originalReplaceAtomic;
+  }
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result contains permission codes with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_whitespace_target',
+    code: 'TENANT_ROLE_PERMISSION_WHITESPACE_TARGET',
+    name: 'Tenant Role Permission Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_whitespace_target',
+    permissionCodes: [' tenant.member_admin.view'],
+    affectedUserIds: [],
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-permission-whitespace',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_whitespace_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result exceeds 5 role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_b',
+    code: 'TENANT_ROLE_BINDING_B',
+    name: 'Tenant Role Binding B',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: [
+      'tenant_role_1',
+      'tenant_role_2',
+      'tenant_role_3',
+      'tenant_role_4',
+      'tenant_role_5',
+      'tenant_role_6'
+    ],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-over-limit-result',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a', 'tenant_role_binding_b'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings fails closed when store returns non-string role ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_numeric',
+    code: 'TENANT_ROLE_BINDING_NUMERIC',
+    name: 'Tenant Role Binding Numeric',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantMembershipRoleBindings = async () => [123];
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result mismatches requested membership_id', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-2',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-membership-mismatch',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result membership_id contains surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_membership_whitespace_a',
+    code: 'TENANT_ROLE_BINDING_MEMBERSHIP_WHITESPACE_A',
+    name: 'Tenant Role Binding Membership Whitespace A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: ' membership-role-binding-1',
+    roleIds: ['tenant_role_binding_membership_whitespace_a'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-membership-whitespace',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_membership_whitespace_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result has invalid affected user ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: ['tenant-role-binding-user', 123],
+    affectedUserCount: 2
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-affected-user-ids-invalid',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result affected user ids contain surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: [' tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-affected-user-ids-whitespace',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when store write result omits affected user metadata', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a']
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-affected-user-metadata-missing',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when affected user ids are null', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: null,
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-affected-user-ids-null',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when affected user count is null', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-affected-user-count-null',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings fails closed when affected user count mismatches affected user ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_a',
+    code: 'TENANT_ROLE_BINDING_A',
+    name: 'Tenant Role Binding A',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_a'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 2
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-affected-user-count-mismatch',
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when role catalog lookup returns role ids with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_catalog_whitespace_target',
+    code: 'TENANT_ROLE_PERMISSION_CATALOG_WHITESPACE_TARGET',
+    name: 'Tenant Role Permission Catalog Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindRoleCatalogEntries =
+    authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: ' tenant_role_permission_catalog_whitespace_target',
+      tenant_id: 'tenant-role-binding',
+      status: 'active',
+      scope: 'tenant'
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantRolePermissionGrants({
+          requestId: 'req-tenant-role-permission-catalog-roleid-whitespace-write',
+          tenantId: 'tenant-role-binding',
+          roleId: 'tenant_role_permission_catalog_whitespace_target',
+          permissionCodes: ['tenant.member_admin.view'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findPlatformRoleCatalogEntriesByRoleIds =
+      originalFindRoleCatalogEntries;
+  }
+});
+
+test('replaceTenantRolePermissionGrants fails closed when role catalog lookup returns tenant ids with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_catalog_tenant_whitespace_target',
+    code: 'TENANT_ROLE_PERMISSION_CATALOG_TENANT_WHITESPACE_TARGET',
+    name: 'Tenant Role Permission Catalog Tenant Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindRoleCatalogEntries =
+    authStore.findPlatformRoleCatalogEntriesByRoleIds;
+  authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => [
+    {
+      role_id: 'tenant_role_permission_catalog_tenant_whitespace_target',
+      tenant_id: ' tenant-role-binding',
+      status: 'active',
+      scope: 'tenant'
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantRolePermissionGrants({
+          requestId: 'req-tenant-role-permission-catalog-tenantid-whitespace-write',
+          tenantId: 'tenant-role-binding',
+          roleId: 'tenant_role_permission_catalog_tenant_whitespace_target',
+          permissionCodes: ['tenant.member_admin.view'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findPlatformRoleCatalogEntriesByRoleIds =
+      originalFindRoleCatalogEntries;
+  }
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result mismatches requested role_id', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_other',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: [],
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-role-mismatch',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result role_id contains surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_roleid_whitespace_target',
+    code: 'TENANT_ROLE_PERMISSION_ROLEID_WHITESPACE_TARGET',
+    name: 'Tenant Role Permission RoleId Whitespace Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: ' tenant_role_permission_roleid_whitespace_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: [],
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-role-whitespace',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_roleid_whitespace_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result has invalid affected user ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: ['tenant-role-binding-user', 123],
+    affectedUserCount: 2
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-ids-invalid',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result affected user ids contain surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: [' tenant-role-binding-user'],
+    affectedUserCount: 1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-ids-whitespace',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result has invalid affected user count', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: -1
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-count-invalid',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when store write result omits affected user metadata', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view']
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-metadata-missing',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when affected user ids are null', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: null,
+    affectedUserCount: 0
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-ids-null',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when affected user count is null', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-count-null',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants fails closed when affected user count mismatches affected user ids', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_target',
+    code: 'TENANT_ROLE_PERMISSION_TARGET',
+    name: 'Tenant Role Permission Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
+    roleId: 'tenant_role_permission_target',
+    permissionCodes: ['tenant.member_admin.view'],
+    affectedUserIds: ['tenant-role-binding-user'],
+    affectedUserCount: 2
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-affected-user-count-mismatch',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants rejects role_id with surrounding whitespace as invalid payload', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: ' tenant_role_binding_a'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants rejects malformed role_id as invalid payload', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-write-invalid-role-id',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant role invalid',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings rejects membership_id with surrounding whitespace as invalid payload', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: ' membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMemberRoleBindings rejects membership_id with surrounding whitespace as invalid payload', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantMemberRoleBindings({
+        requestId: 'req-tenant-role-binding-write-invalid-membership-id',
+        tenantId: 'tenant-role-binding',
+        membershipId: ' membership-role-binding-1',
+        roleIds: ['tenant_role_binding_a'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings normalizes uppercase membership_id to lowercase', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  const result = await service.listTenantMemberRoleBindings({
+    tenantId: 'tenant-role-binding',
+    membershipId: 'MEMBERSHIP-ROLE-BINDING-1'
+  });
+
+  assert.equal(result.membership_id, 'membership-role-binding-1');
+  assert.deepEqual(result.role_ids, []);
+});
+
+test('replaceTenantMemberRoleBindings normalizes uppercase membership_id to lowercase', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_uppercase_membership',
+    code: 'TENANT_ROLE_BINDING_UPPERCASE_MEMBERSHIP',
+    name: 'Tenant Role Binding Uppercase Membership',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const result = await service.replaceTenantMemberRoleBindings({
+    requestId: 'req-tenant-role-binding-uppercase-membership-id',
+    tenantId: 'tenant-role-binding',
+    membershipId: 'MEMBERSHIP-ROLE-BINDING-1',
+    roleIds: ['tenant_role_binding_uppercase_membership'],
+    operatorUserId: 'tenant-role-binding-user',
+    operatorSessionId: 'tenant-role-binding-session'
+  });
+
+  assert.equal(result.membership_id, 'membership-role-binding-1');
+  assert.deepEqual(result.role_ids, ['tenant_role_binding_uppercase_membership']);
 });

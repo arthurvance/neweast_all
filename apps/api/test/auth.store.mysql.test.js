@@ -3314,6 +3314,10 @@ test('updateTenantMembershipStatus fails closed when membership history table is
 test('updateTenantMembershipStatus keeps permission snapshot when re-activating from disabled', async () => {
   let updateSql = '';
   let updateParams = [];
+  let membershipLookupCount = 0;
+  let roleBindingLookupCount = 0;
+  let roleCatalogLookupCount = 0;
+  let roleGrantLookupCount = 0;
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
     if (
@@ -3322,12 +3326,13 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
+      membershipLookupCount += 1;
       return [{
         membership_id: 'membership-reactivate',
         user_id: 'tenant-user-reactivate',
         tenant_id: 'tenant-reactivate',
         tenant_name: 'Tenant Reactivate',
-        status: 'disabled',
+        status: membershipLookupCount === 1 ? 'disabled' : 'active',
         can_view_member_admin: 1,
         can_operate_member_admin: 0,
         can_view_billing: 1,
@@ -3337,7 +3342,46 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
       }];
     }
     if (
+      normalizedSql.includes('SELECT role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      roleBindingLookupCount += 1;
+      return [{ role_id: 'tenant_role_reactivate' }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      roleCatalogLookupCount += 1;
+      return [{
+        role_id: 'tenant_role_reactivate',
+        status: 'active',
+        scope: 'tenant',
+        tenant_id: 'tenant-reactivate'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      roleGrantLookupCount += 1;
+      return [
+        {
+          role_id: 'tenant_role_reactivate',
+          permission_code: 'tenant.member_admin.view'
+        },
+        {
+          role_id: 'tenant_role_reactivate',
+          permission_code: 'tenant.billing.view'
+        }
+      ];
+    }
+    if (
       normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET status = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       updateSql = normalizedSql;
@@ -3384,11 +3428,18 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     updateParams.slice(0, 7),
     ['active', 'active', 'active', 'active', 'active', 'active', 'active']
   );
+  assert.equal(membershipLookupCount, 2);
+  assert.equal(roleBindingLookupCount, 1);
+  assert.equal(roleCatalogLookupCount, 1);
+  assert.equal(roleGrantLookupCount, 1);
 });
 
 test('updateTenantMembershipStatus clears permission snapshot when re-activating from left', async () => {
   let updateSql = '';
   let updateParams = [];
+  let membershipLookupCount = 0;
+  let rotatedMembershipId = '';
+  let deleteMembershipRoleBindingCount = 0;
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
     if (
@@ -3397,29 +3448,55 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
+      membershipLookupCount += 1;
+      if (membershipLookupCount === 1) {
+        return [{
+          membership_id: 'membership-reactivate-left',
+          user_id: 'tenant-user-reactivate-left',
+          tenant_id: 'tenant-reactivate-left',
+          tenant_name: 'Tenant Reactivate Left',
+          status: 'left',
+          can_view_member_admin: 1,
+          can_operate_member_admin: 1,
+          can_view_billing: 1,
+          can_operate_billing: 1,
+          joined_at: '2026-02-01T00:00:00.000Z',
+          left_at: '2026-02-10T00:00:00.000Z'
+        }];
+      }
       return [{
-        membership_id: 'membership-reactivate-left',
+        membership_id: String(params?.[0] || rotatedMembershipId || 'membership-reactivate-left-new'),
         user_id: 'tenant-user-reactivate-left',
         tenant_id: 'tenant-reactivate-left',
         tenant_name: 'Tenant Reactivate Left',
-        status: 'left',
-        can_view_member_admin: 1,
-        can_operate_member_admin: 1,
-        can_view_billing: 1,
-        can_operate_billing: 1,
-        joined_at: '2026-02-01T00:00:00.000Z',
-        left_at: '2026-02-10T00:00:00.000Z'
+        status: 'active',
+        can_view_member_admin: 0,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0,
+        joined_at: '2026-02-11T00:00:00.000Z',
+        left_at: null
       }];
     }
     if (normalizedSql.includes('INSERT INTO auth_user_tenant_membership_history')) {
       return { affectedRows: 1 };
     }
     if (
+      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('WHERE membership_id = ?')
+    ) {
+      deleteMembershipRoleBindingCount += 1;
+      assert.equal(params?.[0], 'membership-reactivate-left');
+      return { affectedRows: 1 };
+    }
+    if (
       normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET membership_id = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       updateSql = normalizedSql;
       updateParams = params;
+      rotatedMembershipId = String(params?.[0] || '');
       return { affectedRows: 1 };
     }
     if (
@@ -3454,4 +3531,351 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
   assert.match(updateSql, /can_view_billing\s*=\s*0/i);
   assert.match(updateSql, /can_operate_billing\s*=\s*0/i);
   assert.equal(updateParams.length, 3);
+  assert.equal(deleteMembershipRoleBindingCount, 1);
+  assert.equal(membershipLookupCount, 2);
+});
+
+test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects non-active membership inside transaction', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-binding-race',
+        user_id: 'tenant-user-binding-race',
+        tenant_id: 'tenant-binding-race',
+        status: 'disabled'
+      }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+        tenantId: 'tenant-binding-race',
+        membershipId: 'membership-binding-race',
+        roleIds: ['tenant_role_binding_race']
+      }),
+    (error) => {
+      assert.equal(
+        error?.code,
+        'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE'
+      );
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects disabled role bindings inside transaction', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-binding-role-race',
+        user_id: 'tenant-user-binding-role-race',
+        tenant_id: 'tenant-binding-role-race',
+        status: 'active'
+      }];
+    }
+    if (
+      normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        role_id: 'tenant_role_binding_disabled',
+        status: 'disabled',
+        scope: 'tenant',
+        tenant_id: 'tenant-binding-role-race'
+      }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+        tenantId: 'tenant-binding-role-race',
+        membershipId: 'membership-binding-role-race',
+        roleIds: ['tenant_role_binding_disabled']
+      }),
+    (error) => {
+      assert.equal(
+        error?.code,
+        'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID'
+      );
+      assert.equal(error?.roleId, 'tenant_role_binding_disabled');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects malformed affected user id from membership row', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-binding-user-id-invalid',
+        user_id: ' tenant-user-binding-invalid ',
+        tenant_id: 'tenant-binding-user-id-invalid',
+        status: 'active'
+      }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+        tenantId: 'tenant-binding-user-id-invalid',
+        membershipId: 'membership-binding-user-id-invalid',
+        roleIds: []
+      }),
+    (error) => {
+      assert.equal(
+        error?.code,
+        'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID'
+      );
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrantsAndSyncSnapshots rejects malformed affected user ids from membership rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id')
+      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes("scope = 'tenant'")
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{ role_id: 'tenant_role_permission_affected_user_invalid' }];
+    }
+    if (
+      normalizedSql.includes('SELECT ut.membership_id, ut.user_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles mr')
+      && normalizedSql.includes('JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-role-permission-user-id-invalid',
+        user_id: ' tenant-user-role-permission-invalid '
+      }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.replaceTenantRolePermissionGrantsAndSyncSnapshots({
+        tenantId: 'tenant-role-permission-user-id-invalid',
+        roleId: 'tenant_role_permission_affected_user_invalid',
+        permissionCodes: ['tenant.member_admin.view']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants rejects malformed permission codes from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+    ) {
+      return [
+        { permission_code: 'tenant.member_admin.view' },
+        { permission_code: '   ' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantRolePermissionGrants({
+        roleId: 'tenant_role_permission_target'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants rejects duplicate permission codes from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+    ) {
+      return [
+        { permission_code: 'tenant.member_admin.view' },
+        { permission_code: 'TENANT.MEMBER_ADMIN.VIEW' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantRolePermissionGrants({
+        roleId: 'tenant_role_permission_duplicate_target'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrantsByRoleIds rejects unexpected role rows from storage', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+    ) {
+      return [
+        {
+          role_id: 'tenant_role_permission_batch_expected',
+          permission_code: 'tenant.member_admin.view'
+        },
+        {
+          role_id: 'tenant_role_permission_batch_unexpected',
+          permission_code: 'tenant.billing.view'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantRolePermissionGrantsByRoleIds({
+        roleIds: ['tenant_role_permission_batch_expected']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants rejects permission codes with surrounding whitespace from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+    ) {
+      return [
+        { permission_code: ' tenant.member_admin.view' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantRolePermissionGrants({
+        roleId: 'tenant_role_permission_whitespace_target'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrantsByRoleIds rejects role rows with surrounding whitespace', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+    ) {
+      return [
+        {
+          role_id: ' tenant_role_permission_batch_whitespace',
+          permission_code: 'tenant.member_admin.view'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantRolePermissionGrantsByRoleIds({
+        roleIds: ['tenant_role_permission_batch_whitespace']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembershipRoleBindings rejects role ids with surrounding whitespace from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT mr.role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles mr')
+      && normalizedSql.includes('JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id')
+    ) {
+      return [
+        { role_id: ' tenant_role_binding_whitespace' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantMembershipRoleBindings({
+        membershipId: 'membership-role-binding-whitespace',
+        tenantId: 'tenant-role-binding-whitespace'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID');
+      return true;
+    }
+  );
 });

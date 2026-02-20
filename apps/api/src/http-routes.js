@@ -603,6 +603,34 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    tenantGetMemberRoles: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext
+    ) =>
+      tenantMember.getMemberRoles({
+        requestId,
+        authorization,
+        params: params || {},
+        authorizationContext
+      }),
+
+    tenantReplaceMemberRoles: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext
+    ) =>
+      tenantMember.replaceMemberRoles({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        authorizationContext
+      }),
+
     tenantListRoles: async (
       requestId,
       authorization,
@@ -652,6 +680,34 @@ const createRouteHandlers = (config, options = {}) => {
         requestId,
         authorization,
         params: params || {},
+        authorizationContext
+      }),
+
+    tenantGetRolePermissions: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext
+    ) =>
+      tenantRole.getRolePermissions({
+        requestId,
+        authorization,
+        params: params || {},
+        authorizationContext
+      }),
+
+    tenantReplaceRolePermissions: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext
+    ) =>
+      tenantRole.replaceRolePermissions({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
         authorizationContext
       }),
 

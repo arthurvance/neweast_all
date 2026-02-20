@@ -23,6 +23,7 @@ const {
   TENANT_MEMBER_LIST_PATH,
   TENANT_MEMBER_CREATE_PATH,
   TENANT_MEMBER_STATUS_PATH,
+  TENANT_MEMBER_ROLE_BINDING_PATH,
   TENANT_MEMBER_VIEW_PERMISSION_CODE,
   TENANT_MEMBER_OPERATE_PERMISSION_CODE,
   TENANT_MEMBER_SCOPE
@@ -30,6 +31,7 @@ const {
 const {
   TENANT_ROLE_BASE_PATH,
   TENANT_ROLE_ITEM_PATH,
+  TENANT_ROLE_PERMISSION_PATH,
   TENANT_ROLE_VIEW_PERMISSION_CODE,
   TENANT_ROLE_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_SCOPE
@@ -314,6 +316,20 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   },
   {
     method: 'GET',
+    path: TENANT_MEMBER_ROLE_BINDING_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_VIEW_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
+  },
+  {
+    method: 'PUT',
+    path: TENANT_MEMBER_ROLE_BINDING_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
+  },
+  {
+    method: 'GET',
     path: TENANT_ROLE_BASE_PATH,
     access: 'protected',
     permission_code: TENANT_ROLE_VIEW_PERMISSION_CODE,
@@ -336,6 +352,20 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   {
     method: 'DELETE',
     path: TENANT_ROLE_ITEM_PATH,
+    access: 'protected',
+    permission_code: TENANT_ROLE_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ROLE_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_ROLE_PERMISSION_PATH,
+    access: 'protected',
+    permission_code: TENANT_ROLE_VIEW_PERMISSION_CODE,
+    scope: TENANT_ROLE_SCOPE
+  },
+  {
+    method: 'PUT',
+    path: TENANT_ROLE_PERMISSION_PATH,
     access: 'protected',
     permission_code: TENANT_ROLE_OPERATE_PERMISSION_CODE,
     scope: TENANT_ROLE_SCOPE

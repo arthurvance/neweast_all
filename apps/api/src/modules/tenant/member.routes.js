@@ -47,9 +47,11 @@ const createTenantMemberHandlers = (tenantMemberService) => {
     || typeof tenantMemberService.listMembers !== 'function'
     || typeof tenantMemberService.createMember !== 'function'
     || typeof tenantMemberService.updateMemberStatus !== 'function'
+    || typeof tenantMemberService.getMemberRoles !== 'function'
+    || typeof tenantMemberService.replaceMemberRoles !== 'function'
   ) {
     throw new TypeError(
-      'createTenantMemberHandlers requires a tenantMemberService with listMembers, createMember and updateMemberStatus'
+      'createTenantMemberHandlers requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberRoles and replaceMemberRoles'
     );
   }
 
@@ -94,6 +96,42 @@ const createTenantMemberHandlers = (tenantMemberService) => {
       authorizationContext = null
     }) =>
       tenantMemberService.updateMemberStatus({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_MEMBER_OPERATE_PERMISSION_CODE
+        }),
+        params: params || {},
+        payload: body || {},
+        authorizationContext
+      }),
+
+    getMemberRoles: async ({
+      requestId,
+      authorization,
+      params,
+      authorizationContext = null
+    }) =>
+      tenantMemberService.getMemberRoles({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_MEMBER_VIEW_PERMISSION_CODE
+        }),
+        params: params || {},
+        authorizationContext
+      }),
+
+    replaceMemberRoles: async ({
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext = null
+    }) =>
+      tenantMemberService.replaceMemberRoles({
         requestId,
         accessToken: resolveAccessToken({
           authorization,

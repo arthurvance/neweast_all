@@ -1599,6 +1599,387 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/tenant/members/{membership_id}/roles': {
+      get: {
+        summary: 'Get tenant member role bindings by membership_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'membership_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: TENANT_MEMBERSHIP_ID_PATTERN
+            },
+            description: '成员关系主键'
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Tenant member role bindings fetched',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantMemberRoleBindingsResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid membership_id',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_membership_id: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'membership_id 格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant membership not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  membership_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标成员关系不存在',
+                      error_code: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant member dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织成员治理依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      put: {
+        summary: 'Replace tenant member role bindings by membership_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'membership_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: TENANT_MEMBERSHIP_ID_PATTERN
+            },
+            description: '成员关系主键'
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ReplaceTenantMemberRoleBindingsRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant member role bindings replaced and snapshot synced',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TenantMemberRoleBindingsResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'role_ids 数量必须在 1 到 5 之间',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Tenant membership or role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  membership_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标成员关系不存在',
+                      error_code: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  role_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标角色不存在',
+                      error_code: 'AUTH-404-ROLE-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant member dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织成员治理依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/tenant/roles': {
       get: {
         summary: 'List tenant role catalog under current active tenant context',
@@ -1913,6 +2294,378 @@ const buildOpenApiSpec = () => {
             content: {
               'application/problem+json': {
                 schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/tenant/roles/{role_id}/permissions': {
+      get: {
+        summary: 'Get tenant role permission grants by role_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Tenant role permission grants fetched',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/TenantRolePermissionGrantsReadResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid role_id',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_role_id: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'role_id 不能为空',
+                      error_code: 'TROLE-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  role_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标角色不存在',
+                      error_code: 'TROLE-404-ROLE-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant role permission dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织角色治理依赖暂不可用，请稍后重试',
+                      error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      put: {
+        summary: 'Replace tenant role permission grants by role_id',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'role_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ReplaceTenantRolePermissionGrantsRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Tenant role permission grants replaced and affected snapshots resynced',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/TenantRolePermissionGrantsWriteResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'permission_codes 不能包含前后空白字符',
+                      error_code: 'TROLE-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Role not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  role_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标角色不存在',
+                      error_code: 'TROLE-404-ROLE-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Tenant role permission dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '组织角色治理依赖暂不可用，请稍后重试',
+                      error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  }
+                }
               }
             }
           }
@@ -4628,6 +5381,48 @@ const buildOpenApiSpec = () => {
           request_id: { type: 'string' }
         }
       },
+      ReplaceTenantMemberRoleBindingsRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['role_ids'],
+        properties: {
+          role_ids: {
+            type: 'array',
+            uniqueItems: true,
+            minItems: 1,
+            maxItems: 5,
+            items: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          }
+        }
+      },
+      TenantMemberRoleBindingsResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['membership_id', 'role_ids', 'request_id'],
+        properties: {
+          membership_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: TENANT_MEMBERSHIP_ID_PATTERN
+          },
+          role_ids: {
+            type: 'array',
+            items: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_ROLE_ID_PATTERN
+            }
+          },
+          request_id: { type: 'string' }
+        }
+      },
       TenantRoleCatalogItem: {
         type: 'object',
         additionalProperties: false,
@@ -5176,6 +5971,94 @@ const buildOpenApiSpec = () => {
           can_operate_member_admin: { type: 'boolean' },
           can_view_billing: { type: 'boolean' },
           can_operate_billing: { type: 'boolean' }
+        }
+      },
+      ReplaceTenantRolePermissionGrantsRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['permission_codes'],
+        properties: {
+          permission_codes: {
+            type: 'array',
+            uniqueItems: true,
+            maxItems: 64,
+            description: '仅允许 tenant.* 权限码，按大小写不敏感语义判重',
+            items: {
+              type: 'string',
+              pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          }
+        }
+      },
+      TenantRolePermissionGrantsReadResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'role_id',
+          'permission_codes',
+          'available_permission_codes',
+          'request_id'
+        ],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      TenantRolePermissionGrantsWriteResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'role_id',
+          'permission_codes',
+          'available_permission_codes',
+          'affected_user_count',
+          'request_id'
+        ],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_ROLE_ID_PATTERN
+          },
+          permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permission_codes: {
+            type: 'array',
+            items: {
+              type: 'string',
+              pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          affected_user_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          request_id: { type: 'string' }
         }
       },
       ReplacePlatformRolePermissionGrantsRequest: {

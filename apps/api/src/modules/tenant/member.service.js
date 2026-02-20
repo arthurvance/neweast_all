@@ -12,14 +12,18 @@ const {
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_MEMBERSHIP_ID_LENGTH = 64;
+const MAX_MEMBER_ROLE_BINDINGS = 5;
+const MAX_ROLE_ID_LENGTH = 64;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const DEFAULT_MEMBER_LIST_PAGE = 1;
 const DEFAULT_MEMBER_LIST_PAGE_SIZE = 50;
 const MAX_MEMBER_LIST_PAGE_SIZE = 200;
 const MEMBERSHIP_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
+const ROLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
 const CREATE_MEMBER_ALLOWED_FIELDS = new Set(['phone']);
 const UPDATE_MEMBER_STATUS_ALLOWED_FIELDS = new Set(['status', 'reason']);
+const REPLACE_MEMBER_ROLES_ALLOWED_FIELDS = new Set(['role_ids']);
 const LIST_MEMBER_ALLOWED_FIELDS = new Set(['page', 'page_size']);
 const VALID_MEMBER_STATUS = new Set(['active', 'disabled', 'left']);
 
@@ -35,12 +39,60 @@ const normalizeRequiredString = (candidate) => {
   return candidate.trim();
 };
 
+const normalizeStrictRequiredString = (candidate) => {
+  if (typeof candidate !== 'string') {
+    return '';
+  }
+  const normalized = candidate.trim();
+  if (!normalized || candidate !== normalized) {
+    return '';
+  }
+  return normalized;
+};
+
 const normalizeMemberStatus = (status) => {
   const normalizedStatus = String(status || '').trim().toLowerCase();
   if (normalizedStatus === 'enabled') {
     return 'active';
   }
   return normalizedStatus;
+};
+
+const resolveRawMemberField = (
+  source = {},
+  camelCaseKey = '',
+  snakeCaseKey = ''
+) => {
+  if (!source || typeof source !== 'object') {
+    return undefined;
+  }
+  const hasCamelCaseKey = Object.prototype.hasOwnProperty.call(
+    source,
+    camelCaseKey
+  );
+  const hasSnakeCaseKey = Object.prototype.hasOwnProperty.call(
+    source,
+    snakeCaseKey
+  );
+  if (hasCamelCaseKey) {
+    const camelCaseValue = source[camelCaseKey];
+    if (camelCaseValue !== undefined && camelCaseValue !== null) {
+      return camelCaseValue;
+    }
+  }
+  if (hasSnakeCaseKey) {
+    const snakeCaseValue = source[snakeCaseKey];
+    if (snakeCaseValue !== undefined && snakeCaseValue !== null) {
+      return snakeCaseValue;
+    }
+  }
+  if (hasCamelCaseKey) {
+    return source[camelCaseKey];
+  }
+  if (hasSnakeCaseKey) {
+    return source[snakeCaseKey];
+  }
+  return undefined;
 };
 
 const isValidOptionalTenantName = (value) => {
@@ -61,6 +113,16 @@ const normalizeOptionalTenantName = (value) => {
     return null;
   }
   return normalizeRequiredString(value);
+};
+
+const isValidOptionalStrictTenantName = (value) => {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return normalizeStrictRequiredString(value).length > 0;
 };
 
 const isValidOptionalDateTime = (value) => {
@@ -85,6 +147,20 @@ const normalizeOptionalDateTime = (value) => {
     return null;
   }
   return new Date(Date.parse(normalizeRequiredString(value))).toISOString();
+};
+
+const isValidOptionalStrictDateTime = (value) => {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = normalizeStrictRequiredString(value);
+  if (!normalized) {
+    return false;
+  }
+  return Number.isFinite(Date.parse(normalized));
 };
 
 const isValidMembershipId = (value = '') =>
@@ -244,18 +320,19 @@ const parseCreateMemberPayload = (payload = {}) => {
   };
 };
 
-const parseUpdateMemberStatusInput = ({ params = {}, payload = {} } = {}) => {
+const parseMembershipIdFromParams = (params = {}) => {
   const rawMembershipId = params.membership_id;
   if (typeof rawMembershipId !== 'string') {
     throw tenantMemberErrors.invalidPayload('membership_id 不能为空');
   }
-  const membershipId = normalizeRequiredString(rawMembershipId);
-  if (!membershipId) {
+  const trimmedMembershipId = normalizeRequiredString(rawMembershipId);
+  if (!trimmedMembershipId) {
     throw tenantMemberErrors.invalidPayload('membership_id 不能为空');
   }
-  if (rawMembershipId !== membershipId) {
+  if (rawMembershipId !== trimmedMembershipId) {
     throw tenantMemberErrors.invalidPayload('membership_id 不能包含前后空白字符');
   }
+  const membershipId = trimmedMembershipId.toLowerCase();
   if (membershipId.length > MAX_MEMBERSHIP_ID_LENGTH) {
     throw tenantMemberErrors.invalidPayload(
       `membership_id 长度不能超过 ${MAX_MEMBERSHIP_ID_LENGTH}`
@@ -267,6 +344,11 @@ const parseUpdateMemberStatusInput = ({ params = {}, payload = {} } = {}) => {
   if (!isValidMembershipId(membershipId)) {
     throw tenantMemberErrors.invalidPayload('membership_id 格式错误');
   }
+  return membershipId;
+};
+
+const parseUpdateMemberStatusInput = ({ params = {}, payload = {} } = {}) => {
+  const membershipId = parseMembershipIdFromParams(params);
   if (!isPlainObject(payload)) {
     throw tenantMemberErrors.invalidPayload();
   }
@@ -312,6 +394,107 @@ const parseUpdateMemberStatusInput = ({ params = {}, payload = {} } = {}) => {
     nextStatus,
     reason
   };
+};
+
+const parseReplaceMemberRolesInput = ({ params = {}, payload = {} } = {}) => {
+  const membershipId = parseMembershipIdFromParams(params);
+  if (!isPlainObject(payload)) {
+    throw tenantMemberErrors.invalidPayload();
+  }
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !REPLACE_MEMBER_ROLES_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw tenantMemberErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'role_ids')) {
+    throw tenantMemberErrors.invalidPayload('role_ids 为必填字段');
+  }
+  if (!Array.isArray(payload.role_ids)) {
+    throw tenantMemberErrors.invalidPayload('role_ids 必须为数组');
+  }
+  if (
+    payload.role_ids.length === 0
+    || payload.role_ids.length > MAX_MEMBER_ROLE_BINDINGS
+  ) {
+    throw tenantMemberErrors.invalidPayload(
+      `role_ids 数量必须在 1 到 ${MAX_MEMBER_ROLE_BINDINGS} 之间`
+    );
+  }
+  const dedupedRoleIds = new Map();
+  for (const roleId of payload.role_ids) {
+    if (typeof roleId !== 'string') {
+      throw tenantMemberErrors.invalidPayload('role_ids 仅允许字符串');
+    }
+    const normalizedRoleId = roleId.trim().toLowerCase();
+    if (!normalizedRoleId) {
+      throw tenantMemberErrors.invalidPayload('role_ids 不能为空字符串');
+    }
+    if (roleId !== roleId.trim()) {
+      throw tenantMemberErrors.invalidPayload('role_ids 不能包含前后空白字符');
+    }
+    if (normalizedRoleId.length > MAX_ROLE_ID_LENGTH) {
+      throw tenantMemberErrors.invalidPayload(
+        `role_ids 中元素长度不能超过 ${MAX_ROLE_ID_LENGTH}`
+      );
+    }
+    if (CONTROL_CHAR_PATTERN.test(normalizedRoleId)) {
+      throw tenantMemberErrors.invalidPayload('role_ids 不能包含控制字符');
+    }
+    if (!ROLE_ID_PATTERN.test(normalizedRoleId)) {
+      throw tenantMemberErrors.invalidPayload('role_ids 格式错误');
+    }
+    if (dedupedRoleIds.has(normalizedRoleId)) {
+      throw tenantMemberErrors.invalidPayload('role_ids 不允许重复');
+    }
+    dedupedRoleIds.set(normalizedRoleId, normalizedRoleId);
+  }
+  return {
+    membershipId,
+    roleIds: [...dedupedRoleIds.values()]
+  };
+};
+
+const normalizeStrictRoleIdsFromBindings = ({
+  bindings = {},
+  minCount = 0,
+  maxCount = MAX_MEMBER_ROLE_BINDINGS
+} = {}) => {
+  const rawRoleIds = Array.isArray(bindings?.role_ids)
+    ? bindings.role_ids
+    : Array.isArray(bindings?.roleIds)
+      ? bindings.roleIds
+      : null;
+  if (!Array.isArray(rawRoleIds)) {
+    return null;
+  }
+  if (rawRoleIds.length < minCount || rawRoleIds.length > maxCount) {
+    return null;
+  }
+  const normalizedRoleIds = [];
+  const seenRoleIds = new Set();
+  for (const roleId of rawRoleIds) {
+    if (typeof roleId !== 'string') {
+      return null;
+    }
+    const trimmedRoleId = roleId.trim();
+    if (roleId !== trimmedRoleId) {
+      return null;
+    }
+    const normalizedRoleId = trimmedRoleId.toLowerCase();
+    if (
+      !normalizedRoleId
+      || normalizedRoleId.length > MAX_ROLE_ID_LENGTH
+      || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
+      || !ROLE_ID_PATTERN.test(normalizedRoleId)
+      || seenRoleIds.has(normalizedRoleId)
+    ) {
+      return null;
+    }
+    seenRoleIds.add(normalizedRoleId);
+    normalizedRoleIds.push(normalizedRoleId);
+  }
+  return normalizedRoleIds;
 };
 
 const parsePositiveInteger = ({
@@ -372,21 +555,120 @@ const parseListMembersQuery = (query = {}) => {
 
 const normalizeMemberRecord = (record = {}) => {
   const source = isPlainObject(record) ? record : {};
-  const rawTenantName = source.tenant_name ?? source.tenantName ?? null;
-  const rawJoinedAt = source.joined_at ?? source.joinedAt ?? null;
-  const rawLeftAt = source.left_at ?? source.leftAt ?? null;
+  const rawTenantName = resolveRawMemberField(
+    source,
+    'tenantName',
+    'tenant_name'
+  ) ?? null;
+  const rawJoinedAt = resolveRawMemberField(
+    source,
+    'joinedAt',
+    'joined_at'
+  ) ?? null;
+  const rawLeftAt = resolveRawMemberField(
+    source,
+    'leftAt',
+    'left_at'
+  ) ?? null;
   return {
-    membership_id: normalizeRequiredString(
-      source.membership_id || source.membershipId
-    ),
-    user_id: normalizeRequiredString(source.user_id || source.userId),
-    tenant_id: normalizeRequiredString(source.tenant_id || source.tenantId),
+    membership_id: normalizeRequiredString(resolveRawMemberField(
+      source,
+      'membershipId',
+      'membership_id'
+    )),
+    user_id: normalizeRequiredString(resolveRawMemberField(
+      source,
+      'userId',
+      'user_id'
+    )),
+    tenant_id: normalizeRequiredString(resolveRawMemberField(
+      source,
+      'tenantId',
+      'tenant_id'
+    )),
     tenant_name: normalizeOptionalTenantName(rawTenantName),
     phone: normalizeRequiredString(source.phone),
     status: normalizeMemberStatus(source.status),
     joined_at: normalizeOptionalDateTime(rawJoinedAt),
     left_at: normalizeOptionalDateTime(rawLeftAt)
   };
+};
+
+const isValidNormalizedMemberRecordFromRaw = ({
+  member = {},
+  rawMember = {},
+  activeTenantId = '',
+  expectedStatus = null,
+  expectedUserId = '',
+  expectedPhone = ''
+} = {}) => {
+  const rawMembershipId = normalizeStrictRequiredString(
+    resolveRawMemberField(rawMember, 'membershipId', 'membership_id')
+  );
+  const rawUserId = normalizeStrictRequiredString(
+    resolveRawMemberField(rawMember, 'userId', 'user_id')
+  );
+  const rawTenantId = normalizeStrictRequiredString(
+    resolveRawMemberField(rawMember, 'tenantId', 'tenant_id')
+  );
+  const rawPhone = normalizeStrictRequiredString(rawMember?.phone);
+  const rawStatus = normalizeMemberStatus(
+    normalizeStrictRequiredString(rawMember?.status)
+  );
+  const rawTenantName = resolveRawMemberField(
+    rawMember,
+    'tenantName',
+    'tenant_name'
+  ) ?? null;
+  const rawJoinedAt = resolveRawMemberField(
+    rawMember,
+    'joinedAt',
+    'joined_at'
+  ) ?? null;
+  const rawLeftAt = resolveRawMemberField(
+    rawMember,
+    'leftAt',
+    'left_at'
+  ) ?? null;
+  const normalizedExpectedStatus = expectedStatus === null
+    ? null
+    : normalizeMemberStatus(expectedStatus);
+  const normalizedExpectedUserId = normalizeRequiredString(expectedUserId);
+  const normalizedExpectedPhone = normalizeRequiredString(expectedPhone);
+
+  return (
+    !!rawMembershipId
+    && !!rawUserId
+    && !!rawTenantId
+    && !!rawPhone
+    && !!rawStatus
+    && rawMembershipId === String(member?.membership_id || '')
+    && rawUserId === String(member?.user_id || '')
+    && rawTenantId === String(member?.tenant_id || '')
+    && rawPhone === String(member?.phone || '')
+    && rawStatus === String(member?.status || '')
+    && isValidMembershipId(member?.membership_id)
+    && !!member?.user_id
+    && !!member?.tenant_id
+    && isValidMainlandPhone(member?.phone)
+    && VALID_MEMBER_STATUS.has(String(member?.status || ''))
+    && String(member?.tenant_id || '') === String(activeTenantId || '').trim()
+    && (
+      normalizedExpectedStatus === null
+      || String(member?.status || '') === normalizedExpectedStatus
+    )
+    && (
+      !normalizedExpectedUserId
+      || String(member?.user_id || '') === normalizedExpectedUserId
+    )
+    && (
+      !normalizedExpectedPhone
+      || String(member?.phone || '') === normalizedExpectedPhone
+    )
+    && isValidOptionalStrictTenantName(rawTenantName)
+    && isValidOptionalStrictDateTime(rawJoinedAt)
+    && isValidOptionalStrictDateTime(rawLeftAt)
+  );
 };
 
 const createTenantMemberService = ({ authService } = {}) => {
@@ -555,23 +837,12 @@ const createTenantMemberService = ({ authService } = {}) => {
       throw tenantMemberErrors.dependencyUnavailable();
     }
     const normalizedMembers = members.map((member) => normalizeMemberRecord(member));
-    const hasMalformedMember = normalizedMembers.some(
-      (member, index) => {
-        const rawMember = isPlainObject(members[index]) ? members[index] : {};
-        const rawTenantName = rawMember.tenant_name ?? rawMember.tenantName ?? null;
-        const rawJoinedAt = rawMember.joined_at ?? rawMember.joinedAt ?? null;
-        const rawLeftAt = rawMember.left_at ?? rawMember.leftAt ?? null;
-        return (
-        !isValidMembershipId(member.membership_id)
-        || !member.user_id
-        || !member.tenant_id
-        || !isValidMainlandPhone(member.phone)
-        || !VALID_MEMBER_STATUS.has(member.status)
-        || !isValidOptionalTenantName(rawTenantName)
-        || !isValidOptionalDateTime(rawJoinedAt)
-        || !isValidOptionalDateTime(rawLeftAt)
-        );
-      }
+    const hasMalformedMember = normalizedMembers.some((member, index) =>
+      !isValidNormalizedMemberRecordFromRaw({
+        member,
+        rawMember: members[index],
+        activeTenantId
+      })
     );
     if (hasMalformedMember) {
       addAuditEvent({
@@ -793,14 +1064,14 @@ const createTenantMemberService = ({ authService } = {}) => {
     }
     const normalizedMembership = normalizeMemberRecord(membership || {});
     if (
-      !isValidMembershipId(normalizedMembership.membership_id)
-      || !normalizedMembership.user_id
-      || !normalizedMembership.tenant_id
-      || !isValidMainlandPhone(normalizedMembership.phone)
-      || normalizedMembership.phone !== parsedPayload.phone
-      || normalizedMembership.status !== 'active'
-      || normalizedMembership.user_id !== targetUserId
-      || normalizedMembership.tenant_id !== activeTenantId
+      !isValidNormalizedMemberRecordFromRaw({
+        member: normalizedMembership,
+        rawMember: membership || {},
+        activeTenantId,
+        expectedStatus: 'active',
+        expectedUserId: targetUserId,
+        expectedPhone: parsedPayload.phone
+      })
     ) {
       addAuditEvent({
         type: 'tenant.member.create.rejected',
@@ -938,16 +1209,24 @@ const createTenantMemberService = ({ authService } = {}) => {
     if (!updatedMembership) {
       throw tenantMemberErrors.membershipNotFound();
     }
-    const resolvedMembershipId = normalizeRequiredString(
-      updatedMembership.membership_id
+    const resolvedMembershipId = normalizeStrictRequiredString(
+      resolveRawMemberField(updatedMembership, 'membershipId', 'membership_id')
     );
-    const resolvedUserId = normalizeRequiredString(updatedMembership.user_id);
-    const resolvedTenantId = normalizeRequiredString(updatedMembership.tenant_id);
+    const resolvedUserId = normalizeStrictRequiredString(
+      resolveRawMemberField(updatedMembership, 'userId', 'user_id')
+    );
+    const resolvedTenantId = normalizeStrictRequiredString(
+      resolveRawMemberField(updatedMembership, 'tenantId', 'tenant_id')
+    );
     const resolvedPreviousStatus = normalizeMemberStatus(
-      updatedMembership.previous_status
+      normalizeStrictRequiredString(
+        resolveRawMemberField(updatedMembership, 'previousStatus', 'previous_status')
+      )
     );
     const resolvedCurrentStatus = normalizeMemberStatus(
-      updatedMembership.current_status
+      normalizeStrictRequiredString(
+        resolveRawMemberField(updatedMembership, 'currentStatus', 'current_status')
+      )
     );
     const isRejoinTransition =
       resolvedPreviousStatus === 'left'
@@ -1015,10 +1294,310 @@ const createTenantMemberService = ({ authService } = {}) => {
     };
   };
 
+  const getMemberRoles = async ({
+    requestId,
+    accessToken,
+    params = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const membershipId = parseMembershipIdFromParams(params);
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: TENANT_MEMBER_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'tenant.member.roles.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          tenant_id: null,
+          membership_id: membershipId,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const { operatorUserId, activeTenantId } = operatorContext;
+    assertAuthServiceMethod('listTenantMemberRoleBindings');
+
+    let bindings;
+    try {
+      bindings = await authService.listTenantMemberRoleBindings({
+        tenantId: activeTenantId,
+        membershipId
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        const mappedError = error.errorCode === 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+          ? tenantMemberErrors.membershipNotFound()
+          : error;
+        addAuditEvent({
+          type: 'tenant.member.roles.read.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          detail: 'tenant member role binding read rejected',
+          metadata: {
+            tenant_id: activeTenantId,
+            membership_id: membershipId,
+            error_code: mappedError.errorCode
+          }
+        });
+        throw mappedError;
+      }
+      addAuditEvent({
+        type: 'tenant.member.roles.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding read dependency unavailable',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    const rawResolvedMembershipId =
+      Object.prototype.hasOwnProperty.call(bindings || {}, 'membership_id')
+        ? bindings?.membership_id
+        : bindings?.membershipId;
+    const resolvedMembershipId = normalizeStrictRequiredString(rawResolvedMembershipId);
+    const normalizedRoleIds = normalizeStrictRoleIdsFromBindings({
+      bindings,
+      minCount: 0,
+      maxCount: MAX_MEMBER_ROLE_BINDINGS
+    });
+    if (!normalizedRoleIds) {
+      addAuditEvent({
+        type: 'tenant.member.roles.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding read returned malformed payload',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+    if (resolvedMembershipId !== membershipId) {
+      addAuditEvent({
+        type: 'tenant.member.roles.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding read returned mismatched membership',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'tenant.member.roles.read.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      detail: 'tenant member role bindings listed',
+      metadata: {
+        tenant_id: activeTenantId,
+        membership_id: membershipId,
+        role_count: normalizedRoleIds.length
+      }
+    });
+
+    return {
+      membership_id: membershipId,
+      role_ids: normalizedRoleIds,
+      request_id: resolvedRequestId
+    };
+  };
+
+  const replaceMemberRoles = async ({
+    requestId,
+    accessToken,
+    params = {},
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const parsedInput = parseReplaceMemberRolesInput({
+      params,
+      payload
+    });
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: TENANT_MEMBER_OPERATE_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'tenant.member.roles.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          tenant_id: null,
+          membership_id: parsedInput.membershipId,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const { operatorUserId, operatorSessionId, activeTenantId } = operatorContext;
+    assertAuthServiceMethod('replaceTenantMemberRoleBindings');
+
+    let bindings;
+    try {
+      bindings = await authService.replaceTenantMemberRoleBindings({
+        requestId: resolvedRequestId,
+        tenantId: activeTenantId,
+        membershipId: parsedInput.membershipId,
+        roleIds: parsedInput.roleIds,
+        operatorUserId,
+        operatorSessionId
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        const mappedError = error.errorCode === 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+          ? tenantMemberErrors.membershipNotFound()
+          : error;
+        addAuditEvent({
+          type: 'tenant.member.roles.update.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          detail: 'tenant member role binding update rejected',
+          metadata: {
+            tenant_id: activeTenantId,
+            membership_id: parsedInput.membershipId,
+            error_code: mappedError.errorCode
+          }
+        });
+        throw mappedError;
+      }
+      addAuditEvent({
+        type: 'tenant.member.roles.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding update dependency unavailable',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    const rawResolvedMembershipId =
+      Object.prototype.hasOwnProperty.call(bindings || {}, 'membership_id')
+        ? bindings?.membership_id
+        : bindings?.membershipId;
+    const resolvedMembershipId = normalizeStrictRequiredString(rawResolvedMembershipId);
+    const normalizedRoleIds = normalizeStrictRoleIdsFromBindings({
+      bindings,
+      minCount: 1,
+      maxCount: MAX_MEMBER_ROLE_BINDINGS
+    });
+    if (!normalizedRoleIds) {
+      addAuditEvent({
+        type: 'tenant.member.roles.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding update returned malformed payload',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+    if (resolvedMembershipId !== parsedInput.membershipId) {
+      addAuditEvent({
+        type: 'tenant.member.roles.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding update returned mismatched membership',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+    const expectedRoleIds = [...parsedInput.roleIds].sort((left, right) =>
+      left.localeCompare(right)
+    );
+    const resolvedSortedRoleIds = [...normalizedRoleIds].sort((left, right) =>
+      left.localeCompare(right)
+    );
+    const hasRoleBindingMismatch = (
+      expectedRoleIds.length !== resolvedSortedRoleIds.length
+      || expectedRoleIds.some(
+        (roleId, index) => roleId !== resolvedSortedRoleIds[index]
+      )
+    );
+    if (hasRoleBindingMismatch) {
+      addAuditEvent({
+        type: 'tenant.member.roles.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member role binding update returned mismatched role set',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'tenant.member.roles.update.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      detail: 'tenant member role bindings replaced',
+      metadata: {
+        tenant_id: activeTenantId,
+        membership_id: parsedInput.membershipId,
+        role_count: normalizedRoleIds.length
+      }
+    });
+
+    return {
+      membership_id: parsedInput.membershipId,
+      role_ids: normalizedRoleIds,
+      request_id: resolvedRequestId
+    };
+  };
+
   return {
     listMembers,
     createMember,
     updateMemberStatus,
+    getMemberRoles,
+    replaceMemberRoles,
     _internals: {
       auditTrail,
       authService

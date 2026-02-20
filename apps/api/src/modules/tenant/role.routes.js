@@ -48,9 +48,11 @@ const createTenantRoleHandlers = (tenantRoleService) => {
     || typeof tenantRoleService.createRole !== 'function'
     || typeof tenantRoleService.updateRole !== 'function'
     || typeof tenantRoleService.deleteRole !== 'function'
+    || typeof tenantRoleService.getRolePermissions !== 'function'
+    || typeof tenantRoleService.replaceRolePermissions !== 'function'
   ) {
     throw new TypeError(
-      'createTenantRoleHandlers requires a tenantRoleService with listRoles, createRole, updateRole and deleteRole'
+      'createTenantRoleHandlers requires a tenantRoleService with listRoles, createRole, updateRole, deleteRole, getRolePermissions and replaceRolePermissions'
     );
   }
 
@@ -120,6 +122,42 @@ const createTenantRoleHandlers = (tenantRoleService) => {
           permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
         }),
         roleId: params.role_id,
+        authorizationContext
+      }),
+
+    getRolePermissions: async ({
+      requestId,
+      authorization,
+      params = {},
+      authorizationContext = null
+    }) =>
+      tenantRoleService.getRolePermissions({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_ROLE_VIEW_PERMISSION_CODE
+        }),
+        roleId: params.role_id,
+        authorizationContext
+      }),
+
+    replaceRolePermissions: async ({
+      requestId,
+      authorization,
+      params = {},
+      body,
+      authorizationContext = null
+    }) =>
+      tenantRoleService.replaceRolePermissions({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
+        }),
+        roleId: params.role_id,
+        payload: body || {},
         authorizationContext
       })
   };

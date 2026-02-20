@@ -315,6 +315,37 @@ test('0013 down migration drops tenant scoped role catalog indexes and tenant_id
   assert.match(sql, /DROP COLUMN IF EXISTS tenant_id/i);
 });
 
+test('0014 migration defines tenant role permission grants table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0014_tenant_role_permission_grants.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_role_permission_grants/i);
+  assert.match(sql, /PRIMARY KEY \(role_id, permission_code\)/i);
+  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_role_catalog \(role_id\)/i);
+  assert.match(sql, /idx_tenant_role_permission_grants_permission_code/i);
+});
+
+test('0015 migration defines tenant membership role bindings table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0015_auth_tenant_membership_roles.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS auth_tenant_membership_roles/i);
+  assert.match(sql, /PRIMARY KEY \(membership_id, role_id\)/i);
+  assert.match(sql, /FOREIGN KEY \(membership_id\) REFERENCES auth_user_tenants \(membership_id\)/i);
+  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_role_catalog \(role_id\)/i);
+  assert.match(sql, /ON DELETE CASCADE/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

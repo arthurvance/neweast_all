@@ -1,6 +1,10 @@
 const { randomUUID } = require('node:crypto');
 
-const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
+const createInMemoryAuthStore = ({
+  seedUsers = [],
+  hashPassword,
+  faultInjector = null
+}) => {
   const usersByPhone = new Map();
   const usersById = new Map();
   const sessionsById = new Map();
@@ -13,6 +17,8 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
   const platformRoleCatalogById = new Map();
   const platformRoleCatalogCodeIndex = new Map();
   const platformRolePermissionGrantsByRoleId = new Map();
+  const tenantRolePermissionGrantsByRoleId = new Map();
+  const tenantMembershipRolesByMembershipId = new Map();
   const orgsById = new Map();
   const tenantMembershipHistoryByPair = new Map();
   const ownerTransferLocksByOrgId = new Map();
@@ -31,6 +37,24 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
     'platform.billing.view',
     'platform.billing.operate'
   ]);
+  const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
+    'tenant.member_admin.view',
+    'tenant.member_admin.operate',
+    'tenant.billing.view',
+    'tenant.billing.operate'
+  ]);
+  const invokeFaultInjector = (hookName, payload = {}) => {
+    if (!faultInjector || typeof faultInjector !== 'object') {
+      return;
+    }
+    const hook = faultInjector[hookName];
+    if (typeof hook === 'function') {
+      hook(payload);
+    }
+  };
+  const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
+  const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
+  const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
   const isActiveLikeStatus = (status) => {
     const normalizedStatus = String(status || 'active').trim().toLowerCase();
@@ -383,6 +407,185 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       normalizedPermissionCodes
     );
     return listPlatformRolePermissionGrantsForRoleId(normalizedRoleId);
+  };
+
+  const normalizeTenantPermissionCode = (permissionCode) =>
+    String(permissionCode || '').trim();
+  const toTenantPermissionCodeKey = (permissionCode) =>
+    normalizeTenantPermissionCode(permissionCode).toLowerCase();
+  const normalizeTenantPermissionCodes = (permissionCodes = []) => {
+    const deduped = new Map();
+    for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
+      const normalizedCode = normalizeTenantPermissionCode(permissionCode);
+      if (!normalizedCode) {
+        continue;
+      }
+      const permissionCodeKey = toTenantPermissionCodeKey(normalizedCode);
+      deduped.set(permissionCodeKey, permissionCodeKey);
+    }
+    return [...deduped.values()];
+  };
+  const createTenantRolePermissionGrantDataError = (
+    reason = 'tenant-role-permission-grants-invalid'
+  ) => {
+    const error = new Error('tenant role permission grants invalid');
+    error.code = 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID';
+    error.reason = String(reason || 'tenant-role-permission-grants-invalid')
+      .trim()
+      .toLowerCase();
+    return error;
+  };
+  const normalizeStrictTenantPermissionCodeFromGrantRow = (
+    permissionCode,
+    reason = 'tenant-role-permission-grants-invalid'
+  ) => {
+    if (typeof permissionCode !== 'string') {
+      throw createTenantRolePermissionGrantDataError(reason);
+    }
+    const normalizedPermissionCode = normalizeTenantPermissionCode(permissionCode);
+    const permissionCodeKey = toTenantPermissionCodeKey(normalizedPermissionCode);
+    if (
+      permissionCode !== normalizedPermissionCode
+      || !normalizedPermissionCode
+      || CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)
+      || !KNOWN_TENANT_PERMISSION_CODE_SET.has(permissionCodeKey)
+    ) {
+      throw createTenantRolePermissionGrantDataError(reason);
+    }
+    return permissionCodeKey;
+  };
+  const normalizeStrictTenantRolePermissionGrantIdentity = (
+    identityValue,
+    reason = 'tenant-role-permission-grants-invalid-identity'
+  ) => {
+    if (typeof identityValue !== 'string') {
+      throw createTenantRolePermissionGrantDataError(reason);
+    }
+    const normalizedIdentity = identityValue.trim();
+    if (
+      !normalizedIdentity
+      || identityValue !== normalizedIdentity
+      || CONTROL_CHAR_PATTERN.test(normalizedIdentity)
+    ) {
+      throw createTenantRolePermissionGrantDataError(reason);
+    }
+    return normalizedIdentity;
+  };
+  const createTenantMembershipRoleBindingDataError = (
+    reason = 'tenant-membership-role-bindings-invalid'
+  ) => {
+    const error = new Error('tenant membership role bindings invalid');
+    error.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID';
+    error.reason = String(reason || 'tenant-membership-role-bindings-invalid')
+      .trim()
+      .toLowerCase();
+    return error;
+  };
+  const normalizeStrictTenantMembershipRoleIdFromBindingRow = (
+    roleId,
+    reason = 'tenant-membership-role-bindings-invalid-role-id'
+  ) => {
+    if (typeof roleId !== 'string') {
+      throw createTenantMembershipRoleBindingDataError(reason);
+    }
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+    if (
+      roleId !== roleId.trim()
+      || !normalizedRoleId
+      || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
+      || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
+    ) {
+      throw createTenantMembershipRoleBindingDataError(reason);
+    }
+    return normalizedRoleId;
+  };
+  const normalizeStrictTenantMembershipRoleBindingIdentity = (
+    identityValue,
+    reason = 'tenant-membership-role-bindings-invalid-identity'
+  ) => {
+    if (typeof identityValue !== 'string') {
+      throw createTenantMembershipRoleBindingDataError(reason);
+    }
+    const normalizedIdentity = identityValue.trim();
+    if (
+      !normalizedIdentity
+      || identityValue !== normalizedIdentity
+      || CONTROL_CHAR_PATTERN.test(normalizedIdentity)
+    ) {
+      throw createTenantMembershipRoleBindingDataError(reason);
+    }
+    return normalizedIdentity;
+  };
+  const buildEmptyTenantPermission = (scopeLabel = '组织权限（角色并集）') => ({
+    scopeLabel,
+    canViewMemberAdmin: false,
+    canOperateMemberAdmin: false,
+    canViewBilling: false,
+    canOperateBilling: false
+  });
+  const resolveTenantPermissionFromGrantCodes = (permissionCodes = []) => {
+    const permission = buildEmptyTenantPermission();
+    for (const permissionCode of normalizeTenantPermissionCodes(permissionCodes)) {
+      switch (toTenantPermissionCodeKey(permissionCode)) {
+        case 'tenant.member_admin.view':
+          permission.canViewMemberAdmin = true;
+          break;
+        case 'tenant.member_admin.operate':
+          permission.canViewMemberAdmin = true;
+          permission.canOperateMemberAdmin = true;
+          break;
+        case 'tenant.billing.view':
+          permission.canViewBilling = true;
+          break;
+        case 'tenant.billing.operate':
+          permission.canViewBilling = true;
+          permission.canOperateBilling = true;
+          break;
+        default:
+          break;
+      }
+    }
+    return permission;
+  };
+  const listTenantRolePermissionGrantsForRoleId = (roleId) => {
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+    if (!normalizedRoleId) {
+      return [];
+    }
+    const normalizedPermissionCodeKeys = [];
+    const seenPermissionCodeKeys = new Set();
+    for (const permissionCode of tenantRolePermissionGrantsByRoleId.get(normalizedRoleId) || []) {
+      const permissionCodeKey = normalizeStrictTenantPermissionCodeFromGrantRow(
+        permissionCode,
+        'tenant-role-permission-grants-invalid-permission-code'
+      );
+      if (seenPermissionCodeKeys.has(permissionCodeKey)) {
+        throw createTenantRolePermissionGrantDataError(
+          'tenant-role-permission-grants-duplicate-permission-code'
+        );
+      }
+      seenPermissionCodeKeys.add(permissionCodeKey);
+      normalizedPermissionCodeKeys.push(permissionCodeKey);
+    }
+    return normalizedPermissionCodeKeys.sort((left, right) => left.localeCompare(right));
+  };
+  const replaceTenantRolePermissionGrantsForRoleId = ({
+    roleId,
+    permissionCodes = []
+  }) => {
+    const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+    if (!normalizedRoleId) {
+      throw new Error('replaceTenantRolePermissionGrants requires roleId');
+    }
+    const normalizedPermissionCodes = normalizeTenantPermissionCodes(permissionCodes)
+      .filter((permissionCode) =>
+        KNOWN_TENANT_PERMISSION_CODES.includes(permissionCode)
+      );
+    tenantRolePermissionGrantsByRoleId.set(
+      normalizedRoleId,
+      normalizedPermissionCodes
+    );
+    return listTenantRolePermissionGrantsForRoleId(normalizedRoleId);
   };
 
   const isSamePlatformPermission = (left, right) => {
@@ -752,6 +955,202 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       activeTenantId
     });
 
+  const findTenantMembershipStateByMembershipId = (membershipId) => {
+    const normalizedMembershipId = String(membershipId || '').trim();
+    if (!normalizedMembershipId) {
+      return null;
+    }
+    for (const [userId, memberships] of tenantsByUserId.entries()) {
+      for (const membership of Array.isArray(memberships) ? memberships : []) {
+        if (String(membership?.membershipId || '').trim() !== normalizedMembershipId) {
+          continue;
+        }
+        return {
+          userId: String(userId || '').trim(),
+          memberships,
+          membership
+        };
+      }
+    }
+    return null;
+  };
+
+  const listTenantMembershipRoleBindingsForMembershipId = ({
+    membershipId,
+    tenantId = undefined
+  } = {}) => {
+    const normalizedMembershipId = String(membershipId || '').trim();
+    if (!normalizedMembershipId) {
+      return [];
+    }
+    const membershipState = findTenantMembershipStateByMembershipId(normalizedMembershipId);
+    if (!membershipState) {
+      return [];
+    }
+    if (tenantId !== undefined && tenantId !== null) {
+      const normalizedTenantId = String(tenantId || '').trim();
+      const membershipTenantId = String(
+        membershipState.membership?.tenantId || membershipState.membership?.tenant_id || ''
+      ).trim();
+      if (membershipTenantId !== normalizedTenantId) {
+        return [];
+      }
+    }
+    const normalizedRoleIds = [];
+    const seenRoleIds = new Set();
+    for (const rawRoleId of tenantMembershipRolesByMembershipId.get(normalizedMembershipId) || []) {
+      const normalizedRoleId = normalizeStrictTenantMembershipRoleIdFromBindingRow(
+        rawRoleId,
+        'tenant-membership-role-bindings-invalid-role-id'
+      );
+      if (seenRoleIds.has(normalizedRoleId)) {
+        throw createTenantMembershipRoleBindingDataError(
+          'tenant-membership-role-bindings-duplicate-role-id'
+        );
+      }
+      seenRoleIds.add(normalizedRoleId);
+      normalizedRoleIds.push(normalizedRoleId);
+    }
+    return normalizedRoleIds.sort((left, right) => left.localeCompare(right));
+  };
+
+  const replaceTenantMembershipRoleBindingsForMembershipId = ({
+    membershipId,
+    roleIds = []
+  } = {}) => {
+    const normalizedMembershipId = String(membershipId || '').trim();
+    if (!normalizedMembershipId) {
+      throw new Error('replaceTenantMembershipRoleBindings requires membershipId');
+    }
+    const normalizedRoleIds = [...new Set(
+      (Array.isArray(roleIds) ? roleIds : [])
+        .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+        .filter((roleId) => roleId.length > 0)
+    )].sort((left, right) => left.localeCompare(right));
+    tenantMembershipRolesByMembershipId.set(normalizedMembershipId, normalizedRoleIds);
+    return listTenantMembershipRoleBindingsForMembershipId({
+      membershipId: normalizedMembershipId
+    });
+  };
+
+  const toTenantMembershipScopeLabel = (membership = null) => {
+    const tenantId = String(
+      membership?.tenantId || membership?.tenant_id || ''
+    ).trim();
+    const tenantName = membership?.tenantName === null || membership?.tenantName === undefined
+      ? null
+      : String(membership?.tenantName || '').trim() || null;
+    return `组织权限（${tenantName || tenantId || '未知组织'}）`;
+  };
+
+  const resolveEffectiveTenantPermissionForMembership = ({
+    membership = null,
+    roleIds = []
+  } = {}) => {
+    const scopeLabel = toTenantMembershipScopeLabel(membership);
+    if (!membership || !isTenantMembershipActiveForAuth(membership)) {
+      return buildEmptyTenantPermission(scopeLabel);
+    }
+    const membershipTenantId = String(
+      membership?.tenantId || membership?.tenant_id || ''
+    ).trim();
+    let mergedPermission = null;
+    for (const roleId of Array.isArray(roleIds) ? roleIds : []) {
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedRoleId) {
+        continue;
+      }
+      const catalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
+        normalizedRoleId
+      )?.record;
+      if (!catalogEntry) {
+        continue;
+      }
+      const normalizedCatalogScope = normalizePlatformRoleCatalogScope(catalogEntry.scope);
+      const normalizedCatalogTenantId = normalizePlatformRoleCatalogTenantId(
+        catalogEntry.tenantId
+      );
+      const normalizedCatalogStatus = normalizePlatformRoleCatalogStatus(
+        catalogEntry.status
+      );
+      if (
+        normalizedCatalogScope !== 'tenant'
+        || normalizedCatalogTenantId !== membershipTenantId
+        || !isActiveLikeStatus(normalizedCatalogStatus)
+      ) {
+        continue;
+      }
+      const rolePermission = resolveTenantPermissionFromGrantCodes(
+        listTenantRolePermissionGrantsForRoleId(normalizedRoleId)
+      );
+      mergedPermission = mergePlatformPermission(mergedPermission, rolePermission);
+    }
+    if (!mergedPermission) {
+      return buildEmptyTenantPermission(scopeLabel);
+    }
+    return {
+      ...mergedPermission,
+      scopeLabel
+    };
+  };
+
+  const syncTenantMembershipPermissionSnapshot = ({
+    membershipState = null,
+    reason = 'tenant-membership-permission-changed',
+    revokeSessions = true
+  } = {}) => {
+    const targetMembershipState = membershipState
+      || null;
+    if (
+      !targetMembershipState
+      || !targetMembershipState.membership
+      || !targetMembershipState.memberships
+    ) {
+      return {
+        synced: false,
+        reason: 'membership-not-found',
+        changed: false,
+        permission: null,
+        roleIds: []
+      };
+    }
+    const membership = targetMembershipState.membership;
+    const membershipId = String(membership.membershipId || '').trim();
+    const tenantId = String(membership.tenantId || '').trim();
+    const userId = String(targetMembershipState.userId || '').trim();
+    const roleIds = listTenantMembershipRoleBindingsForMembershipId({
+      membershipId,
+      tenantId
+    });
+    const previousPermission = normalizePlatformPermission(
+      membership.permission,
+      toTenantMembershipScopeLabel(membership)
+    ) || buildEmptyTenantPermission(toTenantMembershipScopeLabel(membership));
+    const nextPermission = resolveEffectiveTenantPermissionForMembership({
+      membership,
+      roleIds
+    });
+    const changed = !isSamePlatformPermission(previousPermission, nextPermission);
+    membership.permission = { ...nextPermission };
+    if (revokeSessions && changed && userId && tenantId) {
+      revokeTenantSessionsForUser({
+        userId,
+        reason,
+        activeTenantId: tenantId
+      });
+    }
+    return {
+      synced: true,
+      reason: 'ok',
+      changed,
+      permission: { ...nextPermission },
+      roleIds: [...roleIds],
+      userId,
+      membershipId,
+      tenantId
+    };
+  };
+
   const createForeignKeyConstraintError = () => {
     const error = new Error('Cannot delete or update a parent row: a foreign key constraint fails');
     error.code = 'ER_ROW_IS_REFERENCED_2';
@@ -1061,6 +1460,13 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       usersByPhone.delete(String(existingUser.phone || ''));
       domainsByUserId.delete(normalizedUserId);
       platformDomainKnownByUserId.delete(normalizedUserId);
+      for (const membership of tenantsByUserId.get(normalizedUserId) || []) {
+        const membershipId = String(membership?.membershipId || '').trim();
+        if (!membershipId) {
+          continue;
+        }
+        tenantMembershipRolesByMembershipId.delete(membershipId);
+      }
       tenantsByUserId.delete(normalizedUserId);
       platformRolesByUserId.delete(normalizedUserId);
       platformPermissionsByUserId.delete(normalizedUserId);
@@ -1113,6 +1519,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
           reason: 'rejoin',
           operatorUserId: null
         });
+        const previousMembershipId = String(existingMembership.membershipId || '').trim();
         existingMembership.membershipId = randomUUID();
         existingMembership.tenantName = normalizedTenantName;
         existingMembership.status = 'active';
@@ -1125,12 +1532,20 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
           canViewBilling: false,
           canOperateBilling: false
         };
+        if (previousMembershipId) {
+          tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+        }
+        tenantMembershipRolesByMembershipId.set(
+          String(existingMembership.membershipId || '').trim(),
+          []
+        );
         tenantsByUserId.set(normalizedUserId, tenantMemberships);
         return { created: true };
       }
 
+      const membershipId = randomUUID();
       tenantMemberships.push({
-        membershipId: randomUUID(),
+        membershipId,
         tenantId: normalizedTenantId,
         tenantName: normalizedTenantName,
         status: 'active',
@@ -1144,6 +1559,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
           canOperateBilling: false
         }
       });
+      tenantMembershipRolesByMembershipId.set(membershipId, []);
       tenantsByUserId.set(normalizedUserId, tenantMemberships);
       return { created: true };
     },
@@ -1163,6 +1579,16 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       );
       const removed = retainedMemberships.length !== tenantMemberships.length;
       if (removed) {
+        for (const membership of tenantMemberships) {
+          if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
+            continue;
+          }
+          const membershipId = String(membership?.membershipId || '').trim();
+          if (!membershipId) {
+            continue;
+          }
+          tenantMembershipRolesByMembershipId.delete(membershipId);
+        }
         tenantsByUserId.set(normalizedUserId, retainedMemberships);
       }
       return { removed };
@@ -1300,6 +1726,36 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
       };
     },
 
+    findTenantMembershipByMembershipIdAndTenantId: async ({
+      membershipId,
+      tenantId
+    }) => {
+      const normalizedMembershipId = String(membershipId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      if (!normalizedMembershipId || !normalizedTenantId) {
+        return null;
+      }
+      const membershipState = findTenantMembershipStateByMembershipId(
+        normalizedMembershipId
+      );
+      if (!membershipState) {
+        return null;
+      }
+      const membership = membershipState.membership;
+      if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
+        return null;
+      }
+      return {
+        membership_id: normalizedMembershipId,
+        user_id: String(membershipState.userId || '').trim(),
+        tenant_id: normalizedTenantId,
+        tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
+        status: normalizeTenantMembershipStatusForRead(membership?.status),
+        joined_at: membership?.joinedAt || null,
+        left_at: membership?.leftAt || null
+      };
+    },
+
     listTenantMembersByTenantId: async ({ tenantId, page = 1, pageSize = 50 }) => {
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedTenantId) {
@@ -1406,6 +1862,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         throw new Error('updateTenantMembershipStatus encountered unsupported existing status');
       }
       if (previousStatus !== normalizedNextStatus) {
+        let previousMembershipId = '';
         if (previousStatus === 'left' && normalizedNextStatus === 'active') {
           appendTenantMembershipHistory({
             membership: {
@@ -1416,6 +1873,7 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
             reason: reason || 'reactivate',
             operatorUserId
           });
+          previousMembershipId = String(targetMembership.membershipId || '').trim();
           targetMembership.membershipId = randomUUID();
           targetMembership.joinedAt = new Date().toISOString();
           targetMembership.leftAt = null;
@@ -1428,6 +1886,13 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
               canOperateBilling: false
             };
           }
+          if (previousMembershipId) {
+            tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+          }
+          tenantMembershipRolesByMembershipId.set(
+            String(targetMembership.membershipId || '').trim(),
+            []
+          );
         } else if (normalizedNextStatus === 'left') {
           appendTenantMembershipHistory({
             membership: {
@@ -1447,6 +1912,10 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
               canViewBilling: false,
               canOperateBilling: false
             };
+          }
+          const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
+          if (resolvedMembershipId) {
+            tenantMembershipRolesByMembershipId.delete(resolvedMembershipId);
           }
         } else if (normalizedNextStatus === 'active') {
           targetMembership.leftAt = null;
@@ -1474,6 +1943,17 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
           }
           domainsByUserId.set(targetUserId, userDomains);
         }
+
+        if (normalizedNextStatus === 'active') {
+          syncTenantMembershipPermissionSnapshot({
+            membershipState: {
+              userId: targetUserId,
+              memberships: targetMemberships,
+              membership: targetMembership
+            },
+            reason: 'tenant-membership-status-changed'
+          });
+        }
       }
 
       const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
@@ -1484,6 +1964,135 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         tenant_id: normalizedTenantId,
         previous_status: previousStatus,
         current_status: normalizeTenantMembershipStatusForRead(targetMembership.status)
+      };
+    },
+
+    listTenantMembershipRoleBindings: async ({
+      membershipId,
+      tenantId
+    } = {}) =>
+      listTenantMembershipRoleBindingsForMembershipId({
+        membershipId,
+        tenantId
+      }),
+
+    replaceTenantMembershipRoleBindingsAndSyncSnapshot: async ({
+      tenantId,
+      membershipId,
+      roleIds = []
+    } = {}) => {
+      const normalizedTenantId = String(tenantId || '').trim();
+      const normalizedMembershipId = String(membershipId || '').trim();
+      if (!normalizedTenantId || !normalizedMembershipId) {
+        throw new Error('replaceTenantMembershipRoleBindingsAndSyncSnapshot requires tenantId and membershipId');
+      }
+      const membershipState = findTenantMembershipStateByMembershipId(
+        normalizedMembershipId
+      );
+      if (!membershipState) {
+        return null;
+      }
+      if (
+        String(membershipState.membership?.tenantId || '').trim()
+        !== normalizedTenantId
+      ) {
+        return null;
+      }
+      if (
+        !isActiveLikeStatus(
+          normalizeTenantMembershipStatusForRead(
+            membershipState.membership?.status
+          )
+        )
+      ) {
+        const membershipStatusError = new Error(
+          'tenant membership role bindings membership not active'
+        );
+        membershipStatusError.code =
+          'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE';
+        throw membershipStatusError;
+      }
+      const normalizedAffectedUserId =
+        normalizeStrictTenantMembershipRoleBindingIdentity(
+          membershipState?.userId,
+          'tenant-membership-role-bindings-invalid-affected-user-id'
+        );
+      const normalizedRoleIds = [...new Set(
+        (Array.isArray(roleIds) ? roleIds : [])
+          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+          .filter((roleId) => roleId.length > 0)
+      )].sort((left, right) => left.localeCompare(right));
+      for (const roleId of normalizedRoleIds) {
+        const catalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
+          roleId
+        )?.record;
+        const normalizedScope = normalizePlatformRoleCatalogScope(
+          catalogEntry?.scope
+        );
+        const normalizedCatalogTenantId = normalizePlatformRoleCatalogTenantId(
+          catalogEntry?.tenantId
+        );
+        let normalizedCatalogStatus = 'disabled';
+        try {
+          normalizedCatalogStatus = normalizePlatformRoleCatalogStatus(
+            catalogEntry?.status || 'disabled'
+          );
+        } catch (_error) {}
+        if (
+          !catalogEntry
+          || normalizedScope !== 'tenant'
+          || normalizedCatalogTenantId !== normalizedTenantId
+          || !isActiveLikeStatus(normalizedCatalogStatus)
+        ) {
+          const roleBindingError = new Error(
+            'tenant membership role bindings role invalid'
+          );
+          roleBindingError.code =
+            'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID';
+          roleBindingError.roleId = roleId;
+          throw roleBindingError;
+        }
+      }
+      const previousRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+        membershipId: normalizedMembershipId,
+        tenantId: normalizedTenantId
+      });
+      const resolvedRoleIds = replaceTenantMembershipRoleBindingsForMembershipId({
+        membershipId: normalizedMembershipId,
+        roleIds: normalizedRoleIds
+      });
+      const rollbackRoleBindings = () =>
+        replaceTenantMembershipRoleBindingsForMembershipId({
+          membershipId: normalizedMembershipId,
+          roleIds: previousRoleIds
+        });
+      let syncResult;
+      try {
+        syncResult = syncTenantMembershipPermissionSnapshot({
+          membershipState,
+          reason: 'tenant-membership-role-bindings-changed'
+        });
+      } catch (error) {
+        rollbackRoleBindings();
+        throw error;
+      }
+      const syncReason = String(syncResult?.reason || 'unknown')
+        .trim()
+        .toLowerCase();
+      if (syncReason !== 'ok') {
+        rollbackRoleBindings();
+        const syncError = new Error(
+          `tenant membership role bindings sync failed: ${syncReason || 'unknown'}`
+        );
+        syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
+        syncError.syncReason = syncReason || 'unknown';
+        throw syncError;
+      }
+      return {
+        membershipId: normalizedMembershipId,
+        roleIds: resolvedRoleIds,
+        affectedUserIds: [normalizedAffectedUserId],
+        affectedUserCount: 1
       };
     },
 
@@ -1649,6 +2258,183 @@ const createInMemoryAuthStore = ({ seedUsers = [], hashPassword }) => {
         roleId,
         permissionCodes
       }),
+
+    listTenantRolePermissionGrants: async ({ roleId }) =>
+      listTenantRolePermissionGrantsForRoleId(roleId),
+
+    listTenantRolePermissionGrantsByRoleIds: async ({ roleIds = [] } = {}) => {
+      const normalizedRoleIds = [...new Set(
+        (Array.isArray(roleIds) ? roleIds : [])
+          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+          .filter((roleId) => roleId.length > 0)
+      )];
+      return normalizedRoleIds.map((roleId) => ({
+        roleId,
+        permissionCodes: listTenantRolePermissionGrantsForRoleId(roleId)
+      }));
+    },
+
+    replaceTenantRolePermissionGrantsAndSyncSnapshots: async ({
+      tenantId,
+      roleId,
+      permissionCodes = [],
+      maxAffectedMemberships = 100
+    }) => {
+      const normalizedTenantId = String(tenantId || '').trim();
+      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+      if (!normalizedTenantId || !normalizedRoleId) {
+        throw new Error('replaceTenantRolePermissionGrantsAndSyncSnapshots requires tenantId and roleId');
+      }
+      const roleCatalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
+        normalizedRoleId
+      )?.record;
+      if (!roleCatalogEntry) {
+        return null;
+      }
+      if (
+        normalizePlatformRoleCatalogScope(roleCatalogEntry.scope) !== 'tenant'
+        || normalizePlatformRoleCatalogTenantId(roleCatalogEntry.tenantId) !== normalizedTenantId
+      ) {
+        return null;
+      }
+      const normalizedMaxAffectedMemberships = Math.max(
+        1,
+        Math.floor(Number(maxAffectedMemberships || 100))
+      );
+      const affectedMembershipStatesByMembershipId = new Map();
+      for (const [userId, memberships] of tenantsByUserId.entries()) {
+        for (const membership of Array.isArray(memberships) ? memberships : []) {
+          if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
+            continue;
+          }
+          if (!isTenantMembershipActiveForAuth(membership)) {
+            continue;
+          }
+          const membershipId = normalizeStrictTenantRolePermissionGrantIdentity(
+            membership?.membershipId || membership?.membership_id,
+            'tenant-role-permission-grants-invalid-membership-id'
+          );
+          const boundRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+            membershipId,
+            tenantId: normalizedTenantId
+          });
+          if (!boundRoleIds.includes(normalizedRoleId)) {
+            continue;
+          }
+          affectedMembershipStatesByMembershipId.set(membershipId, {
+            userId: normalizeStrictTenantRolePermissionGrantIdentity(
+              userId,
+              'tenant-role-permission-grants-invalid-affected-user-id'
+            ),
+            memberships,
+            membership
+          });
+        }
+      }
+      if (
+        affectedMembershipStatesByMembershipId.size
+        > normalizedMaxAffectedMemberships
+      ) {
+        const limitError = new Error('tenant role permission affected memberships exceed limit');
+        limitError.code = 'ERR_TENANT_ROLE_PERMISSION_AFFECTED_MEMBERSHIPS_OVER_LIMIT';
+        limitError.maxAffectedMemberships = normalizedMaxAffectedMemberships;
+        limitError.affectedMemberships = affectedMembershipStatesByMembershipId.size;
+        throw limitError;
+      }
+      const previousPermissionCodes = listTenantRolePermissionGrantsForRoleId(
+        normalizedRoleId
+      );
+      const previousMembershipPermissionsByMembershipId = new Map();
+      for (const [membershipId, membershipState] of affectedMembershipStatesByMembershipId.entries()) {
+        const previousPermission =
+          membershipState?.membership?.permission
+          && typeof membershipState.membership.permission === 'object'
+            ? { ...membershipState.membership.permission }
+            : null;
+        previousMembershipPermissionsByMembershipId.set(
+          membershipId,
+          previousPermission
+        );
+      }
+      const savedPermissionCodes = replaceTenantRolePermissionGrantsForRoleId({
+        roleId: normalizedRoleId,
+        permissionCodes
+      });
+      const affectedUserIds = new Set();
+      const tenantSessionRevocations = new Map();
+      try {
+        for (const [
+          membershipId,
+          membershipState
+        ] of affectedMembershipStatesByMembershipId.entries()) {
+          const resolvedUserId = normalizeStrictTenantRolePermissionGrantIdentity(
+            membershipState?.userId,
+            'tenant-role-permission-grants-invalid-affected-user-id'
+          );
+          affectedUserIds.add(resolvedUserId);
+          invokeFaultInjector('beforeTenantRolePermissionSnapshotSync', {
+            tenantId: normalizedTenantId,
+            roleId: normalizedRoleId,
+            membershipId,
+            userId: resolvedUserId
+          });
+          const syncResult = syncTenantMembershipPermissionSnapshot({
+            membershipState,
+            reason: 'tenant-role-permission-grants-changed',
+            revokeSessions: false
+          });
+          if (!syncResult?.synced || syncResult.reason !== 'ok') {
+            const syncError = new Error(
+              `tenant role permission sync failed: ${String(syncResult?.reason || 'unknown')}`
+            );
+            syncError.code = 'ERR_TENANT_ROLE_PERMISSION_SYNC_FAILED';
+            syncError.syncReason = String(syncResult?.reason || 'unknown');
+            throw syncError;
+          }
+          const syncUserId = String(syncResult?.userId || '').trim();
+          const syncTenantId = String(syncResult?.tenantId || '').trim();
+          if (syncResult.changed && syncUserId && syncTenantId) {
+            tenantSessionRevocations.set(`${syncUserId}::${syncTenantId}`, {
+              userId: syncUserId,
+              tenantId: syncTenantId
+            });
+          }
+        }
+      } catch (error) {
+        replaceTenantRolePermissionGrantsForRoleId({
+          roleId: normalizedRoleId,
+          permissionCodes: previousPermissionCodes
+        });
+        for (const [
+          membershipId,
+          membershipState
+        ] of affectedMembershipStatesByMembershipId.entries()) {
+          if (!membershipState?.membership || typeof membershipState.membership !== 'object') {
+            continue;
+          }
+          const previousPermission =
+            previousMembershipPermissionsByMembershipId.get(membershipId);
+          membershipState.membership.permission = previousPermission
+            ? { ...previousPermission }
+            : null;
+        }
+        throw error;
+      }
+      for (const { userId, tenantId: activeTenantId } of tenantSessionRevocations.values()) {
+        revokeTenantSessionsForUser({
+          userId,
+          reason: 'tenant-role-permission-grants-changed',
+          activeTenantId
+        });
+      }
+
+      return {
+        roleId: normalizedRoleId,
+        permissionCodes: savedPermissionCodes,
+        affectedUserIds: [...affectedUserIds],
+        affectedUserCount: affectedUserIds.size
+      };
+    },
 
     listUserIdsByPlatformRoleId: async ({ roleId }) => {
       const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);

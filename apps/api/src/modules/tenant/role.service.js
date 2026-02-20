@@ -16,7 +16,9 @@ const MAX_ROLE_ID_LENGTH = 64;
 const MAX_ROLE_CODE_LENGTH = 64;
 const MAX_ROLE_NAME_LENGTH = 128;
 const MAX_TENANT_ID_LENGTH = 64;
+const MAX_PERMISSION_CODES_PAYLOAD_LENGTH = 64;
 const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const TENANT_PERMISSION_CODE_PATTERN = /^tenant\.[A-Za-z0-9._-]+$/;
 const TENANT_ID_WHITESPACE_PATTERN = /\s/;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const VALID_ROLE_STATUS = new Set(['active', 'disabled']);
@@ -30,6 +32,9 @@ const UPDATE_ROLE_ALLOWED_FIELDS = new Set([
   'code',
   'name',
   'status'
+]);
+const UPDATE_ROLE_PERMISSION_ALLOWED_FIELDS = new Set([
+  'permission_codes'
 ]);
 const PROTECTED_ROLE_ID_SET = new Set(
   PROTECTED_TENANT_ROLE_IDS.map((roleId) => String(roleId || '').trim().toLowerCase())
@@ -45,6 +50,17 @@ const normalizeRequiredString = (candidate) => {
     return '';
   }
   return candidate.trim();
+};
+
+const normalizeStrictRequiredString = (candidate) => {
+  if (typeof candidate !== 'string') {
+    return '';
+  }
+  const normalized = candidate.trim();
+  if (!normalized || candidate !== normalized) {
+    return '';
+  }
+  return normalized;
 };
 
 const normalizeRoleStatusInput = (status) =>
@@ -388,12 +404,145 @@ const parseUpdateRolePayload = (payload) => {
   return updates;
 };
 
+const parseReplaceRolePermissionsPayload = (payload) => {
+  if (!isPlainObject(payload)) {
+    throw tenantRoleErrors.invalidPayload();
+  }
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !UPDATE_ROLE_PERMISSION_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw tenantRoleErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'permission_codes')) {
+    throw tenantRoleErrors.invalidPayload('permission_codes 必填');
+  }
+  if (!Array.isArray(payload.permission_codes)) {
+    throw tenantRoleErrors.invalidPayload('permission_codes 必须为数组');
+  }
+  if (payload.permission_codes.length > MAX_PERMISSION_CODES_PAYLOAD_LENGTH) {
+    throw tenantRoleErrors.invalidPayload(
+      `permission_codes 数量不能超过 ${MAX_PERMISSION_CODES_PAYLOAD_LENGTH}`
+    );
+  }
+  const dedupedPermissionCodes = new Map();
+  for (const permissionCode of payload.permission_codes) {
+    if (typeof permissionCode !== 'string') {
+      throw tenantRoleErrors.invalidPayload('permission_codes 仅允许字符串权限码');
+    }
+    const normalizedPermissionCode = permissionCode.trim();
+    if (!normalizedPermissionCode) {
+      throw tenantRoleErrors.invalidPayload('permission_codes 不能为空字符串');
+    }
+    if (permissionCode !== normalizedPermissionCode) {
+      throw tenantRoleErrors.invalidPayload('permission_codes 不能包含前后空白字符');
+    }
+    if (CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)) {
+      throw tenantRoleErrors.invalidPayload('permission_codes 不允许包含控制字符');
+    }
+    const normalizedPermissionCodeKey = normalizedPermissionCode.toLowerCase();
+    if (dedupedPermissionCodes.has(normalizedPermissionCodeKey)) {
+      throw tenantRoleErrors.invalidPayload('permission_codes 不允许重复');
+    }
+    dedupedPermissionCodes.set(
+      normalizedPermissionCodeKey,
+      normalizedPermissionCode
+    );
+  }
+  return {
+    permissionCodes: [...dedupedPermissionCodes.values()]
+  };
+};
+
+const normalizeStrictTenantPermissionCodes = ({
+  permissionCodes,
+  minCount = 0,
+  maxCount = Number.POSITIVE_INFINITY
+} = {}) => {
+  if (!Array.isArray(permissionCodes)) {
+    return null;
+  }
+  if (
+    permissionCodes.length < minCount
+    || permissionCodes.length > maxCount
+  ) {
+    return null;
+  }
+  const normalizedPermissionCodes = [];
+  const seenPermissionCodes = new Set();
+  for (const permissionCode of permissionCodes) {
+    if (typeof permissionCode !== 'string') {
+      return null;
+    }
+    const trimmedPermissionCode = permissionCode.trim();
+    if (permissionCode !== trimmedPermissionCode) {
+      return null;
+    }
+    const normalizedPermissionCode = trimmedPermissionCode.toLowerCase();
+    if (
+      !normalizedPermissionCode
+      || CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)
+      || !TENANT_PERMISSION_CODE_PATTERN.test(normalizedPermissionCode)
+      || seenPermissionCodes.has(normalizedPermissionCode)
+    ) {
+      return null;
+    }
+    seenPermissionCodes.add(normalizedPermissionCode);
+    normalizedPermissionCodes.push(normalizedPermissionCode);
+  }
+  return normalizedPermissionCodes;
+};
+
+const normalizeNonNegativeInteger = (value) => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+};
+
 const resolveRawRoleIsSystem = (role = {}) => {
   if (role && role.isSystem !== undefined) {
     return role.isSystem;
   }
   if (role && role.is_system !== undefined) {
     return role.is_system;
+  }
+  return undefined;
+};
+
+const resolveRawRoleCatalogField = (
+  role = {},
+  camelCaseKey = '',
+  snakeCaseKey = ''
+) => {
+  if (!role || typeof role !== 'object') {
+    return undefined;
+  }
+  const hasCamelCaseKey = Object.prototype.hasOwnProperty.call(
+    role,
+    camelCaseKey
+  );
+  const hasSnakeCaseKey = Object.prototype.hasOwnProperty.call(
+    role,
+    snakeCaseKey
+  );
+  if (hasCamelCaseKey) {
+    const camelCaseValue = role[camelCaseKey];
+    if (camelCaseValue !== undefined && camelCaseValue !== null) {
+      return camelCaseValue;
+    }
+  }
+  if (hasSnakeCaseKey) {
+    const snakeCaseValue = role[snakeCaseKey];
+    if (snakeCaseValue !== undefined && snakeCaseValue !== null) {
+      return snakeCaseValue;
+    }
+  }
+  if (hasCamelCaseKey) {
+    return role[camelCaseKey];
+  }
+  if (hasSnakeCaseKey) {
+    return role[snakeCaseKey];
   }
   return undefined;
 };
@@ -419,6 +568,45 @@ const isValidRoleCatalogEntry = ({
     const createdAtEpoch = new Date(String(role?.created_at || '').trim()).getTime();
     const updatedAtEpoch = new Date(String(role?.updated_at || '').trim()).getTime();
     return Number.isFinite(createdAtEpoch) && Number.isFinite(updatedAtEpoch);
+  })()
+  && (() => {
+    const rawRoleId = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'roleId', 'role_id')
+    );
+    const rawTenantId = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'tenantId', 'tenant_id')
+    );
+    const rawCode = normalizeStrictRequiredString(rawRole?.code);
+    const rawName = normalizeStrictRequiredString(rawRole?.name);
+    const rawStatus = normalizeRoleStatusOutput(
+      normalizeStrictRequiredString(rawRole?.status).toLowerCase()
+    );
+    const rawScope = normalizeStrictRequiredString(rawRole?.scope).toLowerCase();
+    const rawCreatedAt = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'createdAt', 'created_at')
+    );
+    const rawUpdatedAt = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'updatedAt', 'updated_at')
+    );
+
+    return (
+      !!rawRoleId
+      && !!rawTenantId
+      && !!rawCode
+      && !!rawName
+      && !!rawStatus
+      && !!rawScope
+      && !!rawCreatedAt
+      && !!rawUpdatedAt
+      && normalizeRoleIdKey(rawRoleId) === normalizeRoleIdKey(role?.role_id)
+      && rawTenantId === String(role?.tenant_id || '')
+      && rawCode === String(role?.code || '')
+      && rawName === String(role?.name || '')
+      && rawStatus === String(role?.status || '')
+      && rawScope === TENANT_ROLE_SCOPE
+      && !CONTROL_CHAR_PATTERN.test(rawCode)
+      && !CONTROL_CHAR_PATTERN.test(rawName)
+    );
   })()
   && String(role?.created_at || '').trim().length > 0
   && String(role?.updated_at || '').trim().length > 0
@@ -1257,11 +1445,323 @@ const createTenantRoleService = ({ authService } = {}) => {
     };
   };
 
+  const getRolePermissions = async ({
+    requestId,
+    accessToken,
+    roleId,
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedRoleId = normalizeRoleId(roleId);
+    if (!normalizedRoleId) {
+      throw tenantRoleErrors.invalidPayload('role_id 不能为空');
+    }
+    if (normalizedRoleId.length > MAX_ROLE_ID_LENGTH) {
+      throw tenantRoleErrors.invalidPayload(`role_id 长度不能超过 ${MAX_ROLE_ID_LENGTH}`);
+    }
+    assertAddressableRoleId(normalizedRoleId);
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: TENANT_ROLE_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'tenant.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetRoleId: normalizedRoleId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    assertAuthServiceMethod('listTenantRolePermissionGrants');
+    let grants;
+    try {
+      grants = await authService.listTenantRolePermissionGrants({
+        tenantId: operatorContext.activeTenantId,
+        roleId: normalizedRoleId
+      });
+    } catch (error) {
+      const mappedError = error?.errorCode === 'AUTH-404-ROLE-NOT-FOUND'
+        ? tenantRoleErrors.roleNotFound()
+        : tenantRoleErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'tenant.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail:
+          mappedError.errorCode === 'TROLE-404-ROLE-NOT-FOUND'
+            ? 'role not found'
+            : 'tenant role permission grants dependency unavailable',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const rawResultRoleId =
+      Object.prototype.hasOwnProperty.call(grants || {}, 'role_id')
+        ? grants?.role_id
+        : grants?.roleId;
+    const normalizedResultRoleId = normalizeRoleId(
+      normalizeStrictRequiredString(rawResultRoleId)
+    );
+    const normalizedPermissionCodes = normalizeStrictTenantPermissionCodes({
+      permissionCodes: Array.isArray(grants?.permission_codes)
+        ? grants.permission_codes
+        : grants?.permissionCodes,
+      minCount: 0,
+      maxCount: Number.POSITIVE_INFINITY
+    });
+    const normalizedAvailablePermissionCodes = normalizeStrictTenantPermissionCodes({
+      permissionCodes: Array.isArray(grants?.available_permission_codes)
+        ? grants.available_permission_codes
+        : grants?.availablePermissionCodes,
+      minCount: 0,
+      maxCount: Number.POSITIVE_INFINITY
+    });
+    const availablePermissionSet = new Set(normalizedAvailablePermissionCodes || []);
+    const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
+      && normalizedPermissionCodes.some((permissionCode) =>
+        !availablePermissionSet.has(permissionCode)
+      );
+    if (
+      normalizedResultRoleId !== normalizedRoleId
+      || !normalizedPermissionCodes
+      || !normalizedAvailablePermissionCodes
+      || hasUnsupportedGrantedPermission
+    ) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant role permission grants read returned malformed payload',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'tenant.role.permissions.read.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId: operatorContext.operatorUserId,
+      targetRoleId: normalizedRoleId,
+      detail: 'tenant role permission grants listed',
+      metadata: {
+        tenant_id: operatorContext.activeTenantId,
+        permission_codes_count: normalizedPermissionCodes.length
+      }
+    });
+
+    return {
+      role_id: normalizedRoleId,
+      permission_codes: [...normalizedPermissionCodes],
+      available_permission_codes: [...normalizedAvailablePermissionCodes],
+      request_id: resolvedRequestId
+    };
+  };
+
+  const replaceRolePermissions = async ({
+    requestId,
+    accessToken,
+    roleId,
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedRoleId = normalizeRoleId(roleId);
+    if (!normalizedRoleId) {
+      throw tenantRoleErrors.invalidPayload('role_id 不能为空');
+    }
+    if (normalizedRoleId.length > MAX_ROLE_ID_LENGTH) {
+      throw tenantRoleErrors.invalidPayload(`role_id 长度不能超过 ${MAX_ROLE_ID_LENGTH}`);
+    }
+    assertAddressableRoleId(normalizedRoleId);
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetRoleId: normalizedRoleId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    let parsedPayload;
+    try {
+      parsedPayload = parseReplaceRolePermissionsPayload(payload);
+    } catch (error) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'payload validation failed',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: String(error?.errorCode || 'TROLE-400-INVALID-PAYLOAD')
+        }
+      });
+      throw error;
+    }
+
+    assertAuthServiceMethod('replaceTenantRolePermissionGrants');
+    assertAuthServiceMethod('listTenantPermissionCatalog');
+
+    let updated;
+    try {
+      updated = await authService.replaceTenantRolePermissionGrants({
+        requestId: resolvedRequestId,
+        tenantId: operatorContext.activeTenantId,
+        roleId: normalizedRoleId,
+        permissionCodes: parsedPayload.permissionCodes,
+        operatorUserId: operatorContext.operatorUserId,
+        operatorSessionId: operatorContext.operatorSessionId
+      });
+    } catch (error) {
+      const mappedError = error?.errorCode === 'AUTH-404-ROLE-NOT-FOUND'
+        ? tenantRoleErrors.roleNotFound()
+        : error?.errorCode === 'AUTH-400-INVALID-PAYLOAD'
+          ? tenantRoleErrors.invalidPayload('请求参数不完整或格式错误')
+          : tenantRoleErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail:
+          mappedError.errorCode === 'TROLE-404-ROLE-NOT-FOUND'
+            ? 'role not found'
+            : mappedError.errorCode === 'TROLE-400-INVALID-PAYLOAD'
+              ? 'payload validation failed'
+              : 'tenant role permission grants update failed',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const availablePermissionCodes = normalizeStrictTenantPermissionCodes({
+      permissionCodes: authService.listTenantPermissionCatalog(),
+      minCount: 0,
+      maxCount: Number.POSITIVE_INFINITY
+    });
+    const rawResultRoleId =
+      Object.prototype.hasOwnProperty.call(updated || {}, 'role_id')
+        ? updated?.role_id
+        : updated?.roleId;
+    const normalizedResultRoleId = normalizeRoleId(
+      normalizeStrictRequiredString(rawResultRoleId)
+    );
+    const normalizedPermissionCodes = normalizeStrictTenantPermissionCodes({
+      permissionCodes: Array.isArray(updated?.permission_codes)
+        ? updated.permission_codes
+        : updated?.permissionCodes,
+      minCount: 0,
+      maxCount: MAX_PERMISSION_CODES_PAYLOAD_LENGTH
+    });
+    const normalizedAffectedUserCount = normalizeNonNegativeInteger(
+      updated?.affected_user_count ?? updated?.affectedUserCount
+    );
+    const expectedPermissionCodes = [...parsedPayload.permissionCodes]
+      .map((permissionCode) => permissionCode.toLowerCase())
+      .sort((left, right) => left.localeCompare(right));
+    const resolvedPermissionCodes = [...(normalizedPermissionCodes || [])]
+      .sort((left, right) => left.localeCompare(right));
+    const availablePermissionSet = new Set(availablePermissionCodes || []);
+    const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
+      && normalizedPermissionCodes.some((permissionCode) =>
+        !availablePermissionSet.has(permissionCode)
+      );
+    const hasPermissionCodeMismatch = (
+      expectedPermissionCodes.length !== resolvedPermissionCodes.length
+      || expectedPermissionCodes.some(
+        (permissionCode, index) => permissionCode !== resolvedPermissionCodes[index]
+      )
+    );
+    if (
+      !availablePermissionCodes
+      || normalizedResultRoleId !== normalizedRoleId
+      || !normalizedPermissionCodes
+      || normalizedAffectedUserCount === null
+      || hasUnsupportedGrantedPermission
+      || hasPermissionCodeMismatch
+    ) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant role permission grants update returned malformed payload',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
+    addAuditEvent({
+      type: 'tenant.role.permissions.update.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId: operatorContext.operatorUserId,
+      targetRoleId: normalizedRoleId,
+      detail: 'tenant role permission grants replaced',
+      metadata: {
+        tenant_id: operatorContext.activeTenantId,
+        permission_codes_count: normalizedPermissionCodes.length,
+        affected_user_count: normalizedAffectedUserCount
+      }
+    });
+
+    return {
+      role_id: normalizedRoleId,
+      permission_codes: [...normalizedPermissionCodes],
+      available_permission_codes: [...availablePermissionCodes],
+      affected_user_count: normalizedAffectedUserCount,
+      request_id: resolvedRequestId
+    };
+  };
+
   return {
     listRoles,
     createRole,
     updateRole,
     deleteRole,
+    getRolePermissions,
+    replaceRolePermissions,
     _internals: {
       auditTrail,
       authService
