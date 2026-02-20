@@ -104,7 +104,9 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
   assert.ok(payload.paths['/tenant/members']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/roles']);
   assert.ok(payload.paths['/tenant/roles']);
   assert.ok(payload.paths['/tenant/roles/{role_id}']);
@@ -195,6 +197,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(
     payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -299,6 +306,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.paths['/tenant/members/{membership_id}/roles'].put.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
@@ -390,6 +403,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).description,
+    '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突'
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
     '关键写幂等键；同键重复提交返回首次语义，同键不同载荷返回冲突'
@@ -510,6 +529,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/tenant/members'].post.responses['409']);
   assert.ok(payload.paths['/tenant/members'].post.responses['413']);
   assert.ok(payload.paths['/tenant/members'].post.responses['503']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}'].get.responses['200']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}'].get.responses['400']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}'].get.responses['401']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}'].get.responses['403']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}'].get.responses['404']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}'].get.responses['503']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['400']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['401']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['403']);
@@ -521,6 +546,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['413']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status'].patch.responses['503']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['400']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['401']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['403']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['404']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['409']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['413']);
+  assert.ok(payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['503']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/roles'].get.responses['200']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/roles'].get.responses['400']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/roles'].get.responses['401']);
@@ -557,6 +589,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     200
   );
   assert.equal(
+    payload.paths['/tenant/members/{membership_id}'].get.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'membership_id'
+    ).schema.pattern,
+    '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
+  );
+  assert.equal(
     payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
       (parameter) => parameter.in === 'path' && parameter.name === 'membership_id'
     ).schema.maxLength,
@@ -564,6 +602,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/tenant/members/{membership_id}/status'].patch.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'membership_id'
+    ).schema.pattern,
+    '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.parameters.find(
       (parameter) => parameter.in === 'path' && parameter.name === 'membership_id'
     ).schema.pattern,
     '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
@@ -587,6 +631,14 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^[^\\s\\x00-\\x1F\\x7F]{1,64}$'
   );
   assert.equal(
+    payload.components.schemas.TenantMemberRecord.properties.display_name.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberRecord.properties.department_name.maxLength,
+    128
+  );
+  assert.equal(
     payload.components.schemas.TenantMemberCreateResponse.properties.membership_id.maxLength,
     64
   );
@@ -597,6 +649,14 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.equal(
     payload.components.schemas.TenantMemberStatusUpdateResponse.properties.membership_id.maxLength,
     64
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberProfileUpdateRequest.properties.display_name.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.TenantMemberProfileUpdateRequest.properties.department_name.maxLength,
+    128
   );
   assert.equal(
     payload.components.schemas.TenantMemberStatusUpdateResponse.properties.membership_id.pattern,
@@ -748,8 +808,36 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       .examples.idempotency_store_unavailable
   );
   assert.ok(
+    payload.paths['/tenant/members/{membership_id}'].get.responses['400']
+      .content['application/problem+json'].examples.invalid_membership_id
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}'].get.responses['404']
+      .content['application/problem+json'].examples.membership_not_found
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['400']
+      .content['application/problem+json'].examples.invalid_idempotency_key
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['404']
+      .content['application/problem+json'].examples.membership_not_found
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['409']
+      .content['application/problem+json'].examples.idempotency_conflict
+  );
+  assert.ok(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['503']
+      .content['application/problem+json'].examples.idempotency_store_unavailable
+  );
+  assert.ok(
     payload.paths['/tenant/members/{membership_id}/status'].patch.responses['400']
       .content['application/problem+json'].examples.invalid_payload
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['409'].description,
+    'Idempotency payload mismatch conflict'
   );
   assert.ok(
     payload.paths['/tenant/members/{membership_id}/status'].patch.responses['404']
@@ -1168,6 +1256,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.paths['/platform/orgs'].post.responses['403'].content['application/problem+json']
       .examples.forbidden.value.error_code,
     'AUTH-403-FORBIDDEN'
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['409'].content[
+      'application/problem+json'
+    ].examples.idempotency_conflict.value.error_code,
+    'AUTH-409-IDEMPOTENCY-CONFLICT'
+  );
+  assert.equal(
+    payload.paths['/tenant/members/{membership_id}/profile'].patch.responses['503'].content[
+      'application/problem+json'
+    ].examples.idempotency_store_unavailable.value.retryable,
+    true
   );
   assert.equal(
     payload.paths['/tenant/members/{membership_id}/roles'].put.responses['404'].content[

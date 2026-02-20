@@ -83,8 +83,13 @@ const REQUIRED_AUTH_SCHEMA = {
   auth_user_tenants: [
     'user_id',
     'tenant_id',
+    'membership_id',
     'tenant_name',
     'status',
+    'display_name',
+    'department_name',
+    'joined_at',
+    'left_at',
     'can_view_member_admin',
     'can_operate_member_admin',
     'can_view_billing',

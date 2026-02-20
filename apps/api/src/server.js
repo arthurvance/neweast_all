@@ -29,7 +29,9 @@ const {
 const {
   TENANT_MEMBER_LIST_ROUTE_KEY,
   TENANT_MEMBER_CREATE_ROUTE_KEY,
+  TENANT_MEMBER_DETAIL_ROUTE_KEY,
   TENANT_MEMBER_STATUS_ROUTE_KEY,
+  TENANT_MEMBER_PROFILE_ROUTE_KEY,
   TENANT_MEMBER_ROLE_BINDING_GET_ROUTE_KEY,
   TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY
 } = require('./modules/tenant/member.constants');
@@ -144,6 +146,7 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/tenant/member-admin/provision-user',
   'POST /auth/platform/member-admin/provision-user',
   TENANT_MEMBER_CREATE_ROUTE_KEY,
+  TENANT_MEMBER_PROFILE_ROUTE_KEY,
   TENANT_MEMBER_STATUS_ROUTE_KEY,
   TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY,
   TENANT_ROLE_CREATE_ROUTE_KEY,
@@ -163,6 +166,7 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_MEMBER_CREATE_ROUTE_KEY,
+  TENANT_MEMBER_PROFILE_ROUTE_KEY,
   TENANT_MEMBER_STATUS_ROUTE_KEY,
   TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY,
   TENANT_ROLE_CREATE_ROUTE_KEY,
@@ -192,6 +196,7 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_MEMBER_PROFILE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [TENANT_MEMBER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [TENANT_ROLE_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
@@ -625,6 +630,7 @@ const normalizeRouteParamsForIdempotency = ({
   });
   if (
     routeKey === TENANT_MEMBER_STATUS_ROUTE_KEY
+    || routeKey === TENANT_MEMBER_PROFILE_ROUTE_KEY
     || routeKey === TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY
   ) {
     normalizedRouteParams.membership_id = String(
@@ -781,6 +787,7 @@ const shouldPersistIdempotencyResponse = ({
   const normalizedRouteKey = String(routeKey || '').trim();
   if (
     (normalizedRouteKey === TENANT_MEMBER_CREATE_ROUTE_KEY
+      || normalizedRouteKey === TENANT_MEMBER_PROFILE_ROUTE_KEY
       || normalizedRouteKey === TENANT_MEMBER_STATUS_ROUTE_KEY)
     && resolvedStatusCode === 409
   ) {
@@ -1953,6 +1960,17 @@ const createRouteTable = ({
             requestId
           )
       }),
+    [TENANT_MEMBER_DETAIL_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.tenantGetMemberDetail(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     [TENANT_MEMBER_STATUS_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
         routeKey: TENANT_MEMBER_STATUS_ROUTE_KEY,
@@ -1960,6 +1978,22 @@ const createRouteTable = ({
           runAuthRoute(
             () =>
               handlers.tenantUpdateMemberStatus(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [TENANT_MEMBER_PROFILE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_MEMBER_PROFILE_ROUTE_KEY,
+        execute: () =>
+          runAuthRoute(
+            () =>
+              handlers.tenantUpdateMemberProfile(
                 requestId,
                 headers.authorization,
                 getRouteParams(),

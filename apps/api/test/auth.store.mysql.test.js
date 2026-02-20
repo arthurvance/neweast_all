@@ -585,7 +585,7 @@ test('findTenantMembershipByUserAndTenantId does not coerce blank status to acti
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('JOIN users u')
+      && normalizedSql.includes('LEFT JOIN users u')
     ) {
       return [
         {
@@ -610,6 +610,169 @@ test('findTenantMembershipByUserAndTenantId does not coerce blank status to acti
   });
   assert.ok(membership);
   assert.equal(membership.status, '');
+});
+
+test('findTenantMembershipByMembershipIdAndTenantId returns membership projection with phone', async () => {
+  let lookupSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+    ) {
+      lookupSql = normalizedSql;
+      return [
+        {
+          membership_id: 'membership-profile-read-1',
+          user_id: 'tenant-user-profile-read-1',
+          tenant_id: 'tenant-profile-read-1',
+          tenant_name: 'Tenant Profile Read',
+          phone: '13835557771',
+          status: 'active',
+          display_name: '成员甲',
+          department_name: '研发一部',
+          joined_at: '2026-02-20T00:00:00.000Z',
+          left_at: null
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const membership = await store.findTenantMembershipByMembershipIdAndTenantId({
+    membershipId: 'membership-profile-read-1',
+    tenantId: 'tenant-profile-read-1'
+  });
+
+  assert.ok(membership);
+  assert.match(lookupSql, /LEFT JOIN users u ON u\.id = ut\.user_id/i);
+  assert.equal(membership.membership_id, 'membership-profile-read-1');
+  assert.equal(membership.user_id, 'tenant-user-profile-read-1');
+  assert.equal(membership.tenant_id, 'tenant-profile-read-1');
+  assert.equal(membership.phone, '13835557771');
+  assert.equal(membership.display_name, '成员甲');
+  assert.equal(membership.department_name, '研发一部');
+});
+
+test('findTenantMembershipByMembershipIdAndTenantId keeps raw profile fields without trimming', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+    ) {
+      return [
+        {
+          membership_id: 'membership-profile-read-raw',
+          user_id: 'tenant-user-profile-read-raw',
+          tenant_id: 'tenant-profile-read-raw',
+          tenant_name: 'Tenant Profile Read Raw',
+          phone: '13835557772',
+          status: 'active',
+          display_name: ' 成员甲',
+          department_name: '研发一部 ',
+          joined_at: '2026-02-20T00:00:00.000Z',
+          left_at: null
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const membership = await store.findTenantMembershipByMembershipIdAndTenantId({
+    membershipId: 'membership-profile-read-raw',
+    tenantId: 'tenant-profile-read-raw'
+  });
+
+  assert.ok(membership);
+  assert.equal(membership.display_name, ' 成员甲');
+  assert.equal(membership.department_name, '研发一部 ');
+});
+
+test('findTenantMembershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row when user profile is missing', async () => {
+  let lookupSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+    ) {
+      lookupSql = normalizedSql;
+      return [
+        {
+          membership_id: 'membership-profile-read-missing-user',
+          user_id: 'tenant-user-profile-read-missing-user',
+          tenant_id: 'tenant-profile-read-missing-user',
+          tenant_name: 'Tenant Profile Read Missing User',
+          phone: null,
+          status: 'active',
+          display_name: '成员甲',
+          department_name: '研发一部',
+          joined_at: '2026-02-20T00:00:00.000Z',
+          left_at: null
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const membership = await store.findTenantMembershipByMembershipIdAndTenantId({
+    membershipId: 'membership-profile-read-missing-user',
+    tenantId: 'tenant-profile-read-missing-user'
+  });
+
+  assert.ok(membership);
+  assert.match(lookupSql, /LEFT JOIN users u ON u\.id = ut\.user_id/i);
+  assert.equal(membership.membership_id, 'membership-profile-read-missing-user');
+  assert.equal(membership.phone, '');
+});
+
+test('listTenantMembersByTenantId uses LEFT JOIN users and preserves rows with missing user profile', async () => {
+  let listSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.tenant_id = ?')
+      && normalizedSql.includes('ORDER BY ut.joined_at DESC')
+    ) {
+      listSql = normalizedSql;
+      return [
+        {
+          membership_id: 'membership-list-missing-user',
+          user_id: 'tenant-user-list-missing-user',
+          tenant_id: 'tenant-list-missing-user',
+          tenant_name: 'Tenant List Missing User',
+          phone: null,
+          status: 'active',
+          display_name: '成员乙',
+          department_name: '产品部',
+          joined_at: '2026-02-20T00:00:00.000Z',
+          left_at: null
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const members = await store.listTenantMembersByTenantId({
+    tenantId: 'tenant-list-missing-user',
+    page: 1,
+    pageSize: 50
+  });
+
+  assert.equal(members.length, 1);
+  assert.match(listSql, /LEFT JOIN users u ON u\.id = ut\.user_id/i);
+  assert.equal(members[0].membership_id, 'membership-list-missing-user');
+  assert.equal(members[0].phone, '');
 });
 
 test('createTenantMembershipForUser returns created=false when user does not exist', async () => {
@@ -3533,6 +3696,252 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
   assert.equal(updateParams.length, 3);
   assert.equal(deleteMembershipRoleBindingCount, 1);
   assert.equal(membershipLookupCount, 2);
+});
+
+test('updateTenantMembershipProfile updates profile fields and returns normalized membership projection', async () => {
+  let updateSql = '';
+  let updateParams = [];
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT ut.membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        {
+          membership_id: 'membership-profile-update-1',
+          phone: '13835556666'
+        }
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET display_name = ?')
+      && normalizedSql.includes('department_name = CASE')
+    ) {
+      updateSql = normalizedSql;
+      updateParams = params;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT ut.membership_id')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+    ) {
+      return [
+        {
+          membership_id: 'membership-profile-update-1',
+          user_id: 'tenant-user-profile-update-1',
+          tenant_id: 'tenant-profile-update-1',
+          tenant_name: 'Tenant Profile Update',
+          phone: '13835556666',
+          status: 'active',
+          display_name: '成员乙',
+          department_name: null,
+          joined_at: '2026-02-20T00:00:00.000Z',
+          left_at: null
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.updateTenantMembershipProfile({
+    membershipId: 'membership-profile-update-1',
+    tenantId: 'tenant-profile-update-1',
+    displayName: '成员乙',
+    departmentNameProvided: true,
+    departmentName: null,
+    operatorUserId: 'tenant-operator-profile-update'
+  });
+
+  assert.equal(/UPDATE auth_user_tenants/i.test(updateSql), true);
+  assert.equal(updateParams[0], '成员乙');
+  assert.equal(updateParams[1], 1);
+  assert.equal(updateParams[2], null);
+  assert.equal(updateParams[3], 'membership-profile-update-1');
+  assert.equal(updateParams[4], 'tenant-profile-update-1');
+  assert.equal(result.membership_id, 'membership-profile-update-1');
+  assert.equal(result.display_name, '成员乙');
+  assert.equal(result.department_name, null);
+  assert.equal(result.tenant_id, 'tenant-profile-update-1');
+});
+
+test('updateTenantMembershipProfile fails closed before update when locked membership row has missing user profile', async () => {
+  let updateCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT ut.membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-profile-update-missing-user',
+        phone: null
+      }];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET display_name = ?')
+      && normalizedSql.includes('department_name = CASE')
+    ) {
+      updateCalled = true;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipProfile({
+        membershipId: 'membership-profile-update-missing-user',
+        tenantId: 'tenant-profile-update-missing-user',
+        displayName: '成员丁'
+      }),
+    /dependency unavailable: user-profile-missing/
+  );
+  assert.equal(updateCalled, false);
+});
+
+test('updateTenantMembershipProfile fails closed before update when locked membership row has malformed phone', async () => {
+  let updateCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT ut.membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-profile-update-malformed-phone',
+        phone: ' 13835556667'
+      }];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET display_name = ?')
+      && normalizedSql.includes('department_name = CASE')
+    ) {
+      updateCalled = true;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipProfile({
+        membershipId: 'membership-profile-update-malformed-phone',
+        tenantId: 'tenant-profile-update-malformed-phone',
+        displayName: '成员丁'
+      }),
+    /dependency unavailable: user-profile-missing/
+  );
+  assert.equal(updateCalled, false);
+});
+
+test('updateTenantMembershipProfile fails closed before update when locked membership row has malformed department and request omits department update', async () => {
+  let updateCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT ut.membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [{
+        membership_id: 'membership-profile-update-malformed-department',
+        department_name: '研发一部 ',
+        phone: '13835556667'
+      }];
+    }
+    if (
+      normalizedSql.includes('UPDATE auth_user_tenants')
+      && normalizedSql.includes('SET display_name = ?')
+      && normalizedSql.includes('department_name = CASE')
+    ) {
+      updateCalled = true;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipProfile({
+        membershipId: 'membership-profile-update-malformed-department',
+        tenantId: 'tenant-profile-update-malformed-department',
+        displayName: '成员丁',
+        departmentNameProvided: false
+      }),
+    /dependency unavailable: membership-profile-invalid/
+  );
+  assert.equal(updateCalled, false);
+});
+
+test('updateTenantMembershipProfile returns null when target membership does not exist', async () => {
+  let updateCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT ut.membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (normalizedSql.includes('UPDATE auth_user_tenants')) {
+      updateCalled = true;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.updateTenantMembershipProfile({
+    membershipId: 'membership-profile-missing',
+    tenantId: 'tenant-profile-missing',
+    displayName: '成员乙'
+  });
+
+  assert.equal(updateCalled, false);
+  assert.equal(result, null);
+});
+
+test('updateTenantMembershipProfile rejects blank displayName before executing SQL', async () => {
+  let queryCalled = false;
+  const store = createStore(async (sql) => {
+    queryCalled = true;
+    assert.fail(`unexpected query: ${String(sql)}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipProfile({
+        membershipId: 'membership-profile-invalid',
+        tenantId: 'tenant-profile-invalid',
+        displayName: '   '
+      }),
+    /requires membershipId, tenantId and displayName/
+  );
+  assert.equal(queryCalled, false);
 });
 
 test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects non-active membership inside transaction', async () => {

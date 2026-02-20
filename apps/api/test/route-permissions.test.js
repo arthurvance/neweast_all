@@ -74,6 +74,14 @@ test('tenant member governance routes expose explicit permission declarations', 
     method: 'PATCH',
     path: '/tenant/members/:membership_id/status'
   });
+  const tenantMemberDetailRead = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/members/:membership_id'
+  });
+  const tenantMemberProfileUpdate = findRouteDefinition({
+    method: 'PATCH',
+    path: '/tenant/members/:membership_id/profile'
+  });
   const tenantMemberRoleBindingsRead = findRouteDefinition({
     method: 'GET',
     path: '/tenant/members/:membership_id/roles'
@@ -97,6 +105,16 @@ test('tenant member governance routes expose explicit permission declarations', 
   assert.equal(tenantMemberStatusUpdate.access, 'protected');
   assert.equal(tenantMemberStatusUpdate.scope, 'tenant');
   assert.equal(tenantMemberStatusUpdate.permission_code, 'tenant.member_admin.operate');
+
+  assert.ok(tenantMemberDetailRead);
+  assert.equal(tenantMemberDetailRead.access, 'protected');
+  assert.equal(tenantMemberDetailRead.scope, 'tenant');
+  assert.equal(tenantMemberDetailRead.permission_code, 'tenant.member_admin.view');
+
+  assert.ok(tenantMemberProfileUpdate);
+  assert.equal(tenantMemberProfileUpdate.access, 'protected');
+  assert.equal(tenantMemberProfileUpdate.scope, 'tenant');
+  assert.equal(tenantMemberProfileUpdate.permission_code, 'tenant.member_admin.operate');
 
   assert.ok(tenantMemberRoleBindingsRead);
   assert.equal(tenantMemberRoleBindingsRead.access, 'protected');

@@ -47,11 +47,13 @@ const createTenantMemberHandlers = (tenantMemberService) => {
     || typeof tenantMemberService.listMembers !== 'function'
     || typeof tenantMemberService.createMember !== 'function'
     || typeof tenantMemberService.updateMemberStatus !== 'function'
+    || typeof tenantMemberService.getMemberDetail !== 'function'
+    || typeof tenantMemberService.updateMemberProfile !== 'function'
     || typeof tenantMemberService.getMemberRoles !== 'function'
     || typeof tenantMemberService.replaceMemberRoles !== 'function'
   ) {
     throw new TypeError(
-      'createTenantMemberHandlers requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberRoles and replaceMemberRoles'
+      'createTenantMemberHandlers requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberDetail, updateMemberProfile, getMemberRoles and replaceMemberRoles'
     );
   }
 
@@ -96,6 +98,42 @@ const createTenantMemberHandlers = (tenantMemberService) => {
       authorizationContext = null
     }) =>
       tenantMemberService.updateMemberStatus({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_MEMBER_OPERATE_PERMISSION_CODE
+        }),
+        params: params || {},
+        payload: body || {},
+        authorizationContext
+      }),
+
+    getMemberDetail: async ({
+      requestId,
+      authorization,
+      params,
+      authorizationContext = null
+    }) =>
+      tenantMemberService.getMemberDetail({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          permissionCode: TENANT_MEMBER_VIEW_PERMISSION_CODE
+        }),
+        params: params || {},
+        authorizationContext
+      }),
+
+    updateMemberProfile: async ({
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext = null
+    }) =>
+      tenantMemberService.updateMemberProfile({
         requestId,
         accessToken: resolveAccessToken({
           authorization,

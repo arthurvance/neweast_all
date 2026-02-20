@@ -603,6 +603,34 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    tenantGetMemberDetail: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext
+    ) =>
+      tenantMember.getMemberDetail({
+        requestId,
+        authorization,
+        params: params || {},
+        authorizationContext
+      }),
+
+    tenantUpdateMemberProfile: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext
+    ) =>
+      tenantMember.updateMemberProfile({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        authorizationContext
+      }),
+
     tenantGetMemberRoles: async (
       requestId,
       authorization,

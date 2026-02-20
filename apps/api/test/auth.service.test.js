@@ -6013,6 +6013,424 @@ test('listTenantMembers fails closed when store returns non-array payload', asyn
   );
 });
 
+test('findTenantMembershipByMembershipIdAndTenantId returns membership projection from in-memory store', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-member-profile-read-target',
+        phone: '13835559990',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-profile-read-success',
+            tenantId: 'tenant-profile-read-success',
+            tenantName: 'Tenant Profile Read Success',
+            status: 'active',
+            displayName: '成员甲',
+            departmentName: '研发一部',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const membership = await service.findTenantMembershipByMembershipIdAndTenantId({
+    membershipId: 'membership-profile-read-success',
+    tenantId: 'tenant-profile-read-success'
+  });
+
+  assert.ok(membership);
+  assert.equal(membership.membership_id, 'membership-profile-read-success');
+  assert.equal(membership.tenant_id, 'tenant-profile-read-success');
+  assert.equal(membership.phone, '13835559990');
+  assert.equal(membership.display_name, '成员甲');
+  assert.equal(membership.department_name, '研发一部');
+});
+
+test('findTenantMembershipByMembershipIdAndTenantId fails closed when in-memory seed profile contains surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-member-profile-read-seed-whitespace-user',
+        phone: '13835559989',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-profile-read-seed-whitespace',
+            tenantId: 'tenant-profile-read-seed-whitespace',
+            tenantName: 'Tenant Profile Read Seed Whitespace',
+            status: 'active',
+            displayName: ' 成员甲',
+            departmentName: '研发一部',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.findTenantMembershipByMembershipIdAndTenantId({
+        membershipId: 'membership-profile-read-seed-whitespace',
+        tenantId: 'tenant-profile-read-seed-whitespace'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('findTenantMembershipByMembershipIdAndTenantId fails closed when store returns profile fields with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    membership_id: 'membership-profile-read-whitespace',
+    user_id: 'tenant-user-profile-read-whitespace',
+    tenant_id: 'tenant-a',
+    tenant_name: 'Tenant A',
+    phone: '13835559991',
+    status: 'active',
+    display_name: ' 成员甲',
+    department_name: '研发一部',
+    joined_at: '2026-02-19T00:00:00.000Z',
+    left_at: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.findTenantMembershipByMembershipIdAndTenantId({
+        membershipId: 'membership-profile-read-whitespace',
+        tenantId: 'tenant-a'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('findTenantMembershipByMembershipIdAndTenantId fails closed when store returns membership without phone', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    membership_id: 'membership-profile-read-missing-phone',
+    user_id: 'tenant-user-profile-read-missing-phone',
+    tenant_id: 'tenant-a',
+    tenant_name: 'Tenant A',
+    phone: '',
+    status: 'active',
+    display_name: '成员甲',
+    department_name: '研发一部',
+    joined_at: '2026-02-19T00:00:00.000Z',
+    left_at: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.findTenantMembershipByMembershipIdAndTenantId({
+        membershipId: 'membership-profile-read-missing-phone',
+        tenantId: 'tenant-a'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberProfile updates member profile under tenant authorized route', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  const profileUpdateCalls = [];
+  authStore.updateTenantMembershipProfile = async (payload) => {
+    profileUpdateCalls.push(payload);
+    return {
+      membership_id: payload.membershipId,
+      user_id: 'tenant-user-profile-update',
+      tenant_id: payload.tenantId,
+      tenant_name: 'Tenant A',
+      phone: '13835559992',
+      status: 'active',
+      display_name: payload.displayName,
+      department_name: payload.departmentName,
+      joined_at: '2026-02-19T00:00:00.000Z',
+      left_at: null
+    };
+  };
+
+  const updated = await service.updateTenantMemberProfile({
+    requestId: 'req-tenant-member-profile-update-success',
+    membershipId: 'MEMBERSHIP-PROFILE-UPDATE',
+    tenantId: 'tenant-a',
+    displayName: '成员乙',
+    departmentName: '产品部',
+    departmentNameProvided: true,
+    authorizedRoute: {
+      user_id: 'tenant-operator-profile-update',
+      session_id: 'tenant-session-profile-update',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-a'
+    }
+  });
+
+  assert.equal(profileUpdateCalls.length, 1);
+  assert.equal(profileUpdateCalls[0].membershipId, 'membership-profile-update');
+  assert.equal(profileUpdateCalls[0].tenantId, 'tenant-a');
+  assert.equal(profileUpdateCalls[0].displayName, '成员乙');
+  assert.equal(profileUpdateCalls[0].departmentName, '产品部');
+  assert.equal(updated.membership_id, 'membership-profile-update');
+  assert.equal(updated.tenant_id, 'tenant-a');
+  assert.equal(updated.display_name, '成员乙');
+  assert.equal(updated.department_name, '产品部');
+});
+
+test('updateTenantMemberProfile keeps department unchanged when departmentNameProvided is false', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  const profileUpdateCalls = [];
+  authStore.updateTenantMembershipProfile = async (payload) => {
+    profileUpdateCalls.push(payload);
+    return {
+      membership_id: payload.membershipId,
+      user_id: 'tenant-user-profile-update',
+      tenant_id: payload.tenantId,
+      tenant_name: 'Tenant A',
+      phone: '13835559992',
+      status: 'active',
+      display_name: payload.displayName,
+      department_name: '研发一部',
+      joined_at: '2026-02-19T00:00:00.000Z',
+      left_at: null
+    };
+  };
+
+  const updated = await service.updateTenantMemberProfile({
+    requestId: 'req-tenant-member-profile-update-no-dept',
+    membershipId: 'membership-profile-update-no-dept',
+    tenantId: 'tenant-a',
+    displayName: '成员丙',
+    departmentNameProvided: false,
+    authorizedRoute: {
+      user_id: 'tenant-operator-profile-update',
+      session_id: 'tenant-session-profile-update',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-a'
+    }
+  });
+
+  assert.equal(profileUpdateCalls.length, 1);
+  assert.equal(profileUpdateCalls[0].departmentNameProvided, false);
+  assert.equal(updated.department_name, '研发一部');
+  const lastAuditEvent = service._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'auth.tenant.member.profile.updated');
+  assert.deepEqual(lastAuditEvent.changed_fields, ['display_name']);
+});
+
+test('updateTenantMemberProfile maps missing membership to stable 404', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.updateTenantMembershipProfile = async () => null;
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberProfile({
+        requestId: 'req-tenant-member-profile-update-not-found',
+        membershipId: 'membership-profile-update-not-found',
+        displayName: '成员乙',
+        departmentName: '产品部',
+        departmentNameProvided: true,
+        authorizedRoute: {
+          user_id: 'tenant-operator-profile-update',
+          session_id: 'tenant-session-profile-update',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 404);
+      assert.equal(error.errorCode, 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberProfile fails closed when store returns membership without phone', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.updateTenantMembershipProfile = async () => ({
+    membership_id: 'membership-profile-update-missing-phone',
+    user_id: 'tenant-user-profile-update-missing-phone',
+    tenant_id: 'tenant-a',
+    tenant_name: 'Tenant A',
+    phone: '',
+    status: 'active',
+    display_name: '成员乙',
+    department_name: '产品部',
+    joined_at: '2026-02-19T00:00:00.000Z',
+    left_at: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberProfile({
+        requestId: 'req-tenant-member-profile-update-missing-phone',
+        membershipId: 'membership-profile-update-missing-phone',
+        displayName: '成员乙',
+        departmentName: '产品部',
+        departmentNameProvided: true,
+        authorizedRoute: {
+          user_id: 'tenant-operator-profile-update',
+          session_id: 'tenant-session-profile-update',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberProfile fails closed when store returns membership phone with surrounding whitespace', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+  const authStore = service._internals.authStore;
+  authStore.updateTenantMembershipProfile = async () => ({
+    membership_id: 'membership-profile-update-whitespace-phone',
+    user_id: 'tenant-user-profile-update-whitespace-phone',
+    tenant_id: 'tenant-a',
+    tenant_name: 'Tenant A',
+    phone: ' 13835559993',
+    status: 'active',
+    display_name: '成员乙',
+    department_name: '产品部',
+    joined_at: '2026-02-19T00:00:00.000Z',
+    left_at: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberProfile({
+        requestId: 'req-tenant-member-profile-update-whitespace-phone',
+        membershipId: 'membership-profile-update-whitespace-phone',
+        displayName: '成员乙',
+        departmentName: '产品部',
+        departmentNameProvided: true,
+        authorizedRoute: {
+          user_id: 'tenant-operator-profile-update',
+          session_id: 'tenant-session-profile-update',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('updateTenantMemberProfile fails closed without mutation when existing department is malformed and request omits department update', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-profile-invalid-department-user',
+        phone: '13835559994',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-profile-invalid-department',
+            tenantId: 'tenant-a',
+            tenantName: 'Tenant A',
+            status: 'active',
+            displayName: '成员甲',
+            departmentName: '研发一部 ',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: true,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateTenantMemberProfile({
+        requestId: 'req-tenant-member-profile-update-malformed-department',
+        membershipId: 'membership-profile-invalid-department',
+        displayName: '成员乙',
+        departmentNameProvided: false,
+        authorizedRoute: {
+          user_id: 'tenant-profile-invalid-department-user',
+          session_id: 'tenant-profile-invalid-department-session',
+          entry_domain: 'tenant',
+          active_tenant_id: 'tenant-a'
+        }
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+
+  const persistedMembership =
+    await service._internals.authStore.findTenantMembershipByMembershipIdAndTenantId({
+      membershipId: 'membership-profile-invalid-department',
+      tenantId: 'tenant-a'
+    });
+  assert.equal(persistedMembership.display_name, '成员甲');
+});
+
 test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even when existing membership is inactive', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'provision-tenant-inactive-relationship-key';
@@ -8954,6 +9372,7 @@ test('replaceTenantMemberRoleBindings maps store-level non-active membership rac
     membership_id: 'membership-role-binding-1',
     user_id: 'tenant-role-binding-user',
     tenant_id: 'tenant-role-binding',
+    phone: '13835550001',
     status: 'active'
   });
 
@@ -8972,6 +9391,47 @@ test('replaceTenantMemberRoleBindings maps store-level non-active membership rac
         assert.ok(error instanceof AuthProblemError);
         assert.equal(error.status, 404);
         assert.equal(error.errorCode, 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findTenantMembershipByMembershipIdAndTenantId =
+      originalFindMembership;
+  }
+});
+
+test('replaceTenantMemberRoleBindings fails closed when membership lookup returns record without phone', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindMembership =
+    authStore.findTenantMembershipByMembershipIdAndTenantId;
+  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    membership_id: 'membership-role-binding-1',
+    user_id: 'tenant-role-binding-user',
+    tenant_id: 'tenant-role-binding',
+    tenant_name: 'Tenant Role Binding',
+    phone: '',
+    status: 'active'
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        service.replaceTenantMemberRoleBindings({
+          requestId: 'req-tenant-role-binding-missing-phone',
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1',
+          roleIds: ['tenant_role_binding_target'],
+          operatorUserId: 'tenant-role-binding-user',
+          operatorSessionId: 'tenant-role-binding-session'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
         return true;
       }
     );
@@ -9513,6 +9973,43 @@ test('listTenantMemberRoleBindings fails closed when store returns malformed rol
       return true;
     }
   );
+});
+
+test('listTenantMemberRoleBindings fails closed when membership lookup returns record without phone', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  const authStore = service._internals.authStore;
+  const originalFindMembership =
+    authStore.findTenantMembershipByMembershipIdAndTenantId;
+  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    membership_id: 'membership-role-binding-1',
+    user_id: 'tenant-role-binding-user',
+    tenant_id: 'tenant-role-binding',
+    tenant_name: 'Tenant Role Binding',
+    phone: '',
+    status: 'active'
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        service.listTenantMemberRoleBindings({
+          tenantId: 'tenant-role-binding',
+          membershipId: 'membership-role-binding-1'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+        return true;
+      }
+    );
+  } finally {
+    authStore.findTenantMembershipByMembershipIdAndTenantId =
+      originalFindMembership;
+  }
 });
 
 test('listTenantMemberRoleBindings fails closed when store returns role ids with surrounding whitespace', async () => {

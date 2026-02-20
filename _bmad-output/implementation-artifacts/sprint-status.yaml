@@ -66,7 +66,7 @@ development_status:
   3-1-组织成员管理与身份复用: done
   3-2-组织角色管理: done
   3-3-组织权限树与成员角色分配: done
-  3-4-组织成员资料维护: backlog
+  3-4-组织成员资料维护: done
   3-5-负责人变更后的接管保障: backlog
   3-6-负责人变更并发冲突与安全重试: backlog
   3-7-组织软删除级联一致性: backlog

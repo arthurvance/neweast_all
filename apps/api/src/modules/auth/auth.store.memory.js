@@ -31,6 +31,8 @@ const createInMemoryAuthStore = ({
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
   const MAX_ORG_NAME_LENGTH = 128;
+  const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
+  const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
   const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
     'platform.member_admin.view',
     'platform.member_admin.operate',
@@ -55,6 +57,7 @@ const createInMemoryAuthStore = ({
   const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
   const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
   const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
 
   const isActiveLikeStatus = (status) => {
     const normalizedStatus = String(status || 'active').trim().toLowerCase();
@@ -90,6 +93,47 @@ const createInMemoryAuthStore = ({
     return VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedStatus)
       ? normalizedStatus
       : '';
+  };
+  const normalizeOptionalTenantMemberProfileField = ({
+    value,
+    maxLength
+  } = {}) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const normalized = value.trim();
+    if (
+      !normalized
+      || normalized.length > maxLength
+      || CONTROL_CHAR_PATTERN.test(normalized)
+    ) {
+      return null;
+    }
+    return normalized;
+  };
+  const resolveOptionalTenantMemberProfileField = (value) =>
+    value === null || value === undefined
+      ? null
+      : value;
+  const isStrictOptionalTenantMemberProfileField = ({
+    value,
+    maxLength
+  } = {}) => {
+    const resolvedRawValue = resolveOptionalTenantMemberProfileField(value);
+    if (resolvedRawValue === null) {
+      return true;
+    }
+    if (typeof resolvedRawValue !== 'string') {
+      return false;
+    }
+    const normalized = normalizeOptionalTenantMemberProfileField({
+      value: resolvedRawValue,
+      maxLength
+    });
+    return normalized !== null && normalized === resolvedRawValue;
   };
   const appendTenantMembershipHistory = ({
     membership = null,
@@ -806,6 +850,12 @@ const createInMemoryAuthStore = ({
           tenantId: String(tenant.tenantId),
           tenantName: tenant.tenantName ? String(tenant.tenantName) : null,
           status: normalizeTenantMembershipStatus(tenant.status || 'active'),
+          displayName: resolveOptionalTenantMemberProfileField(
+            tenant.displayName ?? tenant.display_name ?? null
+          ),
+          departmentName: resolveOptionalTenantMemberProfileField(
+            tenant.departmentName ?? tenant.department_name ?? null
+          ),
           joinedAt: tenant.joinedAt || tenant.joined_at || new Date().toISOString(),
           leftAt: tenant.leftAt || tenant.left_at || null,
           permission: tenant.permission
@@ -1549,6 +1599,8 @@ const createInMemoryAuthStore = ({
         tenantId: normalizedTenantId,
         tenantName: normalizedTenantName,
         status: 'active',
+        displayName: null,
+        departmentName: null,
         joinedAt: new Date().toISOString(),
         leftAt: null,
         permission: {
@@ -1721,6 +1773,10 @@ const createInMemoryAuthStore = ({
         tenant_name: membership.tenantName ? String(membership.tenantName) : null,
         phone: user?.phone ? String(user.phone) : '',
         status: normalizeTenantMembershipStatusForRead(membership.status),
+        display_name: resolveOptionalTenantMemberProfileField(membership.displayName),
+        department_name: resolveOptionalTenantMemberProfileField(
+          membership.departmentName
+        ),
         joined_at: membership.joinedAt || null,
         left_at: membership.leftAt || null
       };
@@ -1745,12 +1801,21 @@ const createInMemoryAuthStore = ({
       if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
         return null;
       }
+      const resolvedUserId = String(membershipState.userId || '').trim();
+      const user = usersById.get(resolvedUserId);
       return {
         membership_id: normalizedMembershipId,
-        user_id: String(membershipState.userId || '').trim(),
+        user_id: resolvedUserId,
         tenant_id: normalizedTenantId,
         tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
+        phone: user?.phone ? String(user.phone) : '',
         status: normalizeTenantMembershipStatusForRead(membership?.status),
+        display_name: resolveOptionalTenantMemberProfileField(
+          membership?.displayName
+        ),
+        department_name: resolveOptionalTenantMemberProfileField(
+          membership?.departmentName
+        ),
         joined_at: membership?.joinedAt || null,
         left_at: membership?.leftAt || null
       };
@@ -1786,6 +1851,12 @@ const createInMemoryAuthStore = ({
             tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
             phone: String(user.phone || ''),
             status: normalizeTenantMembershipStatusForRead(membership?.status),
+            display_name: resolveOptionalTenantMemberProfileField(
+              membership?.displayName
+            ),
+            department_name: resolveOptionalTenantMemberProfileField(
+              membership?.departmentName
+            ),
             joined_at: membership?.joinedAt || null,
             left_at: membership?.leftAt || null
           });
@@ -1805,6 +1876,108 @@ const createInMemoryAuthStore = ({
       });
       const offset = (resolvedPage - 1) * resolvedPageSize;
       return members.slice(offset, offset + resolvedPageSize);
+    },
+
+    updateTenantMembershipProfile: async ({
+      membershipId,
+      tenantId,
+      displayName,
+      departmentNameProvided = false,
+      departmentName = null
+    }) => {
+      const normalizedMembershipId = String(membershipId || '').trim();
+      const normalizedTenantId = String(tenantId || '').trim();
+      const normalizedDisplayName = normalizeOptionalTenantMemberProfileField({
+        value: displayName,
+        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      });
+      if (
+        !normalizedMembershipId
+        || !normalizedTenantId
+        || normalizedDisplayName === null
+      ) {
+        throw new Error(
+          'updateTenantMembershipProfile requires membershipId, tenantId and displayName'
+        );
+      }
+      const shouldUpdateDepartmentName = departmentNameProvided === true;
+      let normalizedDepartmentName = null;
+      if (shouldUpdateDepartmentName) {
+        if (departmentName === null) {
+          normalizedDepartmentName = null;
+        } else {
+          normalizedDepartmentName = normalizeOptionalTenantMemberProfileField({
+            value: departmentName,
+            maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+          });
+          if (normalizedDepartmentName === null) {
+            throw new Error('updateTenantMembershipProfile departmentName is invalid');
+          }
+        }
+      }
+
+      const membershipState = findTenantMembershipStateByMembershipId(
+        normalizedMembershipId
+      );
+      if (!membershipState) {
+        return null;
+      }
+      const membership = membershipState.membership;
+      if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
+        return null;
+      }
+      const resolvedUserId = String(membershipState.userId || '').trim();
+      const user = usersById.get(resolvedUserId);
+      const rawUserPhone = user?.phone === null || user?.phone === undefined
+        ? ''
+        : String(user.phone);
+      const normalizedUserPhone = rawUserPhone.trim();
+      if (
+        !normalizedUserPhone
+        || rawUserPhone !== normalizedUserPhone
+        || !MAINLAND_PHONE_PATTERN.test(normalizedUserPhone)
+      ) {
+        const dependencyError = new Error(
+          'updateTenantMembershipProfile dependency unavailable: user-profile-missing'
+        );
+        dependencyError.code =
+          'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
+        throw dependencyError;
+      }
+      if (
+        !shouldUpdateDepartmentName
+        && !isStrictOptionalTenantMemberProfileField({
+          value: membership?.departmentName,
+          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+        })
+      ) {
+        const dependencyError = new Error(
+          'updateTenantMembershipProfile dependency unavailable: membership-profile-invalid'
+        );
+        dependencyError.code =
+          'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
+        throw dependencyError;
+      }
+      membership.displayName = normalizedDisplayName;
+      if (shouldUpdateDepartmentName) {
+        membership.departmentName = normalizedDepartmentName;
+      }
+      return {
+        membership_id: normalizedMembershipId,
+        user_id: resolvedUserId,
+        tenant_id: normalizedTenantId,
+        tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
+        phone: normalizedUserPhone,
+        status: normalizeTenantMembershipStatusForRead(membership?.status),
+        display_name: resolveOptionalTenantMemberProfileField(
+          membership?.displayName
+        ),
+        department_name: resolveOptionalTenantMemberProfileField(
+          membership?.departmentName
+        ),
+        joined_at: membership?.joinedAt || null,
+        left_at: membership?.leftAt || null
+      };
     },
 
     updateTenantMembershipStatus: async ({

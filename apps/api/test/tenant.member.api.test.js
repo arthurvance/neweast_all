@@ -64,6 +64,35 @@ const createHarness = ({
     previous_status: nextStatus === 'active' ? 'disabled' : 'active',
     current_status: nextStatus
   }),
+  findTenantMembershipByMembershipIdAndTenantId = async ({ membershipId, tenantId }) => ({
+    membership_id: membershipId,
+    user_id: 'tenant-user-target',
+    tenant_id: tenantId,
+    tenant_name: 'Tenant A',
+    phone: '13800000033',
+    status: 'active',
+    display_name: '成员甲',
+    department_name: '研发一部',
+    joined_at: '2026-02-18T00:00:00.000Z',
+    left_at: null
+  }),
+  updateTenantMemberProfile = async ({
+    membershipId,
+    tenantId,
+    displayName,
+    departmentName
+  }) => ({
+    membership_id: membershipId,
+    user_id: 'tenant-user-target',
+    tenant_id: tenantId,
+    tenant_name: 'Tenant A',
+    phone: '13800000033',
+    status: 'active',
+    display_name: displayName,
+    department_name: departmentName,
+    joined_at: '2026-02-18T00:00:00.000Z',
+    left_at: null
+  }),
   listTenantMemberRoleBindings = async ({ membershipId }) => ({
     membership_id: membershipId,
     role_ids: ['tenant_member']
@@ -80,6 +109,8 @@ const createHarness = ({
   const provisionCalls = [];
   const findMembershipCalls = [];
   const statusCalls = [];
+  const memberDetailCalls = [];
+  const profileUpdateCalls = [];
   const roleBindingReadCalls = [];
   const roleBindingWriteCalls = [];
   const idempotencyEvents = [];
@@ -104,6 +135,14 @@ const createHarness = ({
     updateTenantMemberStatus: async (payload) => {
       statusCalls.push(payload);
       return updateTenantMemberStatus(payload);
+    },
+    findTenantMembershipByMembershipIdAndTenantId: async (payload) => {
+      memberDetailCalls.push(payload);
+      return findTenantMembershipByMembershipIdAndTenantId(payload);
+    },
+    updateTenantMemberProfile: async (payload) => {
+      profileUpdateCalls.push(payload);
+      return updateTenantMemberProfile(payload);
     },
     listTenantMemberRoleBindings: async (payload) => {
       roleBindingReadCalls.push(payload);
@@ -140,6 +179,8 @@ const createHarness = ({
     provisionCalls,
     findMembershipCalls,
     statusCalls,
+    memberDetailCalls,
+    profileUpdateCalls,
     roleBindingReadCalls,
     roleBindingWriteCalls,
     idempotencyEvents
@@ -149,11 +190,11 @@ const createHarness = ({
 test('createTenantMemberHandlers fails fast when tenant member service capability is missing', () => {
   assert.throws(
     () => createTenantMemberHandlers(),
-    /requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberRoles and replaceMemberRoles/
+    /requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberDetail, updateMemberProfile, getMemberRoles and replaceMemberRoles/
   );
   assert.throws(
     () => createTenantMemberHandlers({}),
-    /requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberRoles and replaceMemberRoles/
+    /requires a tenantMemberService with listMembers, createMember, updateMemberStatus, getMemberDetail, updateMemberProfile, getMemberRoles and replaceMemberRoles/
   );
 });
 
@@ -2384,4 +2425,434 @@ test('PUT /tenant/members/:membership_id/roles fails closed when downstream memb
   const payload = JSON.parse(route.body);
   assert.equal(payload.error_code, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
   assert.equal(payload.request_id, 'req-tenant-member-role-write-membership-whitespace');
+});
+
+test('GET /tenant/members/:membership_id returns member profile detail', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-read-1',
+    method: 'GET',
+    requestId: 'req-tenant-member-profile-read',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.membership_id, 'membership-profile-read-1');
+  assert.equal(payload.tenant_id, 'tenant-a');
+  assert.equal(payload.status, 'active');
+  assert.equal(payload.display_name, '成员甲');
+  assert.equal(payload.department_name, '研发一部');
+  assert.equal(payload.request_id, 'req-tenant-member-profile-read');
+  assert.equal(harness.memberDetailCalls.length, 1);
+  assert.equal(harness.memberDetailCalls[0].membershipId, 'membership-profile-read-1');
+  assert.equal(harness.memberDetailCalls[0].tenantId, 'tenant-a');
+});
+
+test('GET /tenant/members/:membership_id normalizes membership_id to lowercase', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/MEMBERSHIP-PROFILE-LOWERCASE',
+    method: 'GET',
+    requestId: 'req-tenant-member-profile-read-lowercase',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.membership_id, 'membership-profile-lowercase');
+  assert.equal(harness.memberDetailCalls.length, 1);
+  assert.equal(harness.memberDetailCalls[0].membershipId, 'membership-profile-lowercase');
+});
+
+test('GET /tenant/members/:membership_id maps missing membership to 404', async () => {
+  const harness = createHarness({
+    findTenantMembershipByMembershipIdAndTenantId: async () => null
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-not-found',
+    method: 'GET',
+    requestId: 'req-tenant-member-profile-read-not-found',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND');
+  assert.equal(payload.request_id, 'req-tenant-member-profile-read-not-found');
+});
+
+test('GET /tenant/members/:membership_id fails closed on cross-tenant payload', async () => {
+  const harness = createHarness({
+    findTenantMembershipByMembershipIdAndTenantId: async ({ membershipId }) => ({
+      membership_id: membershipId,
+      user_id: 'tenant-user-target',
+      tenant_id: 'tenant-b',
+      tenant_name: 'Tenant B',
+      phone: '13800000033',
+      status: 'active',
+      display_name: '成员甲',
+      department_name: '研发一部',
+      joined_at: '2026-02-18T00:00:00.000Z',
+      left_at: null
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-cross-tenant',
+    method: 'GET',
+    requestId: 'req-tenant-member-profile-read-cross-tenant',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+  const lastAuditEvent = harness.tenantMemberService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'tenant.member.profile.read.rejected');
+});
+
+test('PATCH /tenant/members/:membership_id/profile updates member profile', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-1/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '产品部'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.membership_id, 'membership-profile-write-1');
+  assert.equal(payload.display_name, '成员乙');
+  assert.equal(payload.department_name, '产品部');
+  assert.equal(payload.request_id, 'req-tenant-member-profile-write');
+  assert.equal(harness.profileUpdateCalls.length, 1);
+  assert.equal(harness.profileUpdateCalls[0].membershipId, 'membership-profile-write-1');
+  assert.equal(harness.profileUpdateCalls[0].displayName, '成员乙');
+  assert.equal(harness.profileUpdateCalls[0].departmentName, '产品部');
+});
+
+test('PATCH /tenant/members/:membership_id/profile allows null department_name', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-null-dept/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-null-dept',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: null
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.department_name, null);
+});
+
+test('PATCH /tenant/members/:membership_id/profile keeps department_name when payload omits the field', async () => {
+  const harness = createHarness({
+    updateTenantMemberProfile: async ({
+      membershipId,
+      tenantId,
+      displayName,
+      departmentName
+    }) => ({
+      membership_id: membershipId,
+      user_id: 'tenant-user-target',
+      tenant_id: tenantId,
+      tenant_name: 'Tenant A',
+      phone: '13800000033',
+      status: 'active',
+      display_name: displayName,
+      department_name: departmentName === undefined ? '研发一部' : departmentName,
+      joined_at: '2026-02-18T00:00:00.000Z',
+      left_at: null
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-no-dept/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-no-dept',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      display_name: '成员乙'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.display_name, '成员乙');
+  assert.equal(payload.department_name, '研发一部');
+  assert.equal(harness.profileUpdateCalls.length, 1);
+  assert.equal(harness.profileUpdateCalls[0].departmentNameProvided, false);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      harness.profileUpdateCalls[0],
+      'departmentName'
+    ),
+    false
+  );
+});
+
+test('PATCH /tenant/members/:membership_id/profile rejects blank display_name', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-invalid-display/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-invalid-display',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      display_name: '   ',
+      department_name: '研发一部'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  assert.equal(harness.profileUpdateCalls.length, 0);
+});
+
+test('PATCH /tenant/members/:membership_id/profile rejects pure-whitespace department_name', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-invalid-dept/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-invalid-dept',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '   '
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  assert.equal(harness.profileUpdateCalls.length, 0);
+});
+
+test('PATCH /tenant/members/:membership_id/profile maps missing membership to 404', async () => {
+  const harness = createHarness({
+    updateTenantMemberProfile: async () => null
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-not-found/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-not-found',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '产品部'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND');
+});
+
+test('PATCH /tenant/members/:membership_id/profile enforces idempotency conflict on payload mismatch', async () => {
+  const harness = createHarness();
+
+  const first = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-idem/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-idem-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-tenant-member-profile-conflict'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '产品部'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-profile-write-idem/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-idem-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-tenant-member-profile-conflict'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '市场部'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  assert.equal(harness.profileUpdateCalls.length, 1);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(secondPayload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+});
+
+test('PATCH /tenant/members/:membership_id/profile enforces idempotency across canonicalized membership_id variants', async () => {
+  const harness = createHarness();
+
+  const first = await dispatchApiRoute({
+    pathname: '/tenant/members/Membership_Profile_Idem/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-idem-canonical-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-tenant-member-profile-canonical'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '产品部'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/tenant/members/membership_profile_idem/profile',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-profile-write-idem-canonical-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-tenant-member-profile-canonical'
+    },
+    body: {
+      display_name: '成员乙',
+      department_name: '产品部'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(harness.profileUpdateCalls.length, 1);
+  assertSamePayloadWithFreshRequestId(
+    JSON.parse(second.body),
+    JSON.parse(first.body)
+  );
+});
+
+test('PATCH /tenant/members/:membership_id/profile does not cache retryable 409 responses', async () => {
+  const harness = createHarness();
+  let writeCalls = 0;
+  harness.handlers.tenantUpdateMemberProfile = async () => {
+    writeCalls += 1;
+    throw new AuthProblemError({
+      status: 409,
+      title: 'Conflict',
+      detail: '可重试成员资料冲突',
+      errorCode: 'AUTH-409-TENANT-MEMBER-PROFILE-RETRYABLE-CONFLICT',
+      extensions: {
+        retryable: true
+      }
+    });
+  };
+
+  const request = (requestId) =>
+    dispatchApiRoute({
+      pathname: '/tenant/members/membership-profile-idem-retryable/profile',
+      method: 'PATCH',
+      requestId,
+      headers: {
+        authorization: 'Bearer fake-access-token',
+        'idempotency-key': 'idem-tenant-member-profile-retryable-conflict'
+      },
+      body: {
+        display_name: '成员乙',
+        department_name: '产品部'
+      },
+      handlers: harness.handlers
+    });
+
+  const first = await request('req-tenant-member-profile-idem-retryable-1');
+  const second = await request('req-tenant-member-profile-idem-retryable-2');
+
+  assert.equal(first.status, 409);
+  assert.equal(second.status, 409);
+  assert.equal(writeCalls, 2);
+});
+
+test('PATCH /tenant/members/:membership_id/profile caches non-retryable 409 responses', async () => {
+  const harness = createHarness();
+  let writeCalls = 0;
+  harness.handlers.tenantUpdateMemberProfile = async () => {
+    writeCalls += 1;
+    throw new AuthProblemError({
+      status: 409,
+      title: 'Conflict',
+      detail: '不可重试成员资料冲突',
+      errorCode: 'AUTH-409-TENANT-MEMBER-PROFILE-NON-RETRYABLE-CONFLICT',
+      extensions: {
+        retryable: false
+      }
+    });
+  };
+
+  const request = (requestId) =>
+    dispatchApiRoute({
+      pathname: '/tenant/members/membership-profile-idem-non-retryable/profile',
+      method: 'PATCH',
+      requestId,
+      headers: {
+        authorization: 'Bearer fake-access-token',
+        'idempotency-key': 'idem-tenant-member-profile-non-retryable-conflict'
+      },
+      body: {
+        display_name: '成员乙',
+        department_name: '产品部'
+      },
+      handlers: harness.handlers
+    });
+
+  const first = await request('req-tenant-member-profile-idem-non-retryable-1');
+  const second = await request('req-tenant-member-profile-idem-non-retryable-2');
+
+  assert.equal(first.status, 409);
+  assert.equal(second.status, 409);
+  assert.equal(writeCalls, 1);
 });

@@ -88,6 +88,31 @@ const AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS_UPPER = AUTH_DOMAIN_ACCESS_REQUIRE
     COLUMN_NAME: columnName
   })
 );
+const AUTH_USER_TENANTS_REQUIRED_COLUMNS = [
+  'user_id',
+  'tenant_id',
+  'membership_id',
+  'tenant_name',
+  'status',
+  'display_name',
+  'department_name',
+  'joined_at',
+  'left_at',
+  'can_view_member_admin',
+  'can_operate_member_admin',
+  'can_view_billing',
+  'can_operate_billing'
+];
+const AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS = AUTH_USER_TENANTS_REQUIRED_COLUMNS.map(
+  (columnName) => ({
+    column_name: columnName
+  })
+);
+const AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS_UPPER = AUTH_USER_TENANTS_REQUIRED_COLUMNS.map(
+  (columnName) => ({
+    COLUMN_NAME: columnName
+  })
+);
 const AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMNS = [
   'user_id',
   'role_id',
@@ -468,6 +493,9 @@ const ensureTables = async () => {
 
   await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
   await runMigrationSql(adminConnection, '0013_platform_role_catalog_tenant_isolation.sql');
+  await runMigrationSql(adminConnection, '0014_tenant_role_permission_grants.sql');
+  await runMigrationSql(adminConnection, '0015_auth_tenant_membership_roles.sql');
+  await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
 };
 
 const resetTestData = async () => {
@@ -2627,9 +2655,11 @@ test('createApiApp boots with auth schema created only from official migrations'
   await adminConnection.execute('DROP TABLE IF EXISTS refresh_tokens');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_sessions');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_platform_roles');
+  await adminConnection.execute('DROP TABLE IF EXISTS auth_tenant_membership_roles');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenants');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenant_membership_history');
   await adminConnection.execute('DROP TABLE IF EXISTS auth_user_domain_access');
+  await adminConnection.execute('DROP TABLE IF EXISTS tenant_role_permission_grants');
   await adminConnection.execute('DROP TABLE IF EXISTS platform_role_permission_grants');
   await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
   await adminConnection.execute('DROP TABLE IF EXISTS memberships');
@@ -2662,6 +2692,9 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0011_auth_user_platform_roles_role_id_index.sql');
   await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
   await runMigrationSql(adminConnection, '0013_platform_role_catalog_tenant_isolation.sql');
+  await runMigrationSql(adminConnection, '0014_tenant_role_permission_grants.sql');
+  await runMigrationSql(adminConnection, '0015_auth_tenant_membership_roles.sql');
+  await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();
@@ -2735,16 +2768,7 @@ test('createApiApp closes db client when auth service init fails after mysql con
                 return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_tenants') {
-                return [
-                  { column_name: 'user_id' },
-                  { column_name: 'tenant_id' },
-                  { column_name: 'tenant_name' },
-                  { column_name: 'status' },
-                  { column_name: 'can_view_member_admin' },
-                  { column_name: 'can_operate_member_admin' },
-                  { column_name: 'can_view_billing' },
-                  { column_name: 'can_operate_billing' }
-                ];
+                return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
@@ -2799,16 +2823,7 @@ test('createApiApp preflight accepts uppercase information_schema field names', 
             return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS_UPPER;
           }
           if (tableName === 'auth_user_tenants') {
-            return [
-              { COLUMN_NAME: 'user_id' },
-              { COLUMN_NAME: 'tenant_id' },
-              { COLUMN_NAME: 'tenant_name' },
-              { COLUMN_NAME: 'status' },
-              { COLUMN_NAME: 'can_view_member_admin' },
-              { COLUMN_NAME: 'can_operate_member_admin' },
-              { COLUMN_NAME: 'can_view_billing' },
-              { COLUMN_NAME: 'can_operate_billing' }
-            ];
+            return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS_UPPER;
           }
           if (tableName === 'auth_user_platform_roles') {
             return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS_UPPER;
@@ -2861,16 +2876,7 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
                 return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_tenants') {
-                return [
-                  { column_name: 'user_id' },
-                  { column_name: 'tenant_id' },
-                  { column_name: 'tenant_name' },
-                  { column_name: 'status' },
-                  { column_name: 'can_view_member_admin' },
-                  { column_name: 'can_operate_member_admin' },
-                  { column_name: 'can_view_billing' },
-                  { column_name: 'can_operate_billing' }
-                ];
+                return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
               return [];
             }
@@ -2917,16 +2923,7 @@ test('createApiApp fails fast when auth_user_platform_roles table is missing', a
                 return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_tenants') {
-                return [
-                  { column_name: 'user_id' },
-                  { column_name: 'tenant_id' },
-                  { column_name: 'tenant_name' },
-                  { column_name: 'status' },
-                  { column_name: 'can_view_member_admin' },
-                  { column_name: 'can_operate_member_admin' },
-                  { column_name: 'can_view_billing' },
-                  { column_name: 'can_operate_billing' }
-                ];
+                return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
               return [];
             }
@@ -3430,6 +3427,64 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
   assert.equal(dbCloseCalls, 1);
 });
 
+test('createApiApp fails fast when auth_user_tenants profile columns are missing', async () => {
+  let dbCloseCalls = 0;
+  const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
+
+  await assert.rejects(
+    () =>
+      createApiApp(mockConfig, {
+        dependencyProbe,
+        requirePersistentAuthStore: true,
+        connectMySql: async () => ({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (normalizedSql.includes('FROM information_schema.tables')) {
+              return [
+                { table_name: 'auth_sessions' },
+                { table_name: 'auth_user_domain_access' },
+                { table_name: 'auth_user_tenants' },
+                { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_role_permission_grants' }
+              ];
+            }
+            if (normalizedSql.includes('FROM information_schema.columns')) {
+              const tableName = String(params[0] || '');
+              if (tableName === 'auth_sessions') {
+                return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'auth_user_domain_access') {
+                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'auth_user_tenants') {
+                return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS.filter(
+                  (row) =>
+                    row.column_name !== 'display_name'
+                    && row.column_name !== 'department_name'
+                );
+              }
+              if (tableName === 'auth_user_platform_roles') {
+                return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_role_permission_grants') {
+                return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
+              }
+              return [];
+            }
+            return [];
+          },
+          inTransaction: async (runner) => runner({ query: async () => [] }),
+          close: async () => {
+            dbCloseCalls += 1;
+          }
+        })
+      }),
+    /Auth schema preflight failed: auth_user_tenants missing columns: display_name, department_name/
+  );
+
+  assert.equal(dbCloseCalls, 1);
+});
+
 test('createApiApp fails fast when auth_user_domain_access required columns are missing', async () => {
   let dbCloseCalls = 0;
   const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
@@ -3464,16 +3519,7 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
                 ];
               }
               if (tableName === 'auth_user_tenants') {
-                return [
-                  { column_name: 'user_id' },
-                  { column_name: 'tenant_id' },
-                  { column_name: 'tenant_name' },
-                  { column_name: 'status' },
-                  { column_name: 'can_view_member_admin' },
-                  { column_name: 'can_operate_member_admin' },
-                  { column_name: 'can_view_billing' },
-                  { column_name: 'can_operate_billing' }
-                ];
+                return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
@@ -3527,16 +3573,7 @@ test('createApiApp fails fast when auth_sessions context columns are missing', a
                 return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_tenants') {
-                return [
-                  { column_name: 'user_id' },
-                  { column_name: 'tenant_id' },
-                  { column_name: 'tenant_name' },
-                  { column_name: 'status' },
-                  { column_name: 'can_view_member_admin' },
-                  { column_name: 'can_operate_member_admin' },
-                  { column_name: 'can_view_billing' },
-                  { column_name: 'can_operate_billing' }
-                ];
+                return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;

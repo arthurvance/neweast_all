@@ -22,7 +22,9 @@ const {
 const {
   TENANT_MEMBER_LIST_PATH,
   TENANT_MEMBER_CREATE_PATH,
+  TENANT_MEMBER_DETAIL_PATH,
   TENANT_MEMBER_STATUS_PATH,
+  TENANT_MEMBER_PROFILE_PATH,
   TENANT_MEMBER_ROLE_BINDING_PATH,
   TENANT_MEMBER_VIEW_PERMISSION_CODE,
   TENANT_MEMBER_OPERATE_PERMISSION_CODE,
@@ -308,8 +310,22 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     scope: TENANT_MEMBER_SCOPE
   },
   {
+    method: 'GET',
+    path: TENANT_MEMBER_DETAIL_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_VIEW_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
+  },
+  {
     method: 'PATCH',
     path: TENANT_MEMBER_STATUS_PATH,
+    access: 'protected',
+    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_MEMBER_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_MEMBER_PROFILE_PATH,
     access: 'protected',
     permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
     scope: TENANT_MEMBER_SCOPE

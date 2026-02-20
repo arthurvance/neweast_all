@@ -17,6 +17,9 @@ const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
 const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
+const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
+const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
+const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
 const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
   'tenant.member_admin.view',
   'tenant.member_admin.operate',
@@ -70,6 +73,30 @@ const normalizeTenantMembershipStatusForRead = (status) => {
   }
   return VALID_TENANT_MEMBERSHIP_STATUS.has(value) ? value : '';
 };
+const normalizeOptionalTenantMemberProfileField = ({
+  value,
+  maxLength
+} = {}) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  if (
+    !normalized
+    || normalized.length > maxLength
+    || CONTROL_CHAR_PATTERN.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+};
+const resolveOptionalTenantMemberProfileField = (value) =>
+  value === null || value === undefined
+    ? null
+    : value;
 const normalizePlatformRoleCatalogStatus = (status) => {
   const value = String(status || '').trim().toLowerCase();
   if (value === 'enabled') {
@@ -126,6 +153,28 @@ const DEFAULT_DEADLOCK_FALLBACK_RESULT = Object.freeze({
   reason: 'db-deadlock',
   permission: null
 });
+const isStrictMainlandPhone = (candidate) => {
+  const raw = String(candidate ?? '');
+  const normalized = raw.trim();
+  return raw === normalized && MAINLAND_PHONE_PATTERN.test(normalized);
+};
+const isStrictOptionalTenantMemberProfileField = ({
+  value,
+  maxLength
+} = {}) => {
+  const resolvedRawValue = resolveOptionalTenantMemberProfileField(value);
+  if (resolvedRawValue === null) {
+    return true;
+  }
+  if (typeof resolvedRawValue !== 'string') {
+    return false;
+  }
+  const normalized = normalizeOptionalTenantMemberProfileField({
+    value: resolvedRawValue,
+    maxLength
+  });
+  return normalized !== null && normalized === resolvedRawValue;
+};
 
 const toSessionRecord = (row) => {
   if (!row) {
@@ -3439,6 +3488,8 @@ const createMySqlAuthStore = ({
                        tenant_id,
                        tenant_name,
                        status,
+                       display_name,
+                       department_name,
                        can_view_member_admin,
                        can_operate_member_admin,
                        can_view_billing,
@@ -3465,10 +3516,12 @@ const createMySqlAuthStore = ({
                       tenant_id,
                       tenant_name,
                       status,
+                      display_name,
+                      department_name,
                       joined_at,
                       left_at
                     )
-                    VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP(3), NULL)
+                    VALUES (?, ?, ?, ?, 'active', NULL, NULL, CURRENT_TIMESTAMP(3), NULL)
                   `,
                   [
                     membershipId,
@@ -3868,11 +3921,13 @@ const createMySqlAuthStore = ({
                  ut.tenant_id,
                  ut.tenant_name,
                  ut.status,
+                 ut.display_name,
+                 ut.department_name,
                  ut.joined_at,
                  ut.left_at,
                  u.phone
           FROM auth_user_tenants ut
-          JOIN users u ON u.id = ut.user_id
+          LEFT JOIN users u ON u.id = ut.user_id
           WHERE ut.user_id = ? AND ut.tenant_id = ?
           LIMIT 1
         `,
@@ -3889,6 +3944,10 @@ const createMySqlAuthStore = ({
         tenant_name: row.tenant_name ? String(row.tenant_name) : null,
         phone: String(row.phone || ''),
         status: normalizeTenantMembershipStatusForRead(row.status),
+        display_name: resolveOptionalTenantMemberProfileField(row.display_name),
+        department_name: resolveOptionalTenantMemberProfileField(
+          row.department_name
+        ),
         joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
         left_at: row.left_at ? new Date(row.left_at).toISOString() : null
       };
@@ -3905,15 +3964,19 @@ const createMySqlAuthStore = ({
       }
       const rows = await dbClient.query(
         `
-          SELECT membership_id,
-                 user_id,
-                 tenant_id,
-                 tenant_name,
-                 status,
-                 joined_at,
-                 left_at
-          FROM auth_user_tenants
-          WHERE membership_id = ? AND tenant_id = ?
+          SELECT ut.membership_id,
+                 ut.user_id,
+                 ut.tenant_id,
+                 ut.tenant_name,
+                 ut.status,
+                 ut.display_name,
+                 ut.department_name,
+                 ut.joined_at,
+                 ut.left_at,
+                 u.phone
+          FROM auth_user_tenants ut
+          LEFT JOIN users u ON u.id = ut.user_id
+          WHERE ut.membership_id = ? AND ut.tenant_id = ?
           LIMIT 1
         `,
         [normalizedMembershipId, normalizedTenantId]
@@ -3927,7 +3990,12 @@ const createMySqlAuthStore = ({
         user_id: String(row.user_id || '').trim(),
         tenant_id: String(row.tenant_id || '').trim(),
         tenant_name: row.tenant_name ? String(row.tenant_name) : null,
+        phone: String(row.phone || ''),
         status: normalizeTenantMembershipStatusForRead(row.status),
+        display_name: resolveOptionalTenantMemberProfileField(row.display_name),
+        department_name: resolveOptionalTenantMemberProfileField(
+          row.department_name
+        ),
         joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
         left_at: row.left_at ? new Date(row.left_at).toISOString() : null
       };
@@ -4154,11 +4222,13 @@ const createMySqlAuthStore = ({
                  ut.tenant_id,
                  ut.tenant_name,
                  ut.status,
+                 ut.display_name,
+                 ut.department_name,
                  ut.joined_at,
                  ut.left_at,
                  u.phone
           FROM auth_user_tenants ut
-          JOIN users u ON u.id = ut.user_id
+          LEFT JOIN users u ON u.id = ut.user_id
           WHERE ut.tenant_id = ?
           ORDER BY ut.joined_at DESC, ut.membership_id DESC
           LIMIT ? OFFSET ?
@@ -4172,10 +4242,186 @@ const createMySqlAuthStore = ({
         tenant_name: row.tenant_name ? String(row.tenant_name) : null,
         phone: String(row.phone || ''),
         status: normalizeTenantMembershipStatusForRead(row.status),
+        display_name: resolveOptionalTenantMemberProfileField(row.display_name),
+        department_name: resolveOptionalTenantMemberProfileField(
+          row.department_name
+        ),
         joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
         left_at: row.left_at ? new Date(row.left_at).toISOString() : null
       }));
     },
+
+    updateTenantMembershipProfile: async ({
+      membershipId,
+      tenantId,
+      displayName,
+      departmentNameProvided = false,
+      departmentName = null,
+      operatorUserId = null
+    }) =>
+      executeWithDeadlockRetry({
+        operation: 'updateTenantMembershipProfile',
+        onExhausted: 'throw',
+        execute: async () => {
+          const normalizedMembershipId = String(membershipId || '').trim();
+          const normalizedTenantId = String(tenantId || '').trim();
+          const normalizedDisplayName = normalizeOptionalTenantMemberProfileField({
+            value: displayName,
+            maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+          });
+          const normalizedOperatorUserId = String(operatorUserId || '').trim() || null;
+          if (
+            !normalizedMembershipId
+            || !normalizedTenantId
+            || normalizedDisplayName === null
+          ) {
+            throw new Error(
+              'updateTenantMembershipProfile requires membershipId, tenantId and displayName'
+            );
+          }
+
+          const shouldUpdateDepartmentName = departmentNameProvided === true;
+          let normalizedDepartmentName = null;
+          if (shouldUpdateDepartmentName) {
+            if (departmentName === null) {
+              normalizedDepartmentName = null;
+            } else {
+              normalizedDepartmentName = normalizeOptionalTenantMemberProfileField({
+                value: departmentName,
+                maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+              });
+              if (normalizedDepartmentName === null) {
+                throw new Error('updateTenantMembershipProfile departmentName is invalid');
+              }
+            }
+          }
+
+          return dbClient.inTransaction(async (tx) => {
+            const membershipRows = await tx.query(
+              `
+                SELECT ut.membership_id,
+                       ut.department_name,
+                       u.phone
+                FROM auth_user_tenants ut
+                LEFT JOIN users u ON u.id = ut.user_id
+                WHERE ut.membership_id = ? AND ut.tenant_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedMembershipId, normalizedTenantId]
+            );
+            const membershipRow = membershipRows?.[0] || null;
+            if (!membershipRow) {
+              return null;
+            }
+            if (!isStrictMainlandPhone(membershipRow.phone)) {
+              const dependencyError = new Error(
+                'updateTenantMembershipProfile dependency unavailable: user-profile-missing'
+              );
+              dependencyError.code =
+                'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
+              throw dependencyError;
+            }
+            if (
+              !shouldUpdateDepartmentName
+              && !isStrictOptionalTenantMemberProfileField({
+                value: membershipRow.department_name,
+                maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+              })
+            ) {
+              const dependencyError = new Error(
+                'updateTenantMembershipProfile dependency unavailable: membership-profile-invalid'
+              );
+              dependencyError.code =
+                'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
+              throw dependencyError;
+            }
+
+            const updateResult = await tx.query(
+              `
+                UPDATE auth_user_tenants
+                SET display_name = ?,
+                    department_name = CASE
+                      WHEN ? = 1 THEN ?
+                      ELSE department_name
+                    END,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE membership_id = ? AND tenant_id = ?
+              `,
+              [
+                normalizedDisplayName,
+                shouldUpdateDepartmentName ? 1 : 0,
+                shouldUpdateDepartmentName ? normalizedDepartmentName : null,
+                normalizedMembershipId,
+                normalizedTenantId
+              ]
+            );
+            if (Number(updateResult?.affectedRows || 0) !== 1) {
+              return null;
+            }
+
+            const rows = await tx.query(
+              `
+                SELECT ut.membership_id,
+                       ut.user_id,
+                       ut.tenant_id,
+                       ut.tenant_name,
+                       ut.status,
+                       ut.display_name,
+                       ut.department_name,
+                       ut.joined_at,
+                       ut.left_at,
+                       u.phone
+                FROM auth_user_tenants ut
+                LEFT JOIN users u ON u.id = ut.user_id
+                WHERE ut.membership_id = ? AND ut.tenant_id = ?
+                LIMIT 1
+              `,
+              [normalizedMembershipId, normalizedTenantId]
+            );
+            const row = rows?.[0] || null;
+            if (!row) {
+              return null;
+            }
+            if (!isStrictMainlandPhone(row.phone)) {
+              const dependencyError = new Error(
+                'updateTenantMembershipProfile dependency unavailable: user-profile-missing'
+              );
+              dependencyError.code =
+                'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
+              throw dependencyError;
+            }
+            if (!isStrictOptionalTenantMemberProfileField({
+              value: row.department_name,
+              maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+            })) {
+              const dependencyError = new Error(
+                'updateTenantMembershipProfile dependency unavailable: membership-profile-invalid'
+              );
+              dependencyError.code =
+                'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
+              throw dependencyError;
+            }
+            return {
+              membership_id: String(row.membership_id || '').trim(),
+              user_id: String(row.user_id || '').trim(),
+              tenant_id: String(row.tenant_id || '').trim(),
+              tenant_name: row.tenant_name ? String(row.tenant_name) : null,
+              phone: String(row.phone || ''),
+              status: normalizeTenantMembershipStatusForRead(row.status),
+              display_name: resolveOptionalTenantMemberProfileField(
+                row.display_name
+              ),
+              department_name: resolveOptionalTenantMemberProfileField(
+                row.department_name
+              ),
+              joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
+              left_at: row.left_at ? new Date(row.left_at).toISOString() : null,
+              updated_by_user_id: normalizedOperatorUserId
+            };
+          });
+        }
+      }),
 
     updateTenantMembershipStatus: async ({
       membershipId,

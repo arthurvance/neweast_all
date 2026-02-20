@@ -29,6 +29,8 @@ const MAX_OWNER_TRANSFER_REASON_LENGTH = 256;
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const MAX_TENANT_MEMBERSHIP_ID_LENGTH = 64;
 const MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS = 5;
+const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
+const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
@@ -56,6 +58,9 @@ const PLATFORM_ROLE_ASSIGNMENT_ALLOWED_FIELDS = new Set([
   'roleId',
   'status'
 ]);
+const UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD = Symbol(
+  'unsetExpectedTenantMemberProfileField'
+);
 
 const DEFAULT_SEED_USERS = [];
 const ROUTE_PERMISSION_EVALUATORS = Object.freeze({
@@ -950,6 +955,139 @@ const parseOptionalTenantName = (tenantName) => {
     return { valid: false, value: null };
   }
   return { valid: true, value: normalized };
+};
+const parseOptionalTenantMemberProfileField = ({
+  value,
+  maxLength
+} = {}) => {
+  if (value === null || value === undefined) {
+    return { valid: true, value: null };
+  }
+  if (typeof value !== 'string') {
+    return { valid: false, value: null };
+  }
+  const normalized = value.trim();
+  if (
+    !normalized
+    || value !== normalized
+    || normalized.length > maxLength
+    || CONTROL_CHAR_PATTERN.test(normalized)
+  ) {
+    return { valid: false, value: null };
+  }
+  return { valid: true, value: normalized };
+};
+const normalizeTenantMembershipRecordFromStore = ({
+  membership = null,
+  expectedMembershipId = '',
+  expectedUserId = '',
+  expectedTenantId = '',
+  expectedDisplayName = UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD,
+  expectedDepartmentName = UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD
+} = {}) => {
+  if (!membership || typeof membership !== 'object') {
+    return null;
+  }
+  const normalizedMembershipId = normalizeStrictRequiredStringField(
+    resolveRawCamelSnakeField(membership, 'membershipId', 'membership_id')
+  ).toLowerCase();
+  const normalizedUserId = normalizeStrictRequiredStringField(
+    resolveRawCamelSnakeField(membership, 'userId', 'user_id')
+  );
+  const normalizedTenantId = normalizeStrictRequiredStringField(
+    resolveRawCamelSnakeField(membership, 'tenantId', 'tenant_id')
+  );
+  const normalizedPhone = normalizeStrictRequiredStringField(
+    resolveRawCamelSnakeField(membership, 'phone', 'phone')
+  );
+  const normalizedStatus = normalizeTenantMembershipStatus(
+    normalizeStrictRequiredStringField(
+      resolveRawCamelSnakeField(membership, 'status', 'status')
+    )
+  );
+  const normalizedExpectedMembershipId = normalizeStrictRequiredStringField(
+    expectedMembershipId
+  ).toLowerCase();
+  const normalizedExpectedUserId = normalizeStrictRequiredStringField(
+    expectedUserId
+  );
+  const normalizedExpectedTenantId = normalizeStrictRequiredStringField(
+    expectedTenantId
+  );
+  const parsedTenantName = parseOptionalTenantName(
+    resolveRawCamelSnakeField(membership, 'tenantName', 'tenant_name')
+  );
+  const parsedDisplayName = parseOptionalTenantMemberProfileField({
+    value: resolveRawCamelSnakeField(membership, 'displayName', 'display_name'),
+    maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+  });
+  const parsedDepartmentName = parseOptionalTenantMemberProfileField({
+    value: resolveRawCamelSnakeField(membership, 'departmentName', 'department_name'),
+    maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+  });
+  if (
+    !isValidTenantMembershipId(normalizedMembershipId)
+    || !normalizedUserId
+    || !normalizedTenantId
+    || !normalizePhone(normalizedPhone)
+    || !normalizedStatus
+    || !parsedTenantName.valid
+    || !parsedDisplayName.valid
+    || !parsedDepartmentName.valid
+    || (
+      normalizedExpectedMembershipId
+      && normalizedMembershipId !== normalizedExpectedMembershipId
+    )
+    || (
+      normalizedExpectedUserId
+      && normalizedUserId !== normalizedExpectedUserId
+    )
+    || (
+      normalizedExpectedTenantId
+      && normalizedTenantId !== normalizedExpectedTenantId
+    )
+  ) {
+    return null;
+  }
+  if (expectedDisplayName !== UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD) {
+    const normalizedExpectedDisplayName = normalizeStrictRequiredStringField(
+      expectedDisplayName
+    );
+    if (
+      !normalizedExpectedDisplayName
+      || normalizedExpectedDisplayName.length > MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      || CONTROL_CHAR_PATTERN.test(normalizedExpectedDisplayName)
+      || parsedDisplayName.value !== normalizedExpectedDisplayName
+    ) {
+      return null;
+    }
+  }
+  if (expectedDepartmentName !== UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD) {
+    const parsedExpectedDepartmentName = parseOptionalTenantMemberProfileField({
+      value: expectedDepartmentName,
+      maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+    });
+    if (
+      !parsedExpectedDepartmentName.valid
+      || parsedDepartmentName.value !== parsedExpectedDepartmentName.value
+    ) {
+      return null;
+    }
+  }
+  const joinedAt = resolveRawCamelSnakeField(membership, 'joinedAt', 'joined_at');
+  const leftAt = resolveRawCamelSnakeField(membership, 'leftAt', 'left_at');
+  return {
+    membership_id: normalizedMembershipId,
+    user_id: normalizedUserId,
+    tenant_id: normalizedTenantId,
+    tenant_name: parsedTenantName.value,
+    phone: normalizedPhone,
+    status: normalizedStatus,
+    display_name: parsedDisplayName.value,
+    department_name: parsedDepartmentName.value,
+    joined_at: joinedAt || null,
+    left_at: leftAt || null
+  };
 };
 
 const buildPlatformPermissionContext = () => ({
@@ -5093,6 +5231,16 @@ const createAuthService = (options = {}) => {
     if (!membership) {
       throw errors.tenantMembershipNotFound();
     }
+    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+      membership,
+      expectedMembershipId: normalizedMembershipId,
+      expectedTenantId: normalizedTenantId
+    });
+    if (!normalizedMembership) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-record-invalid'
+      });
+    }
 
     let roleIds = await authStore.listTenantMembershipRoleBindings({
       membershipId: normalizedMembershipId,
@@ -5168,8 +5316,23 @@ const createAuthService = (options = {}) => {
       membershipId: normalizedMembershipId,
       tenantId: normalizedTenantId
     });
-    const normalizedMembershipStatus = normalizeTenantMembershipStatus(membership?.status);
-    if (!membership || normalizedMembershipStatus !== 'active') {
+    if (!membership) {
+      throw errors.tenantMembershipNotFound();
+    }
+    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+      membership,
+      expectedMembershipId: normalizedMembershipId,
+      expectedTenantId: normalizedTenantId
+    });
+    if (!normalizedMembership) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-record-invalid'
+      });
+    }
+    const normalizedMembershipStatus = normalizeTenantMembershipStatus(
+      normalizedMembership.status
+    );
+    if (normalizedMembershipStatus !== 'active') {
       throw errors.tenantMembershipNotFound();
     }
 
@@ -6068,46 +6231,14 @@ const createAuthService = (options = {}) => {
     if (!membership) {
       return null;
     }
-    const normalizedStatus = normalizeTenantMembershipStatus(membership.status);
-    if (!normalizedStatus) {
+    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+      membership,
+      expectedUserId: normalizedUserId,
+      expectedTenantId: normalizedTenantId
+    });
+    if (!normalizedMembership) {
       throw errors.tenantMemberDependencyUnavailable({
-        reason: 'tenant-membership-status-invalid'
-      });
-    }
-    const normalizedMembership = {
-      membership_id: String(
-        membership.membership_id
-        || membership.membershipId
-        || ''
-      ).trim(),
-      user_id: String(membership.user_id || membership.userId || '').trim(),
-      tenant_id: String(membership.tenant_id || membership.tenantId || '').trim(),
-      tenant_name: membership.tenant_name || membership.tenantName || null,
-      phone: String(membership.phone || '').trim(),
-      status: normalizedStatus,
-      joined_at: membership.joined_at || membership.joinedAt || null,
-      left_at: membership.left_at || membership.leftAt || null
-    };
-    const hasTenantMismatch =
-      normalizedMembership.tenant_id.length > 0
-      && normalizedMembership.tenant_id !== normalizedTenantId;
-    const hasUserMismatch =
-      normalizedMembership.user_id.length > 0
-      && normalizedMembership.user_id !== normalizedUserId;
-    if (
-      !isValidTenantMembershipId(normalizedMembership.membership_id)
-      || !normalizedMembership.user_id
-      || !normalizedMembership.tenant_id
-      || !normalizePhone(normalizedMembership.phone)
-      || hasTenantMismatch
-      || hasUserMismatch
-    ) {
-      throw errors.tenantMemberDependencyUnavailable({
-        reason:
-          hasTenantMismatch
-          || hasUserMismatch
-            ? 'tenant-membership-identity-mismatch'
-            : 'tenant-membership-record-invalid'
+        reason: 'tenant-membership-record-invalid'
       });
     }
     return normalizedMembership;
@@ -6155,45 +6286,229 @@ const createAuthService = (options = {}) => {
     }
     const normalizedMembers = [];
     for (const member of members) {
-      const normalizedStatus = normalizeTenantMembershipStatus(member?.status);
-      if (!normalizedStatus) {
+      const normalizedMember = normalizeTenantMembershipRecordFromStore({
+        membership: member,
+        expectedTenantId: normalizedTenantId
+      });
+      if (!normalizedMember) {
         throw errors.tenantMemberDependencyUnavailable({
-          reason: 'tenant-membership-status-invalid'
-        });
-      }
-      const normalizedMember = {
-        membership_id: String(
-          member?.membership_id
-          || member?.membershipId
-          || ''
-        ).trim(),
-        user_id: String(member?.user_id || member?.userId || '').trim(),
-        tenant_id: String(member?.tenant_id || member?.tenantId || '').trim(),
-        tenant_name: member?.tenant_name || member?.tenantName || null,
-        phone: String(member?.phone || '').trim(),
-        status: normalizedStatus,
-        joined_at: member?.joined_at || member?.joinedAt || null,
-        left_at: member?.left_at || member?.leftAt || null
-      };
-      const hasTenantMismatch =
-        normalizedMember.tenant_id.length > 0
-        && normalizedMember.tenant_id !== normalizedTenantId;
-      if (
-        !isValidTenantMembershipId(normalizedMember.membership_id)
-        || !normalizedMember.user_id
-        || !normalizedMember.tenant_id
-        || !normalizePhone(normalizedMember.phone)
-        || hasTenantMismatch
-      ) {
-        throw errors.tenantMemberDependencyUnavailable({
-          reason: hasTenantMismatch
-            ? 'tenant-membership-tenant-mismatch'
-            : 'tenant-membership-record-invalid'
+          reason: 'tenant-membership-record-invalid'
         });
       }
       normalizedMembers.push(normalizedMember);
     }
     return normalizedMembers;
+  };
+
+  const findTenantMembershipByMembershipIdAndTenantId = async ({
+    membershipId,
+    tenantId
+  }) => {
+    const normalizedMembershipId =
+      normalizeStrictTenantMembershipIdFromInput(membershipId);
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    if (!normalizedMembershipId || !normalizedTenantId) {
+      return null;
+    }
+
+    assertStoreMethod(
+      authStore,
+      'findTenantMembershipByMembershipIdAndTenantId',
+      'authStore'
+    );
+    let membership = null;
+    try {
+      membership = await authStore.findTenantMembershipByMembershipIdAndTenantId({
+        membershipId: normalizedMembershipId,
+        tenantId: normalizedTenantId
+      });
+    } catch (error) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'query-failed')
+      });
+    }
+    if (!membership) {
+      return null;
+    }
+
+    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+      membership,
+      expectedMembershipId: normalizedMembershipId,
+      expectedTenantId: normalizedTenantId
+    });
+    if (!normalizedMembership) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-record-invalid'
+      });
+    }
+    return normalizedMembership;
+  };
+
+  const updateTenantMemberProfile = async (input = {}) => {
+    const normalizedMembershipId =
+      normalizeStrictTenantMembershipIdFromInput(
+        resolveRawCamelSnakeField(input, 'membershipId', 'membership_id')
+      );
+    const requestedTenantId = normalizeTenantId(
+      resolveRawCamelSnakeField(input, 'tenantId', 'tenant_id')
+    );
+    const rawDisplayName = resolveRawCamelSnakeField(
+      input,
+      'displayName',
+      'display_name'
+    );
+    if (typeof rawDisplayName !== 'string') {
+      throw errors.invalidPayload();
+    }
+    const normalizedDisplayName = normalizeStrictRequiredStringField(rawDisplayName);
+    if (
+      !normalizedDisplayName
+      || normalizedDisplayName.length > MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      || CONTROL_CHAR_PATTERN.test(normalizedDisplayName)
+    ) {
+      throw errors.invalidPayload();
+    }
+    const hasDepartmentNameProvidedFlag = (
+      input?.departmentNameProvided === true
+      || input?.department_name_provided === true
+    );
+    const hasDepartmentNameProvidedKey = (
+      hasOwnProperty(input, 'departmentNameProvided')
+      || hasOwnProperty(input, 'department_name_provided')
+    );
+    const hasDepartmentNameField = (
+      hasOwnProperty(input, 'departmentName')
+      || hasOwnProperty(input, 'department_name')
+    );
+    const hasDepartmentNameCandidate = (
+      hasDepartmentNameProvidedFlag
+      || (!hasDepartmentNameProvidedKey && hasDepartmentNameField)
+    );
+    const rawDepartmentName = hasOwnProperty(input, 'departmentName')
+      ? input.departmentName
+      : input.department_name;
+    let normalizedDepartmentName = null;
+    if (hasDepartmentNameCandidate) {
+      if (rawDepartmentName === null) {
+        normalizedDepartmentName = null;
+      } else if (typeof rawDepartmentName === 'string') {
+        normalizedDepartmentName = normalizeStrictRequiredStringField(rawDepartmentName);
+        if (
+          !normalizedDepartmentName
+          || normalizedDepartmentName.length > MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+          || CONTROL_CHAR_PATTERN.test(normalizedDepartmentName)
+        ) {
+          throw errors.invalidPayload();
+        }
+      } else {
+        throw errors.invalidPayload();
+      }
+    }
+
+    const normalizedAuthorizedRoute =
+      input?.authorizedRoute && typeof input.authorizedRoute === 'object'
+        ? {
+          user_id: String(
+            input.authorizedRoute.user_id
+            || input.authorizedRoute.userId
+            || ''
+          ).trim(),
+          session_id: String(
+            input.authorizedRoute.session_id
+            || input.authorizedRoute.sessionId
+            || ''
+          ).trim(),
+          entry_domain: normalizeEntryDomain(
+            input.authorizedRoute.entry_domain
+            || input.authorizedRoute.entryDomain
+          ),
+          active_tenant_id: normalizeTenantId(
+            input.authorizedRoute.active_tenant_id
+            || input.authorizedRoute.activeTenantId
+          )
+        }
+        : null;
+    let resolvedAuthorizedRoute = null;
+    if (normalizedAuthorizedRoute) {
+      if (
+        !normalizedAuthorizedRoute.user_id
+        || !normalizedAuthorizedRoute.session_id
+        || normalizedAuthorizedRoute.entry_domain !== 'tenant'
+      ) {
+        throw errors.forbidden();
+      }
+      resolvedAuthorizedRoute = normalizedAuthorizedRoute;
+    } else {
+      resolvedAuthorizedRoute = await authorizeRoute({
+        requestId: input.requestId,
+        accessToken: input.accessToken,
+        permissionCode: 'tenant.member_admin.operate',
+        scope: 'tenant',
+        authorizationContext: input.authorizationContext || null
+      });
+    }
+
+    const operatorUserId = String(resolvedAuthorizedRoute?.user_id || '').trim();
+    const operatorSessionId = String(resolvedAuthorizedRoute?.session_id || '').trim();
+    const activeTenantId = normalizeTenantId(resolvedAuthorizedRoute?.active_tenant_id);
+    if (!operatorUserId || !operatorSessionId || !activeTenantId) {
+      throw errors.noDomainAccess();
+    }
+    if (requestedTenantId && requestedTenantId !== activeTenantId) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'updateTenantMembershipProfile', 'authStore');
+    let result = null;
+    try {
+      result = await authStore.updateTenantMembershipProfile({
+        membershipId: normalizedMembershipId,
+        tenantId: activeTenantId,
+        displayName: normalizedDisplayName,
+        departmentNameProvided: hasDepartmentNameCandidate,
+        departmentName: normalizedDepartmentName,
+        operatorUserId
+      });
+    } catch (error) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'write-failed')
+      });
+    }
+    if (!result) {
+      throw errors.tenantMembershipNotFound();
+    }
+
+    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+      membership: result,
+      expectedMembershipId: normalizedMembershipId,
+      expectedTenantId: activeTenantId,
+      expectedDisplayName: normalizedDisplayName,
+      expectedDepartmentName: hasDepartmentNameCandidate
+        ? normalizedDepartmentName
+        : UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD
+    });
+    if (!normalizedMembership) {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-membership-record-invalid'
+      });
+    }
+
+    addAuditEvent({
+      type: 'auth.tenant.member.profile.updated',
+      requestId: input.requestId,
+      userId: operatorUserId || 'unknown',
+      sessionId: operatorSessionId || 'unknown',
+      detail: 'tenant member profile updated',
+      metadata: {
+        membership_id: normalizedMembershipId,
+        tenant_id: activeTenantId,
+        changed_fields: hasDepartmentNameCandidate
+          ? ['display_name', 'department_name']
+          : ['display_name']
+      }
+    });
+
+    return normalizedMembership;
   };
 
   const updateTenantMemberStatus = async ({
@@ -6503,7 +6818,9 @@ const createAuthService = (options = {}) => {
     provisionPlatformUserByPhone,
     provisionTenantUserByPhone,
     findTenantMembershipByUserAndTenantId,
+    findTenantMembershipByMembershipIdAndTenantId,
     listTenantMembers,
+    updateTenantMemberProfile,
     updateTenantMemberStatus,
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,

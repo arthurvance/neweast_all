@@ -346,6 +346,38 @@ test('0015 migration defines tenant membership role bindings table', () => {
   assert.match(sql, /ON DELETE CASCADE/i);
 });
 
+test('0016 migration adds tenant member profile columns with information_schema guards', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0016_auth_tenant_member_profile_fields.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /table_name = 'auth_user_tenants'/i);
+  assert.match(sql, /column_name = 'display_name'/i);
+  assert.match(sql, /column_name = 'department_name'/i);
+  assert.match(sql, /ADD COLUMN display_name VARCHAR\(64\) NULL/i);
+  assert.match(sql, /ADD COLUMN department_name VARCHAR\(128\) NULL/i);
+  assert.match(sql, /PREPARE auth_user_tenants_display_name_stmt/i);
+  assert.match(sql, /PREPARE auth_user_tenants_department_name_stmt/i);
+});
+
+test('0016 down migration drops tenant member profile columns', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0016_auth_tenant_member_profile_fields.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /ALTER TABLE auth_user_tenants/i);
+  assert.match(sql, /DROP COLUMN IF EXISTS department_name/i);
+  assert.match(sql, /DROP COLUMN IF EXISTS display_name/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

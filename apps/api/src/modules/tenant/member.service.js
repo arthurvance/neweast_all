@@ -14,6 +14,8 @@ const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_MEMBERSHIP_ID_LENGTH = 64;
 const MAX_MEMBER_ROLE_BINDINGS = 5;
 const MAX_ROLE_ID_LENGTH = 64;
+const MAX_MEMBER_DISPLAY_NAME_LENGTH = 64;
+const MAX_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const DEFAULT_MEMBER_LIST_PAGE = 1;
 const DEFAULT_MEMBER_LIST_PAGE_SIZE = 50;
@@ -23,6 +25,10 @@ const ROLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
 const CREATE_MEMBER_ALLOWED_FIELDS = new Set(['phone']);
 const UPDATE_MEMBER_STATUS_ALLOWED_FIELDS = new Set(['status', 'reason']);
+const UPDATE_MEMBER_PROFILE_ALLOWED_FIELDS = new Set([
+  'display_name',
+  'department_name'
+]);
 const REPLACE_MEMBER_ROLES_ALLOWED_FIELDS = new Set(['role_ids']);
 const LIST_MEMBER_ALLOWED_FIELDS = new Set(['page', 'page_size']);
 const VALID_MEMBER_STATUS = new Set(['active', 'disabled', 'left']);
@@ -115,6 +121,34 @@ const normalizeOptionalTenantName = (value) => {
   return normalizeRequiredString(value);
 };
 
+const normalizeOptionalMemberDisplayName = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = normalizeRequiredString(value);
+  if (!normalized) {
+    return null;
+  }
+  return normalized;
+};
+
+const normalizeOptionalMemberDepartmentName = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = normalizeRequiredString(value);
+  if (!normalized) {
+    return null;
+  }
+  return normalized;
+};
+
 const isValidOptionalStrictTenantName = (value) => {
   if (value === null || value === undefined) {
     return true;
@@ -123,6 +157,40 @@ const isValidOptionalStrictTenantName = (value) => {
     return false;
   }
   return normalizeStrictRequiredString(value).length > 0;
+};
+
+const isValidOptionalStrictMemberDisplayName = (value) => {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = normalizeStrictRequiredString(value);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.length > MAX_MEMBER_DISPLAY_NAME_LENGTH) {
+    return false;
+  }
+  return !CONTROL_CHAR_PATTERN.test(normalized);
+};
+
+const isValidOptionalStrictMemberDepartmentName = (value) => {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = normalizeStrictRequiredString(value);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.length > MAX_MEMBER_DEPARTMENT_NAME_LENGTH) {
+    return false;
+  }
+  return !CONTROL_CHAR_PATTERN.test(normalized);
 };
 
 const isValidOptionalDateTime = (value) => {
@@ -396,6 +464,76 @@ const parseUpdateMemberStatusInput = ({ params = {}, payload = {} } = {}) => {
   };
 };
 
+const parseUpdateMemberProfileInput = ({ params = {}, payload = {} } = {}) => {
+  const membershipId = parseMembershipIdFromParams(params);
+  if (!isPlainObject(payload)) {
+    throw tenantMemberErrors.invalidPayload();
+  }
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !UPDATE_MEMBER_PROFILE_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw tenantMemberErrors.invalidPayload();
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'display_name')) {
+    throw tenantMemberErrors.invalidPayload('display_name 为必填字段');
+  }
+  if (typeof payload.display_name !== 'string') {
+    throw tenantMemberErrors.invalidPayload('display_name 必须为字符串');
+  }
+  const displayName = normalizeRequiredString(payload.display_name);
+  if (!displayName) {
+    throw tenantMemberErrors.invalidPayload('display_name 不能为空');
+  }
+  if (CONTROL_CHAR_PATTERN.test(displayName)) {
+    throw tenantMemberErrors.invalidPayload('display_name 不能包含控制字符');
+  }
+  if (displayName.length > MAX_MEMBER_DISPLAY_NAME_LENGTH) {
+    throw tenantMemberErrors.invalidPayload(
+      `display_name 长度不能超过 ${MAX_MEMBER_DISPLAY_NAME_LENGTH}`
+    );
+  }
+
+  const departmentNameProvided = Object.prototype.hasOwnProperty.call(
+    payload,
+    'department_name'
+  );
+  let departmentName = null;
+  if (departmentNameProvided) {
+    if (payload.department_name === null) {
+      departmentName = null;
+    } else if (typeof payload.department_name !== 'string') {
+      throw tenantMemberErrors.invalidPayload('department_name 必须为字符串或 null');
+    } else {
+      const normalizedDepartmentName = normalizeRequiredString(
+        payload.department_name
+      );
+      if (!normalizedDepartmentName) {
+        throw tenantMemberErrors.invalidPayload('department_name 不能为纯空白');
+      }
+      if (CONTROL_CHAR_PATTERN.test(normalizedDepartmentName)) {
+        throw tenantMemberErrors.invalidPayload('department_name 不能包含控制字符');
+      }
+      if (
+        normalizedDepartmentName.length
+        > MAX_MEMBER_DEPARTMENT_NAME_LENGTH
+      ) {
+        throw tenantMemberErrors.invalidPayload(
+          `department_name 长度不能超过 ${MAX_MEMBER_DEPARTMENT_NAME_LENGTH}`
+        );
+      }
+      departmentName = normalizedDepartmentName;
+    }
+  }
+
+  return {
+    membershipId,
+    displayName,
+    departmentNameProvided,
+    departmentName
+  };
+};
+
 const parseReplaceMemberRolesInput = ({ params = {}, payload = {} } = {}) => {
   const membershipId = parseMembershipIdFromParams(params);
   if (!isPlainObject(payload)) {
@@ -570,6 +708,16 @@ const normalizeMemberRecord = (record = {}) => {
     'leftAt',
     'left_at'
   ) ?? null;
+  const rawDisplayName = resolveRawMemberField(
+    source,
+    'displayName',
+    'display_name'
+  ) ?? null;
+  const rawDepartmentName = resolveRawMemberField(
+    source,
+    'departmentName',
+    'department_name'
+  ) ?? null;
   return {
     membership_id: normalizeRequiredString(resolveRawMemberField(
       source,
@@ -589,6 +737,8 @@ const normalizeMemberRecord = (record = {}) => {
     tenant_name: normalizeOptionalTenantName(rawTenantName),
     phone: normalizeRequiredString(source.phone),
     status: normalizeMemberStatus(source.status),
+    display_name: normalizeOptionalMemberDisplayName(rawDisplayName),
+    department_name: normalizeOptionalMemberDepartmentName(rawDepartmentName),
     joined_at: normalizeOptionalDateTime(rawJoinedAt),
     left_at: normalizeOptionalDateTime(rawLeftAt)
   };
@@ -599,8 +749,11 @@ const isValidNormalizedMemberRecordFromRaw = ({
   rawMember = {},
   activeTenantId = '',
   expectedStatus = null,
+  expectedMembershipId = '',
   expectedUserId = '',
-  expectedPhone = ''
+  expectedPhone = '',
+  expectedDisplayName = null,
+  expectedDepartmentName = undefined
 } = {}) => {
   const rawMembershipId = normalizeStrictRequiredString(
     resolveRawMemberField(rawMember, 'membershipId', 'membership_id')
@@ -630,11 +783,39 @@ const isValidNormalizedMemberRecordFromRaw = ({
     'leftAt',
     'left_at'
   ) ?? null;
+  const rawDisplayName = resolveRawMemberField(
+    rawMember,
+    'displayName',
+    'display_name'
+  ) ?? null;
+  const rawDepartmentName = resolveRawMemberField(
+    rawMember,
+    'departmentName',
+    'department_name'
+  ) ?? null;
   const normalizedExpectedStatus = expectedStatus === null
     ? null
     : normalizeMemberStatus(expectedStatus);
+  const normalizedExpectedMembershipId = normalizeRequiredString(
+    expectedMembershipId
+  ).toLowerCase();
   const normalizedExpectedUserId = normalizeRequiredString(expectedUserId);
   const normalizedExpectedPhone = normalizeRequiredString(expectedPhone);
+  const normalizedExpectedDisplayName = (
+    expectedDisplayName === null || expectedDisplayName === undefined
+  )
+    ? null
+    : normalizeRequiredString(expectedDisplayName);
+  const hasExpectedDepartmentName = expectedDepartmentName !== undefined;
+  const normalizedExpectedDepartmentName = hasExpectedDepartmentName
+    ? normalizeOptionalMemberDepartmentName(expectedDepartmentName)
+    : undefined;
+  const normalizedRawDisplayName = normalizeOptionalMemberDisplayName(
+    rawDisplayName
+  );
+  const normalizedRawDepartmentName = normalizeOptionalMemberDepartmentName(
+    rawDepartmentName
+  );
 
   return (
     !!rawMembershipId
@@ -658,6 +839,10 @@ const isValidNormalizedMemberRecordFromRaw = ({
       || String(member?.status || '') === normalizedExpectedStatus
     )
     && (
+      !normalizedExpectedMembershipId
+      || String(member?.membership_id || '') === normalizedExpectedMembershipId
+    )
+    && (
       !normalizedExpectedUserId
       || String(member?.user_id || '') === normalizedExpectedUserId
     )
@@ -665,6 +850,21 @@ const isValidNormalizedMemberRecordFromRaw = ({
       !normalizedExpectedPhone
       || String(member?.phone || '') === normalizedExpectedPhone
     )
+    && (
+      normalizedExpectedDisplayName === null
+      || String(member?.display_name || '') === normalizedExpectedDisplayName
+    )
+    && (
+      !hasExpectedDepartmentName
+      || String(member?.department_name ?? '')
+      === String(normalizedExpectedDepartmentName ?? '')
+    )
+    && String(member?.display_name ?? '')
+    === String(normalizedRawDisplayName ?? '')
+    && String(member?.department_name ?? '')
+    === String(normalizedRawDepartmentName ?? '')
+    && isValidOptionalStrictMemberDisplayName(rawDisplayName)
+    && isValidOptionalStrictMemberDepartmentName(rawDepartmentName)
     && isValidOptionalStrictTenantName(rawTenantName)
     && isValidOptionalStrictDateTime(rawJoinedAt)
     && isValidOptionalStrictDateTime(rawLeftAt)
@@ -1294,6 +1494,292 @@ const createTenantMemberService = ({ authService } = {}) => {
     };
   };
 
+  const getMemberDetail = async ({
+    requestId,
+    accessToken,
+    params = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const membershipId = parseMembershipIdFromParams(params);
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: TENANT_MEMBER_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'tenant.member.profile.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          tenant_id: null,
+          membership_id: membershipId,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const { operatorUserId, activeTenantId } = operatorContext;
+    assertAuthServiceMethod('findTenantMembershipByMembershipIdAndTenantId');
+
+    let membership;
+    try {
+      membership = await authService.findTenantMembershipByMembershipIdAndTenantId({
+        membershipId,
+        tenantId: activeTenantId
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        const mappedError = error.errorCode === 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+          ? tenantMemberErrors.membershipNotFound()
+          : error;
+        addAuditEvent({
+          type: 'tenant.member.profile.read.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          detail: 'tenant member profile detail read rejected',
+          metadata: {
+            tenant_id: activeTenantId,
+            membership_id: membershipId,
+            error_code: mappedError.errorCode
+          }
+        });
+        throw mappedError;
+      }
+      addAuditEvent({
+        type: 'tenant.member.profile.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member profile detail read dependency unavailable',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    if (!membership) {
+      addAuditEvent({
+        type: 'tenant.member.profile.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member profile detail not found',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: membershipId,
+          error_code: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        }
+      });
+      throw tenantMemberErrors.membershipNotFound();
+    }
+
+    const normalizedMembership = normalizeMemberRecord(membership || {});
+    if (
+      !isValidNormalizedMemberRecordFromRaw({
+        member: normalizedMembership,
+        rawMember: membership || {},
+        activeTenantId,
+        expectedMembershipId: membershipId
+      })
+    ) {
+      addAuditEvent({
+        type: 'tenant.member.profile.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member profile detail returned malformed payload',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'tenant.member.profile.read.succeeded',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      detail: 'tenant member profile detail fetched',
+      metadata: {
+        tenant_id: activeTenantId,
+        membership_id: membershipId,
+        has_display_name: normalizedMembership.display_name !== null,
+        has_department_name: normalizedMembership.department_name !== null
+      }
+    });
+
+    return {
+      ...normalizedMembership,
+      request_id: resolvedRequestId
+    };
+  };
+
+  const updateMemberProfile = async ({
+    requestId,
+    accessToken,
+    params = {},
+    payload = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const parsedInput = parseUpdateMemberProfileInput({
+      params,
+      payload
+    });
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        permissionCode: TENANT_MEMBER_OPERATE_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'tenant.member.profile.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          tenant_id: null,
+          membership_id: parsedInput.membershipId,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const { operatorUserId, operatorSessionId, activeTenantId } = operatorContext;
+    assertAuthServiceMethod('updateTenantMemberProfile');
+
+    let updatedMembership = null;
+    try {
+      updatedMembership = await authService.updateTenantMemberProfile({
+        requestId: resolvedRequestId,
+        accessToken,
+        membershipId: parsedInput.membershipId,
+        tenantId: activeTenantId,
+        displayName: parsedInput.displayName,
+        departmentNameProvided: parsedInput.departmentNameProvided,
+        ...(parsedInput.departmentNameProvided
+          ? { departmentName: parsedInput.departmentName }
+          : {}),
+        authorizationContext,
+        authorizedRoute: {
+          user_id: operatorUserId,
+          session_id: operatorSessionId,
+          entry_domain: TENANT_MEMBER_SCOPE,
+          active_tenant_id: activeTenantId
+        }
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        const mappedError = error.errorCode === 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+          ? tenantMemberErrors.membershipNotFound()
+          : error;
+        addAuditEvent({
+          type: 'tenant.member.profile.update.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          detail: 'tenant member profile update rejected',
+          metadata: {
+            tenant_id: activeTenantId,
+            membership_id: parsedInput.membershipId,
+            error_code: mappedError.errorCode
+          }
+        });
+        throw mappedError;
+      }
+      addAuditEvent({
+        type: 'tenant.member.profile.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member profile update dependency unavailable',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    if (!updatedMembership) {
+      addAuditEvent({
+        type: 'tenant.member.profile.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member profile update target membership not found',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        }
+      });
+      throw tenantMemberErrors.membershipNotFound();
+    }
+
+    const normalizedMembership = normalizeMemberRecord(updatedMembership || {});
+    const expectedDepartmentName = parsedInput.departmentNameProvided
+      ? parsedInput.departmentName
+      : undefined;
+    if (
+      !isValidNormalizedMemberRecordFromRaw({
+        member: normalizedMembership,
+        rawMember: updatedMembership || {},
+        activeTenantId,
+        expectedMembershipId: parsedInput.membershipId,
+        expectedDisplayName: parsedInput.displayName,
+        expectedDepartmentName
+      })
+    ) {
+      addAuditEvent({
+        type: 'tenant.member.profile.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'tenant member profile update returned malformed payload',
+        metadata: {
+          tenant_id: activeTenantId,
+          membership_id: parsedInput.membershipId,
+          error_code: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantMemberErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'tenant.member.profile.updated',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      detail: 'tenant member profile updated',
+      metadata: {
+        tenant_id: activeTenantId,
+        membership_id: parsedInput.membershipId,
+        changed_fields: parsedInput.departmentNameProvided
+          ? ['display_name', 'department_name']
+          : ['display_name']
+      }
+    });
+
+    return {
+      ...normalizedMembership,
+      request_id: resolvedRequestId
+    };
+  };
+
   const getMemberRoles = async ({
     requestId,
     accessToken,
@@ -1596,6 +2082,8 @@ const createTenantMemberService = ({ authService } = {}) => {
     listMembers,
     createMember,
     updateMemberStatus,
+    getMemberDetail,
+    updateMemberProfile,
     getMemberRoles,
     replaceMemberRoles,
     _internals: {
