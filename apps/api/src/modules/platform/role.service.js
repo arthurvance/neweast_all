@@ -378,6 +378,50 @@ const parseReplaceRolePermissionsPayload = (payload) => {
   };
 };
 
+const normalizeStrictRequiredString = (candidate) => {
+  if (typeof candidate !== 'string') {
+    return '';
+  }
+  return candidate.trim();
+};
+
+const resolveRawRoleCatalogField = (
+  role,
+  camelCaseKey,
+  snakeCaseKey
+) => {
+  if (!isPlainObject(role)) {
+    return undefined;
+  }
+  const hasCamelCaseKey = Object.prototype.hasOwnProperty.call(
+    role,
+    camelCaseKey
+  );
+  const hasSnakeCaseKey = Object.prototype.hasOwnProperty.call(
+    role,
+    snakeCaseKey
+  );
+  if (hasCamelCaseKey) {
+    const camelCaseValue = role[camelCaseKey];
+    if (camelCaseValue !== undefined && camelCaseValue !== null) {
+      return camelCaseValue;
+    }
+  }
+  if (hasSnakeCaseKey) {
+    const snakeCaseValue = role[snakeCaseKey];
+    if (snakeCaseValue !== undefined && snakeCaseValue !== null) {
+      return snakeCaseValue;
+    }
+  }
+  if (hasCamelCaseKey) {
+    return role[camelCaseKey];
+  }
+  if (hasSnakeCaseKey) {
+    return role[snakeCaseKey];
+  }
+  return undefined;
+};
+
 const mapRoleCatalogEntry = (role, requestId) => ({
   role_id: String(role?.roleId || role?.role_id || '').trim(),
   code: String(role?.code || '').trim(),
@@ -388,6 +432,118 @@ const mapRoleCatalogEntry = (role, requestId) => ({
   updated_at: toIsoTimestamp(role?.updatedAt ?? role?.updated_at),
   request_id: String(requestId || '').trim() || 'request_id_unset'
 });
+
+const isValidRoleCatalogEntry = ({
+  role = {},
+  rawRole = null
+} = {}) =>
+  (() => {
+    const createdAtEpoch = new Date(String(role?.created_at || '').trim()).getTime();
+    const updatedAtEpoch = new Date(String(role?.updated_at || '').trim()).getTime();
+    return Number.isFinite(createdAtEpoch) && Number.isFinite(updatedAtEpoch);
+  })()
+  && (() => {
+    const rawRoleId = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'roleId', 'role_id')
+    );
+    const rawCode = normalizeStrictRequiredString(rawRole?.code);
+    const rawName = normalizeStrictRequiredString(rawRole?.name);
+    const rawStatus = normalizeRoleStatusOutput(
+      normalizeStrictRequiredString(rawRole?.status).toLowerCase()
+    );
+    const rawScope = normalizeStrictRequiredString(rawRole?.scope).toLowerCase();
+    const rawCreatedAt = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'createdAt', 'created_at')
+    );
+    const rawUpdatedAt = normalizeStrictRequiredString(
+      resolveRawRoleCatalogField(rawRole, 'updatedAt', 'updated_at')
+    );
+    const rawIsSystem = resolveRawRoleCatalogField(rawRole, 'isSystem', 'is_system');
+
+    return (
+      !!rawRoleId
+      && !!rawCode
+      && !!rawName
+      && !!rawStatus
+      && !!rawScope
+      && !!rawCreatedAt
+      && !!rawUpdatedAt
+      && normalizeRoleIdKey(rawRoleId) === normalizeRoleIdKey(role?.role_id)
+      && rawCode === String(role?.code || '')
+      && rawName === String(role?.name || '')
+      && rawStatus === String(role?.status || '')
+      && rawScope === PLATFORM_ROLE_SCOPE
+      && typeof rawIsSystem === 'boolean'
+      && rawIsSystem === role?.is_system
+      && !CONTROL_CHAR_PATTERN.test(rawCode)
+      && !CONTROL_CHAR_PATTERN.test(rawName)
+    );
+  })()
+  && String(role?.created_at || '').trim().length > 0
+  && String(role?.updated_at || '').trim().length > 0
+  && String(role?.role_id || '').trim().length > 0
+  && ROLE_ID_ADDRESSABLE_PATTERN.test(String(role?.role_id || '').trim())
+  && String(role?.code || '').trim().length > 0
+  && String(role?.code || '').trim().length <= MAX_ROLE_CODE_LENGTH
+  && !CONTROL_CHAR_PATTERN.test(String(role?.code || ''))
+  && String(role?.name || '').trim().length > 0
+  && String(role?.name || '').trim().length <= MAX_ROLE_NAME_LENGTH
+  && !CONTROL_CHAR_PATTERN.test(String(role?.name || ''))
+  && VALID_ROLE_STATUS.has(String(role?.status || '').trim())
+  && typeof role?.is_system === 'boolean'
+  && normalizeRoleStatusOutput(rawRole?.status) === String(role?.status || '')
+  && normalizeRequiredString(rawRole?.scope) === PLATFORM_ROLE_SCOPE;
+
+const isExpectedMutationTarget = ({
+  role = {},
+  expectedRoleId = ''
+} = {}) =>
+  normalizeRoleIdKey(role?.role_id) === normalizeRoleIdKey(expectedRoleId);
+
+const normalizeStrictPlatformPermissionCodes = ({
+  permissionCodes,
+  minCount = 0,
+  maxCount = Number.POSITIVE_INFINITY
+} = {}) => {
+  if (!Array.isArray(permissionCodes)) {
+    return null;
+  }
+  if (
+    permissionCodes.length < minCount
+    || permissionCodes.length > maxCount
+  ) {
+    return null;
+  }
+  const normalizedPermissionCodes = [];
+  const seenPermissionCodes = new Set();
+  for (const permissionCode of permissionCodes) {
+    if (typeof permissionCode !== 'string') {
+      return null;
+    }
+    const trimmedPermissionCode = permissionCode.trim();
+    if (permissionCode !== trimmedPermissionCode) {
+      return null;
+    }
+    const normalizedPermissionCode = trimmedPermissionCode.toLowerCase();
+    if (
+      !normalizedPermissionCode
+      || CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)
+      || seenPermissionCodes.has(normalizedPermissionCode)
+    ) {
+      return null;
+    }
+    seenPermissionCodes.add(normalizedPermissionCode);
+    normalizedPermissionCodes.push(normalizedPermissionCode);
+  }
+  return normalizedPermissionCodes;
+};
+
+const normalizeNonNegativeInteger = (value) => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+};
 
 const createPlatformRoleService = ({ authService } = {}) => {
   const auditTrail = [];
@@ -506,18 +662,50 @@ const createPlatformRoleService = ({ authService } = {}) => {
       throw roleErrors.dependencyUnavailable();
     }
 
+    if (!Array.isArray(roles)) {
+      addAuditEvent({
+        type: 'platform.role.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        detail: 'platform role catalog returned non-array payload',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
+    const rawRoles = roles;
+    const mappedRoles = rawRoles
+      .map((role) => mapRoleCatalogEntry(role, resolvedRequestId));
+    const malformedRoleIndex = mappedRoles.findIndex(
+      (role, index) =>
+        !isValidRoleCatalogEntry({
+          role,
+          rawRole: rawRoles[index]
+        })
+    );
+    if (malformedRoleIndex !== -1) {
+      addAuditEvent({
+        type: 'platform.role.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: mappedRoles[malformedRoleIndex]?.role_id || null,
+        detail: 'platform role catalog returned malformed record',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
     addAuditEvent({
       type: 'platform.role.list.succeeded',
       requestId: resolvedRequestId,
       operatorUserId: operatorContext.operatorUserId,
       detail: 'platform role catalog listed',
       metadata: {
-        total: Array.isArray(roles) ? roles.length : 0
+        total: mappedRoles.length
       }
     });
-
-    const mappedRoles = (Array.isArray(roles) ? roles : [])
-      .map((role) => mapRoleCatalogEntry(role, resolvedRequestId));
     return {
       roles: mappedRoles,
       request_id: resolvedRequestId
@@ -563,6 +751,27 @@ const createPlatformRoleService = ({ authService } = {}) => {
     }
 
     assertAuthServiceMethod('listPlatformRolePermissionGrants');
+    assertAuthServiceMethod('listPlatformPermissionCatalog');
+    let availablePermissionCodes;
+    try {
+      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
+        permissionCodes: authService.listPlatformPermissionCatalog(),
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'platform.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform permission catalog dependency unavailable',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
     let grants;
     try {
       grants = await authService.listPlatformRolePermissionGrants({
@@ -591,6 +800,58 @@ const createPlatformRoleService = ({ authService } = {}) => {
       throw mappedError;
     }
 
+    const rawResultRoleId =
+      Object.prototype.hasOwnProperty.call(grants || {}, 'role_id')
+        ? grants?.role_id
+        : grants?.roleId;
+    const normalizedResultRoleId = normalizeRoleId(
+      normalizeStrictRequiredString(rawResultRoleId)
+    );
+    const normalizedPermissionCodes = normalizeStrictPlatformPermissionCodes({
+      permissionCodes: Array.isArray(grants?.permission_codes)
+        ? grants.permission_codes
+        : grants?.permissionCodes,
+      minCount: 0,
+      maxCount: Number.POSITIVE_INFINITY
+    });
+    const normalizedAvailablePermissionCodes = normalizeStrictPlatformPermissionCodes({
+      permissionCodes: Array.isArray(grants?.available_permission_codes)
+        ? grants.available_permission_codes
+        : grants?.availablePermissionCodes,
+      minCount: 0,
+      maxCount: Number.POSITIVE_INFINITY
+    });
+    const catalogPermissionSet = new Set(availablePermissionCodes || []);
+    const hasUnknownAvailablePermission = Array.isArray(normalizedAvailablePermissionCodes)
+      && normalizedAvailablePermissionCodes.some((permissionCode) =>
+        !catalogPermissionSet.has(permissionCode)
+      );
+    const availablePermissionSet = new Set(normalizedAvailablePermissionCodes || []);
+    const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
+      && normalizedPermissionCodes.some((permissionCode) =>
+        !availablePermissionSet.has(permissionCode)
+      );
+    if (
+      !availablePermissionCodes
+      || normalizedResultRoleId !== normalizedRoleId
+      || !normalizedPermissionCodes
+      || !normalizedAvailablePermissionCodes
+      || hasUnknownAvailablePermission
+      || hasUnsupportedGrantedPermission
+    ) {
+      addAuditEvent({
+        type: 'platform.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform role permission grants read returned malformed payload',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
+
     addAuditEvent({
       type: 'platform.role.permissions.read.succeeded',
       requestId: resolvedRequestId,
@@ -598,20 +859,14 @@ const createPlatformRoleService = ({ authService } = {}) => {
       targetRoleId: normalizedRoleId,
       detail: 'platform role permission grants listed',
       metadata: {
-        permission_codes_count: Array.isArray(grants?.permission_codes)
-          ? grants.permission_codes.length
-          : 0
+        permission_codes_count: normalizedPermissionCodes.length
       }
     });
 
     return {
       role_id: normalizedRoleId,
-      permission_codes: Array.isArray(grants?.permission_codes)
-        ? [...grants.permission_codes]
-        : [],
-      available_permission_codes: Array.isArray(grants?.available_permission_codes)
-        ? [...grants.available_permission_codes]
-        : [],
+      permission_codes: [...normalizedPermissionCodes],
+      available_permission_codes: [...normalizedAvailablePermissionCodes],
       request_id: resolvedRequestId
     };
   };
@@ -738,7 +993,79 @@ const createPlatformRoleService = ({ authService } = {}) => {
       throw mappedError;
     }
 
-    const availablePermissionCodes = authService.listPlatformPermissionCatalog();
+    let availablePermissionCodes;
+    try {
+      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
+        permissionCodes: authService.listPlatformPermissionCatalog(),
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform permission catalog dependency unavailable',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
+    const rawResultRoleId =
+      Object.prototype.hasOwnProperty.call(updated || {}, 'role_id')
+        ? updated?.role_id
+        : updated?.roleId;
+    const normalizedResultRoleId = normalizeRoleId(
+      normalizeStrictRequiredString(rawResultRoleId)
+    );
+    const normalizedPermissionCodes = normalizeStrictPlatformPermissionCodes({
+      permissionCodes: Array.isArray(updated?.permission_codes)
+        ? updated.permission_codes
+        : updated?.permissionCodes,
+      minCount: 0,
+      maxCount: MAX_PERMISSION_CODES_PAYLOAD_LENGTH
+    });
+    const normalizedAffectedUserCount = normalizeNonNegativeInteger(
+      updated?.affected_user_count ?? updated?.affectedUserCount
+    );
+    const expectedPermissionCodes = [...parsedPayload.permissionCodes]
+      .map((permissionCode) => permissionCode.toLowerCase())
+      .sort((left, right) => left.localeCompare(right));
+    const resolvedPermissionCodes = [...(normalizedPermissionCodes || [])]
+      .sort((left, right) => left.localeCompare(right));
+    const availablePermissionSet = new Set(availablePermissionCodes || []);
+    const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
+      && normalizedPermissionCodes.some((permissionCode) =>
+        !availablePermissionSet.has(permissionCode)
+      );
+    const hasPermissionCodeMismatch = (
+      expectedPermissionCodes.length !== resolvedPermissionCodes.length
+      || expectedPermissionCodes.some(
+        (permissionCode, index) => permissionCode !== resolvedPermissionCodes[index]
+      )
+    );
+    if (
+      !availablePermissionCodes
+      || normalizedResultRoleId !== normalizedRoleId
+      || !normalizedPermissionCodes
+      || normalizedAffectedUserCount === null
+      || hasUnsupportedGrantedPermission
+      || hasPermissionCodeMismatch
+    ) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform role permission grants update returned malformed payload',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
     addAuditEvent({
       type: 'platform.role.permissions.update.succeeded',
       requestId: resolvedRequestId,
@@ -746,22 +1073,16 @@ const createPlatformRoleService = ({ authService } = {}) => {
       targetRoleId: normalizedRoleId,
       detail: 'platform role permission grants replaced',
       metadata: {
-        permission_codes_count: Array.isArray(updated?.permission_codes)
-          ? updated.permission_codes.length
-          : 0,
-        affected_user_count: Number(updated?.affected_user_count || 0)
+        permission_codes_count: normalizedPermissionCodes.length,
+        affected_user_count: normalizedAffectedUserCount
       }
     });
 
     return {
       role_id: normalizedRoleId,
-      permission_codes: Array.isArray(updated?.permission_codes)
-        ? [...updated.permission_codes]
-        : [],
-      available_permission_codes: Array.isArray(availablePermissionCodes)
-        ? [...availablePermissionCodes]
-        : [],
-      affected_user_count: Number(updated?.affected_user_count || 0),
+      permission_codes: [...normalizedPermissionCodes],
+      available_permission_codes: [...availablePermissionCodes],
+      affected_user_count: normalizedAffectedUserCount,
       request_id: resolvedRequestId
     };
   };
@@ -855,6 +1176,25 @@ const createPlatformRoleService = ({ authService } = {}) => {
     }
 
     const mappedRole = mapRoleCatalogEntry(createdRole, resolvedRequestId);
+    if (!isValidRoleCatalogEntry({
+      role: mappedRole,
+      rawRole: createdRole
+    }) || !isExpectedMutationTarget({
+      role: mappedRole,
+      expectedRoleId: parsedPayload.roleId
+    }) || mappedRole.is_system !== false) {
+      addAuditEvent({
+        type: 'platform.role.create.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: mappedRole.role_id || parsedPayload.roleId,
+        detail: 'platform role creation returned malformed catalog record',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
     addAuditEvent({
       type: 'platform.role.create.succeeded',
       requestId: resolvedRequestId,
@@ -995,6 +1335,25 @@ const createPlatformRoleService = ({ authService } = {}) => {
     }
 
     const mappedRole = mapRoleCatalogEntry(updatedRole, resolvedRequestId);
+    if (!isValidRoleCatalogEntry({
+      role: mappedRole,
+      rawRole: updatedRole
+    }) || !isExpectedMutationTarget({
+      role: mappedRole,
+      expectedRoleId: normalizedRoleId
+    }) || mappedRole.is_system !== false) {
+      addAuditEvent({
+        type: 'platform.role.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform role update returned malformed catalog record',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
     addAuditEvent({
       type: 'platform.role.update.succeeded',
       requestId: resolvedRequestId,
@@ -1103,6 +1462,25 @@ const createPlatformRoleService = ({ authService } = {}) => {
     }
 
     const mappedRole = mapRoleCatalogEntry(deletedRole, resolvedRequestId);
+    if (!isValidRoleCatalogEntry({
+      role: mappedRole,
+      rawRole: deletedRole
+    }) || !isExpectedMutationTarget({
+      role: mappedRole,
+      expectedRoleId: normalizedRoleId
+    }) || mappedRole.is_system !== false || mappedRole.status !== 'disabled') {
+      addAuditEvent({
+        type: 'platform.role.delete.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform role delete returned malformed catalog record',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
     addAuditEvent({
       type: 'platform.role.delete.succeeded',
       requestId: resolvedRequestId,

@@ -2455,6 +2455,109 @@ test('GET /tenant/roles/:role_id/permissions fails closed when downstream payloa
   assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
 });
 
+test('GET /tenant/roles/:role_id/permissions fails closed when downstream payload includes unknown catalog permissions', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-permission-read-unknown-catalog',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-permission-read-unknown-catalog',
+    headers,
+    body: {
+      role_id: 'tenant_permission_read_unknown_catalog',
+      code: 'TENANT_PERMISSION_READ_UNKNOWN_CATALOG',
+      name: '租户权限读取未知目录项目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalListTenantRolePermissionGrants = harness.authService.listTenantRolePermissionGrants;
+  harness.authService.listTenantRolePermissionGrants = async ({ roleId }) => {
+    if (String(roleId || '').trim().toLowerCase() === 'tenant_permission_read_unknown_catalog') {
+      return {
+        role_id: 'tenant_permission_read_unknown_catalog',
+        permission_codes: ['tenant.permission.unknown'],
+        available_permission_codes: ['tenant.permission.unknown']
+      };
+    }
+    return originalListTenantRolePermissionGrants({ roleId });
+  };
+
+  try {
+    const readRoute = await dispatchApiRoute({
+      pathname: '/tenant/roles/tenant_permission_read_unknown_catalog/permissions',
+      method: 'GET',
+      requestId: 'req-tenant-role-permission-read-unknown-catalog',
+      headers,
+      handlers: harness.handlers
+    });
+    assert.equal(readRoute.status, 503);
+    const payload = JSON.parse(readRoute.body);
+    assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-tenant-role-permission-read-unknown-catalog');
+  } finally {
+    harness.authService.listTenantRolePermissionGrants = originalListTenantRolePermissionGrants;
+  }
+});
+
+test('GET /tenant/roles/:role_id/permissions fails closed when permission catalog dependency is unavailable', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-permission-read-catalog-dependency',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-permission-read-catalog-dependency',
+    headers,
+    body: {
+      role_id: 'tenant_permission_read_catalog_dependency',
+      code: 'TENANT_PERMISSION_READ_CATALOG_DEPENDENCY',
+      name: '租户权限读取目录依赖异常目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalListTenantPermissionCatalog = harness.authService.listTenantPermissionCatalog;
+  harness.authService.listTenantPermissionCatalog = () => {
+    throw new Error('catalog dependency unavailable');
+  };
+
+  try {
+    const readRoute = await dispatchApiRoute({
+      pathname: '/tenant/roles/tenant_permission_read_catalog_dependency/permissions',
+      method: 'GET',
+      requestId: 'req-tenant-role-permission-read-catalog-dependency',
+      headers,
+      handlers: harness.handlers
+    });
+    assert.equal(readRoute.status, 503);
+    const payload = JSON.parse(readRoute.body);
+    assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-tenant-role-permission-read-catalog-dependency');
+  } finally {
+    harness.authService.listTenantPermissionCatalog = originalListTenantPermissionCatalog;
+  }
+});
+
 test('GET /tenant/roles/:role_id/permissions fails closed when downstream payload contains surrounding whitespace permission codes', async () => {
   const harness = createHarness();
   const login = await loginByPhone(
@@ -2682,4 +2785,55 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when downstream write 
   assert.equal(replaceRoute.status, 503);
   const payload = JSON.parse(replaceRoute.body);
   assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+});
+
+test('PUT /tenant/roles/:role_id/permissions fails closed when permission catalog dependency is unavailable', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-permission-write-catalog-dependency',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-permission-write-catalog-dependency',
+    headers,
+    body: {
+      role_id: 'tenant_permission_write_catalog_dependency',
+      code: 'TENANT_PERMISSION_WRITE_CATALOG_DEPENDENCY',
+      name: '租户权限写入目录依赖异常目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalListTenantPermissionCatalog = harness.authService.listTenantPermissionCatalog;
+  harness.authService.listTenantPermissionCatalog = () => {
+    throw new Error('catalog dependency unavailable');
+  };
+
+  try {
+    const replaceRoute = await dispatchApiRoute({
+      pathname: '/tenant/roles/tenant_permission_write_catalog_dependency/permissions',
+      method: 'PUT',
+      requestId: 'req-tenant-role-permission-write-catalog-dependency',
+      headers,
+      body: {
+        permission_codes: ['tenant.member_admin.view']
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replaceRoute.status, 503);
+    const payload = JSON.parse(replaceRoute.body);
+    assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-tenant-role-permission-write-catalog-dependency');
+  } finally {
+    harness.authService.listTenantPermissionCatalog = originalListTenantPermissionCatalog;
+  }
 });

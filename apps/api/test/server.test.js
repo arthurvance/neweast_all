@@ -1384,6 +1384,35 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE'
   );
   assert.equal(
+    payload.paths['/tenant/roles'].post.responses['403'].content['application/problem+json']
+      .examples.system_role_protected.value.error_code,
+    'TROLE-403-SYSTEM-ROLE-PROTECTED'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].patch.responses['403'].content[
+      'application/problem+json'
+    ].examples.system_role_protected.value.error_code,
+    'TROLE-403-SYSTEM-ROLE-PROTECTED'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].delete.responses['403'].content[
+      'application/problem+json'
+    ].examples.system_role_protected.value.error_code,
+    'TROLE-403-SYSTEM-ROLE-PROTECTED'
+  );
+  assert.equal(
+    payload.paths['/tenant/roles/{role_id}'].delete.responses['409'].content[
+      'application/problem+json'
+    ].examples.delete_condition_not_met.value.error_code,
+    'TROLE-409-DELETE-CONDITION-NOT-MET'
+  );
+  assert.equal(
+    payload.paths['/platform/roles/{role_id}'].delete.responses['403'].content[
+      'application/problem+json'
+    ].examples.system_role_protected.value.error_code,
+    'ROLE-403-SYSTEM-ROLE-PROTECTED'
+  );
+  assert.equal(
     Object.prototype.hasOwnProperty.call(
       payload.paths['/platform/roles'].post.responses['400'].content[
         'application/problem+json'

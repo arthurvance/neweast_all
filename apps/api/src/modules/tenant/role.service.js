@@ -1494,6 +1494,28 @@ const createTenantRoleService = ({ authService } = {}) => {
     }
 
     assertAuthServiceMethod('listTenantRolePermissionGrants');
+    assertAuthServiceMethod('listTenantPermissionCatalog');
+    let availablePermissionCodes;
+    try {
+      availablePermissionCodes = normalizeStrictTenantPermissionCodes({
+        permissionCodes: authService.listTenantPermissionCatalog(),
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.read.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant permission catalog dependency unavailable',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
     let grants;
     try {
       grants = await authService.listTenantRolePermissionGrants({
@@ -1542,15 +1564,22 @@ const createTenantRoleService = ({ authService } = {}) => {
       minCount: 0,
       maxCount: Number.POSITIVE_INFINITY
     });
+    const catalogPermissionSet = new Set(availablePermissionCodes || []);
+    const hasUnknownAvailablePermission = Array.isArray(normalizedAvailablePermissionCodes)
+      && normalizedAvailablePermissionCodes.some((permissionCode) =>
+        !catalogPermissionSet.has(permissionCode)
+      );
     const availablePermissionSet = new Set(normalizedAvailablePermissionCodes || []);
     const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
       && normalizedPermissionCodes.some((permissionCode) =>
         !availablePermissionSet.has(permissionCode)
       );
     if (
-      normalizedResultRoleId !== normalizedRoleId
+      !availablePermissionCodes
+      || normalizedResultRoleId !== normalizedRoleId
       || !normalizedPermissionCodes
       || !normalizedAvailablePermissionCodes
+      || hasUnknownAvailablePermission
       || hasUnsupportedGrantedPermission
     ) {
       addAuditEvent({
@@ -1685,11 +1714,27 @@ const createTenantRoleService = ({ authService } = {}) => {
       throw mappedError;
     }
 
-    const availablePermissionCodes = normalizeStrictTenantPermissionCodes({
-      permissionCodes: authService.listTenantPermissionCatalog(),
-      minCount: 0,
-      maxCount: Number.POSITIVE_INFINITY
-    });
+    let availablePermissionCodes;
+    try {
+      availablePermissionCodes = normalizeStrictTenantPermissionCodes({
+        permissionCodes: authService.listTenantPermissionCatalog(),
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant permission catalog dependency unavailable',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
     const rawResultRoleId =
       Object.prototype.hasOwnProperty.call(updated || {}, 'role_id')
         ? updated?.role_id

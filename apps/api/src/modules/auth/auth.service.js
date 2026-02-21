@@ -5178,8 +5178,8 @@ const createAuthService = (options = {}) => {
         scope: normalizedScope,
         tenantId: normalizedTenantId,
         isSystem: Boolean(isSystem),
-        operatorUserId,
-        operatorSessionId,
+        operatorUserId: normalizedOperatorUserId,
+        operatorSessionId: normalizedOperatorSessionId,
         auditContext: {
           requestId: normalizedRequestId,
           traceparent: normalizedTraceparent,
@@ -5329,8 +5329,8 @@ const createAuthService = (options = {}) => {
         scope: normalizedScope,
         tenantId: normalizedTenantId,
         ...updates,
-        operatorUserId,
-        operatorSessionId,
+        operatorUserId: normalizedOperatorUserId,
+        operatorSessionId: normalizedOperatorSessionId,
         auditContext: {
           requestId: normalizedRequestId,
           traceparent: normalizedTraceparent,
@@ -5510,8 +5510,8 @@ const createAuthService = (options = {}) => {
         roleId: normalizedRoleId,
         scope: normalizedScope,
         tenantId: normalizedTenantId,
-        operatorUserId,
-        operatorSessionId,
+        operatorUserId: normalizedOperatorUserId,
+        operatorSessionId: normalizedOperatorSessionId,
         auditContext: {
           requestId: normalizedRequestId,
           traceparent: normalizedTraceparent,

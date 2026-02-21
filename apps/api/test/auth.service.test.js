@@ -10102,6 +10102,43 @@ test('createPlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
   });
 });
 
+test('createPlatformRoleCatalogEntry normalizes operator identifiers before store write', async () => {
+  let capturedPayload = null;
+  const service = createAuthService({
+    authStore: {
+      createPlatformRoleCatalogEntry: async (payload) => {
+        capturedPayload = payload;
+        return {
+          role_id: payload.roleId,
+          code: payload.code,
+          name: payload.name,
+          status: payload.status,
+          scope: payload.scope,
+          tenant_id: payload.tenantId,
+          is_system: false,
+          audit_recorded: true
+        };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-create-operator-normalization',
+    roleId: 'PLATFORM_ROLE_CREATE_OPERATOR_NORMALIZATION_TARGET',
+    code: 'PLATFORM_ROLE_CREATE_OPERATOR_NORMALIZATION_TARGET',
+    name: 'Platform Role Create Operator Normalization Target',
+    scope: 'platform',
+    operatorUserId: '  operator-user  ',
+    operatorSessionId: '  operator-session  '
+  });
+
+  assert.equal(capturedPayload?.operatorUserId, 'operator-user');
+  assert.equal(capturedPayload?.operatorSessionId, 'operator-session');
+  assert.equal(capturedPayload?.auditContext?.actorUserId, 'operator-user');
+  assert.equal(capturedPayload?.auditContext?.actorSessionId, 'operator-session');
+});
+
 test('createPlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
   const service = createAuthService({
     authStore: {
@@ -10239,6 +10276,43 @@ test('updatePlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
     affected_membership_count: 0
   });
   assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
+});
+
+test('updatePlatformRoleCatalogEntry normalizes operator identifiers before store write', async () => {
+  let capturedPayload = null;
+  const service = createAuthService({
+    authStore: {
+      updatePlatformRoleCatalogEntry: async (payload) => {
+        capturedPayload = payload;
+        return {
+          role_id: payload.roleId,
+          code: payload.code,
+          name: payload.name,
+          status: 'active',
+          scope: payload.scope,
+          tenant_id: payload.tenantId || '',
+          is_system: false,
+          audit_recorded: true
+        };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await service.updatePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-update-operator-normalization',
+    roleId: 'platform_role_update_operator_normalization_target',
+    scope: 'platform',
+    code: 'PLATFORM_ROLE_UPDATE_OPERATOR_NORMALIZATION_TARGET',
+    name: 'Platform Role Update Operator Normalization Target',
+    operatorUserId: '  operator-user  ',
+    operatorSessionId: '  operator-session  '
+  });
+
+  assert.equal(capturedPayload?.operatorUserId, 'operator-user');
+  assert.equal(capturedPayload?.operatorSessionId, 'operator-session');
+  assert.equal(capturedPayload?.auditContext?.actorUserId, 'operator-user');
+  assert.equal(capturedPayload?.auditContext?.actorSessionId, 'operator-session');
 });
 
 test('updatePlatformRoleCatalogEntry skips status resync when status is unchanged', async () => {
@@ -10532,6 +10606,46 @@ test('deletePlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
     affected_membership_count: 0
   });
   assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
+});
+
+test('deletePlatformRoleCatalogEntry normalizes operator identifiers before store write', async () => {
+  let capturedPayload = null;
+  const service = createAuthService({
+    authStore: {
+      deletePlatformRoleCatalogEntry: async (payload) => {
+        capturedPayload = payload;
+        return {
+          role_id: payload.roleId,
+          code: 'PLATFORM_ROLE_DELETE_OPERATOR_NORMALIZATION_TARGET',
+          name: 'Platform Role Delete Operator Normalization Target',
+          status: 'disabled',
+          scope: payload.scope,
+          tenant_id: payload.tenantId || '',
+          is_system: false,
+          audit_recorded: true
+        };
+      },
+      listUserIdsByPlatformRoleId: async () => [],
+      listPlatformRoleFactsByUserId: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async () => ({ audit_recorded: true })
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await service.deletePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-delete-operator-normalization',
+    roleId: 'platform_role_delete_operator_normalization_target',
+    scope: 'platform',
+    operatorUserId: '  operator-user  ',
+    operatorSessionId: '  operator-session  '
+  });
+
+  assert.equal(capturedPayload?.operatorUserId, 'operator-user');
+  assert.equal(capturedPayload?.operatorSessionId, 'operator-session');
+  assert.equal(capturedPayload?.auditContext?.actorUserId, 'operator-user');
+  assert.equal(capturedPayload?.auditContext?.actorSessionId, 'operator-session');
 });
 
 test('deletePlatformRoleCatalogEntry reports platform status sync with zero affected_membership_count', async () => {

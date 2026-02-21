@@ -2632,7 +2632,20 @@ const buildOpenApiSpec = () => {
             description: 'Tenant route blocked due to missing tenant context or insufficient permission',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  system_role_protected: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '受保护系统角色定义不允许创建、编辑或删除',
+                      error_code: 'TROLE-403-SYSTEM-ROLE-PROTECTED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
               }
             }
           },
@@ -2723,7 +2736,20 @@ const buildOpenApiSpec = () => {
             description: 'Tenant route blocked due to missing tenant context, insufficient permission, or protected role constraint',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  system_role_protected: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '受保护系统角色定义不允许创建、编辑或删除',
+                      error_code: 'TROLE-403-SYSTEM-ROLE-PROTECTED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
               }
             }
           },
@@ -2812,7 +2838,20 @@ const buildOpenApiSpec = () => {
             description: 'Tenant route blocked due to missing tenant context, insufficient permission, or protected role constraint',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  system_role_protected: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '受保护系统角色定义不允许创建、编辑或删除',
+                      error_code: 'TROLE-403-SYSTEM-ROLE-PROTECTED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
               }
             }
           },
@@ -2828,7 +2867,20 @@ const buildOpenApiSpec = () => {
             description: 'Tenant role deletion precondition conflict or idempotency payload mismatch',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  delete_condition_not_met: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '禁用状态角色不允许删除',
+                      error_code: 'TROLE-409-DELETE-CONDITION-NOT-MET',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
               }
             }
           },
@@ -4047,7 +4099,20 @@ const buildOpenApiSpec = () => {
             description: 'Current session lacks permission or target role is protected',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  system_role_protected: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '受保护系统角色不允许编辑或删除',
+                      error_code: 'ROLE-403-SYSTEM-ROLE-PROTECTED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
               }
             }
           },

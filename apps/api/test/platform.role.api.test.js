@@ -534,6 +534,206 @@ test('PATCH/DELETE /platform/roles/:role_id reject protected sys_admin role muta
   assert.equal(deletePayload.request_id, 'req-platform-role-protected-delete');
 });
 
+test('GET /platform/roles fails closed when role catalog returns malformed records', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-list-malformed');
+  const originalListPlatformRoleCatalogEntries = harness.authService.listPlatformRoleCatalogEntries;
+  harness.authService.listPlatformRoleCatalogEntries = async () => ([
+    {
+      role_id: 'platform_role_malformed_list_target',
+      code: 'ROLE_MALFORMED_LIST_TARGET',
+      name: '平台角色目录脏记录',
+      status: 'active',
+      scope: 'platform',
+      is_system: false,
+      updated_at: new Date().toISOString()
+    }
+  ]);
+  try {
+    const listRoute = await dispatchApiRoute({
+      pathname: '/platform/roles',
+      method: 'GET',
+      requestId: 'req-platform-role-list-malformed',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(listRoute.status, 503);
+    const payload = JSON.parse(listRoute.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-list-malformed');
+  } finally {
+    harness.authService.listPlatformRoleCatalogEntries = originalListPlatformRoleCatalogEntries;
+  }
+});
+
+test('GET /platform/roles fails closed when role catalog payload is not an array', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-list-non-array');
+  const originalListPlatformRoleCatalogEntries = harness.authService.listPlatformRoleCatalogEntries;
+  harness.authService.listPlatformRoleCatalogEntries = async () => ({
+    role_id: 'platform_role_non_array_payload'
+  });
+  try {
+    const listRoute = await dispatchApiRoute({
+      pathname: '/platform/roles',
+      method: 'GET',
+      requestId: 'req-platform-role-list-non-array',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(listRoute.status, 503);
+    const payload = JSON.parse(listRoute.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-list-non-array');
+  } finally {
+    harness.authService.listPlatformRoleCatalogEntries = originalListPlatformRoleCatalogEntries;
+  }
+});
+
+test('POST /platform/roles fails closed when create returns malformed catalog record', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-create-malformed');
+  const originalCreatePlatformRoleCatalogEntry = harness.authService.createPlatformRoleCatalogEntry;
+  harness.authService.createPlatformRoleCatalogEntry = async () => ({
+    role_id: 'platform_role_create_malformed_target',
+    code: 'ROLE_CREATE_MALFORMED_TARGET',
+    name: '平台角色创建脏记录目标',
+    status: 'active',
+    scope: 'platform',
+    is_system: false,
+    updated_at: new Date().toISOString()
+  });
+  try {
+    const createRoute = await dispatchApiRoute({
+      pathname: '/platform/roles',
+      method: 'POST',
+      requestId: 'req-platform-role-create-malformed',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        role_id: 'platform_role_create_malformed_target',
+        code: 'ROLE_CREATE_MALFORMED_TARGET',
+        name: '平台角色创建脏记录目标',
+        status: 'active'
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(createRoute.status, 503);
+    const payload = JSON.parse(createRoute.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-create-malformed');
+  } finally {
+    harness.authService.createPlatformRoleCatalogEntry = originalCreatePlatformRoleCatalogEntry;
+  }
+});
+
+test('PATCH /platform/roles/:role_id fails closed when update returns malformed catalog record', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-update-malformed');
+  const authHeaders = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-update-malformed-target',
+    headers: authHeaders,
+    body: {
+      role_id: 'platform_role_update_malformed_target',
+      code: 'ROLE_UPDATE_MALFORMED_TARGET',
+      name: '平台角色更新脏记录目标',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalUpdatePlatformRoleCatalogEntry = harness.authService.updatePlatformRoleCatalogEntry;
+  harness.authService.updatePlatformRoleCatalogEntry = async () => ({
+    role_id: 'platform_role_update_malformed_target',
+    code: 'ROLE_UPDATE_MALFORMED_TARGET',
+    name: '平台角色更新脏记录目标-已更新',
+    status: 'active',
+    scope: 'platform',
+    is_system: false,
+    updated_at: new Date().toISOString()
+  });
+  try {
+    const updateRoute = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_role_update_malformed_target',
+      method: 'PATCH',
+      requestId: 'req-platform-role-update-malformed',
+      headers: authHeaders,
+      body: {
+        name: '平台角色更新脏记录目标-已更新'
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(updateRoute.status, 503);
+    const payload = JSON.parse(updateRoute.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-update-malformed');
+  } finally {
+    harness.authService.updatePlatformRoleCatalogEntry = originalUpdatePlatformRoleCatalogEntry;
+  }
+});
+
+test('DELETE /platform/roles/:role_id fails closed when delete result is not soft-deleted', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-delete-malformed');
+  const authHeaders = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-delete-malformed-target',
+    headers: authHeaders,
+    body: {
+      role_id: 'platform_role_delete_malformed_target',
+      code: 'ROLE_DELETE_MALFORMED_TARGET',
+      name: '平台角色删除脏记录目标',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalDeletePlatformRoleCatalogEntry = harness.authService.deletePlatformRoleCatalogEntry;
+  harness.authService.deletePlatformRoleCatalogEntry = async () => ({
+    role_id: 'platform_role_delete_malformed_target',
+    code: 'ROLE_DELETE_MALFORMED_TARGET',
+    name: '平台角色删除脏记录目标',
+    status: 'active',
+    scope: 'platform',
+    is_system: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+  try {
+    const deleteRoute = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_role_delete_malformed_target',
+      method: 'DELETE',
+      requestId: 'req-platform-role-delete-malformed',
+      headers: authHeaders,
+      handlers: harness.handlers
+    });
+    assert.equal(deleteRoute.status, 503);
+    const payload = JSON.parse(deleteRoute.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-delete-malformed');
+  } finally {
+    harness.authService.deletePlatformRoleCatalogEntry = originalDeletePlatformRoleCatalogEntry;
+  }
+});
+
 test('DELETE /platform/roles/:role_id keeps idempotency scope isolated by route params', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-iso');
@@ -944,6 +1144,264 @@ test('PUT/GET /platform/roles/:role_id/permissions persists final grant codes an
     ['platform.member_admin.operate', 'platform.member_admin.view']
   );
   assert.equal(getPayload.request_id, 'req-platform-role-permission-read-1');
+});
+
+test('GET /platform/roles/:role_id/permissions fails closed when downstream payload is malformed', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-read-malformed');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-read-malformed',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_read_malformed',
+      code: 'PERMISSION_READ_MALFORMED',
+      name: '权限读取脏载荷角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalListPlatformRolePermissionGrants =
+    harness.authService.listPlatformRolePermissionGrants;
+  harness.authService.listPlatformRolePermissionGrants = async ({ roleId }) => {
+    if (String(roleId || '').trim().toLowerCase() === 'platform_permission_read_malformed') {
+      return {
+        role_id: 'platform_permission_read_malformed',
+        permission_codes: [' platform.member_admin.view'],
+        available_permission_codes: ['platform.member_admin.view']
+      };
+    }
+    return originalListPlatformRolePermissionGrants({ roleId });
+  };
+
+  try {
+    const getPermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_read_malformed/permissions',
+      method: 'GET',
+      requestId: 'req-platform-role-permission-read-malformed',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(getPermissions.status, 503);
+    const payload = JSON.parse(getPermissions.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-permission-read-malformed');
+  } finally {
+    harness.authService.listPlatformRolePermissionGrants =
+      originalListPlatformRolePermissionGrants;
+  }
+});
+
+test('GET /platform/roles/:role_id/permissions fails closed when downstream payload includes unknown catalog permissions', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-read-unknown-catalog');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-read-unknown-catalog',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_read_unknown_catalog',
+      code: 'PERMISSION_READ_UNKNOWN_CATALOG',
+      name: '权限读取未知目录项角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalListPlatformRolePermissionGrants =
+    harness.authService.listPlatformRolePermissionGrants;
+  harness.authService.listPlatformRolePermissionGrants = async ({ roleId }) => {
+    if (String(roleId || '').trim().toLowerCase() === 'platform_permission_read_unknown_catalog') {
+      return {
+        role_id: 'platform_permission_read_unknown_catalog',
+        permission_codes: ['platform.permission.unknown'],
+        available_permission_codes: ['platform.permission.unknown']
+      };
+    }
+    return originalListPlatformRolePermissionGrants({ roleId });
+  };
+
+  try {
+    const getPermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_read_unknown_catalog/permissions',
+      method: 'GET',
+      requestId: 'req-platform-role-permission-read-unknown-catalog',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(getPermissions.status, 503);
+    const payload = JSON.parse(getPermissions.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-permission-read-unknown-catalog');
+  } finally {
+    harness.authService.listPlatformRolePermissionGrants =
+      originalListPlatformRolePermissionGrants;
+  }
+});
+
+test('PUT /platform/roles/:role_id/permissions fails closed when downstream write result role_id mismatches target', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-write-roleid-mismatch');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-write-roleid-mismatch',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_write_roleid_mismatch',
+      code: 'PERMISSION_WRITE_ROLEID_MISMATCH',
+      name: '权限写入角色标识不匹配角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalReplacePlatformRolePermissionGrants =
+    harness.authService.replacePlatformRolePermissionGrants;
+  harness.authService.replacePlatformRolePermissionGrants = async () => ({
+    role_id: 'platform_permission_write_roleid_mismatch_other',
+    permission_codes: ['platform.member_admin.view'],
+    affected_user_count: 0
+  });
+  try {
+    const replacePermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_write_roleid_mismatch/permissions',
+      method: 'PUT',
+      requestId: 'req-platform-role-permission-write-roleid-mismatch',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        permission_codes: ['platform.member_admin.view']
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replacePermissions.status, 503);
+    const payload = JSON.parse(replacePermissions.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-permission-write-roleid-mismatch');
+  } finally {
+    harness.authService.replacePlatformRolePermissionGrants =
+      originalReplacePlatformRolePermissionGrants;
+  }
+});
+
+test('PUT /platform/roles/:role_id/permissions fails closed when downstream write affected_user_count is malformed', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-write-affected-user-count-string');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-write-affected-user-count-string',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_write_affected_user_count_string',
+      code: 'PERMISSION_WRITE_AFFECTED_USER_COUNT_STRING',
+      name: '权限写入影响用户数异常角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalReplacePlatformRolePermissionGrants =
+    harness.authService.replacePlatformRolePermissionGrants;
+  harness.authService.replacePlatformRolePermissionGrants = async () => ({
+    role_id: 'platform_permission_write_affected_user_count_string',
+    permission_codes: ['platform.member_admin.view'],
+    affected_user_count: '1'
+  });
+  try {
+    const replacePermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_write_affected_user_count_string/permissions',
+      method: 'PUT',
+      requestId: 'req-platform-role-permission-write-affected-user-count-string',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        permission_codes: ['platform.member_admin.view']
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replacePermissions.status, 503);
+    const payload = JSON.parse(replacePermissions.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-permission-write-affected-user-count-string');
+  } finally {
+    harness.authService.replacePlatformRolePermissionGrants =
+      originalReplacePlatformRolePermissionGrants;
+  }
+});
+
+test('PUT /platform/roles/:role_id/permissions fails closed when permission catalog dependency is unavailable', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-write-catalog-dependency');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-write-catalog-dependency',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_write_catalog_dependency',
+      code: 'PERMISSION_WRITE_CATALOG_DEPENDENCY',
+      name: '权限写入目录依赖异常角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalListPlatformPermissionCatalog = harness.authService.listPlatformPermissionCatalog;
+  harness.authService.listPlatformPermissionCatalog = () => {
+    throw new Error('catalog dependency unavailable');
+  };
+
+  try {
+    const replacePermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_write_catalog_dependency/permissions',
+      method: 'PUT',
+      requestId: 'req-platform-role-permission-write-catalog-dependency',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        permission_codes: ['platform.member_admin.view']
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replacePermissions.status, 503);
+    const payload = JSON.parse(replacePermissions.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-permission-write-catalog-dependency');
+  } finally {
+    harness.authService.listPlatformPermissionCatalog = originalListPlatformPermissionCatalog;
+  }
 });
 
 test('PUT /platform/roles/:role_id/permissions allows disabled role definitions to be configured', async () => {
