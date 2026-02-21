@@ -20,6 +20,14 @@ const {
   PLATFORM_USER_SCOPE
 } = require('./modules/platform/user.constants');
 const {
+  PLATFORM_AUDIT_EVENTS_PATH,
+  TENANT_AUDIT_EVENTS_PATH,
+  PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
+  TENANT_AUDIT_VIEW_PERMISSION_CODE,
+  PLATFORM_AUDIT_SCOPE,
+  TENANT_AUDIT_SCOPE
+} = require('./modules/audit/audit.constants');
+const {
   TENANT_MEMBER_LIST_PATH,
   TENANT_MEMBER_CREATE_PATH,
   TENANT_MEMBER_DETAIL_PATH,
@@ -388,6 +396,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   },
   {
     method: 'GET',
+    path: TENANT_AUDIT_EVENTS_PATH,
+    access: 'protected',
+    permission_code: TENANT_AUDIT_VIEW_PERMISSION_CODE,
+    scope: TENANT_AUDIT_SCOPE
+  },
+  {
+    method: 'GET',
     path: '/auth/platform/member-admin/probe',
     access: 'protected',
     permission_code: 'platform.member_admin.view',
@@ -420,6 +435,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: PLATFORM_ORG_CREATE_PERMISSION_CODE,
     scope: PLATFORM_ORG_SCOPE
+  },
+  {
+    method: 'GET',
+    path: PLATFORM_AUDIT_EVENTS_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_AUDIT_SCOPE
   },
   {
     method: 'GET',

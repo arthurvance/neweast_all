@@ -335,6 +335,102 @@ test('change password forces relogin and new password login succeeds', async () 
   );
 });
 
+test('change password under tenant entry without active tenant falls back to platform audit domain and keeps traceparent', async () => {
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+  const changeRequestId = 'req-change-password-tenant-no-active-tenant';
+  const context = {
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'tenant-password-user',
+          phone: '13817770088',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['tenant'],
+          tenants: [
+            {
+              membershipId: 'tenant-password-user-membership-a',
+              tenantId: 'tenant-a',
+              tenantName: 'Tenant A',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            },
+            {
+              membershipId: 'tenant-password-user-membership-b',
+              tenantId: 'tenant-b',
+              tenantName: 'Tenant B',
+              status: 'active',
+              permission: {
+                canViewMemberAdmin: true,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            }
+          ]
+        }
+      ]
+    }),
+    dependencyProbe
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13817770088',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+  assert.equal(login.body.entry_domain, 'tenant');
+  assert.equal(login.body.tenant_selection_required, true);
+  assert.equal(login.body.active_tenant_id, null);
+
+  const changed = await callRoute(
+    {
+      pathname: '/auth/change-password',
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`,
+        'x-request-id': changeRequestId,
+        traceparent
+      },
+      body: {
+        current_password: 'Passw0rd!',
+        new_password: 'Passw0rd!2028'
+      }
+    },
+    context
+  );
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.request_id, changeRequestId);
+
+  const platformAuditEvents = await context.authService.listAuditEvents({
+    domain: 'platform',
+    requestId: changeRequestId
+  });
+  assert.equal(platformAuditEvents.total, 1);
+  assert.equal(platformAuditEvents.events[0].event_type, 'auth.password_change.succeeded');
+  assert.equal(platformAuditEvents.events[0].traceparent, traceparent);
+
+  const tenantAuditEvents = await context.authService.listAuditEvents({
+    domain: 'tenant',
+    tenantId: 'tenant-a',
+    requestId: changeRequestId
+  });
+  assert.equal(tenantAuditEvents.total, 0);
+});
+
 test('platform role-facts replace converges session and invalidates previous access/refresh tokens', async () => {
   const context = {
     authService: createAuthService({

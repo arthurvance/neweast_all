@@ -72,8 +72,8 @@ development_status:
   3-7-组织软删除级联一致性: done
   epic-3-retrospective: optional
 
-  epic-4: backlog
-  4-1-审计事件记录与按域查询: backlog
+  epic-4: in-progress
+  4-1-审计事件记录与按域查询: done
   4-2-请求追踪关联与跨链路可观测: backlog
   4-3-受控系统配置治理: backlog
   4-4-受保护角色约束与角色状态失效: backlog

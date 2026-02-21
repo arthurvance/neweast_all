@@ -24,6 +24,12 @@ const createInMemoryAuthStore = ({
   const ownerTransferLocksByOrgId = new Map();
   const orgIdByName = new Map();
   const membershipsByOrgId = new Map();
+  const auditEvents = [];
+  const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
+  const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
+  const AUDIT_EVENT_REDACTION_KEY_PATTERN =
+    /(password|token|secret|credential|private[_-]?key|access[_-]?key|api[_-]?key|signing[_-]?key)/i;
+  const MAX_AUDIT_QUERY_PAGE_SIZE = 200;
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
   const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
@@ -891,6 +897,112 @@ const createInMemoryAuthStore = ({
 
   const clone = (value) => (value ? { ...value } : null);
 
+  const normalizeAuditDomain = (domain) => {
+    const normalized = String(domain || '').trim().toLowerCase();
+    return AUDIT_EVENT_ALLOWED_DOMAINS.has(normalized) ? normalized : '';
+  };
+
+  const normalizeAuditResult = (result) => {
+    const normalized = String(result || '').trim().toLowerCase();
+    return AUDIT_EVENT_ALLOWED_RESULTS.has(normalized) ? normalized : '';
+  };
+
+  const normalizeAuditStringOrNull = (value, maxLength = 256) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const normalized = String(value).trim();
+    if (!normalized || normalized.length > maxLength) {
+      return null;
+    }
+    return normalized;
+  };
+
+  const normalizeAuditOccurredAt = (value) => {
+    if (value === null || value === undefined) {
+      return new Date().toISOString();
+    }
+    const dateValue = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(dateValue.getTime())) {
+      return new Date().toISOString();
+    }
+    return dateValue.toISOString();
+  };
+
+  const safeParseJsonValue = (value) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value === 'object') {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const sanitizeAuditState = (value, depth = 0) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (depth > 8) {
+      return null;
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => sanitizeAuditState(item, depth + 1));
+    }
+    if (typeof value === 'object') {
+      const sanitized = {};
+      for (const [key, itemValue] of Object.entries(value)) {
+        if (AUDIT_EVENT_REDACTION_KEY_PATTERN.test(String(key))) {
+          sanitized[key] = '[REDACTED]';
+          continue;
+        }
+        sanitized[key] = sanitizeAuditState(itemValue, depth + 1);
+      }
+      return sanitized;
+    }
+    return value;
+  };
+
+  const cloneJsonValue = (value) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const toAuditEventRecord = (event = {}) => ({
+    event_id: normalizeAuditStringOrNull(event.event_id, 64) || '',
+    domain: normalizeAuditDomain(event.domain),
+    tenant_id: normalizeAuditStringOrNull(event.tenant_id, 64),
+    request_id: normalizeAuditStringOrNull(event.request_id, 128) || 'request_id_unset',
+    traceparent: normalizeAuditStringOrNull(event.traceparent, 128),
+    event_type: normalizeAuditStringOrNull(event.event_type, 128) || '',
+    actor_user_id: normalizeAuditStringOrNull(event.actor_user_id, 64),
+    actor_session_id: normalizeAuditStringOrNull(event.actor_session_id, 128),
+    target_type: normalizeAuditStringOrNull(event.target_type, 64) || '',
+    target_id: normalizeAuditStringOrNull(event.target_id, 128),
+    result: normalizeAuditResult(event.result) || 'failed',
+    before_state: safeParseJsonValue(cloneJsonValue(event.before_state)),
+    after_state: safeParseJsonValue(cloneJsonValue(event.after_state)),
+    metadata: safeParseJsonValue(cloneJsonValue(event.metadata)),
+    occurred_at: normalizeAuditOccurredAt(event.occurred_at)
+  });
+
   const bumpSessionVersionAndConvergeSessions = ({
     userId,
     passwordHash = null,
@@ -1259,10 +1371,179 @@ const createInMemoryAuthStore = ({
     return false;
   };
 
+  const restoreMapFromSnapshot = (targetMap, snapshotMap) => {
+    targetMap.clear();
+    for (const [key, value] of snapshotMap.entries()) {
+      targetMap.set(key, value);
+    }
+  };
+
+  const restoreAuditEventsFromSnapshot = (snapshotEvents = []) => {
+    auditEvents.length = 0;
+    for (const event of snapshotEvents) {
+      auditEvents.push(event);
+    }
+  };
+
+  const persistAuditEvent = ({
+    eventId = null,
+    domain,
+    tenantId = null,
+    requestId = 'request_id_unset',
+    traceparent = null,
+    eventType,
+    actorUserId = null,
+    actorSessionId = null,
+    targetType,
+    targetId = null,
+    result = 'success',
+    beforeState = null,
+    afterState = null,
+    metadata = null,
+    occurredAt = null
+  } = {}) => {
+    const normalizedDomain = normalizeAuditDomain(domain);
+    const normalizedResult = normalizeAuditResult(result);
+    const normalizedEventType = normalizeAuditStringOrNull(eventType, 128);
+    const normalizedTargetType = normalizeAuditStringOrNull(targetType, 64);
+    if (
+      !normalizedDomain
+      || !normalizedResult
+      || !normalizedEventType
+      || !normalizedTargetType
+    ) {
+      throw new Error('recordAuditEvent requires valid domain, result, eventType and targetType');
+    }
+    const normalizedTenantId = normalizeAuditStringOrNull(tenantId, 64);
+    if (normalizedDomain === 'tenant' && !normalizedTenantId) {
+      throw new Error('recordAuditEvent tenant domain requires tenantId');
+    }
+    const eventRecord = toAuditEventRecord({
+      event_id: normalizeAuditStringOrNull(eventId, 64) || randomUUID(),
+      domain: normalizedDomain,
+      tenant_id: normalizedTenantId,
+      request_id: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+      traceparent: normalizeAuditStringOrNull(traceparent, 128),
+      event_type: normalizedEventType,
+      actor_user_id: normalizeAuditStringOrNull(actorUserId, 64),
+      actor_session_id: normalizeAuditStringOrNull(actorSessionId, 128),
+      target_type: normalizedTargetType,
+      target_id: normalizeAuditStringOrNull(targetId, 128),
+      result: normalizedResult,
+      before_state: sanitizeAuditState(beforeState),
+      after_state: sanitizeAuditState(afterState),
+      metadata: sanitizeAuditState(metadata),
+      occurred_at: normalizeAuditOccurredAt(occurredAt)
+    });
+    auditEvents.push(eventRecord);
+    if (auditEvents.length > 5000) {
+      auditEvents.splice(0, auditEvents.length - 5000);
+    }
+    return toAuditEventRecord(eventRecord);
+  };
+
   return {
     findUserByPhone: async (phone) => clone(usersByPhone.get(phone) || null),
 
     findUserById: async (userId) => clone(usersById.get(String(userId)) || null),
+
+    recordAuditEvent: async (payload = {}) =>
+      persistAuditEvent(payload),
+
+    listAuditEvents: async ({
+      domain,
+      tenantId = null,
+      page = 1,
+      pageSize = 50,
+      from = null,
+      to = null,
+      eventType = null,
+      result = null,
+      requestId = null,
+      actorUserId = null,
+      targetType = null,
+      targetId = null
+    } = {}) => {
+      const normalizedDomain = normalizeAuditDomain(domain);
+      if (!normalizedDomain) {
+        throw new Error('listAuditEvents requires valid domain');
+      }
+      const normalizedTenantId = normalizeAuditStringOrNull(tenantId, 64);
+      if (normalizedDomain === 'tenant' && !normalizedTenantId) {
+        throw new Error('listAuditEvents tenant domain requires tenantId');
+      }
+      const normalizedEventType = normalizeAuditStringOrNull(eventType, 128);
+      const normalizedResult = normalizeAuditResult(result);
+      const normalizedRequestId = normalizeAuditStringOrNull(requestId, 128);
+      const normalizedActorUserId = normalizeAuditStringOrNull(actorUserId, 64);
+      const normalizedTargetType = normalizeAuditStringOrNull(targetType, 64);
+      const normalizedTargetId = normalizeAuditStringOrNull(targetId, 128);
+      const fromDate = from ? new Date(from) : null;
+      const toDate = to ? new Date(to) : null;
+      if (
+        fromDate && toDate
+        && !Number.isNaN(fromDate.getTime())
+        && !Number.isNaN(toDate.getTime())
+        && fromDate.getTime() > toDate.getTime()
+      ) {
+        throw new Error('listAuditEvents requires from <= to');
+      }
+      const filtered = auditEvents.filter((event) => {
+        if (normalizeAuditDomain(event.domain) !== normalizedDomain) {
+          return false;
+        }
+        if (normalizedTenantId && normalizeAuditStringOrNull(event.tenant_id, 64) !== normalizedTenantId) {
+          return false;
+        }
+        if (normalizedEventType && normalizeAuditStringOrNull(event.event_type, 128) !== normalizedEventType) {
+          return false;
+        }
+        if (normalizedResult && normalizeAuditResult(event.result) !== normalizedResult) {
+          return false;
+        }
+        if (normalizedRequestId && normalizeAuditStringOrNull(event.request_id, 128) !== normalizedRequestId) {
+          return false;
+        }
+        if (normalizedActorUserId && normalizeAuditStringOrNull(event.actor_user_id, 64) !== normalizedActorUserId) {
+          return false;
+        }
+        if (normalizedTargetType && normalizeAuditStringOrNull(event.target_type, 64) !== normalizedTargetType) {
+          return false;
+        }
+        if (normalizedTargetId && normalizeAuditStringOrNull(event.target_id, 128) !== normalizedTargetId) {
+          return false;
+        }
+        const occurredAt = new Date(event.occurred_at);
+        if (fromDate && !Number.isNaN(fromDate.getTime()) && occurredAt < fromDate) {
+          return false;
+        }
+        if (toDate && !Number.isNaN(toDate.getTime()) && occurredAt > toDate) {
+          return false;
+        }
+        return true;
+      });
+      filtered.sort((left, right) => {
+        const leftTime = new Date(left.occurred_at).getTime();
+        const rightTime = new Date(right.occurred_at).getTime();
+        if (rightTime !== leftTime) {
+          return rightTime - leftTime;
+        }
+        return String(right.event_id || '').localeCompare(String(left.event_id || ''));
+      });
+      const total = filtered.length;
+      const resolvedPage = Math.max(1, Math.floor(Number(page || 1)));
+      const resolvedPageSize = Math.min(
+        MAX_AUDIT_QUERY_PAGE_SIZE,
+        Math.max(1, Math.floor(Number(pageSize || 50)))
+      );
+      const offset = (resolvedPage - 1) * resolvedPageSize;
+      return {
+        total,
+        events: filtered
+          .slice(offset, offset + resolvedPageSize)
+          .map((event) => toAuditEventRecord(event))
+      };
+    },
 
     createUserByPhone: async ({ phone, passwordHash, status = 'active' }) => {
       const normalizedPhone = String(phone || '').trim();
@@ -1296,63 +1577,117 @@ const createInMemoryAuthStore = ({
       orgId = randomUUID(),
       orgName,
       ownerUserId,
-      operatorUserId
+      operatorUserId,
+      operatorSessionId = null,
+      auditContext = null
     }) => {
-      const normalizedOrgId = String(orgId || '').trim() || randomUUID();
-      const normalizedOrgName = String(orgName || '').trim();
-      const normalizedOwnerUserId = String(ownerUserId || '').trim();
-      const normalizedOperatorUserId = String(operatorUserId || '').trim();
-      if (
-        !normalizedOrgName
-        || !normalizedOwnerUserId
-        || !normalizedOperatorUserId
-      ) {
-        throw new Error(
-          'createOrganizationWithOwner requires orgName, ownerUserId, and operatorUserId'
-        );
-      }
-      if (!usersById.has(normalizedOwnerUserId) || !usersById.has(normalizedOperatorUserId)) {
-        throw new Error('createOrganizationWithOwner requires existing owner and operator users');
-      }
-      if (normalizedOrgName.length > MAX_ORG_NAME_LENGTH) {
-        throw createDataTooLongError();
-      }
-
-      const orgNameDedupeKey = normalizedOrgName.toLowerCase();
-      if (orgIdByName.has(orgNameDedupeKey)) {
-        const duplicateError = new Error('duplicate org name');
-        duplicateError.code = 'ER_DUP_ENTRY';
-        duplicateError.errno = 1062;
-        throw duplicateError;
-      }
-      if (orgsById.has(normalizedOrgId)) {
-        const duplicateError = new Error('duplicate org id');
-        duplicateError.code = 'ER_DUP_ENTRY';
-        duplicateError.errno = 1062;
-        throw duplicateError;
-      }
-
-      orgsById.set(normalizedOrgId, {
-        id: normalizedOrgId,
-        name: normalizedOrgName,
-        ownerUserId: normalizedOwnerUserId,
-        createdByUserId: normalizedOperatorUserId,
-        status: 'active'
-      });
-      orgIdByName.set(orgNameDedupeKey, normalizedOrgId);
-      membershipsByOrgId.set(normalizedOrgId, [
-        {
-          orgId: normalizedOrgId,
-          userId: normalizedOwnerUserId,
-          membershipRole: 'owner',
-          status: 'active'
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          orgsById: structuredClone(orgsById),
+          orgIdByName: structuredClone(orgIdByName),
+          membershipsByOrgId: structuredClone(membershipsByOrgId),
+          auditEvents: structuredClone(auditEvents)
         }
-      ]);
+        : null;
+      try {
+        const normalizedOrgId = String(orgId || '').trim() || randomUUID();
+        const normalizedOrgName = String(orgName || '').trim();
+        const normalizedOwnerUserId = String(ownerUserId || '').trim();
+        const normalizedOperatorUserId = String(operatorUserId || '').trim();
+        if (
+          !normalizedOrgName
+          || !normalizedOwnerUserId
+          || !normalizedOperatorUserId
+        ) {
+          throw new Error(
+            'createOrganizationWithOwner requires orgName, ownerUserId, and operatorUserId'
+          );
+        }
+        if (!usersById.has(normalizedOwnerUserId) || !usersById.has(normalizedOperatorUserId)) {
+          throw new Error('createOrganizationWithOwner requires existing owner and operator users');
+        }
+        if (normalizedOrgName.length > MAX_ORG_NAME_LENGTH) {
+          throw createDataTooLongError();
+        }
 
-      return {
-        org_id: normalizedOrgId,
-        owner_user_id: normalizedOwnerUserId
-      };
+        const orgNameDedupeKey = normalizedOrgName.toLowerCase();
+        if (orgIdByName.has(orgNameDedupeKey)) {
+          const duplicateError = new Error('duplicate org name');
+          duplicateError.code = 'ER_DUP_ENTRY';
+          duplicateError.errno = 1062;
+          throw duplicateError;
+        }
+        if (orgsById.has(normalizedOrgId)) {
+          const duplicateError = new Error('duplicate org id');
+          duplicateError.code = 'ER_DUP_ENTRY';
+          duplicateError.errno = 1062;
+          throw duplicateError;
+        }
+
+        orgsById.set(normalizedOrgId, {
+          id: normalizedOrgId,
+          name: normalizedOrgName,
+          ownerUserId: normalizedOwnerUserId,
+          createdByUserId: normalizedOperatorUserId,
+          status: 'active'
+        });
+        orgIdByName.set(orgNameDedupeKey, normalizedOrgId);
+        membershipsByOrgId.set(normalizedOrgId, [
+          {
+            orgId: normalizedOrgId,
+            userId: normalizedOwnerUserId,
+            membershipRole: 'owner',
+            status: 'active'
+          }
+        ]);
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'tenant',
+              tenantId: normalizedOrgId,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.org.create.succeeded',
+              actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId,
+              targetType: 'org',
+              targetId: normalizedOrgId,
+              result: 'success',
+              beforeState: null,
+              afterState: {
+                org_id: normalizedOrgId,
+                org_name: normalizedOrgName,
+                owner_user_id: normalizedOwnerUserId
+              },
+              metadata: {
+                operator_user_id: normalizedOperatorUserId
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error('organization create audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+
+        return {
+          org_id: normalizedOrgId,
+          owner_user_id: normalizedOwnerUserId,
+          audit_recorded: auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(orgsById, snapshot.orgsById);
+          restoreMapFromSnapshot(orgIdByName, snapshot.orgIdByName);
+          restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
     },
 
     findOrganizationById: async ({ orgId }) => {
@@ -1414,7 +1749,8 @@ const createInMemoryAuthStore = ({
       takeoverRoleId = 'tenant_owner',
       takeoverRoleCode = 'TENANT_OWNER',
       takeoverRoleName = '组织负责人',
-      requiredPermissionCodes = []
+      requiredPermissionCodes = [],
+      auditContext = null
     } = {}) => {
       const normalizedRequestId = String(requestId || '').trim() || 'request_id_unset';
       const normalizedOrgId = String(orgId || '').trim();
@@ -1773,6 +2109,46 @@ const createInMemoryAuthStore = ({
           membershipId
         });
 
+        let auditRecorded = false;
+        if (auditContext && typeof auditContext === 'object') {
+          try {
+            persistAuditEvent({
+              domain: 'tenant',
+              tenantId: normalizedOrgId,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.org.owner_transfer.executed',
+              actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
+              actorSessionId: auditContext.actorSessionId || normalizedOperatorSessionId,
+              targetType: 'org',
+              targetId: normalizedOrgId,
+              result: 'success',
+              beforeState: {
+                owner_user_id: normalizedOldOwnerUserId
+              },
+              afterState: {
+                owner_user_id: normalizedNewOwnerUserId
+              },
+              metadata: {
+                old_owner_user_id: normalizedOldOwnerUserId,
+                new_owner_user_id: normalizedNewOwnerUserId,
+                reason:
+                  auditContext.reason === null || auditContext.reason === undefined
+                    ? null
+                    : String(auditContext.reason).trim() || null
+              }
+            });
+          } catch (error) {
+            const auditWriteError = new Error(
+              'owner transfer takeover audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+          auditRecorded = true;
+        }
+
         return {
           org_id: normalizedOrgId,
           old_owner_user_id: normalizedOldOwnerUserId,
@@ -1781,7 +2157,8 @@ const createInMemoryAuthStore = ({
           role_ids: nextRoleIds,
           permission_codes: listTenantRolePermissionGrantsForRoleId(
             normalizedTakeoverRoleId
-          )
+          ),
+          audit_recorded: auditRecorded
         };
       } catch (error) {
         restoreMap(orgsById, snapshot.orgsById);
@@ -1810,7 +2187,8 @@ const createInMemoryAuthStore = ({
     updateOrganizationStatus: async ({
       orgId,
       nextStatus,
-      operatorUserId
+      operatorUserId,
+      auditContext = null
     }) => {
       const normalizedOrgId = String(orgId || '').trim();
       const normalizedOperatorUserId = String(operatorUserId || '').trim();
@@ -1828,141 +2206,217 @@ const createInMemoryAuthStore = ({
       if (!existingOrg) {
         return null;
       }
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          orgsById: structuredClone(orgsById),
+          membershipsByOrgId: structuredClone(membershipsByOrgId),
+          tenantsByUserId: structuredClone(tenantsByUserId),
+          tenantMembershipRolesByMembershipId: structuredClone(
+            tenantMembershipRolesByMembershipId
+          ),
+          platformRoleCatalogById: structuredClone(platformRoleCatalogById),
+          sessionsById: structuredClone(sessionsById),
+          refreshTokensByHash: structuredClone(refreshTokensByHash),
+          domainsByUserId: structuredClone(domainsByUserId),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
 
-      const previousStatus = normalizeOrgStatus(existingOrg.status);
-      let affectedMembershipCount = 0;
-      let affectedRoleCount = 0;
-      let affectedRoleBindingCount = 0;
-      let revokedSessionCount = 0;
-      let revokedRefreshTokenCount = 0;
-      if (previousStatus !== normalizedNextStatus) {
-        existingOrg.status = normalizedNextStatus;
-        existingOrg.updatedAt = Date.now();
-        orgsById.set(normalizedOrgId, existingOrg);
+      try {
+        const previousStatus = normalizeOrgStatus(existingOrg.status);
+        let affectedMembershipCount = 0;
+        let affectedRoleCount = 0;
+        let affectedRoleBindingCount = 0;
+        let revokedSessionCount = 0;
+        let revokedRefreshTokenCount = 0;
+        if (previousStatus !== normalizedNextStatus) {
+          existingOrg.status = normalizedNextStatus;
+          existingOrg.updatedAt = Date.now();
+          orgsById.set(normalizedOrgId, existingOrg);
 
-        if (normalizedNextStatus === 'disabled') {
-          const affectedMembershipUserIds = new Set();
-          const affectedUserIds = new Set();
-          const orgMemberships = membershipsByOrgId.get(normalizedOrgId) || [];
-          for (const membership of orgMemberships) {
-            const membershipUserId = String(membership?.userId || '').trim();
-            if (
-              !membershipUserId
-              || !isActiveLikeStatus(normalizeOrgStatus(membership?.status))
-            ) {
-              continue;
-            }
-            membership.status = 'disabled';
-            affectedMembershipUserIds.add(membershipUserId);
-            affectedUserIds.add(membershipUserId);
-          }
-
-          const tenantMembershipIdsByOrg = new Set();
-          for (const [userId, tenantMemberships] of tenantsByUserId.entries()) {
-            const normalizedUserId = String(userId || '').trim();
-            let hasMutation = false;
-            for (const membership of Array.isArray(tenantMemberships) ? tenantMemberships : []) {
-              const membershipTenantId = String(membership?.tenantId || '').trim();
-              if (membershipTenantId !== normalizedOrgId) {
-                continue;
-              }
-              const membershipId = String(membership?.membershipId || '').trim();
-              if (membershipId) {
-                tenantMembershipIdsByOrg.add(membershipId);
-              }
+          if (normalizedNextStatus === 'disabled') {
+            const affectedMembershipUserIds = new Set();
+            const affectedUserIds = new Set();
+            const orgMemberships = membershipsByOrgId.get(normalizedOrgId) || [];
+            for (const membership of orgMemberships) {
+              const membershipUserId = String(membership?.userId || '').trim();
               if (
-                !isActiveLikeStatus(
-                  normalizeTenantMembershipStatusForRead(membership?.status)
-                )
+                !membershipUserId
+                || !isActiveLikeStatus(normalizeOrgStatus(membership?.status))
               ) {
                 continue;
               }
               membership.status = 'disabled';
-              membership.permission = buildEmptyTenantPermission(
-                toTenantMembershipScopeLabel(membership)
+              affectedMembershipUserIds.add(membershipUserId);
+              affectedUserIds.add(membershipUserId);
+            }
+
+            const tenantMembershipIdsByOrg = new Set();
+            for (const [userId, tenantMemberships] of tenantsByUserId.entries()) {
+              const normalizedUserId = String(userId || '').trim();
+              let hasMutation = false;
+              for (const membership of Array.isArray(tenantMemberships) ? tenantMemberships : []) {
+                const membershipTenantId = String(membership?.tenantId || '').trim();
+                if (membershipTenantId !== normalizedOrgId) {
+                  continue;
+                }
+                const membershipId = String(membership?.membershipId || '').trim();
+                if (membershipId) {
+                  tenantMembershipIdsByOrg.add(membershipId);
+                }
+                if (
+                  !isActiveLikeStatus(
+                    normalizeTenantMembershipStatusForRead(membership?.status)
+                  )
+                ) {
+                  continue;
+                }
+                membership.status = 'disabled';
+                membership.permission = buildEmptyTenantPermission(
+                  toTenantMembershipScopeLabel(membership)
+                );
+                affectedMembershipUserIds.add(normalizedUserId);
+                affectedUserIds.add(normalizedUserId);
+                hasMutation = true;
+              }
+              if (hasMutation) {
+                tenantsByUserId.set(normalizedUserId, tenantMemberships);
+              }
+            }
+
+            for (const membershipId of tenantMembershipIdsByOrg) {
+              const existingRoleIds = tenantMembershipRolesByMembershipId.get(membershipId) || [];
+              affectedRoleBindingCount += existingRoleIds.length;
+              tenantMembershipRolesByMembershipId.delete(membershipId);
+            }
+
+            for (const [roleId, roleCatalogEntry] of platformRoleCatalogById.entries()) {
+              if (
+                normalizePlatformRoleCatalogScope(roleCatalogEntry?.scope) !== 'tenant'
+                || normalizePlatformRoleCatalogTenantId(roleCatalogEntry?.tenantId)
+                  !== normalizedOrgId
+              ) {
+                continue;
+              }
+              if (
+                !isActiveLikeStatus(
+                  normalizePlatformRoleCatalogStatus(roleCatalogEntry?.status)
+                )
+              ) {
+                continue;
+              }
+              roleCatalogEntry.status = 'disabled';
+              roleCatalogEntry.updatedByUserId = normalizedOperatorUserId;
+              roleCatalogEntry.updatedAt = new Date().toISOString();
+              platformRoleCatalogById.set(roleId, roleCatalogEntry);
+              affectedRoleCount += 1;
+            }
+
+            const ownerUserId = String(existingOrg.ownerUserId || '').trim();
+            if (ownerUserId) {
+              affectedUserIds.add(ownerUserId);
+            }
+
+            affectedMembershipCount = affectedMembershipUserIds.size;
+            for (const userId of affectedUserIds) {
+              const revoked = revokeTenantSessionsForUser({
+                userId,
+                reason: 'org-status-changed',
+                activeTenantId: normalizedOrgId
+              });
+              revokedSessionCount += Number(revoked?.revokedSessionCount || 0);
+              revokedRefreshTokenCount += Number(
+                revoked?.revokedRefreshTokenCount || 0
               );
-              affectedMembershipUserIds.add(normalizedUserId);
-              affectedUserIds.add(normalizedUserId);
-              hasMutation = true;
-            }
-            if (hasMutation) {
-              tenantsByUserId.set(normalizedUserId, tenantMemberships);
-            }
-          }
 
-          for (const membershipId of tenantMembershipIdsByOrg) {
-            const existingRoleIds = tenantMembershipRolesByMembershipId.get(membershipId) || [];
-            affectedRoleBindingCount += existingRoleIds.length;
-            tenantMembershipRolesByMembershipId.delete(membershipId);
-          }
-
-          for (const [roleId, roleCatalogEntry] of platformRoleCatalogById.entries()) {
-            if (
-              normalizePlatformRoleCatalogScope(roleCatalogEntry?.scope) !== 'tenant'
-              || normalizePlatformRoleCatalogTenantId(roleCatalogEntry?.tenantId)
-                !== normalizedOrgId
-            ) {
-              continue;
+              const userDomains = domainsByUserId.get(userId) || new Set();
+              const hasAnyActiveMembership = (tenantsByUserId.get(userId) || []).some(
+                (membership) => isTenantMembershipActiveForAuth(membership)
+              );
+              if (!hasAnyActiveMembership) {
+                userDomains.delete('tenant');
+              }
+              domainsByUserId.set(userId, userDomains);
             }
-            if (
-              !isActiveLikeStatus(
-                normalizePlatformRoleCatalogStatus(roleCatalogEntry?.status)
-              )
-            ) {
-              continue;
-            }
-            roleCatalogEntry.status = 'disabled';
-            roleCatalogEntry.updatedByUserId = normalizedOperatorUserId;
-            roleCatalogEntry.updatedAt = new Date().toISOString();
-            platformRoleCatalogById.set(roleId, roleCatalogEntry);
-            affectedRoleCount += 1;
-          }
-
-          const ownerUserId = String(existingOrg.ownerUserId || '').trim();
-          if (ownerUserId) {
-            affectedUserIds.add(ownerUserId);
-          }
-
-          affectedMembershipCount = affectedMembershipUserIds.size;
-          for (const userId of affectedUserIds) {
-            const revoked = revokeTenantSessionsForUser({
-              userId,
-              reason: 'org-status-changed',
-              activeTenantId: normalizedOrgId
-            });
-            revokedSessionCount += Number(revoked?.revokedSessionCount || 0);
-            revokedRefreshTokenCount += Number(
-              revoked?.revokedRefreshTokenCount || 0
-            );
-
-            const userDomains = domainsByUserId.get(userId) || new Set();
-            const hasAnyActiveMembership = (tenantsByUserId.get(userId) || []).some(
-              (membership) => isTenantMembershipActiveForAuth(membership)
-            );
-            if (!hasAnyActiveMembership) {
-              userDomains.delete('tenant');
-            }
-            domainsByUserId.set(userId, userDomains);
           }
         }
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          const normalizedAuditReason =
+            auditContext.reason === null || auditContext.reason === undefined
+              ? null
+              : String(auditContext.reason).trim() || null;
+          try {
+            persistAuditEvent({
+              domain: 'tenant',
+              tenantId: normalizedOrgId,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.org.status.updated',
+              actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
+              actorSessionId: auditContext.actorSessionId || null,
+              targetType: 'org',
+              targetId: normalizedOrgId,
+              result: 'success',
+              beforeState: {
+                status: previousStatus
+              },
+              afterState: {
+                status: normalizedNextStatus
+              },
+              metadata: {
+                reason: normalizedAuditReason,
+                affected_membership_count: affectedMembershipCount,
+                affected_role_count: affectedRoleCount,
+                affected_role_binding_count: affectedRoleBindingCount,
+                revoked_session_count: revokedSessionCount,
+                revoked_refresh_token_count: revokedRefreshTokenCount
+              }
+            });
+          } catch (error) {
+            const auditWriteError = new Error('organization status audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+          auditRecorded = true;
+        }
+        return {
+          org_id: normalizedOrgId,
+          previous_status: previousStatus,
+          current_status: normalizedNextStatus,
+          affected_membership_count: affectedMembershipCount,
+          affected_role_count: affectedRoleCount,
+          affected_role_binding_count: affectedRoleBindingCount,
+          revoked_session_count: revokedSessionCount,
+          revoked_refresh_token_count: revokedRefreshTokenCount,
+          audit_recorded: auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(orgsById, snapshot.orgsById);
+          restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
+          restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
+          restoreMapFromSnapshot(
+            tenantMembershipRolesByMembershipId,
+            snapshot.tenantMembershipRolesByMembershipId
+          );
+          restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
+          restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
+          restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
+          restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
       }
-
-      return {
-        org_id: normalizedOrgId,
-        previous_status: previousStatus,
-        current_status: normalizedNextStatus,
-        affected_membership_count: affectedMembershipCount,
-        affected_role_count: affectedRoleCount,
-        affected_role_binding_count: affectedRoleBindingCount,
-        revoked_session_count: revokedSessionCount,
-        revoked_refresh_token_count: revokedRefreshTokenCount
-      };
     },
 
     updatePlatformUserStatus: async ({
       userId,
       nextStatus,
-      operatorUserId
+      operatorUserId,
+      auditContext = null
     }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedOperatorUserId = String(operatorUserId || '').trim();
@@ -1983,27 +2437,82 @@ const createInMemoryAuthStore = ({
       ) {
         return null;
       }
-
-      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
-      const previousStatus = userDomains.has('platform') ? 'active' : 'disabled';
-      if (previousStatus !== normalizedNextStatus) {
-        if (normalizedNextStatus === 'active') {
-          userDomains.add('platform');
-        } else {
-          userDomains.delete('platform');
-          revokePlatformSessionsForUser({
-            userId: normalizedUserId,
-            reason: 'platform-user-status-changed'
-          });
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          domainsByUserId: structuredClone(domainsByUserId),
+          sessionsById: structuredClone(sessionsById),
+          refreshTokensByHash: structuredClone(refreshTokensByHash),
+          auditEvents: structuredClone(auditEvents)
         }
-        domainsByUserId.set(normalizedUserId, userDomains);
-      }
+        : null;
+      try {
+        const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+        const previousStatus = userDomains.has('platform') ? 'active' : 'disabled';
+        if (previousStatus !== normalizedNextStatus) {
+          if (normalizedNextStatus === 'active') {
+            userDomains.add('platform');
+          } else {
+            userDomains.delete('platform');
+            revokePlatformSessionsForUser({
+              userId: normalizedUserId,
+              reason: 'platform-user-status-changed'
+            });
+          }
+          domainsByUserId.set(normalizedUserId, userDomains);
+        }
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          const normalizedAuditReason =
+            auditContext.reason === null || auditContext.reason === undefined
+              ? null
+              : String(auditContext.reason).trim() || null;
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              tenantId: null,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.platform.user.status.updated',
+              actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
+              actorSessionId: auditContext.actorSessionId || null,
+              targetType: 'user',
+              targetId: normalizedUserId,
+              result: 'success',
+              beforeState: {
+                status: previousStatus
+              },
+              afterState: {
+                status: normalizedNextStatus
+              },
+              metadata: {
+                reason: normalizedAuditReason
+              }
+            });
+          } catch (error) {
+            const auditWriteError = new Error('platform user status audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+          auditRecorded = true;
+        }
 
-      return {
-        user_id: normalizedUserId,
-        previous_status: previousStatus,
-        current_status: normalizedNextStatus
-      };
+        return {
+          user_id: normalizedUserId,
+          previous_status: previousStatus,
+          current_status: normalizedNextStatus,
+          audit_recorded: auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
+          restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
+          restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
     },
 
     deleteUserById: async (userId) => {
@@ -2498,7 +3007,8 @@ const createInMemoryAuthStore = ({
       tenantId,
       nextStatus,
       operatorUserId = null,
-      reason = null
+      reason = null,
+      auditContext = null
     }) => {
       const normalizedMembershipId = String(membershipId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
@@ -2512,145 +3022,220 @@ const createInMemoryAuthStore = ({
           'updateTenantMembershipStatus requires membershipId, tenantId and supported nextStatus'
         );
       }
-
-      let targetUserId = '';
-      const tenantMembershipsByUser = [...tenantsByUserId.entries()];
-      let targetMembership = null;
-      let targetMemberships = null;
-
-      for (const [userId, memberships] of tenantMembershipsByUser) {
-        if (!Array.isArray(memberships)) {
-          continue;
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          tenantsByUserId: structuredClone(tenantsByUserId),
+          tenantMembershipRolesByMembershipId: structuredClone(
+            tenantMembershipRolesByMembershipId
+          ),
+          tenantMembershipHistoryByPair: structuredClone(tenantMembershipHistoryByPair),
+          domainsByUserId: structuredClone(domainsByUserId),
+          sessionsById: structuredClone(sessionsById),
+          refreshTokensByHash: structuredClone(refreshTokensByHash),
+          auditEvents: structuredClone(auditEvents)
         }
-        const match = memberships.find((membership) => {
-          const membershipTenantId = String(membership?.tenantId || '').trim();
-          const resolvedMembershipId = String(membership?.membershipId || '').trim();
-          return (
-            membershipTenantId === normalizedTenantId
-            && resolvedMembershipId === normalizedMembershipId
-          );
-        });
-        if (!match) {
-          continue;
+        : null;
+      try {
+        let targetUserId = '';
+        const tenantMembershipsByUser = [...tenantsByUserId.entries()];
+        let targetMembership = null;
+        let targetMemberships = null;
+
+        for (const [userId, memberships] of tenantMembershipsByUser) {
+          if (!Array.isArray(memberships)) {
+            continue;
+          }
+          const match = memberships.find((membership) => {
+            const membershipTenantId = String(membership?.tenantId || '').trim();
+            const resolvedMembershipId = String(membership?.membershipId || '').trim();
+            return (
+              membershipTenantId === normalizedTenantId
+              && resolvedMembershipId === normalizedMembershipId
+            );
+          });
+          if (!match) {
+            continue;
+          }
+          targetUserId = String(userId || '').trim();
+          targetMembership = match;
+          targetMemberships = memberships;
+          break;
         }
-        targetUserId = String(userId || '').trim();
-        targetMembership = match;
-        targetMemberships = memberships;
-        break;
-      }
 
-      if (!targetMembership || !targetUserId || !targetMemberships) {
-        return null;
-      }
+        if (!targetMembership || !targetUserId || !targetMemberships) {
+          return null;
+        }
 
-      const previousStatus = normalizeTenantMembershipStatusForRead(targetMembership.status);
-      if (!VALID_TENANT_MEMBERSHIP_STATUS.has(previousStatus)) {
-        throw new Error('updateTenantMembershipStatus encountered unsupported existing status');
-      }
-      if (previousStatus !== normalizedNextStatus) {
-        let previousMembershipId = '';
-        if (previousStatus === 'left' && normalizedNextStatus === 'active') {
-          appendTenantMembershipHistory({
-            membership: {
-              ...targetMembership,
+        const previousStatus = normalizeTenantMembershipStatusForRead(targetMembership.status);
+        if (!VALID_TENANT_MEMBERSHIP_STATUS.has(previousStatus)) {
+          throw new Error('updateTenantMembershipStatus encountered unsupported existing status');
+        }
+        if (previousStatus !== normalizedNextStatus) {
+          let previousMembershipId = '';
+          if (previousStatus === 'left' && normalizedNextStatus === 'active') {
+            appendTenantMembershipHistory({
+              membership: {
+                ...targetMembership,
+                userId: targetUserId,
+                tenantId: normalizedTenantId
+              },
+              reason: reason || 'reactivate',
+              operatorUserId
+            });
+            previousMembershipId = String(targetMembership.membershipId || '').trim();
+            targetMembership.membershipId = randomUUID();
+            targetMembership.joinedAt = new Date().toISOString();
+            targetMembership.leftAt = null;
+            if (targetMembership.permission) {
+              targetMembership.permission = {
+                ...targetMembership.permission,
+                canViewMemberAdmin: false,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              };
+            }
+            if (previousMembershipId) {
+              tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+            }
+            tenantMembershipRolesByMembershipId.set(
+              String(targetMembership.membershipId || '').trim(),
+              []
+            );
+          } else if (normalizedNextStatus === 'left') {
+            appendTenantMembershipHistory({
+              membership: {
+                ...targetMembership,
+                userId: targetUserId,
+                tenantId: normalizedTenantId
+              },
+              reason: reason || 'left',
+              operatorUserId
+            });
+            targetMembership.leftAt = new Date().toISOString();
+            if (targetMembership.permission) {
+              targetMembership.permission = {
+                ...targetMembership.permission,
+                canViewMemberAdmin: false,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              };
+            }
+            const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
+            if (resolvedMembershipId) {
+              tenantMembershipRolesByMembershipId.delete(resolvedMembershipId);
+            }
+          } else if (normalizedNextStatus === 'active') {
+            targetMembership.leftAt = null;
+          }
+
+          targetMembership.status = normalizedNextStatus;
+          tenantsByUserId.set(targetUserId, targetMemberships);
+
+          if (normalizedNextStatus === 'active') {
+            const userDomains = domainsByUserId.get(targetUserId) || new Set();
+            userDomains.add('tenant');
+            domainsByUserId.set(targetUserId, userDomains);
+          } else {
+            revokeTenantSessionsForUser({
               userId: targetUserId,
-              tenantId: normalizedTenantId
-            },
-            reason: reason || 'reactivate',
-            operatorUserId
-          });
-          previousMembershipId = String(targetMembership.membershipId || '').trim();
-          targetMembership.membershipId = randomUUID();
-          targetMembership.joinedAt = new Date().toISOString();
-          targetMembership.leftAt = null;
-          if (targetMembership.permission) {
-            targetMembership.permission = {
-              ...targetMembership.permission,
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
-            };
+              reason: 'tenant-membership-status-changed',
+              activeTenantId: normalizedTenantId
+            });
+            const userDomains = domainsByUserId.get(targetUserId) || new Set();
+            const hasAnyActiveMembership = (tenantsByUserId.get(targetUserId) || []).some(
+              (membership) => isTenantMembershipActiveForAuth(membership)
+            );
+            if (!hasAnyActiveMembership) {
+              userDomains.delete('tenant');
+            }
+            domainsByUserId.set(targetUserId, userDomains);
           }
-          if (previousMembershipId) {
-            tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+
+          if (normalizedNextStatus === 'active') {
+            syncTenantMembershipPermissionSnapshot({
+              membershipState: {
+                userId: targetUserId,
+                memberships: targetMemberships,
+                membership: targetMembership
+              },
+              reason: 'tenant-membership-status-changed'
+            });
           }
-          tenantMembershipRolesByMembershipId.set(
-            String(targetMembership.membershipId || '').trim(),
-            []
+        }
+
+        const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
+        const currentStatus = normalizeTenantMembershipStatusForRead(targetMembership.status);
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          const normalizedAuditReason =
+            auditContext.reason === null || auditContext.reason === undefined
+              ? null
+              : String(auditContext.reason).trim() || null;
+          try {
+            persistAuditEvent({
+              domain: 'tenant',
+              tenantId: normalizedTenantId,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.tenant.member.status.updated',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || null,
+              targetType: 'membership',
+              targetId: resolvedMembershipId,
+              result: 'success',
+              beforeState: {
+                status: previousStatus
+              },
+              afterState: {
+                status: currentStatus
+              },
+              metadata: {
+                tenant_id: normalizedTenantId,
+                membership_id: resolvedMembershipId,
+                target_user_id: targetUserId,
+                previous_status: previousStatus,
+                current_status: currentStatus,
+                reason: normalizedAuditReason
+              }
+            });
+          } catch (error) {
+            const auditWriteError = new Error('tenant membership status audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+          auditRecorded = true;
+        }
+
+        return {
+          membership_id: resolvedMembershipId,
+          user_id: targetUserId,
+          tenant_id: normalizedTenantId,
+          previous_status: previousStatus,
+          current_status: currentStatus,
+          audit_recorded: auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
+          restoreMapFromSnapshot(
+            tenantMembershipRolesByMembershipId,
+            snapshot.tenantMembershipRolesByMembershipId
           );
-        } else if (normalizedNextStatus === 'left') {
-          appendTenantMembershipHistory({
-            membership: {
-              ...targetMembership,
-              userId: targetUserId,
-              tenantId: normalizedTenantId
-            },
-            reason: reason || 'left',
-            operatorUserId
-          });
-          targetMembership.leftAt = new Date().toISOString();
-          if (targetMembership.permission) {
-            targetMembership.permission = {
-              ...targetMembership.permission,
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
-            };
-          }
-          const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
-          if (resolvedMembershipId) {
-            tenantMembershipRolesByMembershipId.delete(resolvedMembershipId);
-          }
-        } else if (normalizedNextStatus === 'active') {
-          targetMembership.leftAt = null;
-        }
-
-        targetMembership.status = normalizedNextStatus;
-        tenantsByUserId.set(targetUserId, targetMemberships);
-
-        if (normalizedNextStatus === 'active') {
-          const userDomains = domainsByUserId.get(targetUserId) || new Set();
-          userDomains.add('tenant');
-          domainsByUserId.set(targetUserId, userDomains);
-        } else {
-          revokeTenantSessionsForUser({
-            userId: targetUserId,
-            reason: 'tenant-membership-status-changed',
-            activeTenantId: normalizedTenantId
-          });
-          const userDomains = domainsByUserId.get(targetUserId) || new Set();
-          const hasAnyActiveMembership = (tenantsByUserId.get(targetUserId) || []).some(
-            (membership) => isTenantMembershipActiveForAuth(membership)
+          restoreMapFromSnapshot(
+            tenantMembershipHistoryByPair,
+            snapshot.tenantMembershipHistoryByPair
           );
-          if (!hasAnyActiveMembership) {
-            userDomains.delete('tenant');
-          }
-          domainsByUserId.set(targetUserId, userDomains);
+          restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
+          restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
+          restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
         }
-
-        if (normalizedNextStatus === 'active') {
-          syncTenantMembershipPermissionSnapshot({
-            membershipState: {
-              userId: targetUserId,
-              memberships: targetMemberships,
-              membership: targetMembership
-            },
-            reason: 'tenant-membership-status-changed'
-          });
-        }
+        throw error;
       }
-
-      const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
-
-      return {
-        membership_id: resolvedMembershipId,
-        user_id: targetUserId,
-        tenant_id: normalizedTenantId,
-        previous_status: previousStatus,
-        current_status: normalizeTenantMembershipStatusForRead(targetMembership.status)
-      };
     },
 
     listTenantMembershipRoleBindings: async ({
@@ -2665,121 +3250,183 @@ const createInMemoryAuthStore = ({
     replaceTenantMembershipRoleBindingsAndSyncSnapshot: async ({
       tenantId,
       membershipId,
-      roleIds = []
+      roleIds = [],
+      auditContext = null
     } = {}) => {
       const normalizedTenantId = String(tenantId || '').trim();
       const normalizedMembershipId = String(membershipId || '').trim();
       if (!normalizedTenantId || !normalizedMembershipId) {
         throw new Error('replaceTenantMembershipRoleBindingsAndSyncSnapshot requires tenantId and membershipId');
       }
-      const membershipState = findTenantMembershipStateByMembershipId(
-        normalizedMembershipId
-      );
-      if (!membershipState) {
-        return null;
-      }
-      if (
-        String(membershipState.membership?.tenantId || '').trim()
-        !== normalizedTenantId
-      ) {
-        return null;
-      }
-      if (
-        !isActiveLikeStatus(
-          normalizeTenantMembershipStatusForRead(
-            membershipState.membership?.status
-          )
-        )
-      ) {
-        const membershipStatusError = new Error(
-          'tenant membership role bindings membership not active'
-        );
-        membershipStatusError.code =
-          'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE';
-        throw membershipStatusError;
-      }
-      const normalizedAffectedUserId =
-        normalizeStrictTenantMembershipRoleBindingIdentity(
-          membershipState?.userId,
-          'tenant-membership-role-bindings-invalid-affected-user-id'
-        );
-      const normalizedRoleIds = [...new Set(
-        (Array.isArray(roleIds) ? roleIds : [])
-          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
-          .filter((roleId) => roleId.length > 0)
-      )].sort((left, right) => left.localeCompare(right));
-      for (const roleId of normalizedRoleIds) {
-        const catalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
-          roleId
-        )?.record;
-        const normalizedScope = normalizePlatformRoleCatalogScope(
-          catalogEntry?.scope
-        );
-        const normalizedCatalogTenantId = normalizePlatformRoleCatalogTenantId(
-          catalogEntry?.tenantId
-        );
-        let normalizedCatalogStatus = 'disabled';
-        try {
-          normalizedCatalogStatus = normalizePlatformRoleCatalogStatus(
-            catalogEntry?.status || 'disabled'
-          );
-        } catch (_error) {}
-        if (
-          !catalogEntry
-          || normalizedScope !== 'tenant'
-          || normalizedCatalogTenantId !== normalizedTenantId
-          || !isActiveLikeStatus(normalizedCatalogStatus)
-        ) {
-          const roleBindingError = new Error(
-            'tenant membership role bindings role invalid'
-          );
-          roleBindingError.code =
-            'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID';
-          roleBindingError.roleId = roleId;
-          throw roleBindingError;
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          tenantMembershipRolesByMembershipId: structuredClone(
+            tenantMembershipRolesByMembershipId
+          ),
+          tenantsByUserId: structuredClone(tenantsByUserId),
+          sessionsById: structuredClone(sessionsById),
+          refreshTokensByHash: structuredClone(refreshTokensByHash),
+          auditEvents: structuredClone(auditEvents)
         }
-      }
-      const previousRoleIds = listTenantMembershipRoleBindingsForMembershipId({
-        membershipId: normalizedMembershipId,
-        tenantId: normalizedTenantId
-      });
-      const resolvedRoleIds = replaceTenantMembershipRoleBindingsForMembershipId({
-        membershipId: normalizedMembershipId,
-        roleIds: normalizedRoleIds
-      });
-      const rollbackRoleBindings = () =>
-        replaceTenantMembershipRoleBindingsForMembershipId({
-          membershipId: normalizedMembershipId,
-          roleIds: previousRoleIds
-        });
-      let syncResult;
+        : null;
       try {
-        syncResult = syncTenantMembershipPermissionSnapshot({
-          membershipState,
-          reason: 'tenant-membership-role-bindings-changed'
+        const membershipState = findTenantMembershipStateByMembershipId(
+          normalizedMembershipId
+        );
+        if (!membershipState) {
+          return null;
+        }
+        if (
+          String(membershipState.membership?.tenantId || '').trim()
+          !== normalizedTenantId
+        ) {
+          return null;
+        }
+        if (
+          !isActiveLikeStatus(
+            normalizeTenantMembershipStatusForRead(
+              membershipState.membership?.status
+            )
+          )
+        ) {
+          const membershipStatusError = new Error(
+            'tenant membership role bindings membership not active'
+          );
+          membershipStatusError.code =
+            'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE';
+          throw membershipStatusError;
+        }
+        const normalizedAffectedUserId =
+          normalizeStrictTenantMembershipRoleBindingIdentity(
+            membershipState?.userId,
+            'tenant-membership-role-bindings-invalid-affected-user-id'
+          );
+        const normalizedRoleIds = [...new Set(
+          (Array.isArray(roleIds) ? roleIds : [])
+            .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
+            .filter((roleId) => roleId.length > 0)
+        )].sort((left, right) => left.localeCompare(right));
+        for (const roleId of normalizedRoleIds) {
+          const catalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
+            roleId
+          )?.record;
+          const normalizedScope = normalizePlatformRoleCatalogScope(
+            catalogEntry?.scope
+          );
+          const normalizedCatalogTenantId = normalizePlatformRoleCatalogTenantId(
+            catalogEntry?.tenantId
+          );
+          let normalizedCatalogStatus = 'disabled';
+          try {
+            normalizedCatalogStatus = normalizePlatformRoleCatalogStatus(
+              catalogEntry?.status || 'disabled'
+            );
+          } catch (_error) {}
+          if (
+            !catalogEntry
+            || normalizedScope !== 'tenant'
+            || normalizedCatalogTenantId !== normalizedTenantId
+            || !isActiveLikeStatus(normalizedCatalogStatus)
+          ) {
+            const roleBindingError = new Error(
+              'tenant membership role bindings role invalid'
+            );
+            roleBindingError.code =
+              'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID';
+            roleBindingError.roleId = roleId;
+            throw roleBindingError;
+          }
+        }
+        const previousRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+          membershipId: normalizedMembershipId,
+          tenantId: normalizedTenantId
         });
+        const resolvedRoleIds = replaceTenantMembershipRoleBindingsForMembershipId({
+          membershipId: normalizedMembershipId,
+          roleIds: normalizedRoleIds
+        });
+        const rollbackRoleBindings = () =>
+          replaceTenantMembershipRoleBindingsForMembershipId({
+            membershipId: normalizedMembershipId,
+            roleIds: previousRoleIds
+          });
+        let syncResult;
+        try {
+          syncResult = syncTenantMembershipPermissionSnapshot({
+            membershipState,
+            reason: 'tenant-membership-role-bindings-changed'
+          });
+        } catch (error) {
+          rollbackRoleBindings();
+          throw error;
+        }
+        const syncReason = String(syncResult?.reason || 'unknown')
+          .trim()
+          .toLowerCase();
+        if (syncReason !== 'ok') {
+          rollbackRoleBindings();
+          const syncError = new Error(
+            `tenant membership role bindings sync failed: ${syncReason || 'unknown'}`
+          );
+          syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
+          syncError.syncReason = syncReason || 'unknown';
+          throw syncError;
+        }
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'tenant',
+              tenantId: normalizedTenantId,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.tenant_membership_roles.updated',
+              actorUserId: auditContext.actorUserId || null,
+              actorSessionId: auditContext.actorSessionId || null,
+              targetType: 'membership_role_bindings',
+              targetId: normalizedMembershipId,
+              result: 'success',
+              beforeState: {
+                role_ids: previousRoleIds
+              },
+              afterState: {
+                role_ids: resolvedRoleIds
+              },
+              metadata: {
+                affected_user_count: 1
+              }
+            });
+          } catch (error) {
+            const auditWriteError = new Error(
+              'tenant membership role bindings audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+          auditRecorded = true;
+        }
+        return {
+          membershipId: normalizedMembershipId,
+          roleIds: resolvedRoleIds,
+          affectedUserIds: [normalizedAffectedUserId],
+          affectedUserCount: 1,
+          auditRecorded
+        };
       } catch (error) {
-        rollbackRoleBindings();
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            tenantMembershipRolesByMembershipId,
+            snapshot.tenantMembershipRolesByMembershipId
+          );
+          restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
+          restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
+          restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
         throw error;
       }
-      const syncReason = String(syncResult?.reason || 'unknown')
-        .trim()
-        .toLowerCase();
-      if (syncReason !== 'ok') {
-        rollbackRoleBindings();
-        const syncError = new Error(
-          `tenant membership role bindings sync failed: ${syncReason || 'unknown'}`
-        );
-        syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
-        syncError.syncReason = syncReason || 'unknown';
-        throw syncError;
-      }
-      return {
-        membershipId: normalizedMembershipId,
-        roleIds: resolvedRoleIds,
-        affectedUserIds: [normalizedAffectedUserId],
-        affectedUserCount: 1
-      };
     },
 
     hasAnyTenantRelationshipByUserId: async (userId) =>
@@ -2964,6 +3611,9 @@ const createInMemoryAuthStore = ({
       tenantId,
       roleId,
       permissionCodes = [],
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null,
       maxAffectedMemberships = 100
     }) => {
       const normalizedTenantId = String(tenantId || '').trim();
@@ -3113,12 +3763,47 @@ const createInMemoryAuthStore = ({
           activeTenantId
         });
       }
+      let auditRecorded = false;
+      if (auditContext && typeof auditContext === 'object') {
+        try {
+          persistAuditEvent({
+            domain: 'tenant',
+            tenantId: normalizedTenantId,
+            requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+            traceparent: auditContext.traceparent,
+            eventType: 'auth.tenant_role_permission_grants.updated',
+            actorUserId: auditContext.actorUserId || operatorUserId || null,
+            actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+            targetType: 'role_permission_grants',
+            targetId: normalizedRoleId,
+            result: 'success',
+            beforeState: {
+              permission_codes: [...previousPermissionCodes]
+            },
+            afterState: {
+              permission_codes: [...savedPermissionCodes]
+            },
+            metadata: {
+              affected_user_count: affectedUserIds.size
+            }
+          });
+        } catch (error) {
+          const auditWriteError = new Error(
+            'tenant role permission grants audit write failed'
+          );
+          auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+          auditWriteError.cause = error;
+          throw auditWriteError;
+        }
+        auditRecorded = true;
+      }
 
       return {
         roleId: normalizedRoleId,
         permissionCodes: savedPermissionCodes,
         affectedUserIds: [...affectedUserIds],
-        affectedUserCount: affectedUserIds.size
+        affectedUserCount: affectedUserIds.size,
+        auditRecorded
       };
     },
 
@@ -3163,38 +3848,99 @@ const createInMemoryAuthStore = ({
       tenantId = null,
       isSystem = false,
       operatorUserId = null,
-      operatorSessionId = null
+      operatorSessionId = null,
+      auditContext = null
     }) => {
-      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
-      const normalizedCode = normalizePlatformRoleCatalogCode(code);
-      const normalizedName = String(name || '').trim();
-      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
-      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
-        scope: normalizedScope,
-        tenantId
-      });
-      if (!normalizedRoleId || !normalizedCode || !normalizedName) {
-        throw new Error('createPlatformRoleCatalogEntry requires roleId, code, and name');
-      }
-      if (findPlatformRoleCatalogRecordStateByRoleId(normalizedRoleId)) {
-        throw createDuplicatePlatformRoleCatalogEntryError({
-          target: 'role_id'
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformRoleCatalogById: structuredClone(platformRoleCatalogById),
+          platformRoleCatalogCodeIndex: structuredClone(platformRoleCatalogCodeIndex),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+        const normalizedCode = normalizePlatformRoleCatalogCode(code);
+        const normalizedName = String(name || '').trim();
+        const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+        const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+          scope: normalizedScope,
+          tenantId
         });
+        if (!normalizedRoleId || !normalizedCode || !normalizedName) {
+          throw new Error('createPlatformRoleCatalogEntry requires roleId, code, and name');
+        }
+        if (findPlatformRoleCatalogRecordStateByRoleId(normalizedRoleId)) {
+          throw createDuplicatePlatformRoleCatalogEntryError({
+            target: 'role_id'
+          });
+        }
+        const createdRole = upsertPlatformRoleCatalogRecord({
+          roleId: normalizedRoleId,
+          code: normalizedCode,
+          name: normalizedName,
+          status: normalizePlatformRoleCatalogStatus(status),
+          scope: normalizedScope,
+          tenantId: normalizedTenantId,
+          isSystem: Boolean(isSystem),
+          createdByUserId: operatorUserId ? String(operatorUserId) : null,
+          updatedByUserId: operatorUserId ? String(operatorUserId) : null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
+              tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.role.catalog.created',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'role',
+              targetId: normalizedRoleId,
+              result: 'success',
+              beforeState: null,
+              afterState: {
+                role_id: normalizedRoleId,
+                code: createdRole.code,
+                name: createdRole.name,
+                status: createdRole.status,
+                scope: createdRole.scope,
+                tenant_id: createdRole.tenantId,
+                is_system: createdRole.isSystem
+              },
+              metadata: {
+                scope: normalizedScope
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error('platform role create audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...createdRole,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
+          restoreMapFromSnapshot(
+            platformRoleCatalogCodeIndex,
+            snapshot.platformRoleCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
       }
-      return upsertPlatformRoleCatalogRecord({
-        roleId: normalizedRoleId,
-        code: normalizedCode,
-        name: normalizedName,
-        status: normalizePlatformRoleCatalogStatus(status),
-        scope: normalizedScope,
-        tenantId: normalizedTenantId,
-        isSystem: Boolean(isSystem),
-        createdByUserId: operatorUserId ? String(operatorUserId) : null,
-        updatedByUserId: operatorUserId ? String(operatorUserId) : null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null
-      });
     },
 
     updatePlatformRoleCatalogEntry: async ({
@@ -3205,61 +3951,129 @@ const createInMemoryAuthStore = ({
       name = undefined,
       status = undefined,
       operatorUserId = null,
-      operatorSessionId = null
+      operatorSessionId = null,
+      auditContext = null
     }) => {
-      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
-      if (!normalizedRoleId) {
-        throw new Error('updatePlatformRoleCatalogEntry requires roleId');
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformRoleCatalogById: structuredClone(platformRoleCatalogById),
+          platformRoleCatalogCodeIndex: structuredClone(platformRoleCatalogCodeIndex),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+        if (!normalizedRoleId) {
+          throw new Error('updatePlatformRoleCatalogEntry requires roleId');
+        }
+        const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+        const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+          scope: normalizedScope,
+          tenantId
+        });
+        const existingState = findPlatformRoleCatalogRecordStateByRoleId(
+          normalizedRoleId
+        );
+        const existing = existingState?.record || null;
+        if (!existing) {
+          return null;
+        }
+        if (normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope) {
+          return null;
+        }
+        if (
+          normalizedScope === 'tenant'
+          && String(existing.tenantId || '') !== normalizedTenantId
+        ) {
+          return null;
+        }
+        if (normalizedScope !== 'tenant' && String(existing.tenantId || '') !== '') {
+          return null;
+        }
+        const nextCode = code === undefined
+          ? existing.code
+          : normalizePlatformRoleCatalogCode(code);
+        const nextName = name === undefined
+          ? existing.name
+          : String(name || '').trim();
+        const nextStatus = status === undefined
+          ? existing.status
+          : normalizePlatformRoleCatalogStatus(status);
+        if (!nextCode || !nextName) {
+          throw new Error('updatePlatformRoleCatalogEntry requires non-empty code and name');
+        }
+        const updatedRole = upsertPlatformRoleCatalogRecord({
+          ...existing,
+          roleId: existing.roleId,
+          code: nextCode,
+          name: nextName,
+          status: nextStatus,
+          scope: existing.scope,
+          tenantId: existing.tenantId,
+          isSystem: Boolean(existing.isSystem),
+          updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
+          updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
+          updatedAt: new Date().toISOString()
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
+              tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.role.catalog.updated',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'role',
+              targetId: normalizedRoleId,
+              result: 'success',
+              beforeState: {
+                code: existing.code,
+                name: existing.name,
+                status: existing.status
+              },
+              afterState: {
+                code: updatedRole.code,
+                name: updatedRole.name,
+                status: updatedRole.status
+              },
+              metadata: {
+                scope: normalizedScope,
+                changed_fields: [
+                  ...new Set(Object.keys({
+                    ...(code === undefined ? {} : { code: true }),
+                    ...(name === undefined ? {} : { name: true }),
+                    ...(status === undefined ? {} : { status: true })
+                  }))
+                ]
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error('platform role update audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...updatedRole,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
+          restoreMapFromSnapshot(
+            platformRoleCatalogCodeIndex,
+            snapshot.platformRoleCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
       }
-      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
-      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
-        scope: normalizedScope,
-        tenantId
-      });
-      const existingState = findPlatformRoleCatalogRecordStateByRoleId(
-        normalizedRoleId
-      );
-      const existing = existingState?.record || null;
-      if (!existing) {
-        return null;
-      }
-      if (normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope) {
-        return null;
-      }
-      if (
-        normalizedScope === 'tenant'
-        && String(existing.tenantId || '') !== normalizedTenantId
-      ) {
-        return null;
-      }
-      if (normalizedScope !== 'tenant' && String(existing.tenantId || '') !== '') {
-        return null;
-      }
-      const nextCode = code === undefined
-        ? existing.code
-        : normalizePlatformRoleCatalogCode(code);
-      const nextName = name === undefined
-        ? existing.name
-        : String(name || '').trim();
-      const nextStatus = status === undefined
-        ? existing.status
-        : normalizePlatformRoleCatalogStatus(status);
-      if (!nextCode || !nextName) {
-        throw new Error('updatePlatformRoleCatalogEntry requires non-empty code and name');
-      }
-      return upsertPlatformRoleCatalogRecord({
-        ...existing,
-        roleId: existing.roleId,
-        code: nextCode,
-        name: nextName,
-        status: nextStatus,
-        scope: existing.scope,
-        tenantId: existing.tenantId,
-        isSystem: Boolean(existing.isSystem),
-        updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
-        updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
-        updatedAt: new Date().toISOString()
-      });
     },
 
     deletePlatformRoleCatalogEntry: async ({
@@ -3267,43 +4081,102 @@ const createInMemoryAuthStore = ({
       scope = 'platform',
       tenantId = null,
       operatorUserId = null,
-      operatorSessionId = null
+      operatorSessionId = null,
+      auditContext = null
     }) => {
-      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
-      if (!normalizedRoleId) {
-        throw new Error('deletePlatformRoleCatalogEntry requires roleId');
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformRoleCatalogById: structuredClone(platformRoleCatalogById),
+          platformRoleCatalogCodeIndex: structuredClone(platformRoleCatalogCodeIndex),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+        if (!normalizedRoleId) {
+          throw new Error('deletePlatformRoleCatalogEntry requires roleId');
+        }
+        const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+        const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
+          scope: normalizedScope,
+          tenantId
+        });
+        const existingState = findPlatformRoleCatalogRecordStateByRoleId(
+          normalizedRoleId
+        );
+        const existing = existingState?.record || null;
+        if (!existing) {
+          return null;
+        }
+        if (normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope) {
+          return null;
+        }
+        if (
+          normalizedScope === 'tenant'
+          && String(existing.tenantId || '') !== normalizedTenantId
+        ) {
+          return null;
+        }
+        if (normalizedScope !== 'tenant' && String(existing.tenantId || '') !== '') {
+          return null;
+        }
+        const deletedRole = upsertPlatformRoleCatalogRecord({
+          ...existing,
+          status: 'disabled',
+          updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
+          updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
+          updatedAt: new Date().toISOString()
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
+              tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.role.catalog.deleted',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'role',
+              targetId: normalizedRoleId,
+              result: 'success',
+              beforeState: {
+                code: existing.code,
+                name: existing.name,
+                status: existing.status
+              },
+              afterState: {
+                status: deletedRole.status
+              },
+              metadata: {
+                scope: normalizedScope
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error('platform role delete audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...deletedRole,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
+          restoreMapFromSnapshot(
+            platformRoleCatalogCodeIndex,
+            snapshot.platformRoleCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
       }
-      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
-      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
-        scope: normalizedScope,
-        tenantId
-      });
-      const existingState = findPlatformRoleCatalogRecordStateByRoleId(
-        normalizedRoleId
-      );
-      const existing = existingState?.record || null;
-      if (!existing) {
-        return null;
-      }
-      if (normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope) {
-        return null;
-      }
-      if (
-        normalizedScope === 'tenant'
-        && String(existing.tenantId || '') !== normalizedTenantId
-      ) {
-        return null;
-      }
-      if (normalizedScope !== 'tenant' && String(existing.tenantId || '') !== '') {
-        return null;
-      }
-      return upsertPlatformRoleCatalogRecord({
-        ...existing,
-        status: 'disabled',
-        updatedByUserId: operatorUserId ? String(operatorUserId) : existing.updatedByUserId,
-        updatedBySessionId: operatorSessionId ? String(operatorSessionId) : null,
-        updatedAt: new Date().toISOString()
-      });
     },
 
     syncPlatformPermissionSnapshotByUserId: async ({

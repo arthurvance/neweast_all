@@ -48,6 +48,7 @@ const createPlatformOrgHandlers = (platformOrgService) => {
       requestId,
       authorization,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       platformOrgService.createOrg({
@@ -57,12 +58,14 @@ const createPlatformOrgHandlers = (platformOrgService) => {
           authorizationContext
         }),
         payload: body || {},
+        traceparent,
         authorizationContext
       }),
     updateOrgStatus: async ({
       requestId,
       authorization,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       platformOrgService.updateOrgStatus({
@@ -72,12 +75,14 @@ const createPlatformOrgHandlers = (platformOrgService) => {
           authorizationContext
         }),
         payload: body || {},
+        traceparent,
         authorizationContext
       }),
     ownerTransfer: async ({
       requestId,
       authorization,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       platformOrgService.ownerTransfer({
@@ -87,6 +92,7 @@ const createPlatformOrgHandlers = (platformOrgService) => {
           authorizationContext
         }),
         payload: body || {},
+        traceparent,
         authorizationContext
       })
   };

@@ -3033,7 +3033,8 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
     affected_role_count: 3,
     affected_role_binding_count: 4,
     revoked_session_count: 3,
-    revoked_refresh_token_count: 3
+    revoked_refresh_token_count: 3,
+    audit_recorded: false
   });
   assert.equal(updateMembershipCalled, true);
   assert.equal(updateTenantMembershipCalled, true);
@@ -3171,7 +3172,8 @@ test('updateOrganizationStatus does not count owner-only revocation target as af
     affected_role_count: 0,
     affected_role_binding_count: 0,
     revoked_session_count: 2,
-    revoked_refresh_token_count: 2
+    revoked_refresh_token_count: 2,
+    audit_recorded: false
   });
   assert.deepEqual(revokeTenantSessionUsers.sort(), ['u-member', 'u-owner']);
   assert.deepEqual(revokeTenantRefreshUsers.sort(), ['u-member', 'u-owner']);
@@ -3250,7 +3252,8 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
     affected_role_count: 0,
     affected_role_binding_count: 0,
     revoked_session_count: 0,
-    revoked_refresh_token_count: 0
+    revoked_refresh_token_count: 0,
+    audit_recorded: false
   });
   assert.equal(updateOrgCalled, false);
   assert.equal(readMembershipCalled, false);
@@ -3518,7 +3521,8 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     new_owner_user_id: 'owner-transfer-store-new-owner',
     membership_id: 'membership-owner-transfer-store-new-owner',
     role_ids: ['tenant_owner'],
-    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view']
+    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view'],
+    audit_recorded: false
   });
   assert.equal(roleCatalogInsertCalled, true);
   assert.equal(roleGrantInsertCount, 2);
@@ -4143,7 +4147,8 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     new_owner_user_id: 'owner-transfer-store-membership-race-new-owner',
     membership_id: 'membership-owner-transfer-store-membership-race',
     role_ids: ['tenant_owner'],
-    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view']
+    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view'],
+    audit_recorded: false
   });
   assert.equal(membershipInsertAttemptCount, 1);
   assert.equal(membershipLookupCount, 2);
@@ -4421,7 +4426,8 @@ test('updatePlatformUserStatus updates platform domain status and converges plat
   assert.deepEqual(result, {
     user_id: 'platform-status-user-1',
     previous_status: 'active',
-    current_status: 'disabled'
+    current_status: 'disabled',
+    audit_recorded: false
   });
   assert.equal(updatePlatformDomainCalled, true);
   assert.equal(revokeSessionParams.length, 1);
@@ -4484,7 +4490,8 @@ test('updatePlatformUserStatus treats same-status change as no-op without sessio
   assert.deepEqual(result, {
     user_id: 'platform-status-user-noop',
     previous_status: 'disabled',
-    current_status: 'disabled'
+    current_status: 'disabled',
+    audit_recorded: false
   });
   assert.equal(updateStatusCalled, false);
   assert.equal(updateUserCalled, false);
@@ -4867,7 +4874,8 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     user_id: 'tenant-user-reactivate',
     tenant_id: 'tenant-reactivate',
     previous_status: 'disabled',
-    current_status: 'active'
+    current_status: 'active',
+    audit_recorded: false
   });
   assert.match(updateSql, /can_view_member_admin\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
   assert.match(updateSql, /can_operate_member_admin\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
@@ -4983,6 +4991,130 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
   assert.equal(updateParams.length, 3);
   assert.equal(deleteMembershipRoleBindingCount, 1);
   assert.equal(membershipLookupCount, 2);
+});
+
+test('updateTenantMembershipStatus writes tenant audit event when auditContext is provided', async () => {
+  let auditInsertParams = null;
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-status-audit',
+        user_id: 'tenant-user-status-audit',
+        tenant_id: 'tenant-status-audit',
+        tenant_name: 'Tenant Status Audit',
+        status: 'active',
+        can_view_member_admin: 1,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0,
+        joined_at: '2026-02-20T00:00:00.000Z',
+        left_at: null
+      }];
+    }
+    if (normalizedSql.includes('INSERT INTO audit_events')) {
+      auditInsertParams = params;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.updateTenantMembershipStatus({
+    membershipId: 'membership-status-audit',
+    tenantId: 'tenant-status-audit',
+    nextStatus: 'active',
+    operatorUserId: 'tenant-operator-status-audit',
+    reason: 'manual-noop',
+    auditContext: {
+      requestId: 'req-tenant-status-audit',
+      traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      actorUserId: 'tenant-operator-status-audit',
+      actorSessionId: 'tenant-session-status-audit',
+      reason: 'manual-noop'
+    }
+  });
+
+  assert.deepEqual(result, {
+    membership_id: 'membership-status-audit',
+    user_id: 'tenant-user-status-audit',
+    tenant_id: 'tenant-status-audit',
+    previous_status: 'active',
+    current_status: 'active',
+    audit_recorded: true
+  });
+  assert.ok(Array.isArray(auditInsertParams));
+  assert.equal(auditInsertParams[1], 'tenant');
+  assert.equal(auditInsertParams[2], 'tenant-status-audit');
+  assert.equal(auditInsertParams[3], 'req-tenant-status-audit');
+  assert.equal(
+    auditInsertParams[4],
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(auditInsertParams[5], 'auth.tenant.member.status.updated');
+  assert.equal(auditInsertParams[6], 'tenant-operator-status-audit');
+  assert.equal(auditInsertParams[7], 'tenant-session-status-audit');
+  assert.equal(auditInsertParams[8], 'membership');
+  assert.equal(auditInsertParams[9], 'membership-status-audit');
+  assert.equal(auditInsertParams[10], 'success');
+  assert.deepEqual(JSON.parse(auditInsertParams[11]), { status: 'active' });
+  assert.deepEqual(JSON.parse(auditInsertParams[12]), { status: 'active' });
+  assert.equal(JSON.parse(auditInsertParams[13]).reason, 'manual-noop');
+});
+
+test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_FAILED', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT membership_id')
+      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+    ) {
+      return [{
+        membership_id: 'membership-status-audit-failed',
+        user_id: 'tenant-user-status-audit-failed',
+        tenant_id: 'tenant-status-audit-failed',
+        tenant_name: 'Tenant Status Audit Failed',
+        status: 'active',
+        can_view_member_admin: 1,
+        can_operate_member_admin: 0,
+        can_view_billing: 0,
+        can_operate_billing: 0,
+        joined_at: '2026-02-20T00:00:00.000Z',
+        left_at: null
+      }];
+    }
+    if (normalizedSql.includes('INSERT INTO audit_events')) {
+      throw new Error('audit-table-unavailable');
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.updateTenantMembershipStatus({
+        membershipId: 'membership-status-audit-failed',
+        tenantId: 'tenant-status-audit-failed',
+        nextStatus: 'active',
+        operatorUserId: 'tenant-operator-status-audit-failed',
+        auditContext: {
+          requestId: 'req-tenant-status-audit-failed',
+          actorUserId: 'tenant-operator-status-audit-failed',
+          actorSessionId: 'tenant-session-status-audit-failed'
+        }
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_AUDIT_WRITE_FAILED');
+      return true;
+    }
+  );
 });
 
 test('updateTenantMembershipProfile updates profile fields and returns normalized membership projection', async () => {

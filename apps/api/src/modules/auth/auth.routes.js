@@ -178,21 +178,24 @@ const createAuthHandlers = (authService = createAuthService()) => {
       requestId,
       authorization,
       body,
-      authorizationContext = null
+      authorizationContext = null,
+      traceparent = null
     }) =>
       authService.changePassword({
         requestId,
         accessToken: extractBearerToken(authorization),
         currentPassword: body.current_password,
         newPassword: body.new_password,
-        authorizationContext
+        authorizationContext,
+        traceparent
       }),
 
     replacePlatformRoleFacts: async ({
       requestId,
       authorization,
       body,
-      authorizationContext = null
+      authorizationContext = null,
+      traceparent = null
     }) => {
       const result = await authService.replacePlatformRolesAndSyncSnapshot({
         requestId,
@@ -200,6 +203,7 @@ const createAuthHandlers = (authService = createAuthService()) => {
         userId: body.user_id,
         roles: body.roles,
         authorizationContext,
+        traceparent,
         enforceRoleCatalogValidation: true
       });
       return {

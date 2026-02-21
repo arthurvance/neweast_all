@@ -621,6 +621,7 @@ const createPlatformRoleService = ({ authService } = {}) => {
     accessToken,
     roleId,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -707,6 +708,7 @@ const createPlatformRoleService = ({ authService } = {}) => {
     try {
       updated = await authService.replacePlatformRolePermissionGrants({
         requestId: resolvedRequestId,
+        traceparent,
         roleId: normalizedRoleId,
         permissionCodes: parsedPayload.permissionCodes,
         operatorUserId: operatorContext.operatorUserId,
@@ -768,6 +770,7 @@ const createPlatformRoleService = ({ authService } = {}) => {
     requestId,
     accessToken,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -813,6 +816,8 @@ const createPlatformRoleService = ({ authService } = {}) => {
     let createdRole;
     try {
       createdRole = await authService.createPlatformRoleCatalogEntry({
+        requestId: resolvedRequestId,
+        traceparent,
         roleId: parsedPayload.roleId,
         code: parsedPayload.code,
         name: parsedPayload.name,
@@ -869,6 +874,7 @@ const createPlatformRoleService = ({ authService } = {}) => {
     accessToken,
     roleId,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -939,6 +945,8 @@ const createPlatformRoleService = ({ authService } = {}) => {
     let updatedRole;
     try {
       updatedRole = await authService.updatePlatformRoleCatalogEntry({
+        requestId: resolvedRequestId,
+        traceparent,
         roleId: normalizedRoleId,
         ...parsedPayload,
         operatorUserId: operatorContext.operatorUserId,
@@ -1005,6 +1013,7 @@ const createPlatformRoleService = ({ authService } = {}) => {
     requestId,
     accessToken,
     roleId,
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1058,6 +1067,8 @@ const createPlatformRoleService = ({ authService } = {}) => {
     let deletedRole;
     try {
       deletedRole = await authService.deletePlatformRoleCatalogEntry({
+        requestId: resolvedRequestId,
+        traceparent,
         roleId: normalizedRoleId,
         operatorUserId: operatorContext.operatorUserId,
         operatorSessionId: operatorContext.operatorSessionId

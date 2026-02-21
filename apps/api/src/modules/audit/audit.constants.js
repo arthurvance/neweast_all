@@ -1,0 +1,22 @@
+const PLATFORM_AUDIT_EVENTS_PATH = '/platform/audit/events';
+const TENANT_AUDIT_EVENTS_PATH = '/tenant/audit/events';
+
+const PLATFORM_AUDIT_EVENTS_ROUTE_KEY = 'GET /platform/audit/events';
+const TENANT_AUDIT_EVENTS_ROUTE_KEY = 'GET /tenant/audit/events';
+
+const PLATFORM_AUDIT_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
+const TENANT_AUDIT_VIEW_PERMISSION_CODE = 'tenant.member_admin.view';
+
+const PLATFORM_AUDIT_SCOPE = 'platform';
+const TENANT_AUDIT_SCOPE = 'tenant';
+
+module.exports = {
+  PLATFORM_AUDIT_EVENTS_PATH,
+  TENANT_AUDIT_EVENTS_PATH,
+  PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
+  TENANT_AUDIT_EVENTS_ROUTE_KEY,
+  PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
+  TENANT_AUDIT_VIEW_PERMISSION_CODE,
+  PLATFORM_AUDIT_SCOPE,
+  TENANT_AUDIT_SCOPE
+};

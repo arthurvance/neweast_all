@@ -141,6 +141,51 @@ test('POST /tenant/roles creates role and GET /tenant/roles returns tenant-scope
   assert.equal(role.code, 'OPS_ADMIN');
 });
 
+test('POST /tenant/roles persists tenant audit event with request_id and traceparent', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-audit',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-audit',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent
+    },
+    body: {
+      role_id: 'tenant_a_role_audit_trace',
+      code: 'TENANT_ROLE_AUDIT_TRACE',
+      name: '租户角色审计透传验证',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const auditRoute = await dispatchApiRoute({
+    pathname: '/tenant/audit/events?request_id=req-tenant-role-create-audit&event_type=auth.role.catalog.created',
+    method: 'GET',
+    requestId: 'req-tenant-role-audit-query',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(auditRoute.status, 200);
+  const auditPayload = JSON.parse(auditRoute.body);
+  assert.equal(auditPayload.total, 1);
+  assert.equal(auditPayload.events[0].event_type, 'auth.role.catalog.created');
+  assert.equal(auditPayload.events[0].request_id, 'req-tenant-role-create-audit');
+  assert.equal(auditPayload.events[0].traceparent, traceparent);
+  assert.equal(auditPayload.events[0].tenant_id, 'tenant-a');
+});
+
 test('GET /tenant/roles accepts snake_case catalog fields when camelCase shadow keys are undefined', async () => {
   const harness = createHarness();
   const login = await loginByPhone(

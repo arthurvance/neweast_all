@@ -129,6 +129,104 @@ test('POST /platform/roles creates role and GET /platform/roles returns traceabl
   assert.ok(typeof role.created_at === 'string' && role.created_at.length > 0);
 });
 
+test('POST /platform/roles persists audit event with request_id and traceparent', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-audit');
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-audit',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent
+    },
+    body: {
+      role_id: 'platform_role_audit_trace',
+      code: 'ROLE_AUDIT_TRACE',
+      name: '审计透传验证角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const auditRoute = await dispatchApiRoute({
+    pathname: '/platform/audit/events?request_id=req-platform-role-create-audit&event_type=auth.role.catalog.created',
+    method: 'GET',
+    requestId: 'req-platform-role-audit-query',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(auditRoute.status, 200);
+  const auditPayload = JSON.parse(auditRoute.body);
+  assert.equal(auditPayload.total, 1);
+  assert.equal(auditPayload.events[0].event_type, 'auth.role.catalog.created');
+  assert.equal(auditPayload.events[0].request_id, 'req-platform-role-create-audit');
+  assert.equal(auditPayload.events[0].traceparent, traceparent);
+  assert.equal(auditPayload.events[0].target_type, 'role');
+});
+
+test('POST /auth/platform/role-facts/replace persists audit event with request_id and traceparent', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-role-facts-audit');
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const createRoleRoute = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-facts-audit-create-role',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_role_facts_audit_trace',
+      code: 'PLATFORM_ROLE_FACTS_AUDIT_TRACE',
+      name: '平台角色事实审计透传验证角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoleRoute.status, 200);
+
+  const replaceFactsRoute = await dispatchApiRoute({
+    pathname: '/auth/platform/role-facts/replace',
+    method: 'POST',
+    requestId: 'req-platform-role-facts-audit',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent
+    },
+    body: {
+      user_id: 'platform-role-target-user',
+      roles: [{ role_id: 'platform_role_facts_audit_trace' }]
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replaceFactsRoute.status, 200);
+
+  const auditRoute = await dispatchApiRoute({
+    pathname: '/platform/audit/events?request_id=req-platform-role-facts-audit&event_type=auth.platform_role_facts.updated',
+    method: 'GET',
+    requestId: 'req-platform-role-facts-audit-query',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(auditRoute.status, 200);
+  const auditPayload = JSON.parse(auditRoute.body);
+  assert.equal(auditPayload.total, 1);
+  assert.equal(auditPayload.events[0].event_type, 'auth.platform_role_facts.updated');
+  assert.equal(auditPayload.events[0].request_id, 'req-platform-role-facts-audit');
+  assert.equal(auditPayload.events[0].traceparent, traceparent);
+  assert.equal(auditPayload.events[0].target_type, 'user');
+  assert.equal(auditPayload.events[0].target_id, 'platform-role-target-user');
+});
+
 test('POST /platform/roles rejects case-insensitive duplicate code with stable 409 semantics', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-2');

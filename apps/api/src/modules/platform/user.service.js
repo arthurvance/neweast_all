@@ -384,6 +384,7 @@ const createPlatformUserService = ({ authService } = {}) => {
     requestId,
     accessToken,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -440,6 +441,7 @@ const createPlatformUserService = ({ authService } = {}) => {
     try {
       statusUpdateResult = await authService.updatePlatformUserStatus({
         requestId: resolvedRequestId,
+        traceparent,
         userId: parsedPayload.userId,
         nextStatus: parsedPayload.nextStatus,
         operatorUserId,

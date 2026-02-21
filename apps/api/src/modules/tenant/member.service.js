@@ -1323,6 +1323,7 @@ const createTenantMemberService = ({ authService } = {}) => {
     accessToken,
     params = {},
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1363,6 +1364,7 @@ const createTenantMemberService = ({ authService } = {}) => {
     try {
       updatedMembership = await authService.updateTenantMemberStatus({
         requestId: resolvedRequestId,
+        traceparent,
         accessToken,
         membershipId: parsedInput.membershipId,
         nextStatus: parsedInput.nextStatus,
@@ -1917,6 +1919,7 @@ const createTenantMemberService = ({ authService } = {}) => {
     accessToken,
     params = {},
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1956,6 +1959,7 @@ const createTenantMemberService = ({ authService } = {}) => {
     try {
       bindings = await authService.replaceTenantMemberRoleBindings({
         requestId: resolvedRequestId,
+        traceparent,
         tenantId: activeTenantId,
         membershipId: parsedInput.membershipId,
         roleIds: parsedInput.roleIds,

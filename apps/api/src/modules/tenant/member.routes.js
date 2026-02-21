@@ -95,6 +95,7 @@ const createTenantMemberHandlers = (tenantMemberService) => {
       authorization,
       params,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       tenantMemberService.updateMemberStatus({
@@ -106,6 +107,7 @@ const createTenantMemberHandlers = (tenantMemberService) => {
         }),
         params: params || {},
         payload: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -167,6 +169,7 @@ const createTenantMemberHandlers = (tenantMemberService) => {
       authorization,
       params,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       tenantMemberService.replaceMemberRoles({
@@ -178,6 +181,7 @@ const createTenantMemberHandlers = (tenantMemberService) => {
         }),
         params: params || {},
         payload: body || {},
+        traceparent,
         authorizationContext
       })
   };

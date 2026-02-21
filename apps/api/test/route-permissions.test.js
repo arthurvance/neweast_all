@@ -184,6 +184,18 @@ test('tenant role governance routes expose explicit permission declarations', ()
   assert.equal(tenantRolePermissionUpdate.permission_code, 'tenant.member_admin.operate');
 });
 
+test('tenant audit query route exposes explicit permission declaration', () => {
+  const tenantAuditEvents = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/audit/events'
+  });
+
+  assert.ok(tenantAuditEvents);
+  assert.equal(tenantAuditEvents.access, 'protected');
+  assert.equal(tenantAuditEvents.scope, 'tenant');
+  assert.equal(tenantAuditEvents.permission_code, 'tenant.member_admin.view');
+});
+
 test('platform protected auth route exposes explicit permission declaration', () => {
   const platformMemberAdminProbe = findRouteDefinition({
     method: 'GET',
@@ -203,6 +215,18 @@ test('platform protected auth route exposes explicit permission declaration', ()
   assert.equal(platformMemberAdminProvisionUser.access, 'protected');
   assert.equal(platformMemberAdminProvisionUser.scope, 'platform');
   assert.equal(platformMemberAdminProvisionUser.permission_code, 'platform.member_admin.operate');
+});
+
+test('platform audit query route exposes explicit permission declaration', () => {
+  const platformAuditEvents = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/audit/events'
+  });
+
+  assert.ok(platformAuditEvents);
+  assert.equal(platformAuditEvents.access, 'protected');
+  assert.equal(platformAuditEvents.scope, 'platform');
+  assert.equal(platformAuditEvents.permission_code, 'platform.member_admin.view');
 });
 
 test('platform role-facts replace route exposes explicit permission declaration', () => {

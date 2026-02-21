@@ -27,6 +27,10 @@ const {
   PLATFORM_USER_STATUS_ROUTE_KEY
 } = require('./modules/platform/user.constants');
 const {
+  PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
+  TENANT_AUDIT_EVENTS_ROUTE_KEY
+} = require('./modules/audit/audit.constants');
+const {
   TENANT_MEMBER_LIST_ROUTE_KEY,
   TENANT_MEMBER_CREATE_ROUTE_KEY,
   TENANT_MEMBER_DETAIL_ROUTE_KEY,
@@ -121,6 +125,7 @@ const parseRequestQuery = (search = '') => {
 const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+const MAX_TRACEPARENT_LENGTH = 128;
 const OWNER_TRANSFER_ORG_ID_MAX_LENGTH = 64;
 const DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 30 * 1000;
@@ -498,6 +503,23 @@ const resolveRequestId = ({ requestId, headers = {} } = {}) => {
     return normalizedRequestId;
   }
   return resolveRequestIdFromHeaders(headers);
+};
+
+const normalizeTraceparent = (headers = {}) => {
+  const rawTraceparent = readHeaderValue(headers, 'traceparent');
+  if (!rawTraceparent.present || rawTraceparent.values.length !== 1) {
+    return null;
+  }
+  const normalized = String(rawTraceparent.value || '').trim();
+  if (
+    !normalized
+    || normalized.length > MAX_TRACEPARENT_LENGTH
+    || normalized.includes(',')
+    || !isHeaderSafeValue('traceparent', normalized)
+  ) {
+    return null;
+  }
+  return normalized;
 };
 
 const requestIdFrom = (req) =>
@@ -1442,6 +1464,7 @@ const createRouteTable = ({
     && typeof handlers.authIdempotencyStore.releasePending === 'function'
       ? handlers.authIdempotencyStore
       : resolveDefaultAuthIdempotencyStore(handlers);
+  const traceparent = normalizeTraceparent(headers);
 
   const executeIdempotentAuthRoute = async ({
     routeKey,
@@ -1982,7 +2005,8 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2025,7 +2049,8 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2050,7 +2075,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2066,7 +2092,8 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2081,7 +2108,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 getRouteParams(),
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2108,11 +2136,23 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
       }),
+    [TENANT_AUDIT_EVENTS_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.tenantListAuditEvents(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     'GET /auth/platform/member-admin/probe': async () =>
       runAuthRoute(
         () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
@@ -2128,7 +2168,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2143,7 +2184,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2158,7 +2200,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2173,11 +2216,23 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
       }),
+    [PLATFORM_AUDIT_EVENTS_ROUTE_KEY]: async () =>
+      runAuthRoute(
+        () =>
+          handlers.platformListAuditEvents(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     [PLATFORM_ROLE_LIST_ROUTE_KEY]: async () =>
       runAuthRoute(
         () =>
@@ -2198,7 +2253,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2214,7 +2270,8 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2229,7 +2286,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 getRouteParams(),
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2256,7 +2314,8 @@ const createRouteTable = ({
                 headers.authorization,
                 getRouteParams(),
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2286,7 +2345,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )
@@ -2310,7 +2370,8 @@ const createRouteTable = ({
             requestId,
             headers.authorization,
             body || {},
-            getAuthorizationContext()
+            getAuthorizationContext(),
+            traceparent
           ),
         requestId
       ),
@@ -2324,7 +2385,8 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 body || {},
-                getAuthorizationContext()
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )

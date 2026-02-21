@@ -434,6 +434,33 @@ test('POST /platform/users/status updates user status and records governance aud
   assert.equal(lastAuditEvent.next_status, 'disabled');
 });
 
+test('POST /platform/users/status forwards traceparent to auth domain write call', async () => {
+  const harness = createHarness();
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/status',
+    method: 'POST',
+    requestId: 'req-platform-user-status-traceparent',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      traceparent
+    },
+    body: {
+      user_id: 'platform-user-target-trace',
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  assert.equal(harness.statusCalls.length, 1);
+  assert.equal(
+    harness.statusCalls[0].traceparent,
+    traceparent
+  );
+});
+
 test('POST /platform/users/status accepts status=enabled and normalizes to active', async () => {
   const harness = createHarness({
     updatePlatformUserStatus: async ({ userId, nextStatus }) => ({

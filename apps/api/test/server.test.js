@@ -103,6 +103,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/probe']);
   assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
+  assert.ok(payload.paths['/tenant/audit/events']);
   assert.ok(payload.paths['/tenant/members']);
   assert.ok(payload.paths['/tenant/members/{membership_id}']);
   assert.ok(payload.paths['/tenant/members/{membership_id}/status']);
@@ -118,6 +119,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs']);
   assert.ok(payload.paths['/platform/orgs/status']);
   assert.ok(payload.paths['/platform/orgs/owner-transfer']);
+  assert.ok(payload.paths['/platform/audit/events']);
   assert.ok(payload.paths['/platform/users']);
   assert.ok(payload.paths['/platform/users/status']);
   assert.ok(payload.paths['/smoke']);
@@ -514,6 +516,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['413']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409']);
   assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/tenant/audit/events'].get.responses['200']);
+  assert.ok(payload.paths['/tenant/audit/events'].get.responses['400']);
+  assert.ok(payload.paths['/tenant/audit/events'].get.responses['401']);
+  assert.ok(payload.paths['/tenant/audit/events'].get.responses['403']);
+  assert.ok(payload.paths['/tenant/audit/events'].get.responses['503']);
   assert.ok(payload.paths['/tenant/members'].get.responses['200']);
   assert.ok(payload.paths['/tenant/members'].get.responses['400']);
   assert.ok(payload.paths['/tenant/members'].get.responses['401']);
@@ -763,6 +770,26 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.components.schemas.DeletePlatformRoleResponse.properties.status.enum,
     ['disabled']
   );
+  assert.equal(
+    payload.components.schemas.AuditEventListResponse.properties.events.items.$ref,
+    '#/components/schemas/AuditEventRecord'
+  );
+  assert.equal(
+    payload.components.schemas.AuditEventRecord.properties.request_id.type,
+    'string'
+  );
+  assert.equal(
+    payload.paths['/platform/audit/events'].get.parameters.find(
+      (parameter) => parameter.in === 'query' && parameter.name === 'tenant_id'
+    ).schema.maxLength,
+    64
+  );
+  assert.equal(
+    payload.paths['/tenant/audit/events'].get.parameters.some(
+      (parameter) => parameter.in === 'query' && parameter.name === 'tenant_id'
+    ),
+    false
+  );
   assert.ok(
     payload.paths['/tenant/members'].get.responses['400'].content['application/problem+json']
       .examples.invalid_query
@@ -931,6 +958,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/tenant/roles/{role_id}/permissions'].put.responses['409']);
   assert.ok(payload.paths['/tenant/roles/{role_id}/permissions'].put.responses['413']);
   assert.ok(payload.paths['/tenant/roles/{role_id}/permissions'].put.responses['503']);
+  assert.ok(payload.paths['/platform/audit/events'].get.responses['200']);
+  assert.ok(payload.paths['/platform/audit/events'].get.responses['400']);
+  assert.ok(payload.paths['/platform/audit/events'].get.responses['401']);
+  assert.ok(payload.paths['/platform/audit/events'].get.responses['403']);
+  assert.ok(payload.paths['/platform/audit/events'].get.responses['503']);
   assert.ok(payload.paths['/platform/roles'].post.responses['400']);
   assert.ok(payload.paths['/platform/roles'].post.responses['401']);
   assert.ok(payload.paths['/platform/roles'].post.responses['403']);

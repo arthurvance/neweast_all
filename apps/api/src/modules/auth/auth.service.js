@@ -36,6 +36,11 @@ const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
   'tenant.member_admin.operate'
 ]);
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
+const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
+const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
+const AUDIT_EVENT_REDACTION_KEY_PATTERN =
+  /(password|token|secret|credential|private[_-]?key|access[_-]?key|api[_-]?key|signing[_-]?key)/i;
+const MAX_AUDIT_QUERY_PAGE_SIZE = 200;
 const MAX_TENANT_MEMBERSHIP_ID_LENGTH = 64;
 const MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS = 5;
 const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
@@ -152,6 +157,105 @@ const normalizeStrictRequiredStringField = (candidate) => {
     return '';
   }
   return normalized;
+};
+const normalizeAuditDomain = (domain) => {
+  const normalized = String(domain || '').trim().toLowerCase();
+  return AUDIT_EVENT_ALLOWED_DOMAINS.has(normalized) ? normalized : '';
+};
+const normalizeAuditResult = (result) => {
+  const normalized = String(result || '').trim().toLowerCase();
+  return AUDIT_EVENT_ALLOWED_RESULTS.has(normalized) ? normalized : '';
+};
+const normalizeAuditStringOrNull = (value, maxLength = 256) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = String(value).trim();
+  if (!normalized || normalized.length > maxLength) {
+    return null;
+  }
+  return normalized;
+};
+const normalizeAuditOccurredAt = (value) => {
+  if (value === null || value === undefined) {
+    return new Date().toISOString();
+  }
+  const asDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(asDate.getTime())) {
+    return new Date().toISOString();
+  }
+  return asDate.toISOString();
+};
+const parseAuditQueryTimestamp = (value) => {
+  if (value === null || value === undefined) {
+    return {
+      valid: true,
+      value: null
+    };
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return {
+        valid: false,
+        value: null
+      };
+    }
+    return {
+      valid: true,
+      value: value.toISOString()
+    };
+  }
+  if (typeof value !== 'string') {
+    return {
+      valid: false,
+      value: null
+    };
+  }
+  const normalizedValue = value.trim();
+  if (
+    !normalizedValue
+    || normalizedValue !== value
+    || CONTROL_CHAR_PATTERN.test(normalizedValue)
+  ) {
+    return {
+      valid: false,
+      value: null
+    };
+  }
+  const parsedDate = new Date(normalizedValue);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return {
+      valid: false,
+      value: null
+    };
+  }
+  return {
+    valid: true,
+    value: parsedDate.toISOString()
+  };
+};
+const sanitizeAuditState = (value, depth = 0) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (depth > 8) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeAuditState(item, depth + 1));
+  }
+  if (typeof value === 'object') {
+    const sanitized = {};
+    for (const [key, itemValue] of Object.entries(value)) {
+      if (AUDIT_EVENT_REDACTION_KEY_PATTERN.test(String(key))) {
+        sanitized[key] = '[REDACTED]';
+        continue;
+      }
+      sanitized[key] = sanitizeAuditState(itemValue, depth + 1);
+    }
+    return sanitized;
+  }
+  return value;
 };
 const resolveRawCamelSnakeField = (
   source,
@@ -572,6 +676,18 @@ const errors = {
       extensions: {
         retryable: true,
         degradation_reason: String(reason || 'dependency-unavailable').trim()
+      }
+    }),
+
+  auditDependencyUnavailable: ({ reason = 'audit-dependency-unavailable' } = {}) =>
+    authError({
+      status: 503,
+      title: 'Service Unavailable',
+      detail: '审计依赖暂不可用，请稍后重试',
+      errorCode: 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE',
+      extensions: {
+        retryable: true,
+        degradation_reason: String(reason || 'audit-dependency-unavailable').trim()
       }
     })
 };
@@ -1365,6 +1481,137 @@ const createAuthService = (options = {}) => {
       auditTrail.splice(0, auditTrail.length - MAX_AUTH_AUDIT_TRAIL_ENTRIES);
     }
     log('info', 'Auth audit event', event);
+  };
+
+  const recordPersistentAuditEvent = async ({
+    domain,
+    tenantId = null,
+    requestId = 'request_id_unset',
+    traceparent = null,
+    eventType,
+    actorUserId = null,
+    actorSessionId = null,
+    targetType,
+    targetId = null,
+    result = 'success',
+    beforeState = null,
+    afterState = null,
+    metadata = null,
+    occurredAt = null
+  } = {}) => {
+    const normalizedDomain = normalizeAuditDomain(domain);
+    const normalizedResult = normalizeAuditResult(result);
+    const normalizedEventType = normalizeAuditStringOrNull(eventType, 128);
+    const normalizedTargetType = normalizeAuditStringOrNull(targetType, 64);
+    if (
+      !normalizedDomain
+      || !normalizedResult
+      || !normalizedEventType
+      || !normalizedTargetType
+    ) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'audit-payload-invalid'
+      });
+    }
+    const normalizedTenantId = normalizeAuditStringOrNull(tenantId, 64);
+    if (normalizedDomain === 'tenant' && !normalizedTenantId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'audit-tenant-id-missing'
+      });
+    }
+    if (!authStore || typeof authStore.recordAuditEvent !== 'function') {
+      throw errors.auditDependencyUnavailable({
+        reason: 'audit-store-unsupported'
+      });
+    }
+    try {
+      return await authStore.recordAuditEvent({
+        domain: normalizedDomain,
+        tenantId: normalizedTenantId,
+        requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+        traceparent: normalizeAuditStringOrNull(traceparent, 128),
+        eventType: normalizedEventType,
+        actorUserId: normalizeAuditStringOrNull(actorUserId, 64),
+        actorSessionId: normalizeAuditStringOrNull(actorSessionId, 128),
+        targetType: normalizedTargetType,
+        targetId: normalizeAuditStringOrNull(targetId, 128),
+        result: normalizedResult,
+        beforeState: sanitizeAuditState(beforeState),
+        afterState: sanitizeAuditState(afterState),
+        metadata: sanitizeAuditState(metadata),
+        occurredAt: normalizeAuditOccurredAt(occurredAt)
+      });
+    } catch (error) {
+      throw errors.auditDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'audit-write-failed').trim().toLowerCase()
+      });
+    }
+  };
+
+  const listAuditEvents = async ({
+    domain,
+    tenantId = null,
+    page = 1,
+    pageSize = 50,
+    from = null,
+    to = null,
+    eventType = null,
+    result = null,
+    requestId = null,
+    actorUserId = null,
+    targetType = null,
+    targetId = null
+  } = {}) => {
+    const normalizedDomain = normalizeAuditDomain(domain);
+    if (!normalizedDomain) {
+      throw errors.invalidPayload();
+    }
+    const normalizedTenantId = normalizeAuditStringOrNull(tenantId, 64);
+    if (normalizedDomain === 'tenant' && !normalizedTenantId) {
+      throw errors.invalidPayload();
+    }
+    const resolvedPage = Math.max(1, Math.floor(Number(page || 1)));
+    const resolvedPageSize = Math.min(
+      MAX_AUDIT_QUERY_PAGE_SIZE,
+      Math.max(1, Math.floor(Number(pageSize || 50)))
+    );
+    const parsedFrom = parseAuditQueryTimestamp(from);
+    const parsedTo = parseAuditQueryTimestamp(to);
+    if (!parsedFrom.valid || !parsedTo.valid) {
+      throw errors.invalidPayload();
+    }
+    if (
+      parsedFrom.value
+      && parsedTo.value
+      && new Date(parsedFrom.value).getTime() > new Date(parsedTo.value).getTime()
+    ) {
+      throw errors.invalidPayload();
+    }
+    if (!authStore || typeof authStore.listAuditEvents !== 'function') {
+      throw errors.auditDependencyUnavailable({
+        reason: 'audit-store-query-unsupported'
+      });
+    }
+    try {
+      return await authStore.listAuditEvents({
+        domain: normalizedDomain,
+        tenantId: normalizedTenantId,
+        page: resolvedPage,
+        pageSize: resolvedPageSize,
+        from: parsedFrom.value,
+        to: parsedTo.value,
+        eventType: normalizeAuditStringOrNull(eventType, 128),
+        result: normalizeAuditResult(result) || null,
+        requestId: normalizeAuditStringOrNull(requestId, 128),
+        actorUserId: normalizeAuditStringOrNull(actorUserId, 64),
+        targetType: normalizeAuditStringOrNull(targetType, 64),
+        targetId: normalizeAuditStringOrNull(targetId, 128)
+      });
+    } catch (error) {
+      throw errors.auditDependencyUnavailable({
+        reason: String(error?.code || error?.message || 'audit-query-failed').trim().toLowerCase()
+      });
+    }
   };
 
   const recordIdempotencyEvent = async ({
@@ -2828,7 +3075,8 @@ const createAuthService = (options = {}) => {
     accessToken,
     currentPassword,
     newPassword,
-    authorizationContext = null
+    authorizationContext = null,
+    traceparent = null
   }) => {
     if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
       addAuditEvent({
@@ -2861,6 +3109,22 @@ const createAuthService = (options = {}) => {
       accessToken,
       authorizationContext
     });
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    const normalizedSessionEntryDomain = normalizeAuditDomain(
+      session.entryDomain || session.entry_domain || 'platform'
+    );
+    const normalizedSessionActiveTenantId = normalizeAuditStringOrNull(
+      session.activeTenantId || session.active_tenant_id,
+      64
+    );
+    const resolvedPasswordAuditDomain =
+      normalizedSessionEntryDomain === 'tenant' && normalizedSessionActiveTenantId
+        ? 'tenant'
+        : 'platform';
+    const resolvedPasswordAuditTenantId =
+      resolvedPasswordAuditDomain === 'tenant'
+        ? normalizedSessionActiveTenantId
+        : null;
     const currentPasswordValid = verifyPassword(currentPassword, user.passwordHash);
 
     if (!currentPasswordValid) {
@@ -2874,9 +3138,32 @@ const createAuthService = (options = {}) => {
           phone_masked: maskPhone(user.phone)
         }
       });
+      await recordPersistentAuditEvent({
+        domain: resolvedPasswordAuditDomain,
+        tenantId: resolvedPasswordAuditTenantId,
+        requestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.password_change.rejected',
+        actorUserId: user.id,
+        actorSessionId: session.sessionId || session.session_id || null,
+        targetType: 'user',
+        targetId: user.id,
+        result: 'rejected',
+        beforeState: {
+          session_version: Number(user.sessionVersion || 0)
+        },
+        afterState: {
+          session_version: Number(user.sessionVersion || 0)
+        },
+        metadata: {
+          reason: 'current-password-mismatch',
+          phone_masked: maskPhone(user.phone)
+        }
+      });
       throw errors.loginFailed();
     }
 
+    const previousSessionVersion = Number(user.sessionVersion || 0);
     const updatedUser = typeof authStore.updateUserPasswordAndRevokeSessions === 'function'
       ? await authStore.updateUserPasswordAndRevokeSessions({
         userId: user.id,
@@ -2903,6 +3190,27 @@ const createAuthService = (options = {}) => {
       requestId,
       userId: user.id,
       sessionId: session.sessionId || session.session_id
+    });
+    await recordPersistentAuditEvent({
+      domain: resolvedPasswordAuditDomain,
+      tenantId: resolvedPasswordAuditTenantId,
+      requestId,
+      traceparent: normalizedTraceparent,
+      eventType: 'auth.password_change.succeeded',
+      actorUserId: user.id,
+      actorSessionId: session.sessionId || session.session_id || null,
+      targetType: 'user',
+      targetId: user.id,
+      result: 'success',
+      beforeState: {
+        session_version: previousSessionVersion
+      },
+      afterState: {
+        session_version: Number(updatedUser.sessionVersion || previousSessionVersion)
+      },
+      metadata: {
+        relogin_required: true
+      }
     });
 
     return {
@@ -3482,6 +3790,7 @@ const createAuthService = (options = {}) => {
     userId,
     roles,
     authorizationContext = null,
+    traceparent = null,
     enforceRoleCatalogValidation = false
   }) => {
     if (typeof authStore.replacePlatformRolesAndSyncSnapshot !== 'function') {
@@ -3507,6 +3816,7 @@ const createAuthService = (options = {}) => {
     const operatorSessionId = String(
       authorizedRoute?.session_id || authorizedRoute?.session?.sessionId || ''
     ).trim() || null;
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
 
     const normalizedUserId = normalizeRequiredStringField(
       userId,
@@ -3592,6 +3902,57 @@ const createAuthService = (options = {}) => {
         actor_user_id: operatorUserId,
         actor_session_id: operatorSessionId,
         target_user_id: normalizedUserId,
+        session_version_changed: sessionVersionChanged,
+        sync_reason: syncReason || 'unknown'
+      }
+    });
+    const toPlatformRoleFactsAuditState = (userRecord = null) => {
+      const roleFacts = Array.isArray(userRecord?.platformRoles)
+        ? userRecord.platformRoles
+        : Array.isArray(userRecord?.platform_roles)
+          ? userRecord.platform_roles
+          : [];
+      return roleFacts
+        .map((roleFact) => ({
+          role_id: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(roleFact, 'roleId', 'role_id'),
+            64
+          ),
+          status: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(roleFact, 'status', 'status'),
+            16
+          ) || 'active'
+        }))
+        .filter((roleFact) => roleFact.role_id)
+        .sort((left, right) => left.role_id.localeCompare(right.role_id));
+    };
+    const previousSessionVersion = Number(
+      resolveRawCamelSnakeField(previousUser, 'sessionVersion', 'session_version') || 0
+    );
+    const nextSessionVersion = Number(
+      resolveRawCamelSnakeField(nextUser, 'sessionVersion', 'session_version')
+        || previousSessionVersion
+    );
+    await recordPersistentAuditEvent({
+      domain: 'platform',
+      tenantId: null,
+      requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+      traceparent: normalizedTraceparent,
+      eventType: 'auth.platform_role_facts.updated',
+      actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+      actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+      targetType: 'user',
+      targetId: normalizedUserId,
+      result: 'success',
+      beforeState: {
+        session_version: previousSessionVersion,
+        role_facts: toPlatformRoleFactsAuditState(previousUser)
+      },
+      afterState: {
+        session_version: nextSessionVersion,
+        role_facts: toPlatformRoleFactsAuditState(nextUser)
+      },
+      metadata: {
         session_version_changed: sessionVersionChanged,
         sync_reason: syncReason || 'unknown'
       }
@@ -3955,18 +4316,104 @@ const createAuthService = (options = {}) => {
   };
 
   const createOrganizationWithOwner = async ({
+    requestId = 'request_id_unset',
+    traceparent = null,
     orgId = randomUUID(),
     orgName,
     ownerUserId,
-    operatorUserId
+    operatorUserId,
+    operatorSessionId = null
   }) => {
+    const normalizedRequestId =
+      normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset';
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    const normalizedOrgId = normalizeAuditStringOrNull(orgId, 64) || randomUUID();
+    const normalizedOwnerUserId = normalizeAuditStringOrNull(ownerUserId, 64);
+    const normalizedOperatorUserId = normalizeAuditStringOrNull(operatorUserId, 64);
+    const normalizedOperatorSessionId = normalizeAuditStringOrNull(operatorSessionId, 128);
     assertStoreMethod(authStore, 'createOrganizationWithOwner', 'authStore');
-    return authStore.createOrganizationWithOwner({
-      orgId,
-      orgName,
-      ownerUserId,
-      operatorUserId
-    });
+    let createdOrg = null;
+    try {
+      createdOrg = await authStore.createOrganizationWithOwner({
+        orgId: normalizedOrgId,
+        orgName,
+        ownerUserId,
+        operatorUserId,
+        operatorSessionId: normalizedOperatorSessionId,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
+    if (!isPlainObject(createdOrg)) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'org-create-result-invalid'
+      });
+    }
+    const resolvedCreatedOrgId = normalizeAuditStringOrNull(
+      resolveRawCamelSnakeField(createdOrg, 'orgId', 'org_id'),
+      64
+    );
+    const resolvedCreatedOwnerUserId = normalizeAuditStringOrNull(
+      resolveRawCamelSnakeField(createdOrg, 'ownerUserId', 'owner_user_id'),
+      64
+    );
+    if (!resolvedCreatedOrgId || !resolvedCreatedOwnerUserId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'org-create-result-invalid'
+      });
+    }
+    if (
+      resolvedCreatedOrgId !== normalizedOrgId
+      || resolvedCreatedOwnerUserId !== normalizedOwnerUserId
+    ) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'org-create-result-target-mismatch'
+      });
+    }
+    const storeAuditRecorded = (
+      createdOrg?.auditRecorded === true
+      || createdOrg?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'tenant',
+        tenantId: normalizedOrgId,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.org.create.succeeded',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'org',
+        targetId: normalizedOrgId,
+        result: 'success',
+        beforeState: null,
+        afterState: {
+          org_id: resolvedCreatedOrgId,
+          org_name: normalizeAuditStringOrNull(orgName, 128),
+          owner_user_id: resolvedCreatedOwnerUserId
+        },
+        metadata: {
+          operator_user_id: normalizedOperatorUserId
+        }
+      });
+    }
+    const createdOrgResponse = {
+      ...(createdOrg || {})
+    };
+    delete createdOrgResponse.auditRecorded;
+    delete createdOrgResponse.audit_recorded;
+    return createdOrgResponse;
   };
 
   const acquireOwnerTransferLock = async ({
@@ -4174,6 +4621,7 @@ const createAuthService = (options = {}) => {
 
   const executeOwnerTransferTakeover = async ({
     requestId,
+    traceparent = null,
     orgId,
     newOwnerPhone,
     operatorUserId,
@@ -4232,7 +4680,14 @@ const createAuthService = (options = {}) => {
         takeoverRoleId,
         takeoverRoleCode: OWNER_TRANSFER_TAKEOVER_ROLE_CODE,
         takeoverRoleName: OWNER_TRANSFER_TAKEOVER_ROLE_NAME,
-        requiredPermissionCodes: [...OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES]
+        requiredPermissionCodes: [...OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES],
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizeAuditStringOrNull(traceparent, 128),
+          actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+          actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+          reason: normalizedReason
+        }
       });
     } catch (error) {
       if (error instanceof AuthProblemError) {
@@ -4281,6 +4736,11 @@ const createAuthService = (options = {}) => {
           newOwnerUserId: validatedNewOwnerUserId
         });
       }
+      if (normalizedStoreErrorCode === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
       throw errors.tenantMemberDependencyUnavailable({
         reason: normalizedStoreErrorCode
           || String(error?.message || 'owner-transfer-takeover-write-failed').trim()
@@ -4321,6 +4781,35 @@ const createAuthService = (options = {}) => {
         new_owner_user_id: resolvedNewOwnerUserId
       }
     });
+    const storeAuditRecorded = (
+      takeoverResult?.auditRecorded === true
+      || takeoverResult?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'tenant',
+        tenantId: resolvedOrgId,
+        requestId: normalizedRequestId,
+        traceparent: normalizeAuditStringOrNull(traceparent, 128),
+        eventType: 'auth.org.owner_transfer.executed',
+        actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+        actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+        targetType: 'org',
+        targetId: resolvedOrgId,
+        result: 'success',
+        beforeState: {
+          owner_user_id: resolvedOldOwnerUserId
+        },
+        afterState: {
+          owner_user_id: resolvedNewOwnerUserId
+        },
+        metadata: {
+          old_owner_user_id: resolvedOldOwnerUserId,
+          new_owner_user_id: resolvedNewOwnerUserId,
+          reason: normalizedReason
+        }
+      });
+    }
 
     return {
       org_id: resolvedOrgId,
@@ -4330,6 +4819,8 @@ const createAuthService = (options = {}) => {
   };
 
   const createPlatformRoleCatalogEntry = async ({
+    requestId = 'request_id_unset',
+    traceparent = null,
     roleId,
     code,
     name,
@@ -4364,22 +4855,113 @@ const createAuthService = (options = {}) => {
       scope: normalizedScope,
       tenantId
     });
+    const normalizedRequestId =
+      normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset';
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    const normalizedOperatorUserId = normalizeAuditStringOrNull(operatorUserId, 64);
+    const normalizedOperatorSessionId = normalizeAuditStringOrNull(operatorSessionId, 128);
 
     assertStoreMethod(authStore, 'createPlatformRoleCatalogEntry', 'authStore');
-    return authStore.createPlatformRoleCatalogEntry({
-      roleId: normalizedRoleId,
-      code: normalizedCode,
-      name: normalizedName,
-      status: normalizedStatus === 'enabled' ? 'active' : normalizedStatus,
-      scope: normalizedScope,
-      tenantId: normalizedTenantId,
-      isSystem: Boolean(isSystem),
-      operatorUserId,
-      operatorSessionId
-    });
+    let createdRole = null;
+    try {
+      createdRole = await authStore.createPlatformRoleCatalogEntry({
+        roleId: normalizedRoleId,
+        code: normalizedCode,
+        name: normalizedName,
+        status: normalizedStatus === 'enabled' ? 'active' : normalizedStatus,
+        scope: normalizedScope,
+        tenantId: normalizedTenantId,
+        isSystem: Boolean(isSystem),
+        operatorUserId,
+        operatorSessionId,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
+    if (!isPlainObject(createdRole)) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-create-result-invalid'
+      });
+    }
+    const resolvedCreatedRoleId = normalizeAuditStringOrNull(
+      resolveRawCamelSnakeField(createdRole, 'roleId', 'role_id'),
+      64
+    );
+    if (!resolvedCreatedRoleId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-create-result-invalid'
+      });
+    }
+    if (resolvedCreatedRoleId !== normalizedRoleId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-create-result-target-mismatch'
+      });
+    }
+    const storeAuditRecorded = (
+      createdRole?.auditRecorded === true
+      || createdRole?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
+        tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.role.catalog.created',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'role',
+        targetId: normalizedRoleId,
+        result: 'success',
+        beforeState: null,
+        afterState: {
+          role_id: normalizedRoleId,
+          code: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(createdRole, 'code', 'code'),
+            64
+          ) || normalizedCode,
+          name: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(createdRole, 'name', 'name'),
+            128
+          ) || normalizedName,
+          status: normalizePlatformRoleCatalogStatus(
+            resolveRawCamelSnakeField(createdRole, 'status', 'status')
+              || (normalizedStatus === 'enabled' ? 'active' : normalizedStatus)
+          ),
+          scope: normalizedScope,
+          tenant_id: normalizedScope === 'tenant' ? normalizedTenantId : null,
+          is_system: Boolean(
+            resolveRawCamelSnakeField(createdRole, 'isSystem', 'is_system')
+              ?? Boolean(isSystem)
+          )
+        },
+        metadata: {
+          scope: normalizedScope
+        }
+      });
+    }
+    const createdRoleResponse = {
+      ...(createdRole || {})
+    };
+    delete createdRoleResponse.auditRecorded;
+    delete createdRoleResponse.audit_recorded;
+    return createdRoleResponse;
   };
 
   const updatePlatformRoleCatalogEntry = async ({
+    requestId = 'request_id_unset',
+    traceparent = null,
     roleId,
     scope = PLATFORM_ROLE_CATALOG_SCOPE,
     tenantId = null,
@@ -4401,6 +4983,11 @@ const createAuthService = (options = {}) => {
       scope: normalizedScope,
       tenantId
     });
+    const normalizedRequestId =
+      normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset';
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    const normalizedOperatorUserId = normalizeAuditStringOrNull(operatorUserId, 64);
+    const normalizedOperatorSessionId = normalizeAuditStringOrNull(operatorSessionId, 128);
     const updates = {};
     if (code !== undefined) {
       updates.code = normalizeRequiredStringField(code, errors.invalidPayload);
@@ -4417,19 +5004,125 @@ const createAuthService = (options = {}) => {
         ? 'active'
         : normalizedStatus;
     }
-
+    let previousRole = null;
+    if (typeof authStore.findPlatformRoleCatalogEntryByRoleId === 'function') {
+      try {
+        previousRole = await authStore.findPlatformRoleCatalogEntryByRoleId({
+          roleId: normalizedRoleId,
+          scope: normalizedScope,
+          tenantId: normalizedTenantId
+        });
+      } catch (_error) {
+      }
+    }
     assertStoreMethod(authStore, 'updatePlatformRoleCatalogEntry', 'authStore');
-    return authStore.updatePlatformRoleCatalogEntry({
-      roleId: normalizedRoleId,
-      scope: normalizedScope,
-      tenantId: normalizedTenantId,
-      ...updates,
-      operatorUserId,
-      operatorSessionId
-    });
+    let updatedRole = null;
+    try {
+      updatedRole = await authStore.updatePlatformRoleCatalogEntry({
+        roleId: normalizedRoleId,
+        scope: normalizedScope,
+        tenantId: normalizedTenantId,
+        ...updates,
+        operatorUserId,
+        operatorSessionId,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
+    if (!updatedRole) {
+      return updatedRole;
+    }
+    if (!isPlainObject(updatedRole)) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-update-result-invalid'
+      });
+    }
+    const resolvedUpdatedRoleId = normalizeAuditStringOrNull(
+      resolveRawCamelSnakeField(updatedRole, 'roleId', 'role_id'),
+      64
+    );
+    if (!resolvedUpdatedRoleId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-update-result-invalid'
+      });
+    }
+    if (resolvedUpdatedRoleId !== normalizedRoleId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-update-result-target-mismatch'
+      });
+    }
+    const storeAuditRecorded = (
+      updatedRole?.auditRecorded === true
+      || updatedRole?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
+        tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.role.catalog.updated',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'role',
+        targetId: normalizedRoleId,
+        result: 'success',
+        beforeState: previousRole
+          ? {
+            code: normalizeAuditStringOrNull(
+              resolveRawCamelSnakeField(previousRole, 'code', 'code'),
+              64
+            ),
+            name: normalizeAuditStringOrNull(
+              resolveRawCamelSnakeField(previousRole, 'name', 'name'),
+              128
+            ),
+            status: normalizePlatformRoleCatalogStatus(
+              resolveRawCamelSnakeField(previousRole, 'status', 'status') || 'active'
+            )
+          }
+          : null,
+        afterState: {
+          code: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(updatedRole, 'code', 'code'),
+            64
+          ),
+          name: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(updatedRole, 'name', 'name'),
+            128
+          ),
+          status: normalizePlatformRoleCatalogStatus(
+            resolveRawCamelSnakeField(updatedRole, 'status', 'status') || 'active'
+          )
+        },
+        metadata: {
+          scope: normalizedScope,
+          changed_fields: Object.keys(updates)
+        }
+      });
+    }
+    const updatedRoleResponse = {
+      ...(updatedRole || {})
+    };
+    delete updatedRoleResponse.auditRecorded;
+    delete updatedRoleResponse.audit_recorded;
+    return updatedRoleResponse;
   };
 
   const deletePlatformRoleCatalogEntry = async ({
+    requestId = 'request_id_unset',
+    traceparent = null,
     roleId,
     scope = PLATFORM_ROLE_CATALOG_SCOPE,
     tenantId = null,
@@ -4448,14 +5141,100 @@ const createAuthService = (options = {}) => {
       scope: normalizedScope,
       tenantId
     });
+    const normalizedRequestId =
+      normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset';
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    const normalizedOperatorUserId = normalizeAuditStringOrNull(operatorUserId, 64);
+    const normalizedOperatorSessionId = normalizeAuditStringOrNull(operatorSessionId, 128);
     assertStoreMethod(authStore, 'deletePlatformRoleCatalogEntry', 'authStore');
-    return authStore.deletePlatformRoleCatalogEntry({
-      roleId: normalizedRoleId,
-      scope: normalizedScope,
-      tenantId: normalizedTenantId,
-      operatorUserId,
-      operatorSessionId
-    });
+    let deletedRole = null;
+    try {
+      deletedRole = await authStore.deletePlatformRoleCatalogEntry({
+        roleId: normalizedRoleId,
+        scope: normalizedScope,
+        tenantId: normalizedTenantId,
+        operatorUserId,
+        operatorSessionId,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
+    if (!deletedRole) {
+      return deletedRole;
+    }
+    if (!isPlainObject(deletedRole)) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-delete-result-invalid'
+      });
+    }
+    const resolvedDeletedRoleId = normalizeAuditStringOrNull(
+      resolveRawCamelSnakeField(deletedRole, 'roleId', 'role_id'),
+      64
+    );
+    if (!resolvedDeletedRoleId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-delete-result-invalid'
+      });
+    }
+    if (resolvedDeletedRoleId !== normalizedRoleId) {
+      throw errors.auditDependencyUnavailable({
+        reason: 'platform-role-delete-result-target-mismatch'
+      });
+    }
+    const storeAuditRecorded = (
+      deletedRole?.auditRecorded === true
+      || deletedRole?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
+        tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.role.catalog.deleted',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'role',
+        targetId: normalizedRoleId,
+        result: 'success',
+        beforeState: {
+          code: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(deletedRole, 'code', 'code'),
+            64
+          ),
+          name: normalizeAuditStringOrNull(
+            resolveRawCamelSnakeField(deletedRole, 'name', 'name'),
+            128
+          ),
+          status: normalizePlatformRoleCatalogStatus(
+            resolveRawCamelSnakeField(deletedRole, 'status', 'status') || 'disabled'
+          )
+        },
+        afterState: {
+          status: 'disabled'
+        },
+        metadata: {
+          scope: normalizedScope
+        }
+      });
+    }
+    const deletedRoleResponse = {
+      ...(deletedRole || {})
+    };
+    delete deletedRoleResponse.auditRecorded;
+    delete deletedRoleResponse.audit_recorded;
+    return deletedRoleResponse;
   };
 
   const listPlatformRoleCatalogEntries = async ({
@@ -4716,6 +5495,7 @@ const createAuthService = (options = {}) => {
 
   const replacePlatformRolePermissionGrants = async ({
     requestId,
+    traceparent = null,
     roleId,
     permissionCodes = [],
     operatorUserId = null,
@@ -4753,6 +5533,20 @@ const createAuthService = (options = {}) => {
       roles: [{ roleId: normalizedRoleId }],
       allowDisabledRoles: true
     });
+    let previousPermissionCodesForAudit = null;
+    let previousTargetRolePermissionCodes = null;
+    try {
+      const previousGrantsByRoleIdKey = await loadPlatformRolePermissionGrantsByRoleIds({
+        roleIds: [normalizedRoleId]
+      });
+      const resolvedPreviousPermissionCodes =
+        previousGrantsByRoleIdKey.get(normalizedTargetRoleIdKey) || [];
+      previousPermissionCodesForAudit = [...resolvedPreviousPermissionCodes];
+      previousTargetRolePermissionCodes = [...resolvedPreviousPermissionCodes];
+    } catch (_error) {
+      previousPermissionCodesForAudit = null;
+      previousTargetRolePermissionCodes = null;
+    }
 
     if (typeof authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots === 'function') {
       let atomicWriteResult;
@@ -4763,6 +5557,12 @@ const createAuthService = (options = {}) => {
             permissionCodes: normalizedPermissionCodes,
             operatorUserId,
             operatorSessionId,
+            auditContext: {
+              requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+              traceparent: normalizeAuditStringOrNull(traceparent, 128),
+              actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+              actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128)
+            },
             maxAffectedUsers: MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS
           });
       } catch (error) {
@@ -4778,6 +5578,11 @@ const createAuthService = (options = {}) => {
         if (String(error?.code || '').trim() === 'ERR_PLATFORM_ROLE_PERMISSION_SYNC_FAILED') {
           throw errors.platformSnapshotDegraded({
             reason: String(error?.syncReason || 'platform-role-permission-resync-failed')
+          });
+        }
+        if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+          throw errors.platformSnapshotDegraded({
+            reason: 'audit-write-failed'
           });
         }
         const normalizedErrorMessage = String(error?.message || '')
@@ -4899,6 +5704,35 @@ const createAuthService = (options = {}) => {
           affected_user_count: resyncedUserCount
         }
       });
+      const storeAuditRecorded = (
+        atomicWriteResult?.auditRecorded === true
+        || atomicWriteResult?.audit_recorded === true
+      );
+      if (!storeAuditRecorded) {
+        await recordPersistentAuditEvent({
+          domain: 'platform',
+          tenantId: null,
+          requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+          traceparent: normalizeAuditStringOrNull(traceparent, 128),
+          eventType: 'auth.platform_role_permission_grants.updated',
+          actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+          actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+          targetType: 'role_permission_grants',
+          targetId: normalizedRoleId,
+          result: 'success',
+          beforeState: {
+            permission_codes: Array.isArray(previousPermissionCodesForAudit)
+              ? [...previousPermissionCodesForAudit]
+              : null
+          },
+          afterState: {
+            permission_codes: [...normalizedSavedPermissionCodeKeys]
+          },
+          metadata: {
+            affected_user_count: resyncedUserCount
+          }
+        });
+      }
 
       return {
         role_id: normalizedRoleId,
@@ -4945,21 +5779,23 @@ const createAuthService = (options = {}) => {
       }
     }
 
-    let previousTargetRolePermissionCodes = [];
-    try {
-      const previousTargetRoleGrantsByRoleIdKey =
-        await loadPlatformRolePermissionGrantsByRoleIds({
-          roleIds: [normalizedRoleId]
+    if (!Array.isArray(previousTargetRolePermissionCodes)) {
+      try {
+        const previousTargetRoleGrantsByRoleIdKey =
+          await loadPlatformRolePermissionGrantsByRoleIds({
+            roleIds: [normalizedRoleId]
+          });
+        previousTargetRolePermissionCodes =
+          previousTargetRoleGrantsByRoleIdKey.get(normalizedTargetRoleIdKey) || [];
+        previousPermissionCodesForAudit = [...previousTargetRolePermissionCodes];
+      } catch (error) {
+        if (error instanceof AuthProblemError) {
+          throw error;
+        }
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-grants-query-failed'
         });
-      previousTargetRolePermissionCodes =
-        previousTargetRoleGrantsByRoleIdKey.get(normalizedTargetRoleIdKey) || [];
-    } catch (error) {
-      if (error instanceof AuthProblemError) {
-        throw error;
       }
-      throw errors.platformSnapshotDegraded({
-        reason: 'platform-role-permission-grants-query-failed'
-      });
     }
 
     let savedPermissionCodes = [];
@@ -5124,6 +5960,29 @@ const createAuthService = (options = {}) => {
         affected_user_count: resyncedUserCount
       }
     });
+    await recordPersistentAuditEvent({
+      domain: 'platform',
+      tenantId: null,
+      requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+      traceparent: normalizeAuditStringOrNull(traceparent, 128),
+      eventType: 'auth.platform_role_permission_grants.updated',
+      actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+      actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+      targetType: 'role_permission_grants',
+      targetId: normalizedRoleId,
+      result: 'success',
+      beforeState: {
+        permission_codes: Array.isArray(previousPermissionCodesForAudit)
+          ? [...previousPermissionCodesForAudit]
+          : null
+      },
+      afterState: {
+        permission_codes: [...savedPermissionCodes]
+      },
+      metadata: {
+        affected_user_count: resyncedUserCount
+      }
+    });
 
     return {
       role_id: normalizedRoleId,
@@ -5161,6 +6020,7 @@ const createAuthService = (options = {}) => {
 
   const replaceTenantRolePermissionGrants = async ({
     requestId,
+    traceparent = null,
     tenantId,
     roleId,
     permissionCodes = [],
@@ -5200,6 +6060,17 @@ const createAuthService = (options = {}) => {
       roleIds: [normalizedRoleId],
       allowDisabledRoles: true
     });
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    let previousPermissionCodesForAudit = null;
+    try {
+      const previousGrantsByRoleIdKey = await loadTenantRolePermissionGrantsByRoleIds({
+        roleIds: [normalizedRoleId]
+      });
+      previousPermissionCodesForAudit =
+        previousGrantsByRoleIdKey.get(normalizePlatformRoleIdKey(normalizedRoleId)) || [];
+    } catch (_error) {
+      previousPermissionCodesForAudit = null;
+    }
 
     if (typeof authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots !== 'function') {
       throw errors.tenantMemberDependencyUnavailable({
@@ -5215,6 +6086,12 @@ const createAuthService = (options = {}) => {
         permissionCodes: normalizedPermissionCodes,
         operatorUserId,
         operatorSessionId,
+        auditContext: {
+          requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+          traceparent: normalizeAuditStringOrNull(traceparent, 128),
+          actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+          actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128)
+        },
         maxAffectedMemberships: MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS
       });
     } catch (error) {
@@ -5230,6 +6107,11 @@ const createAuthService = (options = {}) => {
       if (String(error?.code || '').trim() === 'ERR_TENANT_ROLE_PERMISSION_SYNC_FAILED') {
         throw errors.tenantMemberDependencyUnavailable({
           reason: String(error?.syncReason || 'tenant-role-permission-resync-failed')
+        });
+      }
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'audit-write-failed'
         });
       }
       const normalizedErrorMessage = String(error?.message || '')
@@ -5347,12 +6229,41 @@ const createAuthService = (options = {}) => {
       sessionId: operatorSessionId || 'unknown',
       detail: 'tenant role permission grants replaced and affected snapshots resynced',
       metadata: {
-        tenant_id: normalizeTenantId(tenantId),
+        tenant_id: normalizedTenantId,
         role_id: normalizedRoleId,
         permission_codes: normalizedSavedPermissionCodeKeys,
         affected_user_count: affectedUserCount
       }
     });
+    const storeAuditRecorded = (
+      atomicWriteResult?.auditRecorded === true
+      || atomicWriteResult?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'tenant',
+        tenantId: normalizedTenantId,
+        requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+        traceparent: normalizeAuditStringOrNull(traceparent, 128),
+        eventType: 'auth.tenant_role_permission_grants.updated',
+        actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+        actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+        targetType: 'role_permission_grants',
+        targetId: normalizedRoleId,
+        result: 'success',
+        beforeState: {
+          permission_codes: Array.isArray(previousPermissionCodesForAudit)
+            ? [...previousPermissionCodesForAudit]
+            : null
+        },
+        afterState: {
+          permission_codes: [...normalizedSavedPermissionCodeKeys]
+        },
+        metadata: {
+          affected_user_count: affectedUserCount
+        }
+      });
+    }
 
     return {
       role_id: normalizedRoleId,
@@ -5487,6 +6398,7 @@ const createAuthService = (options = {}) => {
 
   const replaceTenantMemberRoleBindings = async ({
     requestId,
+    traceparent = null,
     tenantId,
     membershipId,
     roleIds = [],
@@ -5527,6 +6439,8 @@ const createAuthService = (options = {}) => {
       dedupedRoleIds.set(normalizedRoleId, normalizedRoleId);
     }
     const normalizedRoleIds = [...dedupedRoleIds.values()];
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    let previousRoleIdsForAudit = null;
 
     assertStoreMethod(
       authStore,
@@ -5563,6 +6477,23 @@ const createAuthService = (options = {}) => {
       allowDisabledRoles: false
     });
 
+    if (typeof authStore.listTenantMembershipRoleBindings === 'function') {
+      try {
+        const existingRoleIds = await authStore.listTenantMembershipRoleBindings({
+          membershipId: normalizedMembershipId,
+          tenantId: normalizedTenantId
+        });
+        previousRoleIdsForAudit = normalizeStrictTenantMembershipRoleIds({
+          roleIds: existingRoleIds,
+          minCount: 0,
+          maxCount: MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS,
+          dependencyReason: 'tenant-membership-role-bindings-audit-invalid'
+        });
+      } catch (_error) {
+        previousRoleIdsForAudit = null;
+      }
+    }
+
     if (typeof authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot !== 'function') {
       throw errors.tenantMemberDependencyUnavailable({
         reason: 'tenant-membership-role-bindings-unsupported'
@@ -5577,7 +6508,13 @@ const createAuthService = (options = {}) => {
         membershipId: normalizedMembershipId,
         roleIds: normalizedRoleIds,
         operatorUserId,
-        operatorSessionId
+        operatorSessionId,
+        auditContext: {
+          requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+          actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128)
+        }
       });
     } catch (error) {
       if (error instanceof AuthProblemError) {
@@ -5595,6 +6532,11 @@ const createAuthService = (options = {}) => {
         === 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID'
       ) {
         throw errors.roleNotFound();
+      }
+      if (normalizedErrorCode === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
       }
       const normalizedErrorMessage = String(error?.message || '')
         .trim()
@@ -5706,6 +6648,35 @@ const createAuthService = (options = {}) => {
         affected_user_count: affectedUserCount
       }
     });
+    const storeAuditRecorded = (
+      writeResult?.auditRecorded === true
+      || writeResult?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'tenant',
+        tenantId: normalizedTenantId,
+        requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.tenant_membership_roles.updated',
+        actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+        actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+        targetType: 'membership_role_bindings',
+        targetId: normalizedMembershipId,
+        result: 'success',
+        beforeState: {
+          role_ids: Array.isArray(previousRoleIdsForAudit)
+            ? [...previousRoleIdsForAudit]
+            : null
+        },
+        afterState: {
+          role_ids: [...resolvedRoleIds]
+        },
+        metadata: {
+          affected_user_count: affectedUserCount
+        }
+      });
+    }
 
     return {
       membership_id: resolvedMembershipId,
@@ -5715,6 +6686,7 @@ const createAuthService = (options = {}) => {
 
   const updateOrganizationStatus = async ({
     requestId,
+    traceparent = null,
     orgId,
     nextStatus,
     operatorUserId,
@@ -5740,13 +6712,30 @@ const createAuthService = (options = {}) => {
     }
 
     assertStoreMethod(authStore, 'updateOrganizationStatus', 'authStore');
-    const result = await authStore.updateOrganizationStatus({
-      requestId: normalizedRequestId,
-      orgId: normalizedOrgId,
-      nextStatus: normalizedNextStatus,
-      operatorUserId: normalizedOperatorUserId,
-      reason: normalizedReason
-    });
+    let result = null;
+    try {
+      result = await authStore.updateOrganizationStatus({
+        requestId: normalizedRequestId,
+        orgId: normalizedOrgId,
+        nextStatus: normalizedNextStatus,
+        operatorUserId: normalizedOperatorUserId,
+        reason: normalizedReason,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizeAuditStringOrNull(traceparent, 128),
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId,
+          reason: normalizedReason
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
     if (!result) {
       throw errors.orgNotFound();
     }
@@ -5819,6 +6808,38 @@ const createAuthService = (options = {}) => {
         revoked_refresh_token_count: revokedRefreshTokenCount
       }
     });
+    const storeAuditRecorded = (
+      result?.auditRecorded === true
+      || result?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'tenant',
+        tenantId: normalizedOrgId,
+        requestId: normalizedRequestId,
+        traceparent: normalizeAuditStringOrNull(traceparent, 128),
+        eventType: 'auth.org.status.updated',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'org',
+        targetId: normalizedOrgId,
+        result: 'success',
+        beforeState: {
+          status: previousStatus
+        },
+        afterState: {
+          status: currentStatus
+        },
+        metadata: {
+          reason: normalizedReason,
+          affected_membership_count: affectedMembershipCount,
+          affected_role_count: affectedRoleCount,
+          affected_role_binding_count: affectedRoleBindingCount,
+          revoked_session_count: revokedSessionCount,
+          revoked_refresh_token_count: revokedRefreshTokenCount
+        }
+      });
+    }
 
     return {
       org_id: normalizedOrgId,
@@ -5834,6 +6855,7 @@ const createAuthService = (options = {}) => {
 
   const updatePlatformUserStatus = async ({
     requestId,
+    traceparent = null,
     userId,
     nextStatus,
     operatorUserId,
@@ -5848,6 +6870,7 @@ const createAuthService = (options = {}) => {
     const normalizedReason = reason === null || reason === undefined
       ? null
       : String(reason).trim() || null;
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
 
     if (
       !normalizedUserId
@@ -5859,13 +6882,30 @@ const createAuthService = (options = {}) => {
     }
 
     assertStoreMethod(authStore, 'updatePlatformUserStatus', 'authStore');
-    const result = await authStore.updatePlatformUserStatus({
-      requestId: normalizedRequestId,
-      userId: normalizedUserId,
-      nextStatus: normalizedNextStatus,
-      operatorUserId: normalizedOperatorUserId,
-      reason: normalizedReason
-    });
+    let result;
+    try {
+      result = await authStore.updatePlatformUserStatus({
+        requestId: normalizedRequestId,
+        userId: normalizedUserId,
+        nextStatus: normalizedNextStatus,
+        operatorUserId: normalizedOperatorUserId,
+        reason: normalizedReason,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId,
+          reason: normalizedReason
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
     if (!result) {
       throw errors.userNotFound();
     }
@@ -5898,6 +6938,33 @@ const createAuthService = (options = {}) => {
         reason: normalizedReason
       }
     });
+    const storeAuditRecorded = (
+      result?.auditRecorded === true
+      || result?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'platform',
+        tenantId: null,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.platform.user.status.updated',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'user',
+        targetId: normalizedUserId,
+        result: 'success',
+        beforeState: {
+          status: previousStatus
+        },
+        afterState: {
+          status: currentStatus
+        },
+        metadata: {
+          reason: normalizedReason
+        }
+      });
+    }
 
     return {
       user_id: normalizedUserId,
@@ -6784,6 +7851,7 @@ const createAuthService = (options = {}) => {
 
   const updateTenantMemberStatus = async ({
     requestId,
+    traceparent = null,
     accessToken,
     membershipId,
     nextStatus,
@@ -6816,6 +7884,8 @@ const createAuthService = (options = {}) => {
     ) {
       throw errors.invalidPayload();
     }
+    const normalizedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
 
     const normalizedAuthorizedRoute =
       authorizedRoute && typeof authorizedRoute === 'object'
@@ -6852,7 +7922,7 @@ const createAuthService = (options = {}) => {
       resolvedAuthorizedRoute = normalizedAuthorizedRoute;
     } else {
       resolvedAuthorizedRoute = await authorizeRoute({
-        requestId,
+        requestId: normalizedRequestId,
         accessToken,
         permissionCode: 'tenant.member_admin.operate',
         scope: 'tenant',
@@ -6875,9 +7945,21 @@ const createAuthService = (options = {}) => {
         tenantId: activeTenantId,
         nextStatus: normalizedNextStatus,
         operatorUserId,
-        reason: normalizedReason
+        reason: normalizedReason,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: operatorUserId,
+          actorSessionId: operatorSessionId,
+          reason: normalizedReason
+        }
       });
     } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
       throw errors.tenantMemberDependencyUnavailable({
         reason: String(error?.code || error?.message || 'write-failed')
       });
@@ -6923,7 +8005,7 @@ const createAuthService = (options = {}) => {
     }
     addAuditEvent({
       type: 'auth.tenant.member.status.updated',
-      requestId,
+      requestId: normalizedRequestId,
       userId: operatorUserId || 'unknown',
       sessionId: operatorSessionId || 'unknown',
       detail: previousStatus === currentStatus
@@ -6938,6 +8020,36 @@ const createAuthService = (options = {}) => {
         reason: normalizedReason
       }
     });
+    const storeAuditRecorded = (
+      result?.auditRecorded === true
+      || result?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'tenant',
+        tenantId: resolvedTenantId,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.tenant.member.status.updated',
+        actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+        actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+        targetType: 'membership',
+        targetId: resolvedMembershipId,
+        result: 'success',
+        beforeState: {
+          status: previousStatus
+        },
+        afterState: {
+          status: currentStatus
+        },
+        metadata: {
+          target_user_id: String(result.user_id || '').trim() || null,
+          tenant_id: resolvedTenantId,
+          membership_id: resolvedMembershipId,
+          reason: normalizedReason
+        }
+      });
+    }
     return {
       membership_id: resolvedMembershipId,
       user_id: String(result.user_id || '').trim(),
@@ -7116,6 +8228,7 @@ const createAuthService = (options = {}) => {
     updatePlatformUserStatus,
     rollbackProvisionedUserIdentity,
     replacePlatformRolesAndSyncSnapshot,
+    listAuditEvents,
     recordIdempotencyEvent,
     // Test support
     _internals: {

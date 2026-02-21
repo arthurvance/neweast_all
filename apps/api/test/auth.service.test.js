@@ -4034,6 +4034,105 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
   );
 });
 
+test('replacePlatformRolePermissionGrants skips out-of-transaction audit fallback when atomic store reports audit_recorded', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_audit_recorded_target',
+    code: 'PLATFORM_ATOMIC_AUDIT_RECORDED_TARGET',
+    name: 'Platform Atomic Audit Recorded Target'
+  });
+
+  const authStore = service._internals.authStore;
+  const originalReplaceAtomic =
+    authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots;
+  const originalRecordAuditEvent = authStore.recordAuditEvent;
+  authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async ({
+    roleId,
+    permissionCodes,
+    auditContext
+  }) => {
+    assert.equal(roleId, 'platform_atomic_audit_recorded_target');
+    assert.deepEqual(permissionCodes, ['platform.member_admin.view']);
+    assert.equal(typeof auditContext, 'object');
+    assert.equal(
+      String(auditContext?.requestId || ''),
+      'req-platform-role-permission-atomic-audit-recorded'
+    );
+    assert.equal(String(auditContext?.actorUserId || ''), 'platform-role-facts-operator');
+    assert.equal(String(auditContext?.actorSessionId || ''), 'platform-role-facts-session');
+    return {
+      roleId: 'platform_atomic_audit_recorded_target',
+      permissionCodes: ['platform.member_admin.view'],
+      affectedUserIds: [],
+      affectedUserCount: 0,
+      audit_recorded: true
+    };
+  };
+  authStore.recordAuditEvent = async () => {
+    throw new Error('recordAuditEvent-should-not-be-called');
+  };
+
+  try {
+    const result = await service.replacePlatformRolePermissionGrants({
+      requestId: 'req-platform-role-permission-atomic-audit-recorded',
+      traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      roleId: 'platform_atomic_audit_recorded_target',
+      permissionCodes: ['platform.member_admin.view'],
+      operatorUserId: 'platform-role-facts-operator',
+      operatorSessionId: 'platform-role-facts-session'
+    });
+
+    assert.deepEqual(result, {
+      role_id: 'platform_atomic_audit_recorded_target',
+      permission_codes: ['platform.member_admin.view'],
+      affected_user_count: 0
+    });
+  } finally {
+    authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots =
+      originalReplaceAtomic;
+    authStore.recordAuditEvent = originalRecordAuditEvent;
+  }
+});
+
+test('replacePlatformRolePermissionGrants maps ERR_AUDIT_WRITE_FAILED from atomic store to platform snapshot degraded', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'platform_atomic_audit_failed_target',
+    code: 'PLATFORM_ATOMIC_AUDIT_FAILED_TARGET',
+    name: 'Platform Atomic Audit Failed Target'
+  });
+
+  service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => {
+    const error = new Error('platform-atomic-audit-write-failed');
+    error.code = 'ERR_AUDIT_WRITE_FAILED';
+    throw error;
+  };
+
+  await assert.rejects(
+    () =>
+      service.replacePlatformRolePermissionGrants({
+        requestId: 'req-platform-role-permission-atomic-audit-failed',
+        roleId: 'platform_atomic_audit_failed_target',
+        permissionCodes: ['platform.member_admin.view'],
+        operatorUserId: 'platform-role-facts-operator',
+        operatorSessionId: 'platform-role-facts-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
+      return true;
+    }
+  );
+});
+
 test('platform role facts replace canonicalizes role_id to lowercase under role catalog validation', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -7423,6 +7522,119 @@ test('in-memory createOrganizationWithOwner mirrors mysql data-too-long error fo
   );
 });
 
+test('createOrganizationWithOwner skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const service = createAuthService({
+    authStore: {
+      createOrganizationWithOwner: async ({
+        orgId,
+        orgName,
+        ownerUserId,
+        operatorUserId,
+        operatorSessionId,
+        auditContext
+      }) => {
+        assert.equal(orgId, 'org-create-atomic-audit');
+        assert.equal(orgName, 'Atomic Audit Org');
+        assert.equal(ownerUserId, 'owner-user');
+        assert.equal(operatorUserId, 'operator-user');
+        assert.equal(operatorSessionId, 'operator-session');
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext?.requestId || ''), 'req-org-create-atomic-audit');
+        assert.equal(
+          String(auditContext?.traceparent || ''),
+          '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+        );
+        assert.equal(String(auditContext?.actorUserId || ''), 'operator-user');
+        assert.equal(String(auditContext?.actorSessionId || ''), 'operator-session');
+        return {
+          org_id: orgId,
+          owner_user_id: ownerUserId,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const createdOrg = await service.createOrganizationWithOwner({
+    requestId: 'req-org-create-atomic-audit',
+    traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+    orgId: 'org-create-atomic-audit',
+    orgName: 'Atomic Audit Org',
+    ownerUserId: 'owner-user',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(createdOrg, {
+    org_id: 'org-create-atomic-audit',
+    owner_user_id: 'owner-user'
+  });
+});
+
+test('createOrganizationWithOwner maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    authStore: {
+      createOrganizationWithOwner: async () => {
+        const error = new Error('org-create-audit-write-failed');
+        error.code = 'ERR_AUDIT_WRITE_FAILED';
+        throw error;
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.createOrganizationWithOwner({
+        requestId: 'req-org-create-audit-write-failed',
+        orgId: 'org-create-audit-write-failed',
+        orgName: 'Org Create Audit Failed',
+        ownerUserId: 'owner-user',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
+      return true;
+    }
+  );
+});
+
+test('createOrganizationWithOwner rejects malformed dependency result payload', async () => {
+  const service = createAuthService({
+    authStore: {
+      createOrganizationWithOwner: async () => ({})
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.createOrganizationWithOwner({
+        requestId: 'req-org-create-result-invalid',
+        orgId: 'org-create-result-invalid',
+        orgName: 'Org Create Result Invalid',
+        ownerUserId: 'owner-user',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'org-create-result-invalid');
+      return true;
+    }
+  );
+});
+
 test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant access removed after re-enable', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -7738,6 +7950,93 @@ test('updateOrganizationStatus returns AUTH-404-ORG-NOT-FOUND for missing org', 
   );
 });
 
+test('updateOrganizationStatus skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const orgStatusById = new Map([['org-status-atomic-audit', 'active']]);
+  const service = createAuthService({
+    authStore: {
+      updateOrganizationStatus: async ({
+        orgId,
+        nextStatus,
+        auditContext
+      }) => {
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext?.requestId || ''), 'req-org-status-atomic-audit');
+        assert.equal(String(auditContext?.actorUserId || ''), 'operator-user');
+        assert.equal(String(auditContext?.actorSessionId || ''), 'operator-session');
+        assert.equal(String(auditContext?.reason || ''), 'manual-governance');
+        const previousStatus = orgStatusById.get(orgId) || 'active';
+        orgStatusById.set(orgId, nextStatus);
+        return {
+          previous_status: previousStatus,
+          current_status: nextStatus,
+          affected_membership_count: 0,
+          affected_role_count: 0,
+          affected_role_binding_count: 0,
+          revoked_session_count: 0,
+          revoked_refresh_token_count: 0,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const result = await service.updateOrganizationStatus({
+    requestId: 'req-org-status-atomic-audit',
+    orgId: 'org-status-atomic-audit',
+    nextStatus: 'disabled',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session',
+    reason: 'manual-governance'
+  });
+
+  assert.deepEqual(result, {
+    org_id: 'org-status-atomic-audit',
+    previous_status: 'active',
+    current_status: 'disabled',
+    affected_membership_count: 0,
+    affected_role_count: 0,
+    affected_role_binding_count: 0,
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0
+  });
+});
+
+test('updateOrganizationStatus maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    authStore: {
+      updateOrganizationStatus: async () => {
+        const error = new Error('org-status-audit-write-failed');
+        error.code = 'ERR_AUDIT_WRITE_FAILED';
+        throw error;
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.updateOrganizationStatus({
+        requestId: 'req-org-status-audit-write-failed',
+        orgId: 'org-status-audit-write-failed',
+        nextStatus: 'disabled',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session',
+        reason: 'manual-governance'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
+      return true;
+    }
+  );
+});
+
 test('validateOwnerTransferRequest returns normalized transfer context for active org and active candidate owner', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -7929,6 +8228,17 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
   });
   assert.equal(oldPermissionAfter.canViewMemberAdmin, true);
   assert.equal(oldPermissionAfter.canOperateMemberAdmin, true);
+  const ownerTransferAuditEvents = await service.listAuditEvents({
+    domain: 'tenant',
+    tenantId: orgId,
+    requestId: 'req-owner-transfer-execute-success',
+    eventType: 'auth.org.owner_transfer.executed'
+  });
+  assert.equal(ownerTransferAuditEvents.total, 1);
+  assert.equal(
+    ownerTransferAuditEvents.events[0]?.metadata?.reason,
+    '治理责任移交'
+  );
 });
 
 test('executeOwnerTransferTakeover uses tenant-scoped takeover role ids so cross-org transfers do not collide', async () => {
@@ -9329,6 +9639,484 @@ test('updatePlatformUserStatus treats same-status update as no-op and keeps curr
   assert.equal(logoutResult.request_id, 'req-platform-status-noop-logout');
 });
 
+test('updatePlatformUserStatus persists audit event with request_id and traceparent', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-audit-user',
+        phone: '13835550143',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-audit-operator-login'
+  );
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const result = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-status-audit',
+    traceparent,
+    userId: 'platform-status-audit-user',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id,
+    reason: 'audit-check'
+  });
+  assert.equal(result.current_status, 'disabled');
+
+  const auditEvents = await service.listAuditEvents({
+    domain: 'platform',
+    requestId: 'req-platform-status-audit',
+    eventType: 'auth.platform.user.status.updated'
+  });
+  assert.equal(auditEvents.total, 1);
+  assert.equal(auditEvents.events[0].event_type, 'auth.platform.user.status.updated');
+  assert.equal(auditEvents.events[0].request_id, 'req-platform-status-audit');
+  assert.equal(auditEvents.events[0].traceparent, traceparent);
+  assert.equal(auditEvents.events[0].target_type, 'user');
+  assert.equal(auditEvents.events[0].target_id, 'platform-status-audit-user');
+});
+
+test('updatePlatformUserStatus skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const userStatusById = new Map([['platform-user-atomic-audit', 'active']]);
+  const service = createAuthService({
+    authStore: {
+      updatePlatformUserStatus: async ({
+        userId,
+        nextStatus,
+        auditContext
+      }) => {
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext.requestId || ''), 'req-platform-user-atomic-audit');
+        const previousStatus = userStatusById.get(userId) || 'disabled';
+        userStatusById.set(userId, nextStatus);
+        return {
+          previous_status: previousStatus,
+          current_status: nextStatus,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const result = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-user-atomic-audit',
+    userId: 'platform-user-atomic-audit',
+    nextStatus: 'disabled',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(result, {
+    user_id: 'platform-user-atomic-audit',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+  assert.equal(userStatusById.get('platform-user-atomic-audit'), 'disabled');
+});
+
+test('listAuditEvents maps dependency failures to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    authStore: {
+      listAuditEvents: async () => {
+        throw new Error('invalid connection state');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.listAuditEvents({
+        domain: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'invalid connection state');
+      return true;
+    }
+  );
+});
+
+test('createPlatformRoleCatalogEntry skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const service = createAuthService({
+    authStore: {
+      createPlatformRoleCatalogEntry: async ({
+        roleId,
+        code,
+        name,
+        status,
+        scope,
+        tenantId,
+        isSystem,
+        auditContext
+      }) => {
+        assert.equal(roleId, 'platform_role_atomic_audit_recorded_target');
+        assert.equal(code, 'PLATFORM_ROLE_ATOMIC_AUDIT_RECORDED_TARGET');
+        assert.equal(name, 'Platform Role Atomic Audit Recorded Target');
+        assert.equal(status, 'active');
+        assert.equal(scope, 'platform');
+        assert.equal(tenantId, null);
+        assert.equal(isSystem, false);
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext?.requestId || ''), 'req-platform-role-create-atomic');
+        assert.equal(String(auditContext?.actorUserId || ''), 'operator-user');
+        assert.equal(String(auditContext?.actorSessionId || ''), 'operator-session');
+        return {
+          role_id: roleId,
+          code,
+          name,
+          status,
+          scope,
+          tenant_id: tenantId,
+          is_system: false,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const createdRole = await service.createPlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-create-atomic',
+    traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+    roleId: 'PLATFORM_ROLE_ATOMIC_AUDIT_RECORDED_TARGET',
+    code: 'PLATFORM_ROLE_ATOMIC_AUDIT_RECORDED_TARGET',
+    name: 'Platform Role Atomic Audit Recorded Target',
+    scope: 'platform',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(createdRole, {
+    role_id: 'platform_role_atomic_audit_recorded_target',
+    code: 'PLATFORM_ROLE_ATOMIC_AUDIT_RECORDED_TARGET',
+    name: 'Platform Role Atomic Audit Recorded Target',
+    status: 'active',
+    scope: 'platform',
+    tenant_id: null,
+    is_system: false
+  });
+});
+
+test('createPlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    authStore: {
+      createPlatformRoleCatalogEntry: async () => {
+        const error = new Error('platform-role-create-audit-write-failed');
+        error.code = 'ERR_AUDIT_WRITE_FAILED';
+        throw error;
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.createPlatformRoleCatalogEntry({
+        requestId: 'req-platform-role-create-audit-write-failed',
+        roleId: 'platform_role_create_audit_failed',
+        code: 'PLATFORM_ROLE_CREATE_AUDIT_FAILED',
+        name: 'Platform Role Create Audit Failed',
+        scope: 'platform',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
+      return true;
+    }
+  );
+});
+
+test('createPlatformRoleCatalogEntry rejects malformed dependency result payload', async () => {
+  const service = createAuthService({
+    authStore: {
+      createPlatformRoleCatalogEntry: async () => ({})
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.createPlatformRoleCatalogEntry({
+        requestId: 'req-platform-role-create-result-invalid',
+        roleId: 'platform_role_create_result_invalid',
+        code: 'PLATFORM_ROLE_CREATE_RESULT_INVALID',
+        name: 'Platform Role Create Result Invalid',
+        scope: 'platform',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(
+        error.extensions?.degradation_reason,
+        'platform-role-create-result-invalid'
+      );
+      return true;
+    }
+  );
+});
+
+test('updatePlatformRoleCatalogEntry skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const service = createAuthService({
+    authStore: {
+      findPlatformRoleCatalogEntryByRoleId: async () => ({
+        role_id: 'platform_role_update_atomic_audit_recorded_target',
+        code: 'PLATFORM_ROLE_UPDATE_OLD_CODE',
+        name: 'Platform Role Update Old Name',
+        status: 'active'
+      }),
+      updatePlatformRoleCatalogEntry: async ({
+        roleId,
+        code,
+        name,
+        status,
+        auditContext
+      }) => {
+        assert.equal(roleId, 'platform_role_update_atomic_audit_recorded_target');
+        assert.equal(code, 'PLATFORM_ROLE_UPDATE_NEW_CODE');
+        assert.equal(name, 'Platform Role Update New Name');
+        assert.equal(status, 'disabled');
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext?.requestId || ''), 'req-platform-role-update-atomic');
+        assert.equal(String(auditContext?.actorUserId || ''), 'operator-user');
+        assert.equal(String(auditContext?.actorSessionId || ''), 'operator-session');
+        return {
+          role_id: roleId,
+          code,
+          name,
+          status,
+          scope: 'platform',
+          tenant_id: '',
+          is_system: false,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const updatedRole = await service.updatePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-update-atomic',
+    traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+    roleId: 'platform_role_update_atomic_audit_recorded_target',
+    scope: 'platform',
+    code: 'PLATFORM_ROLE_UPDATE_NEW_CODE',
+    name: 'Platform Role Update New Name',
+    status: 'disabled',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(updatedRole, {
+    role_id: 'platform_role_update_atomic_audit_recorded_target',
+    code: 'PLATFORM_ROLE_UPDATE_NEW_CODE',
+    name: 'Platform Role Update New Name',
+    status: 'disabled',
+    scope: 'platform',
+    tenant_id: '',
+    is_system: false
+  });
+});
+
+test('updatePlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    authStore: {
+      updatePlatformRoleCatalogEntry: async () => {
+        const error = new Error('platform-role-update-audit-write-failed');
+        error.code = 'ERR_AUDIT_WRITE_FAILED';
+        throw error;
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.updatePlatformRoleCatalogEntry({
+        requestId: 'req-platform-role-update-audit-write-failed',
+        roleId: 'platform_role_update_audit_failed',
+        scope: 'platform',
+        code: 'PLATFORM_ROLE_UPDATE_AUDIT_FAILED',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
+      return true;
+    }
+  );
+});
+
+test('updatePlatformRoleCatalogEntry rejects malformed dependency result payload', async () => {
+  const service = createAuthService({
+    authStore: {
+      updatePlatformRoleCatalogEntry: async () => ({})
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.updatePlatformRoleCatalogEntry({
+        requestId: 'req-platform-role-update-result-invalid',
+        roleId: 'platform_role_update_result_invalid',
+        scope: 'platform',
+        code: 'PLATFORM_ROLE_UPDATE_RESULT_INVALID',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(
+        error.extensions?.degradation_reason,
+        'platform-role-update-result-invalid'
+      );
+      return true;
+    }
+  );
+});
+
+test('deletePlatformRoleCatalogEntry skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const service = createAuthService({
+    authStore: {
+      deletePlatformRoleCatalogEntry: async ({
+        roleId,
+        auditContext
+      }) => {
+        assert.equal(roleId, 'platform_role_delete_atomic_audit_recorded_target');
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext?.requestId || ''), 'req-platform-role-delete-atomic');
+        assert.equal(String(auditContext?.actorUserId || ''), 'operator-user');
+        assert.equal(String(auditContext?.actorSessionId || ''), 'operator-session');
+        return {
+          role_id: roleId,
+          code: 'PLATFORM_ROLE_DELETE_ATOMIC_AUDIT_RECORDED_TARGET',
+          name: 'Platform Role Delete Atomic Audit Recorded Target',
+          status: 'disabled',
+          scope: 'platform',
+          tenant_id: '',
+          is_system: false,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const deletedRole = await service.deletePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-delete-atomic',
+    traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+    roleId: 'platform_role_delete_atomic_audit_recorded_target',
+    scope: 'platform',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(deletedRole, {
+    role_id: 'platform_role_delete_atomic_audit_recorded_target',
+    code: 'PLATFORM_ROLE_DELETE_ATOMIC_AUDIT_RECORDED_TARGET',
+    name: 'Platform Role Delete Atomic Audit Recorded Target',
+    status: 'disabled',
+    scope: 'platform',
+    tenant_id: '',
+    is_system: false
+  });
+});
+
+test('deletePlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
+  const service = createAuthService({
+    authStore: {
+      deletePlatformRoleCatalogEntry: async () => {
+        const error = new Error('platform-role-delete-audit-write-failed');
+        error.code = 'ERR_AUDIT_WRITE_FAILED';
+        throw error;
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.deletePlatformRoleCatalogEntry({
+        requestId: 'req-platform-role-delete-audit-write-failed',
+        roleId: 'platform_role_delete_audit_failed',
+        scope: 'platform',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
+      return true;
+    }
+  );
+});
+
+test('deletePlatformRoleCatalogEntry rejects malformed dependency result payload', async () => {
+  const service = createAuthService({
+    authStore: {
+      deletePlatformRoleCatalogEntry: async () => ({})
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.deletePlatformRoleCatalogEntry({
+        requestId: 'req-platform-role-delete-result-invalid',
+        roleId: 'platform_role_delete_result_invalid',
+        scope: 'platform',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(
+        error.extensions?.degradation_reason,
+        'platform-role-delete-result-invalid'
+      );
+      return true;
+    }
+  );
+});
+
 test('updatePlatformUserStatus returns AUTH-404-USER-NOT-FOUND for missing user', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
@@ -9887,6 +10675,112 @@ test('updateTenantMemberStatus rejects reason containing control characters', as
   );
 });
 
+test('updateTenantMemberStatus persists audit event with request_id and traceparent', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-status-audit-target',
+        phone: '13818880601',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['tenant'],
+        tenants: [
+          {
+            membershipId: 'membership-status-audit-1',
+            tenantId: 'tenant-status-audit',
+            tenantName: 'Tenant Status Audit',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ]
+      }
+    ]
+  });
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const result = await service.updateTenantMemberStatus({
+    requestId: 'req-tenant-member-status-audit',
+    traceparent,
+    membershipId: 'membership-status-audit-1',
+    nextStatus: 'disabled',
+    reason: 'manual-governance',
+    authorizedRoute: {
+      user_id: 'tenant-status-audit-operator',
+      session_id: 'tenant-status-audit-session',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-status-audit'
+    }
+  });
+  assert.equal(result.current_status, 'disabled');
+
+  const auditEvents = await service.listAuditEvents({
+    domain: 'tenant',
+    tenantId: 'tenant-status-audit',
+    requestId: 'req-tenant-member-status-audit',
+    eventType: 'auth.tenant.member.status.updated'
+  });
+  assert.equal(auditEvents.total, 1);
+  assert.equal(auditEvents.events[0].event_type, 'auth.tenant.member.status.updated');
+  assert.equal(auditEvents.events[0].request_id, 'req-tenant-member-status-audit');
+  assert.equal(auditEvents.events[0].traceparent, traceparent);
+  assert.equal(auditEvents.events[0].target_type, 'membership');
+  assert.equal(auditEvents.events[0].target_id, result.membership_id);
+});
+
+test('updateTenantMemberStatus skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const service = createAuthService({
+    authStore: {
+      updateTenantMembershipStatus: async ({
+        membershipId,
+        nextStatus,
+        auditContext
+      }) => {
+        assert.equal(membershipId, 'membership-tenant-atomic-audit');
+        assert.equal(typeof auditContext, 'object');
+        assert.equal(String(auditContext.requestId || ''), 'req-tenant-member-status-atomic-audit');
+        return {
+          membership_id: membershipId,
+          user_id: 'tenant-user-atomic-audit',
+          tenant_id: 'tenant-a',
+          previous_status: 'active',
+          current_status: nextStatus,
+          audit_recorded: true
+        };
+      },
+      recordAuditEvent: async () => {
+        throw new Error('recordAuditEvent-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const result = await service.updateTenantMemberStatus({
+    requestId: 'req-tenant-member-status-atomic-audit',
+    membershipId: 'membership-tenant-atomic-audit',
+    nextStatus: 'disabled',
+    reason: 'manual-disable',
+    authorizedRoute: {
+      user_id: 'tenant-atomic-operator',
+      session_id: 'tenant-atomic-session',
+      entry_domain: 'tenant',
+      active_tenant_id: 'tenant-a'
+    }
+  });
+
+  assert.deepEqual(result, {
+    membership_id: 'membership-tenant-atomic-audit',
+    user_id: 'tenant-user-atomic-audit',
+    tenant_id: 'tenant-a',
+    previous_status: 'active',
+    current_status: 'disabled'
+  });
+});
+
 const buildTenantRoleBindingSeed = ({ membershipStatus = 'active' } = {}) => ({
   id: 'tenant-role-binding-user',
   phone: '13818889901',
@@ -9942,6 +10836,45 @@ test('replaceTenantMemberRoleBindings rejects non-active memberships', async () 
       }
     );
   }
+});
+
+test('replaceTenantMemberRoleBindings persists audit event with request_id and traceparent', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_audit_target',
+    code: 'TENANT_ROLE_BINDING_AUDIT_TARGET',
+    name: 'Tenant Role Binding Audit Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const result = await service.replaceTenantMemberRoleBindings({
+    requestId: 'req-tenant-role-binding-audit',
+    traceparent,
+    tenantId: 'tenant-role-binding',
+    membershipId: 'membership-role-binding-1',
+    roleIds: ['tenant_role_binding_audit_target'],
+    operatorUserId: 'tenant-role-binding-user',
+    operatorSessionId: 'tenant-role-binding-session'
+  });
+  assert.equal(result.membership_id, 'membership-role-binding-1');
+
+  const auditEvents = await service.listAuditEvents({
+    domain: 'tenant',
+    tenantId: 'tenant-role-binding',
+    requestId: 'req-tenant-role-binding-audit',
+    eventType: 'auth.tenant_membership_roles.updated'
+  });
+  assert.equal(auditEvents.total, 1);
+  assert.equal(auditEvents.events[0].event_type, 'auth.tenant_membership_roles.updated');
+  assert.equal(auditEvents.events[0].request_id, 'req-tenant-role-binding-audit');
+  assert.equal(auditEvents.events[0].traceparent, traceparent);
+  assert.equal(auditEvents.events[0].target_type, 'membership_role_bindings');
+  assert.equal(auditEvents.events[0].target_id, 'membership-role-binding-1');
 });
 
 test('replaceTenantMemberRoleBindings maps store-level non-active membership race to tenant membership not found', async () => {
@@ -11086,6 +12019,115 @@ test('replaceTenantRolePermissionGrants fails closed when store write result con
       assert.ok(error instanceof AuthProblemError);
       assert.equal(error.status, 503);
       assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('replaceTenantRolePermissionGrants skips out-of-transaction audit fallback when atomic store reports audit_recorded', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_atomic_audit_recorded_target',
+    code: 'TENANT_ROLE_PERMISSION_ATOMIC_AUDIT_RECORDED_TARGET',
+    name: 'Tenant Role Permission Atomic Audit Recorded Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  const authStore = service._internals.authStore;
+  const originalReplaceAtomic =
+    authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots;
+  const originalRecordAuditEvent = authStore.recordAuditEvent;
+  authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async ({
+    tenantId,
+    roleId,
+    permissionCodes,
+    auditContext
+  }) => {
+    assert.equal(tenantId, 'tenant-role-binding');
+    assert.equal(roleId, 'tenant_role_permission_atomic_audit_recorded_target');
+    assert.deepEqual(permissionCodes, ['tenant.member_admin.view']);
+    assert.equal(typeof auditContext, 'object');
+    assert.equal(
+      String(auditContext?.requestId || ''),
+      'req-tenant-role-permission-atomic-audit-recorded'
+    );
+    assert.equal(String(auditContext?.actorUserId || ''), 'tenant-role-binding-user');
+    assert.equal(String(auditContext?.actorSessionId || ''), 'tenant-role-binding-session');
+    return {
+      roleId: 'tenant_role_permission_atomic_audit_recorded_target',
+      permissionCodes: ['tenant.member_admin.view'],
+      affectedUserIds: ['tenant-role-binding-user'],
+      affectedUserCount: 1,
+      audit_recorded: true
+    };
+  };
+  authStore.recordAuditEvent = async () => {
+    throw new Error('recordAuditEvent-should-not-be-called');
+  };
+
+  try {
+    const result = await service.replaceTenantRolePermissionGrants({
+      requestId: 'req-tenant-role-permission-atomic-audit-recorded',
+      traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      tenantId: 'tenant-role-binding',
+      roleId: 'tenant_role_permission_atomic_audit_recorded_target',
+      permissionCodes: ['tenant.member_admin.view'],
+      operatorUserId: 'tenant-role-binding-user',
+      operatorSessionId: 'tenant-role-binding-session'
+    });
+
+    assert.deepEqual(result, {
+      role_id: 'tenant_role_permission_atomic_audit_recorded_target',
+      permission_codes: ['tenant.member_admin.view'],
+      affected_user_count: 1
+    });
+  } finally {
+    authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots =
+      originalReplaceAtomic;
+    authStore.recordAuditEvent = originalRecordAuditEvent;
+  }
+});
+
+test('replaceTenantRolePermissionGrants maps ERR_AUDIT_WRITE_FAILED from atomic store to tenant dependency unavailable', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_permission_atomic_audit_failed_target',
+    code: 'TENANT_ROLE_PERMISSION_ATOMIC_AUDIT_FAILED_TARGET',
+    name: 'Tenant Role Permission Atomic Audit Failed Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => {
+    const error = new Error('tenant-atomic-audit-write-failed');
+    error.code = 'ERR_AUDIT_WRITE_FAILED';
+    throw error;
+  };
+
+  await assert.rejects(
+    () =>
+      service.replaceTenantRolePermissionGrants({
+        requestId: 'req-tenant-role-permission-atomic-audit-failed',
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_permission_atomic_audit_failed_target',
+        permissionCodes: ['tenant.member_admin.view'],
+        operatorUserId: 'tenant-role-binding-user',
+        operatorSessionId: 'tenant-role-binding-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-write-failed');
       return true;
     }
   );

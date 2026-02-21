@@ -1453,6 +1453,30 @@ test('PATCH /tenant/members/:membership_id/status updates status and forwards ro
   assert.equal(harness.statusCalls[0].authorizedRoute.active_tenant_id, 'tenant-a');
 });
 
+test('PATCH /tenant/members/:membership_id/status forwards traceparent to auth domain write call', async () => {
+  const harness = createHarness();
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-target-trace/status',
+    method: 'PATCH',
+    requestId: 'req-tenant-member-status-traceparent',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      traceparent
+    },
+    body: {
+      status: 'disabled',
+      reason: 'manual-governance'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  assert.equal(harness.statusCalls.length, 1);
+  assert.equal(harness.statusCalls[0].traceparent, traceparent);
+});
+
 test('PATCH /tenant/members/:membership_id/status allows left-to-active rejoin result with new membership_id', async () => {
   const harness = createHarness({
     updateTenantMemberStatus: async ({ nextStatus }) => ({
@@ -2106,6 +2130,32 @@ test('PUT /tenant/members/:membership_id/roles replaces role bindings with norma
   assert.deepEqual(
     harness.roleBindingWriteCalls[0].roleIds,
     ['tenant_ops_admin', 'tenant.billing_viewer']
+  );
+});
+
+test('PUT /tenant/members/:membership_id/roles forwards traceparent to auth domain write call', async () => {
+  const harness = createHarness();
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-role-write-trace/roles',
+    method: 'PUT',
+    requestId: 'req-tenant-member-role-write-trace',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      traceparent
+    },
+    body: {
+      role_ids: ['tenant_ops_admin']
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  assert.equal(harness.roleBindingWriteCalls.length, 1);
+  assert.equal(
+    harness.roleBindingWriteCalls[0].traceparent,
+    traceparent
   );
 });
 

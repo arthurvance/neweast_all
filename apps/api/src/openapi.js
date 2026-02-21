@@ -934,6 +934,167 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/tenant/audit/events': {
+      get: {
+        summary: 'List tenant-domain audit events under current active tenant context',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'query',
+            name: 'page',
+            required: false,
+            schema: { type: 'integer', minimum: 1, maximum: 100000, default: 1 }
+          },
+          {
+            in: 'query',
+            name: 'page_size',
+            required: false,
+            schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 }
+          },
+          {
+            in: 'query',
+            name: 'from',
+            required: false,
+            schema: { type: 'string', format: 'date-time' }
+          },
+          {
+            in: 'query',
+            name: 'to',
+            required: false,
+            schema: { type: 'string', format: 'date-time' }
+          },
+          {
+            in: 'query',
+            name: 'event_type',
+            required: false,
+            schema: { type: 'string', maxLength: 128 }
+          },
+          {
+            in: 'query',
+            name: 'result',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: ['success', 'rejected', 'failed']
+            }
+          },
+          {
+            in: 'query',
+            name: 'request_id',
+            required: false,
+            schema: { type: 'string', maxLength: 128 }
+          },
+          {
+            in: 'query',
+            name: 'actor_user_id',
+            required: false,
+            schema: { type: 'string', maxLength: 64 }
+          },
+          {
+            in: 'query',
+            name: 'target_type',
+            required: false,
+            schema: { type: 'string', maxLength: 64 }
+          },
+          {
+            in: 'query',
+            name: 'target_id',
+            required: false,
+            schema: { type: 'string', maxLength: 128 }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Tenant-domain audit events listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AuditEventListResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid query parameters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_query: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Tenant route blocked due to missing tenant context or insufficient permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  },
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Audit dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '审计依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE',
+                      retryable: true,
+                      degradation_reason: 'audit-query-failed',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/tenant/members': {
       get: {
         summary: 'List tenant members under current active tenant context',
@@ -3318,6 +3479,163 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/audit/events': {
+      get: {
+        summary: 'List platform-domain audit events with optional tenant filter',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'query',
+            name: 'page',
+            required: false,
+            schema: { type: 'integer', minimum: 1, maximum: 100000, default: 1 }
+          },
+          {
+            in: 'query',
+            name: 'page_size',
+            required: false,
+            schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 }
+          },
+          {
+            in: 'query',
+            name: 'from',
+            required: false,
+            schema: { type: 'string', format: 'date-time' }
+          },
+          {
+            in: 'query',
+            name: 'to',
+            required: false,
+            schema: { type: 'string', format: 'date-time' }
+          },
+          {
+            in: 'query',
+            name: 'event_type',
+            required: false,
+            schema: { type: 'string', maxLength: 128 }
+          },
+          {
+            in: 'query',
+            name: 'result',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: ['success', 'rejected', 'failed']
+            }
+          },
+          {
+            in: 'query',
+            name: 'request_id',
+            required: false,
+            schema: { type: 'string', maxLength: 128 }
+          },
+          {
+            in: 'query',
+            name: 'actor_user_id',
+            required: false,
+            schema: { type: 'string', maxLength: 64 }
+          },
+          {
+            in: 'query',
+            name: 'target_type',
+            required: false,
+            schema: { type: 'string', maxLength: 64 }
+          },
+          {
+            in: 'query',
+            name: 'target_id',
+            required: false,
+            schema: { type: 'string', maxLength: 128 }
+          },
+          {
+            in: 'query',
+            name: 'tenant_id',
+            required: false,
+            schema: { type: 'string', maxLength: 64 }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Platform-domain audit events listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AuditEventListResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid query parameters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_query: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'AUTH-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Audit dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '审计依赖暂不可用，请稍后重试',
+                      error_code: 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE',
+                      retryable: true,
+                      degradation_reason: 'audit-query-failed',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/roles': {
       get: {
         summary: 'List platform role catalog',
@@ -5608,6 +5926,52 @@ const buildOpenApiSpec = () => {
           first_login_force_password_change: { type: 'boolean', enum: [false] },
           entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
           active_tenant_id: { type: 'string', nullable: true },
+          request_id: { type: 'string' }
+        }
+      },
+      AuditEventRecord: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'event_id',
+          'domain',
+          'request_id',
+          'event_type',
+          'target_type',
+          'result',
+          'occurred_at'
+        ],
+        properties: {
+          event_id: { type: 'string' },
+          domain: { type: 'string', enum: ['platform', 'tenant'] },
+          tenant_id: { type: 'string', nullable: true },
+          request_id: { type: 'string' },
+          traceparent: { type: 'string', nullable: true },
+          event_type: { type: 'string' },
+          actor_user_id: { type: 'string', nullable: true },
+          actor_session_id: { type: 'string', nullable: true },
+          target_type: { type: 'string' },
+          target_id: { type: 'string', nullable: true },
+          result: { type: 'string', enum: ['success', 'rejected', 'failed'] },
+          before_state: { type: 'object', nullable: true, additionalProperties: true },
+          after_state: { type: 'object', nullable: true, additionalProperties: true },
+          metadata: { type: 'object', nullable: true, additionalProperties: true },
+          occurred_at: { type: 'string', format: 'date-time' }
+        }
+      },
+      AuditEventListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['domain', 'page', 'page_size', 'total', 'events', 'request_id'],
+        properties: {
+          domain: { type: 'string', enum: ['platform', 'tenant'] },
+          page: { type: 'integer', minimum: 1 },
+          page_size: { type: 'integer', minimum: 1, maximum: 200 },
+          total: { type: 'integer', minimum: 0 },
+          events: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/AuditEventRecord' }
+          },
           request_id: { type: 'string' }
         }
       },

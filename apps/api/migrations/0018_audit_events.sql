@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS audit_events (
+  event_id VARCHAR(64) NOT NULL,
+  domain VARCHAR(32) NOT NULL,
+  tenant_id VARCHAR(64) NULL,
+  request_id VARCHAR(128) NOT NULL,
+  traceparent VARCHAR(128) NULL,
+  event_type VARCHAR(128) NOT NULL,
+  actor_user_id VARCHAR(64) NULL,
+  actor_session_id VARCHAR(128) NULL,
+  target_type VARCHAR(64) NOT NULL,
+  target_id VARCHAR(128) NULL,
+  result VARCHAR(16) NOT NULL,
+  before_state JSON NULL,
+  after_state JSON NULL,
+  metadata JSON NULL,
+  occurred_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (event_id),
+  KEY idx_audit_events_domain_occurred_at (domain, occurred_at),
+  KEY idx_audit_events_request_id (request_id),
+  KEY idx_audit_events_tenant_occurred_at (tenant_id, occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

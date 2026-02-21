@@ -76,6 +76,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
       requestId,
       authorization,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       tenantRoleService.createRole({
@@ -86,6 +87,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
           permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -94,6 +96,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
       authorization,
       params = {},
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       tenantRoleService.updateRole({
@@ -105,6 +108,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
         }),
         roleId: params.role_id,
         payload: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -112,6 +116,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
       requestId,
       authorization,
       params = {},
+      traceparent = null,
       authorizationContext = null
     }) =>
       tenantRoleService.deleteRole({
@@ -122,6 +127,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
           permissionCode: TENANT_ROLE_OPERATE_PERMISSION_CODE
         }),
         roleId: params.role_id,
+        traceparent,
         authorizationContext
       }),
 
@@ -147,6 +153,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
       authorization,
       params = {},
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       tenantRoleService.replaceRolePermissions({
@@ -158,6 +165,7 @@ const createTenantRoleHandlers = (tenantRoleService) => {
         }),
         roleId: params.role_id,
         payload: body || {},
+        traceparent,
         authorizationContext
       })
   };

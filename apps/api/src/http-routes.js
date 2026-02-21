@@ -1,11 +1,13 @@
 const { authPing, createAuthHandlers } = require('./modules/auth/auth.routes');
-const { createAuthService } = require('./modules/auth/auth.service');
+const { createAuthService, AuthProblemError } = require('./modules/auth/auth.service');
 const { createPlatformOrgHandlers } = require('./modules/platform/org.routes');
 const { createPlatformOrgService } = require('./modules/platform/org.service');
 const { createPlatformRoleHandlers } = require('./modules/platform/role.routes');
 const { createPlatformRoleService } = require('./modules/platform/role.service');
 const { createPlatformUserHandlers } = require('./modules/platform/user.routes');
 const { createPlatformUserService } = require('./modules/platform/user.service');
+const { createAuditHandlers } = require('./modules/audit/audit.routes');
+const { createAuditService } = require('./modules/audit/audit.service');
 const { createTenantMemberHandlers } = require('./modules/tenant/member.routes');
 const { createTenantMemberService } = require('./modules/tenant/member.service');
 const { createTenantRoleHandlers } = require('./modules/tenant/role.routes');
@@ -15,18 +17,31 @@ const { checkDependencies } = require('./infrastructure/connectivity');
 const { log } = require('./common/logger');
 
 const DEPENDENCY_PROBE_FAILURE_DETAIL = 'dependency probe failed';
+const createAuditDependencyUnavailableError = () =>
+  new AuthProblemError({
+    status: 503,
+    title: 'Service Unavailable',
+    detail: '审计依赖暂不可用，请稍后重试',
+    errorCode: 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE',
+    extensions: {
+      retryable: true,
+      degradation_reason: 'audit-store-query-unsupported'
+    }
+  });
 
 const assertAlignedPlatformServicesAuthService = ({
   authService,
   platformOrgService,
   platformRoleService,
   platformUserService,
+  auditService,
   tenantMemberService,
   tenantRoleService
 }) => {
   const platformOrgAuthService = platformOrgService?._internals?.authService;
   const platformRoleAuthService = platformRoleService?._internals?.authService;
   const platformUserAuthService = platformUserService?._internals?.authService;
+  const auditAuthService = auditService?._internals?.authService;
   const tenantMemberAuthService = tenantMemberService?._internals?.authService;
   const tenantRoleAuthService = tenantRoleService?._internals?.authService;
   if (
@@ -164,6 +179,60 @@ const assertAlignedPlatformServicesAuthService = ({
       'createRouteHandlers requires tenantMemberService and tenantRoleService to share the same authService instance'
     );
   }
+  if (
+    authService
+    && auditAuthService
+    && authService !== auditAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires authService and auditService to share the same authService instance'
+    );
+  }
+  if (
+    platformOrgAuthService
+    && auditAuthService
+    && platformOrgAuthService !== auditAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformOrgService and auditService to share the same authService instance'
+    );
+  }
+  if (
+    platformRoleAuthService
+    && auditAuthService
+    && platformRoleAuthService !== auditAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformRoleService and auditService to share the same authService instance'
+    );
+  }
+  if (
+    platformUserAuthService
+    && auditAuthService
+    && platformUserAuthService !== auditAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformUserService and auditService to share the same authService instance'
+    );
+  }
+  if (
+    tenantMemberAuthService
+    && auditAuthService
+    && tenantMemberAuthService !== auditAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires tenantMemberService and auditService to share the same authService instance'
+    );
+  }
+  if (
+    tenantRoleAuthService
+    && auditAuthService
+    && tenantRoleAuthService !== auditAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires tenantRoleService and auditService to share the same authService instance'
+    );
+  }
 };
 
 const normalizeDependencyProbeEntry = ({
@@ -238,6 +307,7 @@ const createRouteHandlers = (config, options = {}) => {
   const preferredPlatformOrgAuthService = options.platformOrgService?._internals?.authService;
   const preferredPlatformRoleAuthService = options.platformRoleService?._internals?.authService;
   const preferredPlatformUserAuthService = options.platformUserService?._internals?.authService;
+  const preferredAuditAuthService = options.auditService?._internals?.authService;
   const preferredTenantMemberAuthService = options.tenantMemberService?._internals?.authService;
   const preferredTenantRoleAuthService = options.tenantRoleService?._internals?.authService;
   assertAlignedPlatformServicesAuthService({
@@ -245,6 +315,7 @@ const createRouteHandlers = (config, options = {}) => {
     platformOrgService: options.platformOrgService,
     platformRoleService: options.platformRoleService,
     platformUserService: options.platformUserService,
+    auditService: options.auditService,
     tenantMemberService: options.tenantMemberService,
     tenantRoleService: options.tenantRoleService
   });
@@ -253,6 +324,7 @@ const createRouteHandlers = (config, options = {}) => {
     || preferredPlatformOrgAuthService
     || preferredPlatformRoleAuthService
     || preferredPlatformUserAuthService
+    || preferredAuditAuthService
     || preferredTenantMemberAuthService
     || preferredTenantRoleAuthService
     || createAuthService();
@@ -276,6 +348,26 @@ const createRouteHandlers = (config, options = {}) => {
       authService
     });
   const platformUser = createPlatformUserHandlers(platformUserService);
+  const auditService =
+    options.auditService
+    || (
+      typeof authService?.listAuditEvents === 'function'
+        ? createAuditService({
+          authService
+        })
+        : {
+          listPlatformAuditEvents: async () => {
+            throw createAuditDependencyUnavailableError();
+          },
+          listTenantAuditEvents: async () => {
+            throw createAuditDependencyUnavailableError();
+          },
+          _internals: {
+            authService
+          }
+        }
+    );
+  const audit = createAuditHandlers(auditService);
   const tenantMemberService =
     options.tenantMemberService
     || createTenantMemberService({
@@ -408,12 +500,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformOrg.createOrg({
         requestId,
         authorization,
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -421,12 +515,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformOrg.updateOrgStatus({
         requestId,
         authorization,
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -434,12 +530,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformOrg.ownerTransfer({
         requestId,
         authorization,
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -458,12 +556,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformRole.createRole({
         requestId,
         authorization,
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -472,13 +572,15 @@ const createRouteHandlers = (config, options = {}) => {
       authorization,
       params,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformRole.updateRole({
         requestId,
         authorization,
         params: params || {},
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -486,12 +588,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       params,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformRole.deleteRole({
         requestId,
         authorization,
         params: params || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -513,13 +617,15 @@ const createRouteHandlers = (config, options = {}) => {
       authorization,
       params,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformRole.replaceRolePermissions({
         requestId,
         authorization,
         params: params || {},
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -540,12 +646,27 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       platformUser.updateUserStatus({
         requestId,
         authorization,
         body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
+    platformListAuditEvents: async (
+      requestId,
+      authorization,
+      query,
+      authorizationContext
+    ) =>
+      audit.listPlatformAuditEvents({
+        requestId,
+        authorization,
+        query: query || {},
         authorizationContext
       }),
 
@@ -593,13 +714,15 @@ const createRouteHandlers = (config, options = {}) => {
       authorization,
       params,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       tenantMember.updateMemberStatus({
         requestId,
         authorization,
         params: params || {},
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -649,13 +772,15 @@ const createRouteHandlers = (config, options = {}) => {
       authorization,
       params,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       tenantMember.replaceMemberRoles({
         requestId,
         authorization,
         params: params || {},
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -674,12 +799,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       tenantRole.createRole({
         requestId,
         authorization,
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -688,13 +815,15 @@ const createRouteHandlers = (config, options = {}) => {
       authorization,
       params,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       tenantRole.updateRole({
         requestId,
         authorization,
         params: params || {},
         body: body || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -702,12 +831,14 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       params,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       tenantRole.deleteRole({
         requestId,
         authorization,
         params: params || {},
+        traceparent,
         authorizationContext
       }),
 
@@ -729,13 +860,28 @@ const createRouteHandlers = (config, options = {}) => {
       authorization,
       params,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       tenantRole.replaceRolePermissions({
         requestId,
         authorization,
         params: params || {},
         body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
+    tenantListAuditEvents: async (
+      requestId,
+      authorization,
+      query,
+      authorizationContext
+    ) =>
+      audit.listTenantAuditEvents({
+        requestId,
+        authorization,
+        query: query || {},
         authorizationContext
       }),
 
@@ -756,26 +902,30 @@ const createRouteHandlers = (config, options = {}) => {
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       auth.changePassword({
         requestId,
         authorization,
         body: body || {},
-        authorizationContext
+        authorizationContext,
+        traceparent
       }),
 
     authReplacePlatformRoleFacts: async (
       requestId,
       authorization,
       body,
-      authorizationContext
+      authorizationContext,
+      traceparent = null
     ) =>
       auth.replacePlatformRoleFacts({
         requestId,
         authorization,
         body: body || {},
-        authorizationContext
+        authorizationContext,
+        traceparent
       }),
 
     openapi: () => buildOpenApiSpec()
@@ -805,6 +955,7 @@ const createRouteHandlers = (config, options = {}) => {
     platformOrgService,
     platformRoleService,
     platformUserService,
+    auditService,
     tenantMemberService,
     tenantRoleService
   };

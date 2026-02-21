@@ -421,6 +421,48 @@ test('0017 down migration is an explicit no-op rollback marker', () => {
   assert.match(sql, /SELECT/i);
 });
 
+test('0018 migration defines audit_events table with required query indexes', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0018_audit_events.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS audit_events/i);
+  assert.match(sql, /event_id/i);
+  assert.match(sql, /domain/i);
+  assert.match(sql, /tenant_id/i);
+  assert.match(sql, /request_id/i);
+  assert.match(sql, /traceparent/i);
+  assert.match(sql, /event_type/i);
+  assert.match(sql, /actor_user_id/i);
+  assert.match(sql, /actor_session_id/i);
+  assert.match(sql, /target_type/i);
+  assert.match(sql, /target_id/i);
+  assert.match(sql, /result/i);
+  assert.match(sql, /before_state/i);
+  assert.match(sql, /after_state/i);
+  assert.match(sql, /metadata/i);
+  assert.match(sql, /occurred_at/i);
+  assert.match(sql, /idx_audit_events_domain_occurred_at/i);
+  assert.match(sql, /idx_audit_events_request_id/i);
+  assert.match(sql, /idx_audit_events_tenant_occurred_at/i);
+});
+
+test('0018 down migration drops audit_events table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0018_audit_events.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP TABLE IF EXISTS audit_events/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

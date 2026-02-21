@@ -62,6 +62,7 @@ const createPlatformUserHandlers = (platformUserService) => {
       requestId,
       authorization,
       body,
+      traceparent = null,
       authorizationContext = null
     }) =>
       platformUserService.updateUserStatus({
@@ -71,6 +72,7 @@ const createPlatformUserHandlers = (platformUserService) => {
           authorizationContext
         }),
         payload: body || {},
+        traceparent,
         authorizationContext
       })
   };

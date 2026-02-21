@@ -818,6 +818,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     requestId,
     accessToken,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -908,10 +909,13 @@ const createPlatformOrgService = ({ authService } = {}) => {
     let createdOrg = null;
     try {
       createdOrg = await authService.createOrganizationWithOwner({
+        requestId: resolvedRequestId,
+        traceparent,
         orgId,
         orgName: parsedPayload.orgName,
         ownerUserId: ownerIdentity.user_id,
-        operatorUserId
+        operatorUserId,
+        operatorSessionId
       });
     } catch (error) {
       const ownerIdentityRollbackSucceeded = await rollbackOwnerIdentityIfNeeded({
@@ -1001,6 +1005,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     requestId,
     accessToken,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1058,6 +1063,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     try {
       statusUpdateResult = await authService.updateOrganizationStatus({
         requestId: resolvedRequestId,
+        traceparent,
         orgId: parsedPayload.orgId,
         nextStatus: parsedPayload.nextStatus,
         operatorUserId,
@@ -1201,6 +1207,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
     requestId,
     accessToken,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1356,6 +1363,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
       assertAuthServiceMethod('executeOwnerTransferTakeover');
       const takeoverResult = await authService.executeOwnerTransferTakeover({
         requestId: resolvedRequestId,
+        traceparent,
         orgId: parsedPayload.orgId,
         newOwnerPhone: parsedPayload.newOwnerPhone,
         operatorUserId,

@@ -841,6 +841,7 @@ const createTenantRoleService = ({ authService } = {}) => {
     requestId,
     accessToken,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -888,6 +889,8 @@ const createTenantRoleService = ({ authService } = {}) => {
     let createdRole;
     try {
       createdRole = await authService.createPlatformRoleCatalogEntry({
+        requestId: resolvedRequestId,
+        traceparent,
         roleId: parsedPayload.roleId,
         code: parsedPayload.code,
         name: parsedPayload.name,
@@ -971,6 +974,7 @@ const createTenantRoleService = ({ authService } = {}) => {
     accessToken,
     roleId,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1122,6 +1126,8 @@ const createTenantRoleService = ({ authService } = {}) => {
     let updatedRole;
     try {
       updatedRole = await authService.updatePlatformRoleCatalogEntry({
+        requestId: resolvedRequestId,
+        traceparent,
         roleId: normalizedRoleId,
         scope: TENANT_ROLE_SCOPE,
         tenantId: operatorContext.activeTenantId,
@@ -1217,6 +1223,7 @@ const createTenantRoleService = ({ authService } = {}) => {
     requestId,
     accessToken,
     roleId,
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1364,6 +1371,8 @@ const createTenantRoleService = ({ authService } = {}) => {
     let deletedRole;
     try {
       deletedRole = await authService.deletePlatformRoleCatalogEntry({
+        requestId: resolvedRequestId,
+        traceparent,
         roleId: normalizedRoleId,
         scope: TENANT_ROLE_SCOPE,
         tenantId: operatorContext.activeTenantId,
@@ -1583,6 +1592,7 @@ const createTenantRoleService = ({ authService } = {}) => {
     accessToken,
     roleId,
     payload = {},
+    traceparent = null,
     authorizationContext = null
   }) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
@@ -1643,6 +1653,7 @@ const createTenantRoleService = ({ authService } = {}) => {
     try {
       updated = await authService.replaceTenantRolePermissionGrants({
         requestId: resolvedRequestId,
+        traceparent,
         tenantId: operatorContext.activeTenantId,
         roleId: normalizedRoleId,
         permissionCodes: parsedPayload.permissionCodes,
