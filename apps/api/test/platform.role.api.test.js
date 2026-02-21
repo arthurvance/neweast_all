@@ -1403,6 +1403,125 @@ test('role permission grants update converges affected sessions and takes effect
   assert.equal(JSON.parse(targetProbeDenied.body).error_code, 'AUTH-403-FORBIDDEN');
 });
 
+test('PATCH /platform/roles/:role_id disabling role converges affected sessions and denies protected access immediately', async () => {
+  const harness = createHarness();
+  const operatorLogin = await loginOperator(
+    harness.authService,
+    'req-platform-role-login-disable-operator'
+  );
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-disable-target',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      role_id: 'platform_scope_disable_role',
+      code: 'SCOPE_DISABLE_ROLE',
+      name: '平台角色禁用即时收敛验证',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const grantPermission = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_scope_disable_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-disable-permission-replace-1',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      permission_codes: ['platform.member_admin.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(grantPermission.status, 200);
+
+  const assignRole = await dispatchApiRoute({
+    pathname: '/auth/platform/role-facts/replace',
+    method: 'POST',
+    requestId: 'req-platform-role-disable-assign-target',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      user_id: 'platform-role-target-user',
+      roles: [{ role_id: 'platform_scope_disable_role' }]
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(assignRole.status, 200);
+
+  const targetLogin = await loginByPhone(
+    harness.authService,
+    'req-platform-role-disable-login-target',
+    TARGET_PHONE
+  );
+  const targetProbeAllowed = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-platform-role-disable-probe-allowed',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeAllowed.status, 200);
+
+  const disableRole = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_scope_disable_role',
+    method: 'PATCH',
+    requestId: 'req-platform-role-disable-status-patch',
+    headers: {
+      authorization: `Bearer ${operatorLogin.access_token}`
+    },
+    body: {
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(disableRole.status, 200);
+  assert.equal(JSON.parse(disableRole.body).status, 'disabled');
+
+  const probeWithOldToken = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-platform-role-disable-probe-old-token',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(probeWithOldToken.status, 401);
+  assert.equal(JSON.parse(probeWithOldToken.body).error_code, 'AUTH-401-INVALID-ACCESS');
+
+  const targetRelogin = await loginByPhone(
+    harness.authService,
+    'req-platform-role-disable-login-target-relogin',
+    TARGET_PHONE
+  );
+  const targetProbeDenied = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-platform-role-disable-probe-denied',
+    headers: {
+      authorization: `Bearer ${targetRelogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeDenied.status, 403);
+  assert.equal(JSON.parse(targetProbeDenied.body).error_code, 'AUTH-403-FORBIDDEN');
+
+  const boundUserIds = await harness.authService._internals.authStore.listUserIdsByPlatformRoleId({
+    roleId: 'platform_scope_disable_role'
+  });
+  assert.ok(boundUserIds.includes('platform-role-target-user'));
+});
+
 test('POST /auth/platform/role-facts/replace rejects empty role list with AUTH-400-INVALID-PAYLOAD', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-empty-roles');

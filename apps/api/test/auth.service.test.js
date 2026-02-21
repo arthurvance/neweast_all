@@ -10168,6 +10168,7 @@ test('createPlatformRoleCatalogEntry rejects malformed dependency result payload
 });
 
 test('updatePlatformRoleCatalogEntry skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const persistentAuditEventTypes = [];
   const service = createAuthService({
     authStore: {
       findPlatformRoleCatalogEntryByRoleId: async () => ({
@@ -10202,8 +10203,13 @@ test('updatePlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
           audit_recorded: true
         };
       },
-      recordAuditEvent: async () => {
-        throw new Error('recordAuditEvent-should-not-be-called');
+      listUserIdsByPlatformRoleId: async () => [],
+      listPlatformRoleFactsByUserId: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async ({ eventType }) => {
+        persistentAuditEventTypes.push(String(eventType || ''));
+        return { audit_recorded: true };
       }
     },
     allowInMemoryOtpStores: true
@@ -10228,8 +10234,182 @@ test('updatePlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
     status: 'disabled',
     scope: 'platform',
     tenant_id: '',
+    is_system: false,
+    affected_user_count: 0,
+    affected_membership_count: 0
+  });
+  assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
+});
+
+test('updatePlatformRoleCatalogEntry skips status resync when status is unchanged', async () => {
+  const persistentAuditEventTypes = [];
+  const service = createAuthService({
+    authStore: {
+      findPlatformRoleCatalogEntryByRoleId: async () => ({
+        role_id: 'platform_role_update_status_unchanged_target',
+        code: 'PLATFORM_ROLE_STATUS_UNCHANGED',
+        name: 'Platform Role Status Unchanged',
+        status: 'active'
+      }),
+      updatePlatformRoleCatalogEntry: async ({ roleId, status }) => ({
+        role_id: roleId,
+        code: 'PLATFORM_ROLE_STATUS_UNCHANGED',
+        name: 'Platform Role Status Unchanged',
+        status,
+        scope: 'platform',
+        tenant_id: '',
+        is_system: false,
+        audit_recorded: true
+      }),
+      listUserIdsByPlatformRoleId: async () => {
+        throw new Error('status-resync-should-not-be-called');
+      },
+      recordAuditEvent: async ({ eventType }) => {
+        persistentAuditEventTypes.push(String(eventType || ''));
+        return { audit_recorded: true };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const updatedRole = await service.updatePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-update-status-unchanged',
+    roleId: 'platform_role_update_status_unchanged_target',
+    scope: 'platform',
+    status: 'active',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(updatedRole, {
+    role_id: 'platform_role_update_status_unchanged_target',
+    code: 'PLATFORM_ROLE_STATUS_UNCHANGED',
+    name: 'Platform Role Status Unchanged',
+    status: 'active',
+    scope: 'platform',
+    tenant_id: '',
     is_system: false
   });
+  assert.deepEqual(persistentAuditEventTypes, []);
+});
+
+test('updatePlatformRoleCatalogEntry resyncs status when previous lookup fails', async () => {
+  const persistentAuditEventTypes = [];
+  const service = createAuthService({
+    authStore: {
+      findPlatformRoleCatalogEntryByRoleId: async () => {
+        throw new Error('lookup-failed');
+      },
+      updatePlatformRoleCatalogEntry: async ({ roleId, status }) => ({
+        role_id: roleId,
+        code: 'PLATFORM_ROLE_LOOKUP_FAILED',
+        name: 'Platform Role Lookup Failed',
+        status,
+        scope: 'platform',
+        tenant_id: '',
+        is_system: false,
+        audit_recorded: true
+      }),
+      listUserIdsByPlatformRoleId: async () => ['platform-user-a'],
+      listPlatformRoleFactsByUserId: async () => ([
+        {
+          role_id: 'platform_role_lookup_failed_target',
+          status: 'active'
+        }
+      ]),
+      listPlatformRolePermissionGrantsByRoleIds: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async ({ eventType }) => {
+        persistentAuditEventTypes.push(String(eventType || ''));
+        return { audit_recorded: true };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const updatedRole = await service.updatePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-update-lookup-failed',
+    roleId: 'platform_role_lookup_failed_target',
+    scope: 'platform',
+    status: 'disabled',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(updatedRole, {
+    role_id: 'platform_role_lookup_failed_target',
+    code: 'PLATFORM_ROLE_LOOKUP_FAILED',
+    name: 'Platform Role Lookup Failed',
+    status: 'disabled',
+    scope: 'platform',
+    tenant_id: '',
+    is_system: false,
+    affected_user_count: 1,
+    affected_membership_count: 0
+  });
+  assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
+});
+
+test('updatePlatformRoleCatalogEntry reports platform status sync with zero affected_membership_count', async () => {
+  const persistentAuditEventTypes = [];
+  const service = createAuthService({
+    authStore: {
+      findPlatformRoleCatalogEntryByRoleId: async () => ({
+        role_id: 'platform_role_update_nonzero_affected_target',
+        code: 'PLATFORM_ROLE_UPDATE_NONZERO_AFFECTED',
+        name: 'Platform Role Update Nonzero Affected',
+        status: 'active'
+      }),
+      updatePlatformRoleCatalogEntry: async ({ roleId, status }) => ({
+        role_id: roleId,
+        code: 'PLATFORM_ROLE_UPDATE_NONZERO_AFFECTED',
+        name: 'Platform Role Update Nonzero Affected',
+        status,
+        scope: 'platform',
+        tenant_id: '',
+        is_system: false,
+        audit_recorded: true
+      }),
+      listUserIdsByPlatformRoleId: async () => ['platform-user-a'],
+      listPlatformRoleFactsByUserId: async () => ([
+        {
+          role_id: 'platform_role_update_nonzero_affected_target',
+          status: 'active'
+        }
+      ]),
+      listPlatformRolePermissionGrantsByRoleIds: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async ({ eventType }) => {
+        persistentAuditEventTypes.push(String(eventType || ''));
+        return { audit_recorded: true };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const updatedRole = await service.updatePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-update-nonzero-affected',
+    roleId: 'platform_role_update_nonzero_affected_target',
+    scope: 'platform',
+    status: 'disabled',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(updatedRole, {
+    role_id: 'platform_role_update_nonzero_affected_target',
+    code: 'PLATFORM_ROLE_UPDATE_NONZERO_AFFECTED',
+    name: 'Platform Role Update Nonzero Affected',
+    status: 'disabled',
+    scope: 'platform',
+    tenant_id: '',
+    is_system: false,
+    affected_user_count: 1,
+    affected_membership_count: 0
+  });
+  assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
 });
 
 test('updatePlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
@@ -10296,6 +10476,7 @@ test('updatePlatformRoleCatalogEntry rejects malformed dependency result payload
 });
 
 test('deletePlatformRoleCatalogEntry skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+  const persistentAuditEventTypes = [];
   const service = createAuthService({
     authStore: {
       deletePlatformRoleCatalogEntry: async ({
@@ -10318,8 +10499,13 @@ test('deletePlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
           audit_recorded: true
         };
       },
-      recordAuditEvent: async () => {
-        throw new Error('recordAuditEvent-should-not-be-called');
+      listUserIdsByPlatformRoleId: async () => [],
+      listPlatformRoleFactsByUserId: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async ({ eventType }) => {
+        persistentAuditEventTypes.push(String(eventType || ''));
+        return { audit_recorded: true };
       }
     },
     allowInMemoryOtpStores: true
@@ -10341,8 +10527,71 @@ test('deletePlatformRoleCatalogEntry skips out-of-transaction audit fallback whe
     status: 'disabled',
     scope: 'platform',
     tenant_id: '',
-    is_system: false
+    is_system: false,
+    affected_user_count: 0,
+    affected_membership_count: 0
   });
+  assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
+});
+
+test('deletePlatformRoleCatalogEntry reports platform status sync with zero affected_membership_count', async () => {
+  const persistentAuditEventTypes = [];
+  const service = createAuthService({
+    authStore: {
+      findPlatformRoleCatalogEntryByRoleId: async () => ({
+        role_id: 'platform_role_delete_nonzero_affected_target',
+        code: 'PLATFORM_ROLE_DELETE_NONZERO_AFFECTED',
+        name: 'Platform Role Delete Nonzero Affected',
+        status: 'active'
+      }),
+      deletePlatformRoleCatalogEntry: async ({ roleId }) => ({
+        role_id: roleId,
+        code: 'PLATFORM_ROLE_DELETE_NONZERO_AFFECTED',
+        name: 'Platform Role Delete Nonzero Affected',
+        status: 'disabled',
+        scope: 'platform',
+        tenant_id: '',
+        is_system: false,
+        audit_recorded: true
+      }),
+      listUserIdsByPlatformRoleId: async () => ['platform-user-a'],
+      listPlatformRoleFactsByUserId: async () => ([
+        {
+          role_id: 'platform_role_delete_nonzero_affected_target',
+          status: 'active'
+        }
+      ]),
+      listPlatformRolePermissionGrantsByRoleIds: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async ({ eventType }) => {
+        persistentAuditEventTypes.push(String(eventType || ''));
+        return { audit_recorded: true };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const deletedRole = await service.deletePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-delete-nonzero-affected',
+    roleId: 'platform_role_delete_nonzero_affected_target',
+    scope: 'platform',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.deepEqual(deletedRole, {
+    role_id: 'platform_role_delete_nonzero_affected_target',
+    code: 'PLATFORM_ROLE_DELETE_NONZERO_AFFECTED',
+    name: 'Platform Role Delete Nonzero Affected',
+    status: 'disabled',
+    scope: 'platform',
+    tenant_id: '',
+    is_system: false,
+    affected_user_count: 1,
+    affected_membership_count: 0
+  });
+  assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
 });
 
 test('deletePlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {

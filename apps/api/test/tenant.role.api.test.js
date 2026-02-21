@@ -1655,6 +1655,124 @@ test('DELETE /tenant/roles/:role_id rejects disabled role deletion precondition'
   assert.equal(payload.retryable, false);
 });
 
+test('PATCH /tenant/roles/:role_id disabling role converges affected sessions and denies protected access immediately', async () => {
+  const harness = createHarness();
+  const operatorLogin = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-disable-operator',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const operatorHeaders = {
+    authorization: `Bearer ${operatorLogin.access_token}`
+  };
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-disable-target',
+    headers: operatorHeaders,
+    body: {
+      role_id: 'tenant_a_scope_disable_role',
+      code: 'TENANT_A_SCOPE_DISABLE_ROLE',
+      name: '租户角色禁用即时收敛验证',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermission = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_scope_disable_role/permissions',
+    method: 'PUT',
+    requestId: 'req-tenant-role-disable-permission-replace-1',
+    headers: operatorHeaders,
+    body: {
+      permission_codes: ['tenant.member_admin.operate']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermission.status, 200);
+
+  const replaceRoleBindings = await dispatchApiRoute({
+    pathname: '/tenant/members/membership-tenant-role-a/roles',
+    method: 'PUT',
+    requestId: 'req-tenant-role-disable-bindings-replace',
+    headers: operatorHeaders,
+    body: {
+      role_ids: ['tenant_a_scope_disable_role']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replaceRoleBindings.status, 200);
+
+  const targetLogin = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-disable-login-target',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const targetProbeAllowed = await dispatchApiRoute({
+    pathname: '/auth/tenant/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-tenant-role-disable-probe-allowed',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeAllowed.status, 200);
+
+  const disableRole = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_scope_disable_role',
+    method: 'PATCH',
+    requestId: 'req-tenant-role-disable-status-patch',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    body: {
+      status: 'disabled'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(disableRole.status, 200);
+  assert.equal(JSON.parse(disableRole.body).status, 'disabled');
+
+  const probeWithOldToken = await dispatchApiRoute({
+    pathname: '/auth/tenant/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-tenant-role-disable-probe-old-token',
+    headers: {
+      authorization: `Bearer ${targetLogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(probeWithOldToken.status, 401);
+  assert.equal(JSON.parse(probeWithOldToken.body).error_code, 'AUTH-401-INVALID-ACCESS');
+
+  const targetRelogin = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-disable-login-target-relogin',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const targetProbeDenied = await dispatchApiRoute({
+    pathname: '/auth/tenant/member-admin/probe',
+    method: 'GET',
+    requestId: 'req-tenant-role-disable-probe-denied',
+    headers: {
+      authorization: `Bearer ${targetRelogin.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(targetProbeDenied.status, 403);
+  assert.equal(JSON.parse(targetProbeDenied.body).error_code, 'AUTH-403-FORBIDDEN');
+
+  const roleBindings = await harness.authService._internals.authStore.listTenantMembershipRoleBindings({
+    membershipId: 'membership-tenant-role-a',
+    tenantId: 'tenant-a'
+  });
+  assert.ok(Array.isArray(roleBindings));
+  assert.ok(roleBindings.includes('tenant_a_scope_disable_role'));
+});
+
 test('PATCH/DELETE /tenant/roles/:role_id decode URL-encoded path params before service lookup', async () => {
   const harness = createHarness();
   const login = await loginByPhone(

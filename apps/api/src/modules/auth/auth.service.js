@@ -71,6 +71,7 @@ const SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET = new Set([
 ].map((permissionCode) => permissionCode.toLowerCase()));
 const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = 'platform.member_admin.operate';
 const PLATFORM_ROLE_CATALOG_SCOPE = 'platform';
+const TENANT_ROLE_SCOPE = 'tenant';
 const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
   'canViewMemberAdmin',
   'can_view_member_admin',
@@ -5367,6 +5368,36 @@ const createAuthService = (options = {}) => {
         reason: 'platform-role-update-result-target-mismatch'
       });
     }
+    let statusSyncResult = null;
+    if (Object.prototype.hasOwnProperty.call(updates, 'status')) {
+      const previousRoleStatusRaw = resolveRawCamelSnakeField(
+        previousRole,
+        'status',
+        'status'
+      );
+      const hasKnownPreviousRoleStatus = normalizePlatformRoleCatalogStatus(
+        previousRoleStatusRaw
+      ).length > 0;
+      const previousRoleStatus = normalizeRoleCatalogStatusForResync(
+        previousRoleStatusRaw
+      );
+      const currentRoleStatus = normalizeRoleCatalogStatusForResync(
+        resolveRawCamelSnakeField(updatedRole, 'status', 'status')
+      );
+      if (!hasKnownPreviousRoleStatus || previousRoleStatus !== currentRoleStatus) {
+        statusSyncResult = await resyncRoleStatusAffectedSnapshots({
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          roleId: normalizedRoleId,
+          scope: normalizedScope,
+          tenantId: normalizedTenantId,
+          previousStatus: previousRoleStatusRaw,
+          currentStatus: resolveRawCamelSnakeField(updatedRole, 'status', 'status'),
+          operatorUserId: normalizedOperatorUserId,
+          operatorSessionId: normalizedOperatorSessionId
+        });
+      }
+    }
     const storeAuditRecorded = (
       updatedRole?.auditRecorded === true
       || updatedRole?.audit_recorded === true
@@ -5413,13 +5444,23 @@ const createAuthService = (options = {}) => {
         },
         metadata: {
           scope: normalizedScope,
-          changed_fields: Object.keys(updates)
+          changed_fields: Object.keys(updates),
+          affected_user_count: Number(statusSyncResult?.affectedUserCount || 0),
+          affected_membership_count: Number(statusSyncResult?.affectedMembershipCount || 0)
         }
       });
     }
     const updatedRoleResponse = {
       ...(updatedRole || {})
     };
+    if (statusSyncResult) {
+      updatedRoleResponse.affected_user_count = Number(
+        statusSyncResult.affectedUserCount || 0
+      );
+      updatedRoleResponse.affected_membership_count = Number(
+        statusSyncResult.affectedMembershipCount || 0
+      );
+    }
     delete updatedRoleResponse.auditRecorded;
     delete updatedRoleResponse.audit_recorded;
     return updatedRoleResponse;
@@ -5451,6 +5492,17 @@ const createAuthService = (options = {}) => {
     const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
     const normalizedOperatorUserId = normalizeAuditStringOrNull(operatorUserId, 64);
     const normalizedOperatorSessionId = normalizeAuditStringOrNull(operatorSessionId, 128);
+    let previousRole = null;
+    if (typeof authStore.findPlatformRoleCatalogEntryByRoleId === 'function') {
+      try {
+        previousRole = await authStore.findPlatformRoleCatalogEntryByRoleId({
+          roleId: normalizedRoleId,
+          scope: normalizedScope,
+          tenantId: normalizedTenantId
+        });
+      } catch (_error) {
+      }
+    }
     assertStoreMethod(authStore, 'deletePlatformRoleCatalogEntry', 'authStore');
     let deletedRole = null;
     try {
@@ -5497,6 +5549,17 @@ const createAuthService = (options = {}) => {
         reason: 'platform-role-delete-result-target-mismatch'
       });
     }
+    const statusSyncResult = await resyncRoleStatusAffectedSnapshots({
+      requestId: normalizedRequestId,
+      traceparent: normalizedTraceparent,
+      roleId: normalizedRoleId,
+      scope: normalizedScope,
+      tenantId: normalizedTenantId,
+      previousStatus: resolveRawCamelSnakeField(previousRole, 'status', 'status'),
+      currentStatus: resolveRawCamelSnakeField(deletedRole, 'status', 'status'),
+      operatorUserId: normalizedOperatorUserId,
+      operatorSessionId: normalizedOperatorSessionId
+    });
     const storeAuditRecorded = (
       deletedRole?.auditRecorded === true
       || deletedRole?.audit_recorded === true
@@ -5530,13 +5593,21 @@ const createAuthService = (options = {}) => {
           status: 'disabled'
         },
         metadata: {
-          scope: normalizedScope
+          scope: normalizedScope,
+          affected_user_count: Number(statusSyncResult?.affectedUserCount || 0),
+          affected_membership_count: Number(statusSyncResult?.affectedMembershipCount || 0)
         }
       });
     }
     const deletedRoleResponse = {
       ...(deletedRole || {})
     };
+    deletedRoleResponse.affected_user_count = Number(
+      statusSyncResult?.affectedUserCount || 0
+    );
+    deletedRoleResponse.affected_membership_count = Number(
+      statusSyncResult?.affectedMembershipCount || 0
+    );
     delete deletedRoleResponse.auditRecorded;
     delete deletedRoleResponse.audit_recorded;
     return deletedRoleResponse;
@@ -6032,6 +6103,414 @@ const createAuthService = (options = {}) => {
           }
           : null
     }));
+
+  const normalizeRoleCatalogStatusForResync = (status) => {
+    const normalizedStatus = normalizePlatformRoleCatalogStatus(status);
+    return normalizedStatus || 'disabled';
+  };
+
+  const isPlatformCatalogRoleActiveForPermissionResync = (catalogEntry = null) => {
+    if (!catalogEntry || typeof catalogEntry !== 'object') {
+      return false;
+    }
+    const normalizedScope = normalizePlatformRoleCatalogScope(
+      resolveRawCamelSnakeField(catalogEntry, 'scope', 'scope')
+    );
+    const normalizedTenantId = normalizeTenantId(
+      resolveRawCamelSnakeField(catalogEntry, 'tenantId', 'tenant_id')
+    );
+    const normalizedStatus = normalizeRoleCatalogStatusForResync(
+      resolveRawCamelSnakeField(catalogEntry, 'status', 'status')
+    );
+    return normalizedScope === PLATFORM_ROLE_CATALOG_SCOPE
+      && !normalizedTenantId
+      && (normalizedStatus === 'active' || normalizedStatus === 'enabled');
+  };
+
+  const resyncPlatformRoleStatusAffectedSnapshots = async ({
+    roleId,
+    requestId = 'request_id_unset'
+  } = {}) => {
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    if (
+      typeof authStore.listUserIdsByPlatformRoleId !== 'function'
+      || typeof authStore.listPlatformRoleFactsByUserId !== 'function'
+      || typeof authStore.replacePlatformRolesAndSyncSnapshot !== 'function'
+      || typeof authStore.findPlatformRoleCatalogEntriesByRoleIds !== 'function'
+    ) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-status-resync-unsupported'
+      });
+    }
+
+    let affectedUserIds = [];
+    try {
+      affectedUserIds = await authStore.listUserIdsByPlatformRoleId({
+        roleId: normalizedRoleId
+      });
+    } catch (_error) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-status-affected-users-query-failed'
+      });
+    }
+    const normalizedAffectedUserIds = toDistinctNormalizedUserIds(affectedUserIds);
+    if (normalizedAffectedUserIds.length === 0) {
+      return {
+        affectedUserCount: 0,
+        affectedMembershipCount: 0
+      };
+    }
+
+    const preSyncRoleFactsByUserId = new Map();
+    const normalizedRoleFactsByUserId = new Map();
+    const normalizedAllRoleIds = new Set();
+    for (const normalizedAffectedUserId of normalizedAffectedUserIds) {
+      let roleFacts = [];
+      try {
+        roleFacts = await authStore.listPlatformRoleFactsByUserId({
+          userId: normalizedAffectedUserId
+        });
+      } catch (_error) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-status-role-facts-query-failed'
+        });
+      }
+      preSyncRoleFactsByUserId.set(
+        normalizedAffectedUserId,
+        cloneRoleFactsSnapshotForRollback(roleFacts)
+      );
+      const normalizedStoredRoleFacts = normalizeStoredRoleFactsForPermissionResync(roleFacts);
+      normalizedRoleFactsByUserId.set(
+        normalizedAffectedUserId,
+        normalizedStoredRoleFacts
+      );
+      for (const roleFact of normalizedStoredRoleFacts) {
+        normalizedAllRoleIds.add(roleFact.roleIdKey);
+      }
+    }
+
+    let grantsByRoleIdKey = new Map();
+    try {
+      grantsByRoleIdKey = await loadPlatformRolePermissionGrantsByRoleIds({
+        roleIds: [...normalizedAllRoleIds]
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        throw error;
+      }
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-status-permission-grants-query-failed'
+      });
+    }
+
+    let catalogEntries = [];
+    try {
+      catalogEntries = await authStore.findPlatformRoleCatalogEntriesByRoleIds({
+        roleIds: [...normalizedAllRoleIds]
+      });
+    } catch (_error) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-status-catalog-query-failed'
+      });
+    }
+    const activeCatalogRoleIdSet = new Set(
+      (Array.isArray(catalogEntries) ? catalogEntries : [])
+        .filter((catalogEntry) =>
+          isPlatformCatalogRoleActiveForPermissionResync(catalogEntry)
+        )
+        .map((catalogEntry) =>
+          normalizePlatformRoleIdKey(
+            resolveRawCamelSnakeField(catalogEntry, 'roleId', 'role_id')
+          )
+        )
+        .filter((roleIdKey) => roleIdKey.length > 0)
+    );
+
+    const syncedUserIds = [];
+    try {
+      for (const normalizedAffectedUserId of normalizedAffectedUserIds) {
+        const normalizedStoredRoleFacts =
+          normalizedRoleFactsByUserId.get(normalizedAffectedUserId) || [];
+        const nextRoleFacts = normalizedStoredRoleFacts.map((roleFact) => {
+          const permissionCodes = activeCatalogRoleIdSet.has(roleFact.roleIdKey)
+            ? (grantsByRoleIdKey.get(roleFact.roleIdKey) || [])
+            : [];
+          return {
+            roleId: roleFact.roleIdKey,
+            status: roleFact.status,
+            permission: toPlatformPermissionSnapshotFromCodes(permissionCodes)
+          };
+        });
+        let syncResult;
+        try {
+          syncResult = await authStore.replacePlatformRolesAndSyncSnapshot({
+            userId: normalizedAffectedUserId,
+            roles: nextRoleFacts
+          });
+        } catch (_error) {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-status-resync-failed'
+          });
+        }
+        const syncReason = String(syncResult?.reason || 'unknown').trim().toLowerCase();
+        if (syncReason !== 'ok') {
+          throw errors.platformSnapshotDegraded({
+            reason: syncReason || 'platform-role-status-resync-failed'
+          });
+        }
+        syncedUserIds.push(normalizedAffectedUserId);
+        invalidateSessionCacheByUserId(normalizedAffectedUserId);
+      }
+    } catch (error) {
+      try {
+        for (const syncedUserId of [...syncedUserIds].reverse()) {
+          const rollbackRoleFacts = preSyncRoleFactsByUserId.get(syncedUserId) || [];
+          const rollbackResult = await authStore.replacePlatformRolesAndSyncSnapshot({
+            userId: syncedUserId,
+            roles: rollbackRoleFacts
+          });
+          const rollbackReason = String(
+            rollbackResult?.reason || 'unknown'
+          ).trim().toLowerCase();
+          if (rollbackReason !== 'ok') {
+            throw new Error(
+              `platform-role-status-resync-rollback-failed:${rollbackReason || 'unknown'}`
+            );
+          }
+          invalidateSessionCacheByUserId(syncedUserId);
+        }
+      } catch (_rollbackError) {
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-status-compensation-failed'
+        });
+      }
+      if (error instanceof AuthProblemError) {
+        throw error;
+      }
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-role-status-resync-failed'
+      });
+    }
+
+    addAuditEvent({
+      type: 'auth.role.catalog.status.sync',
+      requestId,
+      userId: 'system',
+      sessionId: 'system',
+      detail: 'platform role status change resynced affected platform snapshots',
+      metadata: {
+        role_id: normalizedRoleId,
+        scope: PLATFORM_ROLE_CATALOG_SCOPE,
+        tenant_id: null,
+        affected_user_count: syncedUserIds.length,
+        affected_membership_count: 0
+      }
+    });
+
+    return {
+      affectedUserCount: syncedUserIds.length,
+      affectedMembershipCount: 0
+    };
+  };
+
+  const resyncTenantRoleStatusAffectedSnapshots = async ({
+    tenantId,
+    roleId,
+    requestId = 'request_id_unset',
+    operatorUserId = null,
+    operatorSessionId = null
+  } = {}) => {
+    const normalizedTenantId = normalizeTenantId(tenantId);
+    const normalizedRoleId = normalizeStrictAddressableTenantRoleIdFromInput(roleId);
+    if (!normalizedTenantId) {
+      throw errors.invalidPayload();
+    }
+    if (typeof authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots !== 'function') {
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-role-status-resync-unsupported'
+      });
+    }
+
+    let currentPermissionCodes = [];
+    try {
+      const grantsByRoleIdKey = await loadTenantRolePermissionGrantsByRoleIds({
+        roleIds: [normalizedRoleId]
+      });
+      currentPermissionCodes =
+        grantsByRoleIdKey.get(normalizePlatformRoleIdKey(normalizedRoleId)) || [];
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        throw error;
+      }
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-role-status-permission-grants-query-failed'
+      });
+    }
+
+    let syncResult = null;
+    try {
+      syncResult = await authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots({
+        tenantId: normalizedTenantId,
+        roleId: normalizedRoleId,
+        permissionCodes: currentPermissionCodes,
+        operatorUserId,
+        operatorSessionId,
+        maxAffectedMemberships: MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        throw error;
+      }
+      if (
+        String(error?.code || '').trim()
+        === 'ERR_TENANT_ROLE_PERMISSION_AFFECTED_MEMBERSHIPS_OVER_LIMIT'
+      ) {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'tenant-role-status-affected-memberships-over-limit'
+        });
+      }
+      if (String(error?.code || '').trim() === 'ERR_TENANT_ROLE_PERMISSION_SYNC_FAILED') {
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: String(error?.syncReason || 'tenant-role-status-resync-failed')
+        });
+      }
+      throw errors.tenantMemberDependencyUnavailable({
+        reason: 'tenant-role-status-resync-failed'
+      });
+    }
+
+    if (!syncResult) {
+      return {
+        affectedUserCount: 0,
+        affectedMembershipCount: 0
+      };
+    }
+
+    const affectedUserIdsRaw = (
+      resolveRawCamelSnakeField(syncResult, 'affectedUserIds', 'affected_user_ids')
+    );
+    const affectedUserIds = toDistinctNormalizedUserIds(affectedUserIdsRaw);
+    const hasExplicitAffectedMembershipCount = (
+      hasOwnProperty(syncResult, 'affectedMembershipCount')
+      || hasOwnProperty(syncResult, 'affected_membership_count')
+    );
+    const affectedMembershipCount = hasExplicitAffectedMembershipCount
+      ? normalizeStrictNonNegativeIntegerFromDependency({
+        value: resolveRawCamelSnakeField(
+          syncResult,
+          'affectedMembershipCount',
+          'affected_membership_count'
+        ),
+        dependencyReason: 'tenant-role-status-affected-membership-count-invalid'
+      })
+      : affectedUserIds.length;
+    for (const affectedUserId of affectedUserIds) {
+      invalidateSessionCacheByUserId(affectedUserId);
+    }
+
+    addAuditEvent({
+      type: 'auth.role.catalog.status.sync',
+      requestId,
+      userId: operatorUserId || 'unknown',
+      sessionId: operatorSessionId || 'unknown',
+      detail: 'tenant role status change resynced affected tenant snapshots',
+      metadata: {
+        role_id: normalizedRoleId,
+        scope: TENANT_ROLE_SCOPE,
+        tenant_id: normalizedTenantId,
+        affected_user_count: affectedUserIds.length,
+        affected_membership_count: affectedMembershipCount
+      }
+    });
+
+    return {
+      affectedUserCount: affectedUserIds.length,
+      affectedMembershipCount
+    };
+  };
+
+  const resyncRoleStatusAffectedSnapshots = async ({
+    requestId = 'request_id_unset',
+    traceparent = null,
+    roleId,
+    scope = PLATFORM_ROLE_CATALOG_SCOPE,
+    tenantId = null,
+    previousStatus = null,
+    currentStatus = null,
+    operatorUserId = null,
+    operatorSessionId = null
+  } = {}) => {
+    const normalizedScope = normalizePlatformRoleCatalogScope(scope);
+    if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
+      throw errors.invalidPayload();
+    }
+    const normalizedRoleId = normalizeRequiredStringField(
+      roleId,
+      errors.invalidPayload
+    ).toLowerCase();
+    const normalizedTenantId = normalizedScope === TENANT_ROLE_SCOPE
+      ? normalizeTenantId(tenantId)
+      : null;
+    if (normalizedScope === TENANT_ROLE_SCOPE && !normalizedTenantId) {
+      throw errors.invalidPayload();
+    }
+
+    let affectedUserCount = 0;
+    let affectedMembershipCount = 0;
+    if (normalizedScope === TENANT_ROLE_SCOPE) {
+      const result = await resyncTenantRoleStatusAffectedSnapshots({
+        tenantId: normalizedTenantId,
+        roleId: normalizedRoleId,
+        requestId,
+        operatorUserId,
+        operatorSessionId
+      });
+      affectedUserCount = Number(result?.affectedUserCount || 0);
+      affectedMembershipCount = Number(result?.affectedMembershipCount || 0);
+    } else {
+      const result = await resyncPlatformRoleStatusAffectedSnapshots({
+        roleId: normalizedRoleId,
+        requestId
+      });
+      affectedUserCount = Number(result?.affectedUserCount || 0);
+      affectedMembershipCount = Number(result?.affectedMembershipCount || 0);
+    }
+
+    await recordPersistentAuditEvent({
+      domain: normalizedScope === TENANT_ROLE_SCOPE ? 'tenant' : 'platform',
+      tenantId: normalizedScope === TENANT_ROLE_SCOPE ? normalizedTenantId : null,
+      requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
+      traceparent: normalizeAuditStringOrNull(traceparent, 128),
+      eventType: 'auth.role.catalog.status_synced',
+      actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
+      actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
+      targetType: 'role',
+      targetId: normalizedRoleId,
+      result: 'success',
+      beforeState: {
+        status: normalizeRoleCatalogStatusForResync(previousStatus),
+        scope: normalizedScope,
+        tenant_id: normalizedScope === TENANT_ROLE_SCOPE ? normalizedTenantId : null
+      },
+      afterState: {
+        status: normalizeRoleCatalogStatusForResync(currentStatus),
+        scope: normalizedScope,
+        tenant_id: normalizedScope === TENANT_ROLE_SCOPE ? normalizedTenantId : null
+      },
+      metadata: {
+        affected_user_count: affectedUserCount,
+        affected_membership_count: affectedMembershipCount
+      }
+    });
+
+    return {
+      affectedUserCount,
+      affectedMembershipCount
+    };
+  };
 
   const replacePlatformRolePermissionGrants = async ({
     requestId,
