@@ -229,6 +229,27 @@ test('platform audit query route exposes explicit permission declaration', () =>
   assert.equal(platformAuditEvents.permission_code, 'platform.member_admin.view');
 });
 
+test('platform system config routes expose explicit permission declarations', () => {
+  const getSystemConfig = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/system-configs/auth.default_password'
+  });
+  const updateSystemConfig = findRouteDefinition({
+    method: 'PUT',
+    path: '/platform/system-configs/auth.default_password'
+  });
+
+  assert.ok(getSystemConfig);
+  assert.equal(getSystemConfig.access, 'protected');
+  assert.equal(getSystemConfig.scope, 'platform');
+  assert.equal(getSystemConfig.permission_code, 'platform.system_config.view');
+
+  assert.ok(updateSystemConfig);
+  assert.equal(updateSystemConfig.access, 'protected');
+  assert.equal(updateSystemConfig.scope, 'platform');
+  assert.equal(updateSystemConfig.permission_code, 'platform.system_config.operate');
+});
+
 test('platform role-facts replace route exposes explicit permission declaration', () => {
   const replaceRoleFacts = findRouteDefinition({
     method: 'POST',

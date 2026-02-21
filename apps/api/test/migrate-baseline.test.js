@@ -463,6 +463,43 @@ test('0018 down migration drops audit_events table', () => {
   assert.match(sql, /DROP TABLE IF EXISTS audit_events/i);
 });
 
+test('0019 migration defines system_sensitive_configs table and seeds sys_admin permissions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0019_system_sensitive_configs.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS system_sensitive_configs/i);
+  assert.match(sql, /config_key/i);
+  assert.match(sql, /encrypted_value/i);
+  assert.match(sql, /version/i);
+  assert.match(sql, /updated_by_user_id/i);
+  assert.match(sql, /updated_at/i);
+  assert.match(sql, /status/i);
+  assert.match(sql, /CHECK \(config_key IN \('auth\.default_password'\)\)/i);
+  assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
+  assert.match(sql, /platform\.system_config\.view/i);
+  assert.match(sql, /platform\.system_config\.operate/i);
+});
+
+test('0019 down migration drops system_sensitive_configs and removes sys_admin seeded permissions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0019_system_sensitive_configs.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DELETE FROM platform_role_permission_grants/i);
+  assert.match(sql, /platform\.system_config\.view/i);
+  assert.match(sql, /platform\.system_config\.operate/i);
+  assert.match(sql, /DROP TABLE IF EXISTS system_sensitive_configs/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

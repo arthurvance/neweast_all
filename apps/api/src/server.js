@@ -27,6 +27,10 @@ const {
   PLATFORM_USER_STATUS_ROUTE_KEY
 } = require('./modules/platform/user.constants');
 const {
+  PLATFORM_SYSTEM_CONFIG_GET_ROUTE_KEY,
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
+} = require('./modules/platform/system-config.constants');
+const {
   PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
   TENANT_AUDIT_EVENTS_ROUTE_KEY
 } = require('./modules/audit/audit.constants');
@@ -168,7 +172,8 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
-  PLATFORM_USER_STATUS_ROUTE_KEY
+  PLATFORM_USER_STATUS_ROUTE_KEY,
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_MEMBER_CREATE_ROUTE_KEY,
@@ -187,7 +192,8 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
-  PLATFORM_USER_STATUS_ROUTE_KEY
+  PLATFORM_USER_STATUS_ROUTE_KEY,
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
@@ -198,7 +204,8 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
-  PLATFORM_USER_STATUS_ROUTE_KEY
+  PLATFORM_USER_STATUS_ROUTE_KEY,
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
@@ -220,7 +227,11 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
-  [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES]
+  [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [
+    PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ]
 ]);
 const IDEMPOTENCY_REQUEST_HASH_IGNORES_BODY_ROUTE_KEYS = new Set([
   TENANT_ROLE_DELETE_ROUTE_KEY,
@@ -708,6 +719,11 @@ const normalizeRouteParamsForRoute = ({
   ) {
     normalizedRouteParams.role_id = String(
       normalizedRouteParams.role_id || ''
+    ).trim().toLowerCase();
+  }
+  if (routeKey === PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY) {
+    normalizedRouteParams.config_key = String(
+      normalizedRouteParams.config_key || ''
     ).trim().toLowerCase();
   }
   return normalizedRouteParams;
@@ -2375,6 +2391,35 @@ const createRouteTable = ({
           ),
         requestId
       ),
+    [PLATFORM_SYSTEM_CONFIG_GET_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformGetSystemConfig(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext(),
+            traceparent
+          ),
+        requestId
+      ),
+    [PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformUpdateSystemConfig(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
     [PLATFORM_ROLE_LIST_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>

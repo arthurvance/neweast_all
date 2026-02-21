@@ -20,6 +20,7 @@ const createInMemoryAuthStore = ({
   const platformRolePermissionGrantsByRoleId = new Map();
   const tenantRolePermissionGrantsByRoleId = new Map();
   const tenantMembershipRolesByMembershipId = new Map();
+  const systemSensitiveConfigsByKey = new Map();
   const orgsById = new Map();
   const tenantMembershipHistoryByPair = new Map();
   const ownerTransferLocksByOrgId = new Map();
@@ -36,6 +37,8 @@ const createInMemoryAuthStore = ({
   const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
+  const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
+  const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set(['auth.default_password']);
   const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
   const MAX_ORG_NAME_LENGTH = 128;
   const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
@@ -43,6 +46,8 @@ const createInMemoryAuthStore = ({
   const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
     'platform.member_admin.view',
     'platform.member_admin.operate',
+    'platform.system_config.view',
+    'platform.system_config.operate',
     'platform.billing.view',
     'platform.billing.operate'
   ]);
@@ -65,6 +70,31 @@ const createInMemoryAuthStore = ({
   const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
   const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
   const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
+  const normalizeSystemSensitiveConfigKey = (configKey) =>
+    String(configKey || '').trim().toLowerCase();
+  const normalizeSystemSensitiveConfigStatus = (status) => {
+    const normalizedStatus = String(status || 'active').trim().toLowerCase();
+    if (normalizedStatus === 'enabled') {
+      return 'active';
+    }
+    return VALID_SYSTEM_SENSITIVE_CONFIG_STATUS.has(normalizedStatus)
+      ? normalizedStatus
+      : '';
+  };
+  const cloneSystemSensitiveConfigRecord = (record = null) =>
+    record
+      ? {
+        configKey: record.configKey,
+        encryptedValue: record.encryptedValue,
+        version: Number(record.version),
+        previousVersion: Number(record.previousVersion || 0),
+        status: record.status,
+        updatedByUserId: record.updatedByUserId,
+        updatedAt: record.updatedAt,
+        createdByUserId: record.createdByUserId,
+        createdAt: record.createdAt
+      }
+      : null;
 
   const isActiveLikeStatus = (status) => {
     const normalizedStatus = String(status || 'active').trim().toLowerCase();
@@ -355,6 +385,12 @@ const createInMemoryAuthStore = ({
       canViewBilling: Boolean(permission.canViewBilling ?? permission.can_view_billing),
       canOperateBilling: Boolean(
         permission.canOperateBilling ?? permission.can_operate_billing
+      ),
+      canViewSystemConfig: Boolean(
+        permission.canViewSystemConfig ?? permission.can_view_system_config
+      ),
+      canOperateSystemConfig: Boolean(
+        permission.canOperateSystemConfig ?? permission.can_operate_system_config
       )
     };
   };
@@ -377,7 +413,11 @@ const createInMemoryAuthStore = ({
         Boolean(left.canOperateMemberAdmin) || Boolean(right.canOperateMemberAdmin),
       canViewBilling: Boolean(left.canViewBilling) || Boolean(right.canViewBilling),
       canOperateBilling:
-        Boolean(left.canOperateBilling) || Boolean(right.canOperateBilling)
+        Boolean(left.canOperateBilling) || Boolean(right.canOperateBilling),
+      canViewSystemConfig:
+        Boolean(left.canViewSystemConfig) || Boolean(right.canViewSystemConfig),
+      canOperateSystemConfig:
+        Boolean(left.canOperateSystemConfig) || Boolean(right.canOperateSystemConfig)
     };
   };
 
@@ -386,7 +426,9 @@ const createInMemoryAuthStore = ({
     canViewMemberAdmin: false,
     canOperateMemberAdmin: false,
     canViewBilling: false,
-    canOperateBilling: false
+    canOperateBilling: false,
+    canViewSystemConfig: false,
+    canOperateSystemConfig: false
   });
 
   const normalizePlatformPermissionCodes = (permissionCodes = []) => {
@@ -412,6 +454,13 @@ const createInMemoryAuthStore = ({
         case 'platform.member_admin.operate':
           permission.canViewMemberAdmin = true;
           permission.canOperateMemberAdmin = true;
+          break;
+        case 'platform.system_config.view':
+          permission.canViewSystemConfig = true;
+          break;
+        case 'platform.system_config.operate':
+          permission.canViewSystemConfig = true;
+          permission.canOperateSystemConfig = true;
           break;
         case 'platform.billing.view':
           permission.canViewBilling = true;
@@ -647,6 +696,9 @@ const createInMemoryAuthStore = ({
       && Boolean(normalizedLeft.canOperateMemberAdmin) === Boolean(normalizedRight.canOperateMemberAdmin)
       && Boolean(normalizedLeft.canViewBilling) === Boolean(normalizedRight.canViewBilling)
       && Boolean(normalizedLeft.canOperateBilling) === Boolean(normalizedRight.canOperateBilling)
+      && Boolean(normalizedLeft.canViewSystemConfig) === Boolean(normalizedRight.canViewSystemConfig)
+      && Boolean(normalizedLeft.canOperateSystemConfig)
+        === Boolean(normalizedRight.canOperateSystemConfig)
     );
   };
 
@@ -1566,6 +1618,78 @@ const createInMemoryAuthStore = ({
           .slice(offset, offset + resolvedPageSize)
           .map((event) => toAuditEventRecord(event))
       };
+    },
+
+    getSystemSensitiveConfig: async ({ configKey } = {}) => {
+      const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
+      if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
+        return null;
+      }
+      return cloneSystemSensitiveConfigRecord(
+        systemSensitiveConfigsByKey.get(normalizedConfigKey) || null
+      );
+    },
+
+    upsertSystemSensitiveConfig: async ({
+      configKey,
+      encryptedValue,
+      expectedVersion,
+      updatedByUserId,
+      status = 'active'
+    } = {}) => {
+      const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
+      if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
+        throw new Error('upsertSystemSensitiveConfig requires whitelisted configKey');
+      }
+      const normalizedEncryptedValue = String(encryptedValue || '').trim();
+      if (
+        !normalizedEncryptedValue
+        || CONTROL_CHAR_PATTERN.test(normalizedEncryptedValue)
+      ) {
+        throw new Error('upsertSystemSensitiveConfig requires encryptedValue');
+      }
+      const normalizedUpdatedByUserId = String(updatedByUserId || '').trim();
+      if (!normalizedUpdatedByUserId || !usersById.has(normalizedUpdatedByUserId)) {
+        throw new Error('upsertSystemSensitiveConfig requires existing updatedByUserId');
+      }
+      const normalizedStatus = normalizeSystemSensitiveConfigStatus(status);
+      if (!normalizedStatus) {
+        throw new Error('upsertSystemSensitiveConfig received unsupported status');
+      }
+      const parsedExpectedVersion = Number(expectedVersion);
+      if (
+        !Number.isInteger(parsedExpectedVersion)
+        || parsedExpectedVersion < 0
+      ) {
+        throw new Error('upsertSystemSensitiveConfig requires expectedVersion >= 0');
+      }
+
+      const existingRecord = systemSensitiveConfigsByKey.get(normalizedConfigKey) || null;
+      const currentVersion = existingRecord ? Number(existingRecord.version || 0) : 0;
+      if (parsedExpectedVersion !== currentVersion) {
+        const conflictError = new Error('system sensitive config version conflict');
+        conflictError.code = 'ERR_SYSTEM_SENSITIVE_CONFIG_VERSION_CONFLICT';
+        conflictError.currentVersion = currentVersion;
+        conflictError.expectedVersion = parsedExpectedVersion;
+        conflictError.configKey = normalizedConfigKey;
+        throw conflictError;
+      }
+
+      const nextVersion = currentVersion + 1;
+      const nowIso = new Date().toISOString();
+      const nextRecord = {
+        configKey: normalizedConfigKey,
+        encryptedValue: normalizedEncryptedValue,
+        version: nextVersion,
+        previousVersion: currentVersion,
+        status: normalizedStatus,
+        updatedByUserId: normalizedUpdatedByUserId,
+        updatedAt: nowIso,
+        createdByUserId: existingRecord?.createdByUserId || normalizedUpdatedByUserId,
+        createdAt: existingRecord?.createdAt || nowIso
+      };
+      systemSensitiveConfigsByKey.set(normalizedConfigKey, nextRecord);
+      return cloneSystemSensitiveConfigRecord(nextRecord);
     },
 
     createUserByPhone: async ({ phone, passwordHash, status = 'active' }) => {
@@ -3488,6 +3612,88 @@ const createInMemoryAuthStore = ({
       }
       const permission = platformPermissionsByUserId.get(normalizedUserId);
       return permission ? { ...permission } : null;
+    },
+
+    hasPlatformPermissionByUserId: async ({
+      userId,
+      permissionCode
+    } = {}) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedPermissionCode = toPlatformPermissionCodeKey(permissionCode);
+      if (
+        !normalizedUserId
+        || !normalizedPermissionCode
+        || (
+          normalizedPermissionCode !== 'platform.system_config.view'
+          && normalizedPermissionCode !== 'platform.system_config.operate'
+        )
+      ) {
+        return {
+          canViewSystemConfig: false,
+          canOperateSystemConfig: false,
+          granted: false
+        };
+      }
+
+      const roles = platformRolesByUserId.get(normalizedUserId) || [];
+      let canViewSystemConfig = false;
+      let canOperateSystemConfig = false;
+
+      for (const role of roles) {
+        if (!role || !isActiveLikeStatus(role.status)) {
+          continue;
+        }
+        const roleCatalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
+          role.roleId
+        )?.record || null;
+        if (roleCatalogEntry) {
+          const roleCatalogScope = normalizePlatformRoleCatalogScope(
+            roleCatalogEntry.scope
+          );
+          const roleCatalogTenantId = normalizePlatformRoleCatalogTenantId(
+            roleCatalogEntry.tenantId
+          );
+          const roleCatalogStatus = normalizePlatformRoleCatalogStatus(
+            roleCatalogEntry.status
+          );
+          if (
+            roleCatalogScope !== 'platform'
+            || roleCatalogTenantId !== ''
+            || !isActiveLikeStatus(roleCatalogStatus)
+          ) {
+            continue;
+          }
+        }
+        const permission = role.permission || {};
+        if (Boolean(permission.canViewSystemConfig ?? permission.can_view_system_config)) {
+          canViewSystemConfig = true;
+        }
+        if (Boolean(permission.canOperateSystemConfig ?? permission.can_operate_system_config)) {
+          canOperateSystemConfig = true;
+          canViewSystemConfig = true;
+        }
+
+        const grantCodes = listPlatformRolePermissionGrantsForRoleId(role.roleId);
+        if (grantCodes.includes('platform.system_config.operate')) {
+          canOperateSystemConfig = true;
+          canViewSystemConfig = true;
+        } else if (grantCodes.includes('platform.system_config.view')) {
+          canViewSystemConfig = true;
+        }
+
+        if (canViewSystemConfig && canOperateSystemConfig) {
+          break;
+        }
+      }
+
+      const granted = normalizedPermissionCode === 'platform.system_config.operate'
+        ? canOperateSystemConfig
+        : canViewSystemConfig;
+      return {
+        canViewSystemConfig,
+        canOperateSystemConfig,
+        granted
+      };
     },
 
     countPlatformRoleCatalogEntries: async () => platformRoleCatalogById.size,

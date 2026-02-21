@@ -50,12 +50,75 @@ const parseJsonBody = (rawBody) => {
 };
 
 const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
-const createEnvSensitiveConfigProvider = (config = {}) => ({
+const normalizeRuntimeSensitiveConfigStatus = (status) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (!normalizedStatus || normalizedStatus === 'active' || normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  if (normalizedStatus === 'disabled') {
+    return 'disabled';
+  }
+  return '';
+};
+const resolveRuntimeAuthStoreFromAuthService = (authService = null) => {
+  const authStore = authService?._internals?.authStore;
+  if (
+    !authStore
+    || typeof authStore.getSystemSensitiveConfig !== 'function'
+  ) {
+    return null;
+  }
+  return authStore;
+};
+const createEnvSensitiveConfigProvider = (config = {}, options = {}) => ({
   getEncryptedConfig: async (configKey) => {
-    if (String(configKey || '').trim() !== DEFAULT_PASSWORD_CONFIG_KEY) {
+    const normalizedConfigKey = String(configKey || '').trim();
+    const fallbackEncryptedValue = String(config.AUTH_DEFAULT_PASSWORD_ENCRYPTED || '').trim();
+    if (normalizedConfigKey !== DEFAULT_PASSWORD_CONFIG_KEY) {
       return '';
     }
-    return String(config.AUTH_DEFAULT_PASSWORD_ENCRYPTED || '').trim();
+    const runtimeAuthStoreResolver =
+      typeof options.resolveAuthStore === 'function'
+        ? options.resolveAuthStore
+        : null;
+    if (runtimeAuthStoreResolver) {
+      const runtimeAuthStore = runtimeAuthStoreResolver();
+      if (
+        runtimeAuthStore
+        && typeof runtimeAuthStore.getSystemSensitiveConfig === 'function'
+      ) {
+        try {
+          const record = await runtimeAuthStore.getSystemSensitiveConfig({
+            configKey: normalizedConfigKey
+          });
+          const normalizedRecordStatus = normalizeRuntimeSensitiveConfigStatus(
+            record?.status
+          );
+          if (normalizedRecordStatus === 'disabled') {
+            return fallbackEncryptedValue;
+          }
+          if (!normalizedRecordStatus) {
+            log('warn', 'Runtime sensitive config status invalid; fallback to env', {
+              config_key: normalizedConfigKey,
+              status: String(record?.status || '').trim() || null
+            });
+            return fallbackEncryptedValue;
+          }
+          const encryptedValue = String(
+            record?.encryptedValue ?? record?.encrypted_value ?? ''
+          ).trim();
+          if (encryptedValue) {
+            return encryptedValue;
+          }
+        } catch (error) {
+          log('warn', 'Runtime sensitive config lookup failed; fallback to env', {
+            config_key: normalizedConfigKey,
+            error: String(error?.message || error || '')
+          });
+        }
+      }
+    }
+    return fallbackEncryptedValue;
   }
 });
 
@@ -244,7 +307,13 @@ const createApiApp = async (config, options = {}) => {
   const connectDb = options.connectMySql || connectMySql;
   const createAuthServiceFactory = options.createAuthService || createAuthService;
   let authIdempotencyStore = options.authIdempotencyStore || null;
-  const sensitiveConfigProvider = createEnvSensitiveConfigProvider(config);
+  let runtimeAuthStore = null;
+  if (authService) {
+    runtimeAuthStore = resolveRuntimeAuthStoreFromAuthService(authService);
+  }
+  const sensitiveConfigProvider = createEnvSensitiveConfigProvider(config, {
+    resolveAuthStore: () => runtimeAuthStore
+  });
   const createRedisClient =
     options.createRedisClient ||
     ((redisConfig) =>
@@ -266,6 +335,7 @@ const createApiApp = async (config, options = {}) => {
         sensitiveConfigProvider,
         sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY
       });
+      runtimeAuthStore = resolveRuntimeAuthStoreFromAuthService(authService);
     } else {
       let dbClient = null;
       let redisClient = null;
@@ -297,6 +367,7 @@ const createApiApp = async (config, options = {}) => {
         await ensureAuthSchemaPreflight({ dbClient });
 
         const authStore = createMySqlAuthStore({ dbClient });
+        runtimeAuthStore = authStore;
         const privateKey = normalizePem(config.AUTH_JWT_PRIVATE_KEY);
         const publicKey = normalizePem(config.AUTH_JWT_PUBLIC_KEY);
         const hasExternalJwtKeys = privateKey.length > 0 && publicKey.length > 0;
@@ -332,6 +403,8 @@ const createApiApp = async (config, options = {}) => {
           sensitiveConfigProvider,
           sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY
         });
+        runtimeAuthStore =
+          resolveRuntimeAuthStoreFromAuthService(authService) || runtimeAuthStore;
 
         closeAuthResources = closeInfrastructureResources;
       } catch (error) {
@@ -614,4 +687,11 @@ const createApiApp = async (config, options = {}) => {
   return app;
 };
 
-module.exports = { createApiApp };
+module.exports = {
+  createApiApp,
+  _internals: {
+    createEnvSensitiveConfigProvider,
+    resolveRuntimeAuthStoreFromAuthService,
+    DEFAULT_PASSWORD_CONFIG_KEY
+  }
+};

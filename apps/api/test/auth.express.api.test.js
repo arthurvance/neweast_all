@@ -493,12 +493,15 @@ const ensureTables = async () => {
     `
   );
 
+  await runMigrationSql(adminConnection, '0009_platform_role_catalog.sql');
+  await runMigrationSql(adminConnection, '0010_platform_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0012_tenant_member_lifecycle.sql');
   await runMigrationSql(adminConnection, '0013_platform_role_catalog_tenant_isolation.sql');
   await runMigrationSql(adminConnection, '0014_tenant_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0015_auth_tenant_membership_roles.sql');
   await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
   await runMigrationSql(adminConnection, '0018_audit_events.sql');
+  await runMigrationSql(adminConnection, '0019_system_sensitive_configs.sql');
 };
 
 const resetTestData = async () => {
@@ -531,6 +534,9 @@ const resetTestData = async () => {
       `,
       [TEST_USER.id, TEST_USER.id]
     );
+  }
+  if (await doesTableExist('system_sensitive_configs')) {
+    await adminConnection.execute('DELETE FROM system_sensitive_configs');
   }
   await adminConnection.execute('DELETE FROM users WHERE id = ? OR phone = ?', [
     TEST_USER.id,
@@ -701,6 +707,45 @@ const clearPlatformRoleFacts = async () => {
       WHERE user_id = ?
     `,
     [TEST_USER.id]
+  );
+};
+
+const seedSystemDefaultPasswordConfig = async ({
+  encryptedValue,
+  updatedByUserId = TEST_USER.id,
+  createdByUserId = TEST_USER.id,
+  version = 1,
+  status = 'active'
+} = {}) => {
+  const normalizedEncryptedValue = String(encryptedValue || '').trim();
+  if (!normalizedEncryptedValue || !(await doesTableExist('system_sensitive_configs'))) {
+    return;
+  }
+  await adminConnection.execute(
+    `
+      INSERT INTO system_sensitive_configs (
+        config_key,
+        encrypted_value,
+        version,
+        status,
+        updated_by_user_id,
+        created_by_user_id
+      )
+      VALUES ('auth.default_password', ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        encrypted_value = VALUES(encrypted_value),
+        version = VALUES(version),
+        status = VALUES(status),
+        updated_by_user_id = VALUES(updated_by_user_id),
+        updated_at = CURRENT_TIMESTAMP(3)
+    `,
+    [
+      normalizedEncryptedValue,
+      Number(version) || 1,
+      String(status || '').trim().toLowerCase() === 'disabled' ? 'disabled' : 'active',
+      updatedByUserId,
+      createdByUserId
+    ]
   );
 };
 
@@ -940,6 +985,9 @@ test('express platform provision-user creates user with hashed default credentia
     DB_NAME: MYSQL_DATABASE,
     AUTH_DEFAULT_PASSWORD_ENCRYPTED: encryptedDefaultPassword,
     AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY: decryptionKey
+  });
+  await seedSystemDefaultPasswordConfig({
+    encryptedValue: encryptedDefaultPassword
   });
 
   const provisionPhone = '13910000088';
@@ -2665,6 +2713,8 @@ test('createApiApp boots with auth schema created only from official migrations'
   await adminConnection.execute('DROP TABLE IF EXISTS tenant_role_permission_grants');
   await adminConnection.execute('DROP TABLE IF EXISTS platform_role_permission_grants');
   await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
+  await adminConnection.execute('DROP TABLE IF EXISTS audit_events');
+  await adminConnection.execute('DROP TABLE IF EXISTS system_sensitive_configs');
   await adminConnection.execute('DROP TABLE IF EXISTS memberships');
   await adminConnection.execute('DROP TABLE IF EXISTS orgs');
   await adminConnection.execute('DROP TABLE IF EXISTS users');
@@ -2698,6 +2748,8 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0014_tenant_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0015_auth_tenant_membership_roles.sql');
   await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
+  await runMigrationSql(adminConnection, '0018_audit_events.sql');
+  await runMigrationSql(adminConnection, '0019_system_sensitive_configs.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();

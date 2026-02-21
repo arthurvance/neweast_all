@@ -5116,6 +5116,69 @@ test('authorizeRoute deduplicates duplicate platform role_id facts using latest 
   );
 });
 
+test('authorizeRoute rejects system config view when bound role catalog entry is disabled', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'route-authz-system-config-disabled-role-user',
+        phone: '13830000064',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'system-config-disabled-role',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: false,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false,
+              canViewSystemConfig: true,
+              canOperateSystemConfig: true
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  await service._internals.authStore.createPlatformRoleCatalogEntry({
+    roleId: 'system-config-disabled-role',
+    code: 'SYSTEM_CONFIG_DISABLED_ROLE',
+    name: 'System Config Disabled Role',
+    status: 'disabled',
+    scope: 'platform'
+  });
+  await service._internals.authStore.replacePlatformRolePermissionGrants({
+    roleId: 'system-config-disabled-role',
+    permissionCodes: ['platform.system_config.operate']
+  });
+
+  const login = await service.login({
+    requestId: 'req-route-authz-system-config-disabled-role-login',
+    phone: '13830000064',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-route-authz-system-config-disabled-role-authorize',
+        accessToken: login.access_token,
+        permissionCode: 'platform.system_config.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
+      return true;
+    }
+  );
+});
+
 test('provisionPlatformUserByPhone creates user with hashed default credential and allows first login without forced password change', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'provision-default-password-key';
@@ -9776,6 +9839,73 @@ test('updatePlatformUserStatus persists audit event with request_id and tracepar
   assert.equal(auditEvents.events[0].traceparent, traceparent);
   assert.equal(auditEvents.events[0].target_type, 'user');
   assert.equal(auditEvents.events[0].target_id, 'platform-status-audit-user');
+});
+
+test('recordSystemSensitiveConfigAuditEvent persists rejected event for non-whitelisted target key', async () => {
+  const service = createService();
+  await service.recordSystemSensitiveConfigAuditEvent({
+    requestId: 'req-system-config-rejected-non-whitelist-key',
+    targetId: 'auth.unknown_key',
+    eventType: 'auth.system_config.update.rejected',
+    result: 'rejected',
+    metadata: {
+      failure_reason: 'config-key-not-whitelisted'
+    }
+  });
+
+  const auditEvents = await service.listAuditEvents({
+    domain: 'platform',
+    requestId: 'req-system-config-rejected-non-whitelist-key',
+    eventType: 'auth.system_config.update.rejected'
+  });
+  assert.equal(auditEvents.total, 1);
+  assert.equal(auditEvents.events[0].target_type, 'system_config');
+  assert.equal(auditEvents.events[0].target_id, 'auth.unknown_key');
+  assert.equal(auditEvents.events[0].result, 'rejected');
+});
+
+test('upsertSystemSensitiveConfig keeps successful write result when persistent audit write fails', async () => {
+  const service = createService();
+  const authStore = service._internals.authStore;
+  const originalRecordAuditEvent = authStore.recordAuditEvent;
+  let successAuditWriteAttempts = 0;
+  authStore.recordAuditEvent = async (payload = {}) => {
+    if (String(payload.eventType || '').trim() === 'auth.system_config.updated') {
+      successAuditWriteAttempts += 1;
+      const error = new Error('audit-store-unavailable');
+      error.code = 'ERR_AUDIT_WRITE_FAILED';
+      throw error;
+    }
+    return originalRecordAuditEvent(payload);
+  };
+
+  const saved = await service.upsertSystemSensitiveConfig({
+    requestId: 'req-system-config-audit-degraded-write',
+    configKey: 'auth.default_password',
+    encryptedValue: 'enc:v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:QQ',
+    expectedVersion: 0,
+    updatedByUserId: 'user-active',
+    updatedBySessionId: 'system-config-session-1',
+    status: 'active'
+  });
+  assert.equal(saved.configKey, 'auth.default_password');
+  assert.equal(saved.version, 1);
+  assert.equal(saved.previousVersion, 0);
+  assert.equal(saved.status, 'active');
+  assert.equal(successAuditWriteAttempts, 1);
+
+  const persistedRecord = await service.getSystemSensitiveConfig({
+    configKey: 'auth.default_password'
+  });
+  assert.equal(persistedRecord.version, 1);
+  assert.equal(persistedRecord.status, 'active');
+
+  const rejectedAudit = await service.listAuditEvents({
+    domain: 'platform',
+    requestId: 'req-system-config-audit-degraded-write',
+    eventType: 'auth.system_config.update.rejected'
+  });
+  assert.equal(rejectedAudit.total, 0);
 });
 
 test('updatePlatformUserStatus fail-closes invalid traceparent in persisted audit event', async () => {

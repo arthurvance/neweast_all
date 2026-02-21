@@ -20,6 +20,12 @@ const {
   PLATFORM_USER_SCOPE
 } = require('./modules/platform/user.constants');
 const {
+  PLATFORM_SYSTEM_CONFIG_ITEM_PATH,
+  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_SCOPE
+} = require('./modules/platform/system-config.constants');
+const {
   PLATFORM_AUDIT_EVENTS_PATH,
   TENANT_AUDIT_EVENTS_PATH,
   PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
@@ -442,6 +448,20 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
     scope: PLATFORM_AUDIT_SCOPE
+  },
+  {
+    method: 'GET',
+    path: PLATFORM_SYSTEM_CONFIG_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_SYSTEM_CONFIG_SCOPE
+  },
+  {
+    method: 'PUT',
+    path: PLATFORM_SYSTEM_CONFIG_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_SYSTEM_CONFIG_SCOPE
   },
   {
     method: 'GET',

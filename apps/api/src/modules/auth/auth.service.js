@@ -57,6 +57,18 @@ const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
 const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
 const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
 const SENSITIVE_CONFIG_KEY_DERIVATION_SALT = DEFAULT_PASSWORD_CONFIG_KEY;
+const SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set([DEFAULT_PASSWORD_CONFIG_KEY]);
+const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
+const REJECTED_SYSTEM_CONFIG_AUDIT_EVENT_TYPES = new Set([
+  'auth.system_config.read.rejected',
+  'auth.system_config.update.rejected'
+]);
+const PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE = 'platform.system_config.view';
+const PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE = 'platform.system_config.operate';
+const SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET = new Set([
+  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+].map((permissionCode) => permissionCode.toLowerCase()));
 const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = 'platform.member_admin.operate';
 const PLATFORM_ROLE_CATALOG_SCOPE = 'platform';
 const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
@@ -94,6 +106,11 @@ const ROUTE_PERMISSION_EVALUATORS = Object.freeze({
   'platform.billing.operate': ({ platformPermissionContext }) =>
     Boolean(platformPermissionContext?.can_view_billing)
     && Boolean(platformPermissionContext?.can_operate_billing),
+  [PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE]: ({ platformPermissionContext }) =>
+    Boolean(platformPermissionContext?.can_view_system_config),
+  [PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE]: ({ platformPermissionContext }) =>
+    Boolean(platformPermissionContext?.can_view_system_config)
+    && Boolean(platformPermissionContext?.can_operate_system_config),
   'tenant.member_admin.view': ({ tenantPermissionContext }) =>
     Boolean(tenantPermissionContext?.can_view_member_admin),
   'tenant.member_admin.operate': ({ tenantPermissionContext }) =>
@@ -112,6 +129,8 @@ const ROUTE_PERMISSION_SCOPE_RULES = Object.freeze({
   'platform.member_admin.operate': Object.freeze(['platform']),
   'platform.billing.view': Object.freeze(['platform']),
   'platform.billing.operate': Object.freeze(['platform']),
+  [PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE]: Object.freeze(['platform']),
+  [PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE]: Object.freeze(['platform']),
   'tenant.member_admin.view': Object.freeze(['tenant']),
   'tenant.member_admin.operate': Object.freeze(['tenant']),
   'tenant.billing.view': Object.freeze(['tenant']),
@@ -365,7 +384,9 @@ const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
     canViewMemberAdmin: false,
     canOperateMemberAdmin: false,
     canViewBilling: false,
-    canOperateBilling: false
+    canOperateBilling: false,
+    canViewSystemConfig: false,
+    canOperateSystemConfig: false
   };
   for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
     switch (toPlatformPermissionCodeKey(permissionCode)) {
@@ -375,6 +396,13 @@ const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
       case 'platform.member_admin.operate':
         snapshot.canViewMemberAdmin = true;
         snapshot.canOperateMemberAdmin = true;
+        break;
+      case 'platform.system_config.view':
+        snapshot.canViewSystemConfig = true;
+        break;
+      case 'platform.system_config.operate':
+        snapshot.canViewSystemConfig = true;
+        snapshot.canOperateSystemConfig = true;
         break;
       case 'platform.billing.view':
         snapshot.canViewBilling = true;
@@ -425,6 +453,86 @@ const listSupportedRoutePermissionScopes = () =>
       [...scopes]
     ])
   );
+const normalizeSystemSensitiveConfigKey = (configKey) =>
+  String(configKey || '').trim().toLowerCase();
+const normalizeSystemSensitiveConfigStatus = (status) => {
+  const normalizedStatus = String(status || 'active').trim().toLowerCase();
+  if (normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  return VALID_SYSTEM_SENSITIVE_CONFIG_STATUS.has(normalizedStatus)
+    ? normalizedStatus
+    : '';
+};
+const toSystemSensitiveConfigRecord = (record = null) => {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const normalizedConfigKey = normalizeSystemSensitiveConfigKey(
+    record.configKey ?? record.config_key
+  );
+  if (
+    !normalizedConfigKey
+    || !SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)
+  ) {
+    return null;
+  }
+  const normalizedStatus = normalizeSystemSensitiveConfigStatus(record.status || 'active');
+  if (!normalizedStatus) {
+    return null;
+  }
+  const normalizedVersion = Number(record.version || 0);
+  if (!Number.isInteger(normalizedVersion) || normalizedVersion < 0) {
+    return null;
+  }
+  const normalizedPreviousVersion = Number(
+    record.previousVersion
+    ?? record.previous_version
+    ?? 0
+  );
+  if (
+    !Number.isInteger(normalizedPreviousVersion)
+    || normalizedPreviousVersion < 0
+  ) {
+    return null;
+  }
+  const normalizedEncryptedValue = String(
+    record.encryptedValue ?? record.encrypted_value ?? ''
+  ).trim();
+  if (!normalizedEncryptedValue) {
+    return null;
+  }
+  const normalizedUpdatedByUserId = normalizeStrictRequiredStringField(
+    record.updatedByUserId ?? record.updated_by_user_id
+  );
+  if (!normalizedUpdatedByUserId) {
+    return null;
+  }
+  const updatedAtRaw = record.updatedAt ?? record.updated_at;
+  const createdAtRaw = record.createdAt ?? record.created_at;
+  const normalizedUpdatedAt = normalizeStrictRequiredStringField(
+    updatedAtRaw instanceof Date ? updatedAtRaw.toISOString() : updatedAtRaw
+  );
+  if (!normalizedUpdatedAt) {
+    return null;
+  }
+  const normalizedCreatedAt = normalizeStrictRequiredStringField(
+    createdAtRaw instanceof Date ? createdAtRaw.toISOString() : createdAtRaw
+  );
+  return {
+    configKey: normalizedConfigKey,
+    encryptedValue: normalizedEncryptedValue,
+    version: normalizedVersion,
+    previousVersion: normalizedPreviousVersion,
+    status: normalizedStatus,
+    updatedByUserId: normalizedUpdatedByUserId,
+    updatedAt: normalizedUpdatedAt,
+    createdByUserId: normalizeStrictRequiredStringField(
+      record.createdByUserId ?? record.created_by_user_id
+    ) || null,
+    createdAt: normalizedCreatedAt || null
+  };
+};
 
 class AuthProblemError extends Error {
   constructor({ status, title, detail, errorCode, extensions = {} }) {
@@ -1308,6 +1416,12 @@ const normalizePlatformPermissionContext = (permissionContext, fallbackScopeLabe
     can_view_billing: Boolean(permissionContext.canViewBilling ?? permissionContext.can_view_billing),
     can_operate_billing: Boolean(
       permissionContext.canOperateBilling ?? permissionContext.can_operate_billing
+    ),
+    can_view_system_config: Boolean(
+      permissionContext.canViewSystemConfig ?? permissionContext.can_view_system_config
+    ),
+    can_operate_system_config: Boolean(
+      permissionContext.canOperateSystemConfig ?? permissionContext.can_operate_system_config
     )
   };
 };
@@ -2087,6 +2201,88 @@ const createAuthService = (options = {}) => {
       throw errors.forbidden();
     }
     return normalized;
+  };
+
+  const resolveSystemConfigPermissionGrant = async ({
+    requestId,
+    userId,
+    sessionId,
+    entryDomain,
+    permissionCode
+  }) => {
+    if (entryDomain !== 'platform') {
+      return {
+        can_view_system_config: false,
+        can_operate_system_config: false,
+        granted: false
+      };
+    }
+
+    if (typeof authStore.hasPlatformPermissionByUserId !== 'function') {
+      addAuditEvent({
+        type: 'auth.platform.snapshot.degraded',
+        requestId,
+        userId,
+        sessionId,
+        detail: 'platform permission grant lookup unavailable',
+        metadata: {
+          permission_code: permissionCode,
+          entry_domain: entryDomain,
+          tenant_id: null,
+          degradation_reason: 'platform-permission-grant-lookup-unsupported'
+        }
+      });
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-permission-grant-lookup-unsupported'
+      });
+    }
+
+    let lookupResult = null;
+    try {
+      lookupResult = await authStore.hasPlatformPermissionByUserId({
+        userId: String(userId || '').trim(),
+        permissionCode
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'auth.platform.snapshot.degraded',
+        requestId,
+        userId,
+        sessionId,
+        detail: 'platform permission grant lookup failed',
+        metadata: {
+          permission_code: permissionCode,
+          entry_domain: entryDomain,
+          tenant_id: null,
+          degradation_reason: 'platform-permission-grant-lookup-failed'
+        }
+      });
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-permission-grant-lookup-failed'
+      });
+    }
+
+    if (typeof lookupResult === 'boolean') {
+      return {
+        can_view_system_config: lookupResult,
+        can_operate_system_config: lookupResult,
+        granted: lookupResult
+      };
+    }
+
+    const canViewSystemConfig = Boolean(lookupResult?.canViewSystemConfig);
+    const canOperateSystemConfig =
+      canViewSystemConfig && Boolean(lookupResult?.canOperateSystemConfig);
+    const normalizedPermissionCodeKey = toPlatformPermissionCodeKey(permissionCode);
+    const granted =
+      normalizedPermissionCodeKey === PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+        ? canOperateSystemConfig
+        : canViewSystemConfig;
+    return {
+      can_view_system_config: canViewSystemConfig,
+      can_operate_system_config: canOperateSystemConfig,
+      granted
+    };
   };
 
   const reconcileTenantSessionContext = async ({
@@ -4221,12 +4417,32 @@ const createAuthService = (options = {}) => {
       throw errors.forbidden();
     }
 
-    const allowed = evaluator({
+    let allowed = evaluator({
       platformPermissionContext,
       tenantPermissionContext,
       entryDomain: sessionContext.entry_domain,
       activeTenantId: normalizedActiveTenantId
     });
+    const normalizedPermissionCodeKey = toPlatformPermissionCodeKey(
+      normalizedPermissionCode
+    );
+    if (
+      normalizedScope === 'platform'
+      && SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET.has(normalizedPermissionCodeKey)
+    ) {
+      const grant = await resolveSystemConfigPermissionGrant({
+        requestId,
+        userId: user.id,
+        sessionId,
+        entryDomain: sessionContext.entry_domain,
+        permissionCode: normalizedPermissionCode
+      });
+      if (platformPermissionContext && typeof platformPermissionContext === 'object') {
+        platformPermissionContext.can_view_system_config = grant.can_view_system_config;
+        platformPermissionContext.can_operate_system_config = grant.can_operate_system_config;
+      }
+      allowed = grant.granted;
+    }
     if (!allowed) {
       addAuditEvent({
         type: 'auth.route.forbidden',
@@ -5368,6 +5584,241 @@ const createAuthService = (options = {}) => {
       scope: normalizedScope,
       tenantId: normalizedTenantId
     });
+  };
+
+  const recordSystemSensitiveConfigAuditEvent = async ({
+    requestId = 'request_id_unset',
+    traceparent = null,
+    actorUserId = null,
+    actorSessionId = null,
+    targetId = DEFAULT_PASSWORD_CONFIG_KEY,
+    eventType = 'auth.system_config.updated',
+    result = 'success',
+    beforeState = null,
+    afterState = null,
+    metadata = null
+  } = {}) => {
+    const normalizedEventType =
+      normalizeStrictRequiredStringField(eventType) || 'auth.system_config.updated';
+    const normalizedEventTypeKey = normalizedEventType.toLowerCase();
+    const isRejectedEventType =
+      REJECTED_SYSTEM_CONFIG_AUDIT_EVENT_TYPES.has(normalizedEventTypeKey);
+    const normalizedTargetId = normalizeSystemSensitiveConfigKey(targetId);
+    const hasSupportedTargetId =
+      Boolean(normalizedTargetId)
+      && SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedTargetId);
+    if (!hasSupportedTargetId && !isRejectedEventType) {
+      throw errors.invalidPayload();
+    }
+    const resolvedTargetId = hasSupportedTargetId
+      ? normalizedTargetId
+      : (normalizedTargetId || null);
+    return recordPersistentAuditEvent({
+      domain: 'platform',
+      tenantId: null,
+      requestId,
+      traceparent,
+      eventType: normalizedEventType,
+      actorUserId,
+      actorSessionId,
+      targetType: 'system_config',
+      targetId: resolvedTargetId,
+      result,
+      beforeState,
+      afterState,
+      metadata
+    });
+  };
+
+  const getSystemSensitiveConfig = async ({
+    configKey = DEFAULT_PASSWORD_CONFIG_KEY
+  } = {}) => {
+    const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
+    if (
+      !normalizedConfigKey
+      || !SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)
+    ) {
+      throw errors.invalidPayload();
+    }
+    assertStoreMethod(authStore, 'getSystemSensitiveConfig', 'authStore');
+    const record = await authStore.getSystemSensitiveConfig({
+      configKey: normalizedConfigKey
+    });
+    return toSystemSensitiveConfigRecord(record);
+  };
+
+  const upsertSystemSensitiveConfig = async ({
+    requestId,
+    traceparent = null,
+    configKey = DEFAULT_PASSWORD_CONFIG_KEY,
+    encryptedValue,
+    expectedVersion,
+    updatedByUserId,
+    updatedBySessionId = null,
+    status = 'active'
+  } = {}) => {
+    const normalizedRequestId =
+      normalizeAuditRequestIdOrNull(requestId) || 'request_id_unset';
+    const normalizedTraceparent = bindRequestTraceparent({
+      requestId: normalizedRequestId,
+      traceparent
+    });
+    const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
+    if (
+      !normalizedConfigKey
+      || !SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)
+    ) {
+      throw errors.invalidPayload();
+    }
+    const normalizedEncryptedValue = String(encryptedValue || '').trim();
+    if (
+      !normalizedEncryptedValue
+      || CONTROL_CHAR_PATTERN.test(normalizedEncryptedValue)
+    ) {
+      throw errors.invalidPayload();
+    }
+    const parsedExpectedVersion = Number(expectedVersion);
+    if (!Number.isInteger(parsedExpectedVersion) || parsedExpectedVersion < 0) {
+      throw errors.invalidPayload();
+    }
+    const normalizedStatus = normalizeSystemSensitiveConfigStatus(status);
+    if (!normalizedStatus) {
+      throw errors.invalidPayload();
+    }
+    const normalizedUpdatedByUserId = normalizeStrictRequiredStringField(updatedByUserId);
+    const normalizedUpdatedBySessionId = normalizeStrictRequiredStringField(updatedBySessionId);
+    if (!normalizedUpdatedByUserId || !normalizedUpdatedBySessionId) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'upsertSystemSensitiveConfig', 'authStore');
+    let normalizedSavedRecord = null;
+    try {
+      const savedRecord = await authStore.upsertSystemSensitiveConfig({
+        configKey: normalizedConfigKey,
+        encryptedValue: normalizedEncryptedValue,
+        expectedVersion: parsedExpectedVersion,
+        updatedByUserId: normalizedUpdatedByUserId,
+        status: normalizedStatus
+      });
+      normalizedSavedRecord = toSystemSensitiveConfigRecord(savedRecord);
+      if (!normalizedSavedRecord) {
+        throw new Error('system-sensitive-config-upsert-result-invalid');
+      }
+    } catch (error) {
+      const currentVersion = Number(error?.currentVersion ?? error?.current_version ?? -1);
+      const expectedVersionValue = Number(
+        error?.expectedVersion ?? error?.expected_version ?? parsedExpectedVersion
+      );
+      const isVersionConflict =
+        String(error?.code || '').trim() === 'ERR_SYSTEM_SENSITIVE_CONFIG_VERSION_CONFLICT';
+      addAuditEvent({
+        type: 'auth.system_config.update.rejected',
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        userId: normalizedUpdatedByUserId,
+        sessionId: normalizedUpdatedBySessionId,
+        detail: isVersionConflict
+          ? 'system sensitive config version conflict'
+          : 'system sensitive config update failed',
+        metadata: {
+          config_key: normalizedConfigKey,
+          expected_version: expectedVersionValue,
+          current_version: Number.isInteger(currentVersion) && currentVersion >= 0
+            ? currentVersion
+            : null,
+          failure_reason: isVersionConflict
+            ? 'version-conflict'
+            : String(error?.code || error?.message || 'unknown').trim().toLowerCase()
+        }
+      });
+      await recordSystemSensitiveConfigAuditEvent({
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        actorUserId: normalizedUpdatedByUserId,
+        actorSessionId: normalizedUpdatedBySessionId,
+        targetId: normalizedConfigKey,
+        eventType: 'auth.system_config.update.rejected',
+        result: 'rejected',
+        beforeState: Number.isInteger(currentVersion) && currentVersion >= 0
+          ? { version: currentVersion }
+          : null,
+        afterState: null,
+        metadata: {
+          config_key: normalizedConfigKey,
+          expected_version: expectedVersionValue,
+          current_version: Number.isInteger(currentVersion) && currentVersion >= 0
+            ? currentVersion
+            : null,
+          failure_reason: isVersionConflict
+            ? 'version-conflict'
+            : String(error?.code || error?.message || 'unknown').trim().toLowerCase()
+        }
+      }).catch(() => {});
+      throw error;
+    }
+
+    addAuditEvent({
+      type: 'auth.system_config.updated',
+      requestId: normalizedRequestId,
+      traceparent: normalizedTraceparent,
+      userId: normalizedUpdatedByUserId,
+      sessionId: normalizedUpdatedBySessionId,
+      detail: 'system sensitive config updated',
+      metadata: {
+        config_key: normalizedConfigKey,
+        previous_version: normalizedSavedRecord.previousVersion,
+        current_version: normalizedSavedRecord.version,
+        status: normalizedSavedRecord.status
+      }
+    });
+    try {
+      await recordSystemSensitiveConfigAuditEvent({
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        actorUserId: normalizedUpdatedByUserId,
+        actorSessionId: normalizedUpdatedBySessionId,
+        targetId: normalizedConfigKey,
+        eventType: 'auth.system_config.updated',
+        result: 'success',
+        beforeState: {
+          version: normalizedSavedRecord.previousVersion
+        },
+        afterState: {
+          version: normalizedSavedRecord.version,
+          status: normalizedSavedRecord.status
+        },
+        metadata: {
+          config_key: normalizedConfigKey,
+          previous_version: normalizedSavedRecord.previousVersion,
+          current_version: normalizedSavedRecord.version,
+          status: normalizedSavedRecord.status
+        }
+      });
+    } catch (error) {
+      addAuditEvent({
+        type: 'auth.system_config.audit.degraded',
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        userId: normalizedUpdatedByUserId,
+        sessionId: normalizedUpdatedBySessionId,
+        detail: 'system sensitive config persistent audit degraded',
+        metadata: {
+          config_key: normalizedConfigKey,
+          previous_version: normalizedSavedRecord.previousVersion,
+          current_version: normalizedSavedRecord.version,
+          status: normalizedSavedRecord.status,
+          failure_reason: String(
+            error?.errorCode
+              || error?.code
+              || error?.message
+              || 'audit-write-failed'
+          ).trim().toLowerCase()
+        }
+      });
+    }
+
+    return normalizedSavedRecord;
   };
 
   const listPlatformPermissionCatalog = () =>
@@ -8305,6 +8756,9 @@ const createAuthService = (options = {}) => {
     deletePlatformRoleCatalogEntry,
     listPlatformRoleCatalogEntries,
     findPlatformRoleCatalogEntryByRoleId,
+    getSystemSensitiveConfig,
+    upsertSystemSensitiveConfig,
+    recordSystemSensitiveConfigAuditEvent,
     listPlatformRolePermissionGrants,
     replacePlatformRolePermissionGrants,
     listPlatformPermissionCatalog,

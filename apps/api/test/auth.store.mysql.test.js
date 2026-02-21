@@ -1004,6 +1004,143 @@ test('findPlatformPermissionByUserId reads explicit platform permission snapshot
   });
 });
 
+test('upsertSystemSensitiveConfig converts duplicate insert race into version conflict', async () => {
+  const duplicateError = new Error('Duplicate entry for system_sensitive_configs');
+  duplicateError.code = 'ER_DUP_ENTRY';
+  duplicateError.errno = 1062;
+  let conflictVersionLookupCount = 0;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM system_sensitive_configs')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [];
+    }
+    if (normalizedSql.includes('INSERT INTO system_sensitive_configs')) {
+      throw duplicateError;
+    }
+    if (
+      normalizedSql.includes('SELECT version')
+      && normalizedSql.includes('FROM system_sensitive_configs')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('FOR UPDATE')
+    ) {
+      conflictVersionLookupCount += 1;
+      return [{ version: 2 }];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.upsertSystemSensitiveConfig({
+        configKey: 'auth.default_password',
+        encryptedValue: 'enc:v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:QQ',
+        expectedVersion: 0,
+        updatedByUserId: 'u-system-config-operator',
+        status: 'active'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_SYSTEM_SENSITIVE_CONFIG_VERSION_CONFLICT');
+      assert.equal(error?.configKey, 'auth.default_password');
+      assert.equal(error?.expectedVersion, 0);
+      assert.equal(error?.currentVersion, 2);
+      return true;
+    }
+  );
+  assert.equal(conflictVersionLookupCount, 1);
+});
+
+test('hasPlatformPermissionByUserId is fail-closed for unsupported permission codes', async () => {
+  const store = createStore(async (sql) => {
+    assert.fail(`unexpected query: ${String(sql)}`);
+    return [];
+  });
+  const result = await store.hasPlatformPermissionByUserId({
+    userId: 'u-platform-unsupported',
+    permissionCode: 'platform.member_admin.view'
+  });
+  assert.deepEqual(result, {
+    canViewSystemConfig: false,
+    canOperateSystemConfig: false,
+    granted: false
+  });
+});
+
+test('hasPlatformPermissionByUserId resolves system_config.view from active role grants', async () => {
+  let permissionSql = '';
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM auth_user_platform_roles upr')
+      && normalizedSql.includes('LEFT JOIN platform_role_permission_grants prg')
+    ) {
+      permissionSql = normalizedSql;
+      return [
+        {
+          can_view_system_config: 1,
+          can_operate_system_config: 0
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.hasPlatformPermissionByUserId({
+    userId: 'u-platform-system-config-view',
+    permissionCode: 'platform.system_config.view'
+  });
+  assert.deepEqual(result, {
+    canViewSystemConfig: true,
+    canOperateSystemConfig: false,
+    granted: true
+  });
+  assert.match(permissionSql, /INNER JOIN platform_role_catalog prc/i);
+  assert.match(permissionSql, /prc\.scope = 'platform'/i);
+  assert.match(permissionSql, /prc\.tenant_id = ''/i);
+  assert.match(permissionSql, /prc\.status IN \('active', 'enabled'\)/i);
+  assert.match(permissionSql, /upr\.status IN \('active', 'enabled'\)/i);
+});
+
+test('hasPlatformPermissionByUserId treats system_config.operate as granting view+operate', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('FROM auth_user_platform_roles upr')) {
+      return [
+        {
+          can_view_system_config: 0,
+          can_operate_system_config: 1
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const viewResult = await store.hasPlatformPermissionByUserId({
+    userId: 'u-platform-system-config-operate',
+    permissionCode: 'platform.system_config.view'
+  });
+  assert.deepEqual(viewResult, {
+    canViewSystemConfig: true,
+    canOperateSystemConfig: true,
+    granted: true
+  });
+
+  const operateResult = await store.hasPlatformPermissionByUserId({
+    userId: 'u-platform-system-config-operate',
+    permissionCode: 'platform.system_config.operate'
+  });
+  assert.deepEqual(operateResult, {
+    canViewSystemConfig: true,
+    canOperateSystemConfig: true,
+    granted: true
+  });
+});
+
 test('syncPlatformPermissionSnapshotByUserId recalculates platform snapshot from active role facts', async () => {
   let updateParams = null;
   const store = createStore(async (sql, params) => {

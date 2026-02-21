@@ -122,6 +122,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs/status']);
   assert.ok(payload.paths['/platform/orgs/owner-transfer']);
   assert.ok(payload.paths['/platform/audit/events']);
+  assert.ok(payload.paths['/platform/system-configs/{config_key}']);
   assert.ok(payload.paths['/platform/users']);
   assert.ok(payload.paths['/platform/users/status']);
   assert.ok(payload.paths['/smoke']);
@@ -279,6 +280,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
+  assert.ok(
+    payload.paths['/platform/system-configs/{config_key}'].put.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
   assert.equal(
     payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
@@ -398,6 +404,20 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/system-configs/{config_key}'].put.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.components.schemas.UpdateSystemConfigRequest.properties.encrypted_value.pattern,
+    '^enc:v1:[A-Za-z0-9_-]{16}:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]+$'
+  );
+  assert.deepEqual(
+    payload.components.schemas.UpdateSystemConfigRequest.properties.status.enum,
+    ['active', 'disabled', 'enabled']
   );
   assert.equal(
     payload.paths['/tenant/members'].post.parameters.find(
@@ -763,6 +783,10 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.equal(
     payload.components.schemas.UpdatePlatformRoleRequest.properties.code.pattern,
     '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$'
+  );
+  assert.deepEqual(
+    payload.components.schemas.UpdatePlatformRoleRequest.properties.status.enum,
+    ['active', 'disabled']
   );
   assert.equal(
     payload.components.schemas.UpdatePlatformRoleRequest.minProperties,
@@ -3537,6 +3561,64 @@ test('dispatchApiRoute preserves legacy auth idempotency reservation for non-5xx
   assert.equal(second.status, 409);
   assert.equal(JSON.parse(second.body).error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
   assert.equal(executionCalls, 1);
+});
+
+test('dispatchApiRoute does not reserve idempotency key for system config version-conflict 409', async () => {
+  let executionCalls = 0;
+  const handlers = {
+    platformUpdateSystemConfig: async () => {
+      executionCalls += 1;
+      throw new AuthProblemError({
+        status: 409,
+        title: 'Conflict',
+        detail: 'system config version conflict',
+        errorCode: 'SYSCFG-409-VERSION-CONFLICT',
+        extensions: {
+          config_key: 'auth.default_password',
+          expected_version: 0,
+          current_version: 1
+        }
+      });
+    },
+    authorizeRoute: async () => ({
+      user_id: 'operator-user',
+      session_id: 'operator-session',
+      entry_domain: 'platform'
+    })
+  };
+  const dispatchSystemConfigUpdate = ({ body, requestId }) =>
+    dispatchApiRoute({
+      pathname: '/platform/system-configs/auth.default_password',
+      method: 'PUT',
+      requestId,
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': 'idem-system-config-version-conflict'
+      },
+      body,
+      handlers
+    });
+
+  const first = await dispatchSystemConfigUpdate({
+    requestId: 'req-system-config-idem-conflict-1',
+    body: {
+      encrypted_value: 'enc:v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:QQ',
+      expected_version: 0
+    }
+  });
+  const second = await dispatchSystemConfigUpdate({
+    requestId: 'req-system-config-idem-conflict-2',
+    body: {
+      encrypted_value: 'enc:v1:BBBBBBBBBBBBBBBB:BBBBBBBBBBBBBBBBBBBBBB:QQ',
+      expected_version: 1
+    }
+  });
+
+  assert.equal(first.status, 409);
+  assert.equal(JSON.parse(first.body).error_code, 'SYSCFG-409-VERSION-CONFLICT');
+  assert.equal(second.status, 409);
+  assert.equal(JSON.parse(second.body).error_code, 'SYSCFG-409-VERSION-CONFLICT');
+  assert.equal(executionCalls, 2);
 });
 
 test('dispatchApiRoute rebinds replayed response traceparent to current request trace context', async () => {

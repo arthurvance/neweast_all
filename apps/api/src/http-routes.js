@@ -6,6 +6,8 @@ const { createPlatformRoleHandlers } = require('./modules/platform/role.routes')
 const { createPlatformRoleService } = require('./modules/platform/role.service');
 const { createPlatformUserHandlers } = require('./modules/platform/user.routes');
 const { createPlatformUserService } = require('./modules/platform/user.service');
+const { createPlatformSystemConfigHandlers } = require('./modules/platform/system-config.routes');
+const { createPlatformSystemConfigService } = require('./modules/platform/system-config.service');
 const { createAuditHandlers } = require('./modules/audit/audit.routes');
 const { createAuditService } = require('./modules/audit/audit.service');
 const { createTenantMemberHandlers } = require('./modules/tenant/member.routes');
@@ -34,6 +36,7 @@ const assertAlignedPlatformServicesAuthService = ({
   platformOrgService,
   platformRoleService,
   platformUserService,
+  platformSystemConfigService,
   auditService,
   tenantMemberService,
   tenantRoleService
@@ -41,6 +44,7 @@ const assertAlignedPlatformServicesAuthService = ({
   const platformOrgAuthService = platformOrgService?._internals?.authService;
   const platformRoleAuthService = platformRoleService?._internals?.authService;
   const platformUserAuthService = platformUserService?._internals?.authService;
+  const platformSystemConfigAuthService = platformSystemConfigService?._internals?.authService;
   const auditAuthService = auditService?._internals?.authService;
   const tenantMemberAuthService = tenantMemberService?._internals?.authService;
   const tenantRoleAuthService = tenantRoleService?._internals?.authService;
@@ -96,6 +100,42 @@ const assertAlignedPlatformServicesAuthService = ({
   ) {
     throw new TypeError(
       'createRouteHandlers requires authService and platformUserService to share the same authService instance'
+    );
+  }
+  if (
+    authService
+    && platformSystemConfigAuthService
+    && authService !== platformSystemConfigAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires authService and platformSystemConfigService to share the same authService instance'
+    );
+  }
+  if (
+    platformOrgAuthService
+    && platformSystemConfigAuthService
+    && platformOrgAuthService !== platformSystemConfigAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformOrgService and platformSystemConfigService to share the same authService instance'
+    );
+  }
+  if (
+    platformRoleAuthService
+    && platformSystemConfigAuthService
+    && platformRoleAuthService !== platformSystemConfigAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformRoleService and platformSystemConfigService to share the same authService instance'
+    );
+  }
+  if (
+    platformUserAuthService
+    && platformSystemConfigAuthService
+    && platformUserAuthService !== platformSystemConfigAuthService
+  ) {
+    throw new TypeError(
+      'createRouteHandlers requires platformUserService and platformSystemConfigService to share the same authService instance'
     );
   }
   if (
@@ -307,6 +347,8 @@ const createRouteHandlers = (config, options = {}) => {
   const preferredPlatformOrgAuthService = options.platformOrgService?._internals?.authService;
   const preferredPlatformRoleAuthService = options.platformRoleService?._internals?.authService;
   const preferredPlatformUserAuthService = options.platformUserService?._internals?.authService;
+  const preferredPlatformSystemConfigAuthService =
+    options.platformSystemConfigService?._internals?.authService;
   const preferredAuditAuthService = options.auditService?._internals?.authService;
   const preferredTenantMemberAuthService = options.tenantMemberService?._internals?.authService;
   const preferredTenantRoleAuthService = options.tenantRoleService?._internals?.authService;
@@ -315,6 +357,7 @@ const createRouteHandlers = (config, options = {}) => {
     platformOrgService: options.platformOrgService,
     platformRoleService: options.platformRoleService,
     platformUserService: options.platformUserService,
+    platformSystemConfigService: options.platformSystemConfigService,
     auditService: options.auditService,
     tenantMemberService: options.tenantMemberService,
     tenantRoleService: options.tenantRoleService
@@ -324,6 +367,7 @@ const createRouteHandlers = (config, options = {}) => {
     || preferredPlatformOrgAuthService
     || preferredPlatformRoleAuthService
     || preferredPlatformUserAuthService
+    || preferredPlatformSystemConfigAuthService
     || preferredAuditAuthService
     || preferredTenantMemberAuthService
     || preferredTenantRoleAuthService
@@ -348,6 +392,14 @@ const createRouteHandlers = (config, options = {}) => {
       authService
     });
   const platformUser = createPlatformUserHandlers(platformUserService);
+  const platformSystemConfigService =
+    options.platformSystemConfigService
+    || createPlatformSystemConfigService({
+      authService
+    });
+  const platformSystemConfig = createPlatformSystemConfigHandlers(
+    platformSystemConfigService
+  );
   const auditService =
     options.auditService
     || (
@@ -673,6 +725,38 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformGetSystemConfig: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformSystemConfig.getSystemConfig({
+        requestId,
+        authorization,
+        params: params || {},
+        traceparent,
+        authorizationContext
+      }),
+
+    platformUpdateSystemConfig: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformSystemConfig.updateSystemConfig({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
     authTenantMemberAdminProvisionUser: async (
       requestId,
       authorization,
@@ -965,6 +1049,7 @@ const createRouteHandlers = (config, options = {}) => {
     platformOrgService,
     platformRoleService,
     platformUserService,
+    platformSystemConfigService,
     auditService,
     tenantMemberService,
     tenantRoleService

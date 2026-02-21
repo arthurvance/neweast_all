@@ -15,6 +15,8 @@ const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
+const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
+const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set(['auth.default_password']);
 const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
 const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
@@ -28,6 +30,12 @@ const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
   'tenant.billing.operate'
 ]);
 const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
+const PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE = 'platform.system_config.view';
+const PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE = 'platform.system_config.operate';
+const PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET = new Set([
+  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+]);
 const OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX = 30;
 const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
@@ -578,8 +586,59 @@ const createTenantMembershipHistoryUnavailableError = () => {
 };
 const buildSqlInPlaceholders = (count) =>
   new Array(Math.max(0, Number(count) || 0)).fill('?').join(', ');
+const normalizeSystemSensitiveConfigKey = (configKey) =>
+  String(configKey || '').trim().toLowerCase();
+const normalizeSystemSensitiveConfigStatus = (status) => {
+  const normalizedStatus = String(status || 'active').trim().toLowerCase();
+  if (normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  return VALID_SYSTEM_SENSITIVE_CONFIG_STATUS.has(normalizedStatus)
+    ? normalizedStatus
+    : '';
+};
+const createSystemSensitiveConfigVersionConflictError = ({
+  configKey = '',
+  expectedVersion = 0,
+  currentVersion = 0
+} = {}) => {
+  const error = new Error('system sensitive config version conflict');
+  error.code = 'ERR_SYSTEM_SENSITIVE_CONFIG_VERSION_CONFLICT';
+  error.configKey = normalizeSystemSensitiveConfigKey(configKey);
+  error.expectedVersion = Number(expectedVersion);
+  error.currentVersion = Number(currentVersion);
+  return error;
+};
+const toSystemSensitiveConfigRecord = (row) => {
+  if (!row) {
+    return null;
+  }
+  const configKey = normalizeSystemSensitiveConfigKey(row.config_key ?? row.configKey);
+  if (!configKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(configKey)) {
+    return null;
+  }
+  const updatedAtValue = row.updated_at ?? row.updatedAt;
+  const createdAtValue = row.created_at ?? row.createdAt;
+  return {
+    configKey,
+    encryptedValue: String(row.encrypted_value ?? row.encryptedValue ?? '').trim(),
+    version: Number(row.version || 0),
+    previousVersion: Number(row.previous_version || row.previousVersion || 0),
+    status: normalizeSystemSensitiveConfigStatus(row.status || 'active') || 'active',
+    updatedByUserId: String(row.updated_by_user_id ?? row.updatedByUserId ?? '').trim() || null,
+    updatedAt: updatedAtValue instanceof Date
+      ? updatedAtValue.toISOString()
+      : String(updatedAtValue || ''),
+    createdByUserId: String(row.created_by_user_id ?? row.createdByUserId ?? '').trim() || null,
+    createdAt: createdAtValue instanceof Date
+      ? createdAtValue.toISOString()
+      : String(createdAtValue || '')
+  };
+};
 const normalizePlatformPermissionCode = (permissionCode) =>
   String(permissionCode || '').trim();
+const toPlatformPermissionCodeKey = (permissionCode) =>
+  normalizePlatformPermissionCode(permissionCode).toLowerCase();
 const normalizePlatformPermissionCodes = (permissionCodes = []) => {
   const deduped = new Map();
   for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
@@ -2392,6 +2451,189 @@ const createMySqlAuthStore = ({
 
     listAuditEvents: async (query = {}) =>
       listAuditEvents(query),
+
+    getSystemSensitiveConfig: async ({ configKey } = {}) => {
+      const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
+      if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT config_key,
+                 encrypted_value,
+                 version,
+                 status,
+                 updated_by_user_id,
+                 updated_at,
+                 created_by_user_id,
+                 created_at
+          FROM system_sensitive_configs
+          WHERE config_key = ?
+          LIMIT 1
+        `,
+        [normalizedConfigKey]
+      );
+      return toSystemSensitiveConfigRecord(rows?.[0]);
+    },
+
+    upsertSystemSensitiveConfig: async ({
+      configKey,
+      encryptedValue,
+      expectedVersion,
+      updatedByUserId,
+      status = 'active'
+    } = {}) =>
+      dbClient.inTransaction(async (tx) => {
+        const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
+        if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
+          throw new Error('upsertSystemSensitiveConfig requires whitelisted configKey');
+        }
+        const normalizedEncryptedValue = String(encryptedValue || '').trim();
+        if (
+          !normalizedEncryptedValue
+          || CONTROL_CHAR_PATTERN.test(normalizedEncryptedValue)
+        ) {
+          throw new Error('upsertSystemSensitiveConfig requires encryptedValue');
+        }
+        const parsedExpectedVersion = Number(expectedVersion);
+        if (
+          !Number.isInteger(parsedExpectedVersion)
+          || parsedExpectedVersion < 0
+        ) {
+          throw new Error('upsertSystemSensitiveConfig requires expectedVersion >= 0');
+        }
+        const normalizedUpdatedByUserId = String(updatedByUserId || '').trim();
+        if (!normalizedUpdatedByUserId) {
+          throw new Error('upsertSystemSensitiveConfig requires updatedByUserId');
+        }
+        const normalizedStatus = normalizeSystemSensitiveConfigStatus(status);
+        if (!normalizedStatus) {
+          throw new Error('upsertSystemSensitiveConfig received unsupported status');
+        }
+
+        const existingRows = await tx.query(
+          `
+            SELECT config_key,
+                   version,
+                   created_by_user_id,
+                   created_at
+            FROM system_sensitive_configs
+            WHERE config_key = ?
+            LIMIT 1
+            FOR UPDATE
+          `,
+          [normalizedConfigKey]
+        );
+        const existingRow = existingRows?.[0] || null;
+        const currentVersion = existingRow ? Number(existingRow.version || 0) : 0;
+        if (parsedExpectedVersion !== currentVersion) {
+          throw createSystemSensitiveConfigVersionConflictError({
+            configKey: normalizedConfigKey,
+            expectedVersion: parsedExpectedVersion,
+            currentVersion
+          });
+        }
+
+        const nextVersion = currentVersion + 1;
+        if (existingRow) {
+          await tx.query(
+            `
+              UPDATE system_sensitive_configs
+              SET encrypted_value = ?,
+                  version = ?,
+                  status = ?,
+                  updated_by_user_id = ?,
+                  updated_at = CURRENT_TIMESTAMP(3)
+              WHERE config_key = ?
+            `,
+            [
+              normalizedEncryptedValue,
+              nextVersion,
+              normalizedStatus,
+              normalizedUpdatedByUserId,
+              normalizedConfigKey
+            ]
+          );
+        } else {
+          try {
+            await tx.query(
+              `
+                INSERT INTO system_sensitive_configs (
+                  config_key,
+                  encrypted_value,
+                  version,
+                  status,
+                  updated_by_user_id,
+                  created_by_user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+              `,
+              [
+                normalizedConfigKey,
+                normalizedEncryptedValue,
+                nextVersion,
+                normalizedStatus,
+                normalizedUpdatedByUserId,
+                normalizedUpdatedByUserId
+              ]
+            );
+          } catch (error) {
+            const normalizedErrorCode = String(error?.code || '').trim();
+            if (
+              normalizedErrorCode !== 'ER_DUP_ENTRY'
+              && Number(error?.errno || 0) !== MYSQL_DUP_ENTRY_ERRNO
+            ) {
+              throw error;
+            }
+            let conflictCurrentVersion = currentVersion;
+            try {
+              const conflictRows = await tx.query(
+                `
+                  SELECT version
+                  FROM system_sensitive_configs
+                  WHERE config_key = ?
+                  LIMIT 1
+                `,
+                [normalizedConfigKey]
+              );
+              const loadedVersion = Number(conflictRows?.[0]?.version);
+              if (Number.isInteger(loadedVersion) && loadedVersion >= 0) {
+                conflictCurrentVersion = loadedVersion;
+              }
+            } catch (_lookupError) {}
+            throw createSystemSensitiveConfigVersionConflictError({
+              configKey: normalizedConfigKey,
+              expectedVersion: parsedExpectedVersion,
+              currentVersion: conflictCurrentVersion
+            });
+          }
+        }
+
+        const rows = await tx.query(
+          `
+            SELECT config_key,
+                   encrypted_value,
+                   version,
+                   status,
+                   updated_by_user_id,
+                   updated_at,
+                   created_by_user_id,
+                   created_at
+            FROM system_sensitive_configs
+            WHERE config_key = ?
+            LIMIT 1
+          `,
+          [normalizedConfigKey]
+        );
+        const record = toSystemSensitiveConfigRecord(rows?.[0]);
+        if (!record) {
+          throw new Error('upsertSystemSensitiveConfig result unavailable');
+        }
+        return {
+          ...record,
+          previousVersion: currentVersion
+        };
+      }),
 
     countPlatformRoleCatalogEntries: async () => {
       const rows = await dbClient.query(
@@ -6323,6 +6565,72 @@ const createMySqlAuthStore = ({
       } catch (error) {
         throw error;
       }
+    },
+
+    hasPlatformPermissionByUserId: async ({
+      userId,
+      permissionCode
+    } = {}) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedPermissionCode = toPlatformPermissionCodeKey(permissionCode);
+      if (
+        !normalizedUserId
+        || !PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET.has(normalizedPermissionCode)
+      ) {
+        return {
+          canViewSystemConfig: false,
+          canOperateSystemConfig: false,
+          granted: false
+        };
+      }
+
+      const rows = await dbClient.query(
+        `
+          SELECT MAX(
+                   CASE
+                     WHEN prg.permission_code = ? THEN 1
+                     ELSE 0
+                   END
+                 ) AS can_view_system_config,
+                 MAX(
+                   CASE
+                     WHEN prg.permission_code = ? THEN 1
+                     ELSE 0
+                   END
+                 ) AS can_operate_system_config
+          FROM auth_user_platform_roles upr
+          INNER JOIN platform_role_catalog prc
+            ON prc.role_id = upr.role_id
+           AND prc.scope = 'platform'
+           AND prc.tenant_id = ''
+           AND prc.status IN ('active', 'enabled')
+          LEFT JOIN platform_role_permission_grants prg
+            ON prg.role_id = upr.role_id
+           AND prg.permission_code IN (?, ?)
+          WHERE upr.user_id = ?
+            AND upr.status IN ('active', 'enabled')
+        `,
+        [
+          PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+          PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+          PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+          PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+          normalizedUserId
+        ]
+      );
+      const row = rows?.[0] || null;
+      const canOperateSystemConfig = toBoolean(row?.can_operate_system_config);
+      const canViewSystemConfig =
+        canOperateSystemConfig || toBoolean(row?.can_view_system_config);
+      const granted =
+        normalizedPermissionCode === PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+          ? canOperateSystemConfig
+          : canViewSystemConfig;
+      return {
+        canViewSystemConfig,
+        canOperateSystemConfig,
+        granted
+      };
     },
 
     syncPlatformPermissionSnapshotByUserId: async ({

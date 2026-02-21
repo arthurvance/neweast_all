@@ -5025,6 +5025,173 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/system-configs/{config_key}': {
+      get: {
+        summary: 'Get platform controlled sensitive config metadata by key',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'config_key',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 128,
+              pattern: '^auth\\.[A-Za-z0-9._-]+$'
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Controlled config metadata fetched',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SystemConfigReadResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid config key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks system config read permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Config not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'System config dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      },
+      put: {
+        summary: 'Update platform controlled sensitive config with optimistic concurrency',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'config_key',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 128,
+              pattern: '^auth\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/UpdateSystemConfigRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Controlled config updated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/UpdateSystemConfigResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks system config update permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Config not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Version conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'System config dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/users': {
       post: {
         summary: 'Create or reuse platform user by phone',
@@ -6779,6 +6946,128 @@ const buildOpenApiSpec = () => {
             description: '平台用户状态更新后值（platform 域治理状态）'
           },
           request_id: { type: 'string' }
+        }
+      },
+      UpdateSystemConfigRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['encrypted_value', 'expected_version'],
+        properties: {
+          encrypted_value: {
+            type: 'string',
+            minLength: 1,
+            pattern: '^enc:v1:[A-Za-z0-9_-]{16}:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]+$',
+            description: '受控配置密文值（enc:v1 信封）'
+          },
+          expected_version: {
+            type: 'integer',
+            minimum: 0,
+            description: '乐观并发版本号，必须与当前版本一致'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled', 'enabled'],
+            description: '配置状态（enabled 作为 active 的兼容别名）'
+          }
+        }
+      },
+      SystemConfigReadResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['data', 'meta'],
+        properties: {
+          data: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'config_key',
+              'version',
+              'status',
+              'updated_by_user_id',
+              'updated_at'
+            ],
+            properties: {
+              config_key: {
+                type: 'string',
+                enum: ['auth.default_password']
+              },
+              version: {
+                type: 'integer',
+                minimum: 1
+              },
+              status: {
+                type: 'string',
+                enum: ['active', 'disabled']
+              },
+              updated_by_user_id: {
+                type: 'string'
+              },
+              updated_at: {
+                type: 'string',
+                format: 'date-time'
+              }
+            }
+          },
+          meta: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['request_id'],
+            properties: {
+              request_id: { type: 'string' }
+            }
+          }
+        }
+      },
+      UpdateSystemConfigResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['data', 'meta'],
+        properties: {
+          data: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'config_key',
+              'previous_version',
+              'version',
+              'status',
+              'updated_by_user_id',
+              'updated_at'
+            ],
+            properties: {
+              config_key: {
+                type: 'string',
+                enum: ['auth.default_password']
+              },
+              previous_version: {
+                type: 'integer',
+                minimum: 0
+              },
+              version: {
+                type: 'integer',
+                minimum: 1
+              },
+              status: {
+                type: 'string',
+                enum: ['active', 'disabled']
+              },
+              updated_by_user_id: {
+                type: 'string'
+              },
+              updated_at: {
+                type: 'string',
+                format: 'date-time'
+              }
+            }
+          },
+          meta: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['request_id'],
+            properties: {
+              request_id: { type: 'string' }
+            }
+          }
         }
       },
       ReplacePlatformRoleFactsRequest: {
