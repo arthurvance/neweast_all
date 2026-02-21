@@ -5565,6 +5565,11 @@ const createAuthService = (options = {}) => {
       || deletedRole?.audit_recorded === true
     );
     if (!storeAuditRecorded) {
+      const deletedRoleBeforeAuditSource = (
+        previousRole && typeof previousRole === 'object'
+          ? previousRole
+          : deletedRole
+      );
       await recordPersistentAuditEvent({
         domain: normalizedScope === 'tenant' ? 'tenant' : 'platform',
         tenantId: normalizedScope === 'tenant' ? normalizedTenantId : null,
@@ -5578,15 +5583,16 @@ const createAuthService = (options = {}) => {
         result: 'success',
         beforeState: {
           code: normalizeAuditStringOrNull(
-            resolveRawCamelSnakeField(deletedRole, 'code', 'code'),
+            resolveRawCamelSnakeField(deletedRoleBeforeAuditSource, 'code', 'code'),
             64
           ),
           name: normalizeAuditStringOrNull(
-            resolveRawCamelSnakeField(deletedRole, 'name', 'name'),
+            resolveRawCamelSnakeField(deletedRoleBeforeAuditSource, 'name', 'name'),
             128
           ),
           status: normalizePlatformRoleCatalogStatus(
-            resolveRawCamelSnakeField(deletedRole, 'status', 'status') || 'disabled'
+            resolveRawCamelSnakeField(deletedRoleBeforeAuditSource, 'status', 'status')
+            || 'disabled'
           )
         },
         afterState: {

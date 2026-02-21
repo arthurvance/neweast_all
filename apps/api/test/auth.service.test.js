@@ -10594,6 +10594,58 @@ test('deletePlatformRoleCatalogEntry reports platform status sync with zero affe
   assert.deepEqual(persistentAuditEventTypes, ['auth.role.catalog.status_synced']);
 });
 
+test('deletePlatformRoleCatalogEntry fallback audit records beforeState from previous role', async () => {
+  const persistedAuditEvents = [];
+  const service = createAuthService({
+    authStore: {
+      findPlatformRoleCatalogEntryByRoleId: async () => ({
+        role_id: 'platform_role_delete_audit_before_state_target',
+        code: 'PLATFORM_ROLE_DELETE_AUDIT_BEFORE_STATE',
+        name: 'Platform Role Delete Audit Before State',
+        status: 'active',
+        scope: 'platform',
+        tenant_id: '',
+        is_system: false
+      }),
+      deletePlatformRoleCatalogEntry: async ({ roleId }) => ({
+        role_id: roleId,
+        code: 'PLATFORM_ROLE_DELETE_AUDIT_BEFORE_STATE',
+        name: 'Platform Role Delete Audit Before State',
+        status: 'disabled',
+        scope: 'platform',
+        tenant_id: '',
+        is_system: false,
+        audit_recorded: false
+      }),
+      listUserIdsByPlatformRoleId: async () => [],
+      listPlatformRoleFactsByUserId: async () => [],
+      replacePlatformRolesAndSyncSnapshot: async () => ({ reason: 'ok' }),
+      findPlatformRoleCatalogEntriesByRoleIds: async () => [],
+      recordAuditEvent: async (payload) => {
+        persistedAuditEvents.push(payload);
+        return { audit_recorded: true };
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  const deletedRole = await service.deletePlatformRoleCatalogEntry({
+    requestId: 'req-platform-role-delete-audit-before-state',
+    roleId: 'platform_role_delete_audit_before_state_target',
+    scope: 'platform',
+    operatorUserId: 'operator-user',
+    operatorSessionId: 'operator-session'
+  });
+
+  assert.equal(deletedRole.status, 'disabled');
+  const deleteAuditEvent = persistedAuditEvents.find(
+    (payload) => String(payload?.eventType || '') === 'auth.role.catalog.deleted'
+  );
+  assert.ok(deleteAuditEvent);
+  assert.equal(deleteAuditEvent.beforeState?.status, 'active');
+  assert.equal(deleteAuditEvent.afterState?.status, 'disabled');
+});
+
 test('deletePlatformRoleCatalogEntry maps ERR_AUDIT_WRITE_FAILED to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
   const service = createAuthService({
     authStore: {
