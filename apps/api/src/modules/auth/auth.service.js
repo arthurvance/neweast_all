@@ -1,5 +1,7 @@
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { createHash, createDecipheriv, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, randomInt, timingSafeEqual, createSign, createVerify } = require('node:crypto');
 const { log } = require('../../common/logger');
+const { normalizeTraceparent } = require('../../common/trace-context');
 const { createInMemoryAuthStore } = require('./auth.store.memory');
 
 const ACCESS_TTL_SECONDS = 15 * 60;
@@ -175,6 +177,13 @@ const normalizeAuditStringOrNull = (value, maxLength = 256) => {
     return null;
   }
   return normalized;
+};
+const normalizeAuditTraceparentOrNull = (value) => {
+  const normalized = normalizeAuditStringOrNull(value, 128);
+  if (!normalized) {
+    return null;
+  }
+  return normalizeTraceparent(normalized);
 };
 const normalizeAuditOccurredAt = (value) => {
   if (value === null || value === undefined) {
@@ -1456,20 +1465,47 @@ const createAuthService = (options = {}) => {
   })();
 
   const auditTrail = [];
+  const requestTraceContextStorage = new AsyncLocalStorage();
   const ownerTransferLocksByOrgId = new Map();
+
+  const normalizeAuditRequestIdOrNull = (value) =>
+    normalizeAuditStringOrNull(value, 128);
+
+  const bindRequestTraceparent = ({ requestId, traceparent } = {}) => {
+    const normalizedRequestId = normalizeAuditRequestIdOrNull(requestId);
+    const normalizedTraceparent = normalizeAuditTraceparentOrNull(traceparent);
+    requestTraceContextStorage.enterWith({
+      requestId: normalizedRequestId || 'request_id_unset',
+      traceparent: normalizedTraceparent
+    });
+    return normalizedTraceparent;
+  };
 
   const addAuditEvent = ({
     type,
     requestId,
+    traceparent = undefined,
     userId = 'unknown',
     sessionId = 'unknown',
     detail = '',
     metadata = {}
   }) => {
+    const normalizedRequestId =
+      normalizeAuditRequestIdOrNull(requestId) || 'request_id_unset';
+    const traceContext = requestTraceContextStorage.getStore();
+    const inheritedTraceparent =
+      traceContext && traceContext.requestId === normalizedRequestId
+        ? traceContext.traceparent
+        : null;
+    const resolvedTraceparent =
+      traceparent === undefined
+        ? inheritedTraceparent
+        : normalizeAuditTraceparentOrNull(traceparent);
     const event = {
       type,
       at: new Date(now()).toISOString(),
-      request_id: requestId || 'request_id_unset',
+      request_id: normalizedRequestId,
+      traceparent: resolvedTraceparent,
       user_id: userId,
       session_id: sessionId,
       detail,
@@ -1525,11 +1561,12 @@ const createAuthService = (options = {}) => {
       });
     }
     try {
+      const normalizedTraceparent = normalizeAuditTraceparentOrNull(traceparent);
       return await authStore.recordAuditEvent({
         domain: normalizedDomain,
         tenantId: normalizedTenantId,
         requestId: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
-        traceparent: normalizeAuditStringOrNull(traceparent, 128),
+        traceparent: normalizedTraceparent,
         eventType: normalizedEventType,
         actorUserId: normalizeAuditStringOrNull(actorUserId, 64),
         actorSessionId: normalizeAuditStringOrNull(actorSessionId, 128),
@@ -1558,6 +1595,7 @@ const createAuthService = (options = {}) => {
     eventType = null,
     result = null,
     requestId = null,
+    traceparent = null,
     actorUserId = null,
     targetType = null,
     targetId = null
@@ -1592,6 +1630,13 @@ const createAuthService = (options = {}) => {
         reason: 'audit-store-query-unsupported'
       });
     }
+    let normalizedTraceparentFilter = null;
+    if (traceparent !== null && traceparent !== undefined) {
+      normalizedTraceparentFilter = normalizeAuditTraceparentOrNull(traceparent);
+      if (!normalizedTraceparentFilter) {
+        throw errors.invalidPayload();
+      }
+    }
     try {
       return await authStore.listAuditEvents({
         domain: normalizedDomain,
@@ -1603,6 +1648,7 @@ const createAuthService = (options = {}) => {
         eventType: normalizeAuditStringOrNull(eventType, 128),
         result: normalizeAuditResult(result) || null,
         requestId: normalizeAuditStringOrNull(requestId, 128),
+        traceparent: normalizedTraceparentFilter,
         actorUserId: normalizeAuditStringOrNull(actorUserId, 64),
         targetType: normalizeAuditStringOrNull(targetType, 64),
         targetId: normalizeAuditStringOrNull(targetId, 128)
@@ -1616,6 +1662,7 @@ const createAuthService = (options = {}) => {
 
   const recordIdempotencyEvent = async ({
     requestId,
+    traceparent = null,
     outcome = 'hit',
     routeKey = '',
     idempotencyKey = '',
@@ -1670,6 +1717,7 @@ const createAuthService = (options = {}) => {
     addAuditEvent({
       type: selectedOutcomeDescriptor.eventType,
       requestId,
+      traceparent,
       userId: resolvedUserId,
       sessionId: resolvedSessionId,
       detail: selectedOutcomeDescriptor.detail,
@@ -2394,7 +2442,17 @@ const createAuthService = (options = {}) => {
     return authorizedSession;
   };
 
-  const login = async ({ requestId, phone, password, entryDomain }) => {
+  const login = async ({
+    requestId,
+    phone,
+    password,
+    entryDomain,
+    traceparent = null
+  }) => {
+    bindRequestTraceparent({
+      requestId,
+      traceparent
+    });
     const normalizedPhone = normalizePhone(phone);
     const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
     if (
@@ -2534,7 +2592,11 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const sendOtp = async ({ requestId, phone }) => {
+  const sendOtp = async ({ requestId, phone, traceparent = null }) => {
+    bindRequestTraceparent({
+      requestId,
+      traceparent
+    });
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       throw errors.invalidPayload();
@@ -2639,7 +2701,17 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const loginWithOtp = async ({ requestId, phone, otpCode, entryDomain }) => {
+  const loginWithOtp = async ({
+    requestId,
+    phone,
+    otpCode,
+    entryDomain,
+    traceparent = null
+  }) => {
+    bindRequestTraceparent({
+      requestId,
+      traceparent
+    });
     const normalizedPhone = normalizePhone(phone);
     const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
     if (
@@ -2804,7 +2876,11 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const refresh = async ({ requestId, refreshToken }) => {
+  const refresh = async ({ requestId, refreshToken, traceparent = null }) => {
+    bindRequestTraceparent({
+      requestId,
+      traceparent
+    });
     if (typeof refreshToken !== 'string' || refreshToken.trim() === '') {
       addAuditEvent({
         type: 'auth.refresh.replay_or_invalid',
@@ -3043,7 +3119,16 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const logout = async ({ requestId, accessToken, authorizationContext = null }) => {
+  const logout = async ({
+    requestId,
+    accessToken,
+    authorizationContext = null,
+    traceparent = null
+  }) => {
+    bindRequestTraceparent({
+      requestId,
+      traceparent
+    });
     const { session, user } = await resolveAuthorizedSession({
       requestId,
       accessToken,
@@ -3078,6 +3163,10 @@ const createAuthService = (options = {}) => {
     authorizationContext = null,
     traceparent = null
   }) => {
+    bindRequestTraceparent({
+      requestId,
+      traceparent
+    });
     if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
       addAuditEvent({
         type: 'auth.password_change.rejected',

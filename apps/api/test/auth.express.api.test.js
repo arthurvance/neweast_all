@@ -29,6 +29,8 @@ const dependencyProbe = async () => ({
 });
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TRACEPARENT_PATTERN =
+  /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/i;
 
 const decodeJwtPayload = (token) => {
   const parts = String(token || '').split('.');
@@ -496,6 +498,7 @@ const ensureTables = async () => {
   await runMigrationSql(adminConnection, '0014_tenant_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0015_auth_tenant_membership_roles.sql');
   await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
+  await runMigrationSql(adminConnection, '0018_audit_events.sql');
 };
 
 const resetTestData = async () => {
@@ -2970,6 +2973,16 @@ test('createApiApp parser and fallback error responses include access-control-al
     const malformedPayload = await parseResponseBody(malformedJson);
     assert.equal(malformedJson.status, 400);
     assert.equal(malformedPayload.error_code, 'AUTH-400-INVALID-PAYLOAD');
+    assert.equal(malformedPayload.request_id, 'req-create-apiapp-bad-json');
+    assert.match(String(malformedPayload.traceparent || ''), TRACEPARENT_PATTERN);
+    assert.equal(
+      malformedJson.headers.get('x-request-id'),
+      'req-create-apiapp-bad-json'
+    );
+    assert.equal(
+      malformedJson.headers.get('traceparent'),
+      malformedPayload.traceparent
+    );
     assert.equal(
       malformedJson.headers.get('access-control-allow-origin'),
       'https://web.example'
@@ -2989,6 +3002,13 @@ test('createApiApp parser and fallback error responses include access-control-al
     assert.equal(oversized.status, 413);
     assert.equal(oversizedPayload.error_code, 'AUTH-413-PAYLOAD-TOO-LARGE');
     assert.equal(oversizedPayload.detail, 'JSON payload exceeds allowed size');
+    assert.equal(oversizedPayload.request_id, 'req-create-apiapp-too-large');
+    assert.match(String(oversizedPayload.traceparent || ''), TRACEPARENT_PATTERN);
+    assert.equal(
+      oversized.headers.get('x-request-id'),
+      'req-create-apiapp-too-large'
+    );
+    assert.equal(oversized.headers.get('traceparent'), oversizedPayload.traceparent);
     assert.equal(oversized.headers.get('access-control-allow-origin'), 'https://web.example');
 
     const notFound = await fetch(`http://127.0.0.1:${port}/missing-path`, {
@@ -3140,6 +3160,7 @@ test('createApiApp global error handler includes AUTH-500-INTERNAL error_code', 
         Accept: 'application/problem+json',
         'content-type': 'application/json',
         'x-request-id': requestId,
+        traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
         origin: 'https://web.example'
       },
       body: JSON.stringify({
@@ -3152,6 +3173,15 @@ test('createApiApp global error handler includes AUTH-500-INTERNAL error_code', 
     assert.equal(response.status, 500);
     assert.equal(payload.error_code, 'AUTH-500-INTERNAL');
     assert.equal(payload.request_id, requestId);
+    assert.equal(
+      payload.traceparent,
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    );
+    assert.equal(response.headers.get('x-request-id'), requestId);
+    assert.equal(
+      response.headers.get('traceparent'),
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    );
     assert.equal(response.headers.get('access-control-allow-origin'), 'https://web.example');
   } finally {
     await app.close();

@@ -1,5 +1,5 @@
 const http = require('node:http');
-const { randomUUID, createHash } = require('node:crypto');
+const { randomUUID, createHash, randomBytes } = require('node:crypto');
 const { readConfig } = require('./config/env');
 const { createRouteHandlers } = require('./http-routes');
 const { checkDependencies } = require('./infrastructure/connectivity');
@@ -126,6 +126,7 @@ const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
 const MAX_TRACEPARENT_LENGTH = 128;
+const TRACEPARENT_PATTERN = /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/i;
 const OWNER_TRANSFER_ORG_ID_MAX_LENGTH = 64;
 const DEFAULT_IDEMPOTENCY_REPLAY_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_IDEMPOTENCY_PENDING_TTL_MS = 30 * 1000;
@@ -510,17 +511,87 @@ const normalizeTraceparent = (headers = {}) => {
   if (!rawTraceparent.present || rawTraceparent.values.length !== 1) {
     return null;
   }
-  const normalized = String(rawTraceparent.value || '').trim();
+  const normalized = String(rawTraceparent.value || '').trim().toLowerCase();
+  const [version = '', traceId = '', parentId = '', traceFlags = ''] = normalized.split('-');
   if (
     !normalized
     || normalized.length > MAX_TRACEPARENT_LENGTH
     || normalized.includes(',')
     || !isHeaderSafeValue('traceparent', normalized)
+    || !TRACEPARENT_PATTERN.test(normalized)
+    || /^0+$/.test(traceId)
+    || /^0+$/.test(parentId)
+    || version === 'ff'
+    || traceFlags.length !== 2
   ) {
     return null;
   }
   return normalized;
 };
+
+const createTraceHex = (bytes) => randomBytes(bytes).toString('hex');
+
+const createServerRootTraceparent = () => {
+  let traceId = createTraceHex(16);
+  while (/^0+$/.test(traceId)) {
+    traceId = createTraceHex(16);
+  }
+  let parentId = createTraceHex(8);
+  while (/^0+$/.test(parentId)) {
+    parentId = createTraceHex(8);
+  }
+  return `00-${traceId}-${parentId}-01`;
+};
+
+const resolveTraceContext = ({ requestId, headers = {} } = {}) => {
+  const resolvedRequestId = resolveRequestId({
+    requestId,
+    headers
+  });
+  const rawTraceparent = readHeaderValue(headers, 'traceparent');
+  const normalizedTraceparent = normalizeTraceparent(headers);
+  if (normalizedTraceparent) {
+    return {
+      requestId: resolvedRequestId,
+      traceparent: normalizedTraceparent,
+      trace_source: 'upstream'
+    };
+  }
+  if (rawTraceparent.present) {
+    return {
+      requestId: resolvedRequestId,
+      traceparent: null,
+      trace_source: 'invalid'
+    };
+  }
+  return {
+    requestId: resolvedRequestId,
+    traceparent: createServerRootTraceparent(),
+    trace_source: 'generated'
+  };
+};
+
+const applyTraceContextResponseHeaders = (headers = {}, traceContext = {}) => {
+  const nextHeaders = {
+    ...(headers || {})
+  };
+  const resolvedRequestId = String(traceContext?.requestId || '').trim();
+  if (resolvedRequestId) {
+    nextHeaders['x-request-id'] = resolvedRequestId;
+  }
+  const resolvedTraceparent = String(traceContext?.traceparent || '').trim();
+  if (resolvedTraceparent) {
+    nextHeaders.traceparent = resolvedTraceparent;
+  } else {
+    delete nextHeaders.traceparent;
+  }
+  return nextHeaders;
+};
+
+const withTraceContextHeaders = (routeResponse = {}, traceContext = {}) => ({
+  ...routeResponse,
+  headers: applyTraceContextResponseHeaders(routeResponse.headers, traceContext)
+});
 
 const requestIdFrom = (req) =>
   resolveRequestIdFromHeaders(req?.headers || {});
@@ -1032,10 +1103,20 @@ const isValidRouteResponse = (routeResponse = {}) => {
   return typeof routeResponse.body === 'string';
 };
 
-const withPatchedResponseRequestId = (routeResponse = {}, requestId = '') => {
+const withPatchedResponseRequestId = (
+  routeResponse = {},
+  requestId = '',
+  traceparent = undefined
+) => {
   const normalizedRequestId = String(requestId || '').trim();
+  const hasTraceparentOverride =
+    traceparent === null || typeof traceparent === 'string';
+  const normalizedTraceparent =
+    traceparent === null
+      ? null
+      : String(traceparent || '').trim();
   const clonedResponse = cloneRouteResponse(routeResponse);
-  if (!normalizedRequestId || !clonedResponse.body) {
+  if ((!normalizedRequestId && !hasTraceparentOverride) || !clonedResponse.body) {
     return clonedResponse;
   }
   const contentType = String(
@@ -1052,10 +1133,25 @@ const withPatchedResponseRequestId = (routeResponse = {}, requestId = '') => {
       parsedBody
       && typeof parsedBody === 'object'
       && !Array.isArray(parsedBody)
-      && Object.prototype.hasOwnProperty.call(parsedBody, 'request_id')
     ) {
-      parsedBody.request_id = normalizedRequestId;
-      clonedResponse.body = JSON.stringify(parsedBody);
+      let mutated = false;
+      if (
+        normalizedRequestId
+        && Object.prototype.hasOwnProperty.call(parsedBody, 'request_id')
+      ) {
+        parsedBody.request_id = normalizedRequestId;
+        mutated = true;
+      }
+      if (
+        hasTraceparentOverride
+        && Object.prototype.hasOwnProperty.call(parsedBody, 'traceparent')
+      ) {
+        parsedBody.traceparent = normalizedTraceparent || null;
+        mutated = true;
+      }
+      if (mutated) {
+        clonedResponse.body = JSON.stringify(parsedBody);
+      }
     }
   } catch (_error) {
   }
@@ -1279,6 +1375,7 @@ const waitForResolvedIdempotencyEntry = async ({
 const emitAuthIdempotencyAuditEvent = async ({
   handlers,
   requestId,
+  traceparent = null,
   routeKey,
   idempotencyKey,
   outcome,
@@ -1291,6 +1388,7 @@ const emitAuthIdempotencyAuditEvent = async ({
   try {
     await handlers.recordAuthIdempotencyEvent({
       requestId,
+      traceparent,
       routeKey,
       idempotencyKey,
       outcome,
@@ -1308,7 +1406,7 @@ const summarizeErrorForLog = (error) => {
   return String(error || 'Unknown error');
 };
 
-const authProblemResponse = (error, requestId) => {
+const authProblemResponse = (error, requestId, traceparent = null) => {
   const response = responseJson(
     error.status,
     buildProblemDetails({
@@ -1316,6 +1414,7 @@ const authProblemResponse = (error, requestId) => {
       title: error.title,
       detail: error.detail,
       requestId,
+      traceparent,
       extensions: {
         error_code: error.errorCode,
         ...(error.extensions || {})
@@ -1347,19 +1446,19 @@ const authProblemResponse = (error, requestId) => {
   return response;
 };
 
-const runAuthRoute = async (handler, requestId) => {
+const runAuthRoute = async (handler, requestId, traceparent = null) => {
   try {
     const payload = await handler();
     return responseJson(200, payload);
   } catch (error) {
     if (error instanceof AuthProblemError) {
-      return authProblemResponse(error, requestId);
+      return authProblemResponse(error, requestId, traceparent);
     }
     throw error;
   }
 };
 
-const buildMalformedPayloadProblem = (requestId) =>
+const buildMalformedPayloadProblem = (requestId, traceparent = null) =>
   responseJson(
     400,
     buildProblemDetails({
@@ -1367,12 +1466,17 @@ const buildMalformedPayloadProblem = (requestId) =>
       title: 'Bad Request',
       detail: 'Malformed JSON payload',
       requestId,
+      traceparent,
       extensions: { error_code: 'AUTH-400-INVALID-PAYLOAD' }
     }),
     'application/problem+json'
   );
 
-const buildPayloadTooLargeProblem = (requestId, maxBytes) =>
+const buildPayloadTooLargeProblem = (
+  requestId,
+  maxBytes,
+  traceparent = null
+) =>
   (() => {
     const response = responseJson(
     413,
@@ -1381,6 +1485,7 @@ const buildPayloadTooLargeProblem = (requestId, maxBytes) =>
       title: 'Payload Too Large',
       detail: 'JSON payload exceeds allowed size',
       requestId,
+      traceparent,
       extensions: { error_code: 'AUTH-413-PAYLOAD-TOO-LARGE' }
     }),
     'application/problem+json'
@@ -1389,7 +1494,7 @@ const buildPayloadTooLargeProblem = (requestId, maxBytes) =>
     return response;
   })();
 
-const buildInternalServerProblem = (requestId) =>
+const buildInternalServerProblem = (requestId, traceparent = null) =>
   responseJson(
     500,
     buildProblemDetails({
@@ -1397,6 +1502,7 @@ const buildInternalServerProblem = (requestId) =>
       title: 'Internal Server Error',
       detail: 'Unexpected server error',
       requestId,
+      traceparent,
       extensions: { error_code: 'AUTH-500-INTERNAL' }
     }),
     'application/problem+json'
@@ -1411,15 +1517,19 @@ const shouldParseJsonBody = (req) => {
   return contentType.includes('application/json');
 };
 
-const readJsonBody = async (req, maxBytes) => {
+const readJsonBody = async (req, maxBytes, traceContext = null) => {
   if (!shouldParseJsonBody(req)) {
     return { body: {} };
   }
 
-  const requestId = requestIdFrom(req);
+  const resolvedTraceContext = traceContext || resolveTraceContext({
+    headers: req?.headers || {}
+  });
+  const requestId = resolvedTraceContext.requestId;
+  const traceparent = resolvedTraceContext.traceparent;
   const contentLength = Number(req.headers['content-length']);
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    return { error: buildPayloadTooLargeProblem(requestId, maxBytes) };
+    return { error: buildPayloadTooLargeProblem(requestId, maxBytes, traceparent) };
   }
 
   const chunks = [];
@@ -1429,7 +1539,7 @@ const readJsonBody = async (req, maxBytes) => {
     bytesRead += bufferChunk.length;
 
     if (bytesRead > maxBytes) {
-      return { error: buildPayloadTooLargeProblem(requestId, maxBytes) };
+      return { error: buildPayloadTooLargeProblem(requestId, maxBytes, traceparent) };
     }
 
     chunks.push(bufferChunk);
@@ -1443,7 +1553,7 @@ const readJsonBody = async (req, maxBytes) => {
   try {
     return { body: JSON.parse(raw) };
   } catch (_error) {
-    return { error: buildMalformedPayloadProblem(requestId) };
+    return { error: buildMalformedPayloadProblem(requestId, traceparent) };
   }
 };
 
@@ -1452,6 +1562,7 @@ const createRouteTable = ({
   requestId,
   headers,
   body,
+  traceContext = null,
   getAuthorizationContext = () => null,
   getRouteParams = () => ({}),
   getRouteQuery = () => ({})
@@ -1464,7 +1575,13 @@ const createRouteTable = ({
     && typeof handlers.authIdempotencyStore.releasePending === 'function'
       ? handlers.authIdempotencyStore
       : resolveDefaultAuthIdempotencyStore(handlers);
-  const traceparent = normalizeTraceparent(headers);
+  const resolvedTraceContext = traceContext || resolveTraceContext({
+    requestId,
+    headers
+  });
+  const traceparent = resolvedTraceContext.traceparent;
+  const runAuthRouteWithTrace = (handler) =>
+    runAuthRoute(handler, resolvedTraceContext.requestId, traceparent);
 
   const executeIdempotentAuthRoute = async ({
     routeKey,
@@ -1482,7 +1599,8 @@ const createRouteTable = ({
           body,
           outcome: 'invalid_key'
         }),
-        requestId
+        resolvedTraceContext.requestId,
+        traceparent
       );
     }
     if (!normalizedIdempotencyKey.present) {
@@ -1500,7 +1618,8 @@ const createRouteTable = ({
           body,
           outcome: 'invalid_key'
         }),
-        requestId
+        resolvedTraceContext.requestId,
+        traceparent
       );
     }
 
@@ -1549,6 +1668,7 @@ const createRouteTable = ({
       await emitAuthIdempotencyAuditEvent({
         handlers,
         requestId,
+        traceparent,
         routeKey,
         idempotencyKey,
         outcome,
@@ -1562,7 +1682,8 @@ const createRouteTable = ({
           body,
           outcome
         }),
-        requestId
+        resolvedTraceContext.requestId,
+        traceparent
       );
     };
     const maxAcquireAttempts = 2;
@@ -1620,6 +1741,7 @@ const createRouteTable = ({
                 await emitAuthIdempotencyAuditEvent({
                   handlers,
                   requestId,
+                  traceparent,
                   routeKey,
                   idempotencyKey,
                   outcome: 'store_unavailable',
@@ -1643,6 +1765,7 @@ const createRouteTable = ({
               await emitAuthIdempotencyAuditEvent({
                 handlers,
                 requestId,
+                traceparent,
                 routeKey,
                 idempotencyKey,
                 outcome: 'store_unavailable',
@@ -1665,6 +1788,7 @@ const createRouteTable = ({
                 await emitAuthIdempotencyAuditEvent({
                   handlers,
                   requestId,
+                  traceparent,
                   routeKey,
                   idempotencyKey,
                   outcome: 'store_unavailable',
@@ -1679,6 +1803,7 @@ const createRouteTable = ({
               await emitAuthIdempotencyAuditEvent({
                 handlers,
                 requestId,
+                traceparent,
                 routeKey,
                 idempotencyKey,
                 outcome: 'store_unavailable',
@@ -1738,6 +1863,7 @@ const createRouteTable = ({
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
+          traceparent,
           routeKey,
           idempotencyKey,
           outcome: 'conflict',
@@ -1750,14 +1876,16 @@ const createRouteTable = ({
             body,
             outcome: 'conflict'
           }),
-          requestId
+          resolvedTraceContext.requestId,
+          traceparent
         );
       }
 
       if (existingEntry.state === 'resolved') {
         const replayResponse = withPatchedResponseRequestId(
           existingEntry.response,
-          requestId
+          requestId,
+          traceparent
         );
         if (!isValidRouteResponse(replayResponse)) {
           return respondWithAuditedIdempotencyProblem({
@@ -1772,6 +1900,7 @@ const createRouteTable = ({
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
+          traceparent,
           routeKey,
           idempotencyKey,
           outcome: 'hit',
@@ -1812,6 +1941,7 @@ const createRouteTable = ({
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
+          traceparent,
           routeKey,
           idempotencyKey,
           outcome: 'conflict',
@@ -1824,13 +1954,15 @@ const createRouteTable = ({
             body,
             outcome: 'conflict'
           }),
-          requestId
+          resolvedTraceContext.requestId,
+          traceparent
         );
       }
       if (waitResult.state === 'resolved') {
         const replayResponse = withPatchedResponseRequestId(
           waitResult.entry.response,
-          requestId
+          requestId,
+          traceparent
         );
         if (!isValidRouteResponse(replayResponse)) {
           return respondWithAuditedIdempotencyProblem({
@@ -1845,6 +1977,7 @@ const createRouteTable = ({
         await emitAuthIdempotencyAuditEvent({
           handlers,
           requestId,
+          traceparent,
           routeKey,
           idempotencyKey,
           outcome: 'hit',
@@ -1900,13 +2033,22 @@ const createRouteTable = ({
     'GET /openapi.json': async () => responseJson(200, handlers.openapi(requestId)),
     'GET /auth/ping': async () => responseJson(200, handlers.authPing(requestId)),
     'POST /auth/login': async () =>
-      runAuthRoute(() => handlers.authLogin(requestId, body || {}), requestId),
+      runAuthRouteWithTrace(
+        () => handlers.authLogin(requestId, body || {}, traceparent),
+        requestId
+      ),
     'POST /auth/otp/send': async () =>
-      runAuthRoute(() => handlers.authOtpSend(requestId, body || {}), requestId),
+      runAuthRouteWithTrace(
+        () => handlers.authOtpSend(requestId, body || {}, traceparent),
+        requestId
+      ),
     'POST /auth/otp/login': async () =>
-      runAuthRoute(() => handlers.authOtpLogin(requestId, body || {}), requestId),
+      runAuthRouteWithTrace(
+        () => handlers.authOtpLogin(requestId, body || {}, traceparent),
+        requestId
+      ),
     'GET /auth/tenant/options': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.authTenantOptions(
             requestId,
@@ -1916,7 +2058,7 @@ const createRouteTable = ({
         requestId
       ),
     'POST /auth/tenant/select': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.authTenantSelect(
             requestId,
@@ -1927,7 +2069,7 @@ const createRouteTable = ({
         requestId
       ),
     'POST /auth/tenant/switch': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.authTenantSwitch(
             requestId,
@@ -1938,7 +2080,7 @@ const createRouteTable = ({
         requestId
       ),
     'GET /auth/tenant/member-admin/probe': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () => handlers.authTenantMemberAdminProbe(requestId, headers.authorization),
         requestId
       ),
@@ -1946,7 +2088,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: 'POST /auth/tenant/member-admin/provision-user',
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.authTenantMemberAdminProvisionUser(
                 requestId,
@@ -1958,7 +2100,7 @@ const createRouteTable = ({
           )
       }),
     [TENANT_MEMBER_LIST_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.tenantListMembers(
             requestId,
@@ -1972,7 +2114,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_MEMBER_CREATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantCreateMember(
                 requestId,
@@ -1984,7 +2126,7 @@ const createRouteTable = ({
           )
       }),
     [TENANT_MEMBER_DETAIL_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.tenantGetMemberDetail(
             requestId,
@@ -1998,7 +2140,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_MEMBER_STATUS_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantUpdateMemberStatus(
                 requestId,
@@ -2015,7 +2157,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_MEMBER_PROFILE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantUpdateMemberProfile(
                 requestId,
@@ -2028,7 +2170,7 @@ const createRouteTable = ({
           )
       }),
     [TENANT_MEMBER_ROLE_BINDING_GET_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.tenantGetMemberRoles(
             requestId,
@@ -2042,7 +2184,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantReplaceMemberRoles(
                 requestId,
@@ -2056,7 +2198,7 @@ const createRouteTable = ({
           )
       }),
     [TENANT_ROLE_LIST_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.tenantListRoles(
             requestId,
@@ -2069,7 +2211,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_ROLE_CREATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantCreateRole(
                 requestId,
@@ -2085,7 +2227,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_ROLE_UPDATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantUpdateRole(
                 requestId,
@@ -2102,7 +2244,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_ROLE_DELETE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantDeleteRole(
                 requestId,
@@ -2115,7 +2257,7 @@ const createRouteTable = ({
           )
       }),
     [TENANT_ROLE_PERMISSION_GET_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.tenantGetRolePermissions(
             requestId,
@@ -2129,7 +2271,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.tenantReplaceRolePermissions(
                 requestId,
@@ -2143,7 +2285,7 @@ const createRouteTable = ({
           )
       }),
     [TENANT_AUDIT_EVENTS_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.tenantListAuditEvents(
             requestId,
@@ -2154,7 +2296,7 @@ const createRouteTable = ({
         requestId
       ),
     'GET /auth/platform/member-admin/probe': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
         requestId
       ),
@@ -2162,7 +2304,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: 'POST /auth/platform/member-admin/provision-user',
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.authPlatformMemberAdminProvisionUser(
                 requestId,
@@ -2178,7 +2320,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ORG_CREATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformCreateOrg(
                 requestId,
@@ -2194,7 +2336,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ORG_STATUS_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformUpdateOrgStatus(
                 requestId,
@@ -2210,7 +2352,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformOwnerTransfer(
                 requestId,
@@ -2223,7 +2365,7 @@ const createRouteTable = ({
           )
       }),
     [PLATFORM_AUDIT_EVENTS_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.platformListAuditEvents(
             requestId,
@@ -2234,7 +2376,7 @@ const createRouteTable = ({
         requestId
       ),
     [PLATFORM_ROLE_LIST_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.platformListRoles(
             requestId,
@@ -2247,7 +2389,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ROLE_CREATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformCreateRole(
                 requestId,
@@ -2263,7 +2405,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ROLE_UPDATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformUpdateRole(
                 requestId,
@@ -2280,7 +2422,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ROLE_DELETE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformDeleteRole(
                 requestId,
@@ -2293,7 +2435,7 @@ const createRouteTable = ({
           )
       }),
     [PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY]: async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.platformGetRolePermissions(
             requestId,
@@ -2307,7 +2449,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformReplaceRolePermissions(
                 requestId,
@@ -2324,7 +2466,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_USER_CREATE_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformCreateUser(
                 requestId,
@@ -2339,7 +2481,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_USER_STATUS_ROUTE_KEY,
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.platformUpdateUserStatus(
                 requestId,
@@ -2352,19 +2494,23 @@ const createRouteTable = ({
           )
       }),
     'POST /auth/refresh': async () =>
-      runAuthRoute(() => handlers.authRefresh(requestId, body || {}), requestId),
+      runAuthRouteWithTrace(
+        () => handlers.authRefresh(requestId, body || {}, traceparent),
+        requestId
+      ),
     'POST /auth/logout': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.authLogout(
             requestId,
             headers.authorization,
-            getAuthorizationContext()
+            getAuthorizationContext(),
+            traceparent
           ),
         requestId
       ),
     'POST /auth/change-password': async () =>
-      runAuthRoute(
+      runAuthRouteWithTrace(
         () =>
           handlers.authChangePassword(
             requestId,
@@ -2379,7 +2525,7 @@ const createRouteTable = ({
       executeIdempotentAuthRoute({
         routeKey: 'POST /auth/platform/role-facts/replace',
         execute: () =>
-          runAuthRoute(
+          runAuthRouteWithTrace(
             () =>
               handlers.authReplacePlatformRoleFacts(
                 requestId,
@@ -2402,7 +2548,8 @@ const authorizeProtectedRoute = async ({
   routeDefinition,
   handlers,
   requestId,
-  headers
+  headers,
+  traceparent = null
 }) => {
   if (!routeDefinition || routeDefinition.access !== 'protected') {
     return {
@@ -2419,6 +2566,7 @@ const authorizeProtectedRoute = async ({
           title: 'Internal Server Error',
           detail: 'Authorization handler not available for protected route',
           requestId,
+          traceparent,
           extensions: { error_code: 'AUTH-500-AUTHORIZE-HANDLER-MISSING' }
         }),
         'application/problem+json'
@@ -2436,7 +2584,8 @@ const authorizeProtectedRoute = async ({
           detail: '当前会话无效，请重新登录',
           errorCode: 'AUTH-401-INVALID-ACCESS'
         }),
-        requestId
+        requestId,
+        traceparent
       )
     };
   }
@@ -2458,7 +2607,7 @@ const authorizeProtectedRoute = async ({
   } catch (error) {
     if (error instanceof AuthProblemError) {
       return {
-        authorizationFailure: authProblemResponse(error, requestId)
+        authorizationFailure: authProblemResponse(error, requestId, traceparent)
       };
     }
     throw error;
@@ -2633,17 +2782,20 @@ const dispatchApiRoute = async ({
   handlers,
   routeDefinitions = ROUTE_DEFINITIONS,
   routeDeclarationLookup = null,
-  corsPolicy = DEFAULT_CORS_POLICY
+  corsPolicy = DEFAULT_CORS_POLICY,
+  traceContext = null
 }) => {
   const routeDefinitionSnapshot = toRouteDefinitionsSnapshot(routeDefinitions);
   const resolvedRouteDeclarationLookup = resolveRouteDeclarationLookup({
     routeDefinitions: routeDefinitionSnapshot,
     routeDeclarationLookup
   });
-  const resolvedRequestId = resolveRequestId({
+  const resolvedTraceContext = traceContext || resolveTraceContext({
     requestId,
     headers
   });
+  const resolvedRequestId = resolvedTraceContext.requestId;
+  const resolvedTraceparent = resolvedTraceContext.traceparent;
   const corsOptions = {
     corsPolicy,
     requestOrigin: headers.origin
@@ -2654,11 +2806,15 @@ const dispatchApiRoute = async ({
   const normalizedMethod = asMethod(method);
   const routeDispatchMethod = normalizedMethod === 'HEAD' ? 'GET' : normalizedMethod;
   const finalizeResponse = (routeResponse) => {
+    const responseWithTraceHeaders = withTraceContextHeaders(
+      routeResponse,
+      resolvedTraceContext
+    );
     if (normalizedMethod !== 'HEAD') {
-      return routeResponse;
+      return responseWithTraceHeaders;
     }
     return {
-      ...routeResponse,
+      ...responseWithTraceHeaders,
       body: ''
     };
   };
@@ -2670,6 +2826,7 @@ const dispatchApiRoute = async ({
         title: 'Not Found',
         detail: `No route for ${rawRoutePath}`,
         requestId: resolvedRequestId,
+        traceparent: resolvedTraceparent,
         extensions: { error_code: 'AUTH-404-NOT-FOUND' }
       }),
       'application/problem+json',
@@ -2715,6 +2872,7 @@ const dispatchApiRoute = async ({
     requestId: resolvedRequestId,
     headers,
     body,
+    traceContext: resolvedTraceContext,
     getAuthorizationContext: () => authorizationContext,
     getRouteParams: () => routeParams,
     getRouteQuery: () => routeQuery
@@ -2729,6 +2887,7 @@ const dispatchApiRoute = async ({
           title: 'Internal Server Error',
           detail: `Route declaration missing for ${routeKey}`,
           requestId: resolvedRequestId,
+          traceparent: resolvedTraceparent,
           extensions: { error_code: 'AUTH-500-ROUTE-DECLARATION-MISSING' }
         }),
         'application/problem+json',
@@ -2742,7 +2901,8 @@ const dispatchApiRoute = async ({
       routeDefinition,
       handlers,
       requestId: resolvedRequestId,
-      headers
+      headers,
+      traceparent: resolvedTraceparent
     });
     if (authorizationFailure) {
       const routeSpecificAuthorizationFailure = withOwnerTransferParseProblemContract({
@@ -2767,6 +2927,7 @@ const dispatchApiRoute = async ({
         title: 'Method Not Allowed',
         detail: `Method ${normalizedMethod} not allowed for ${routePath}`,
         requestId: resolvedRequestId,
+        traceparent: resolvedTraceparent,
         extensions: { error_code: 'AUTH-405-METHOD-NOT-ALLOWED' }
       }),
       'application/problem+json',
@@ -2783,6 +2944,7 @@ const dispatchApiRoute = async ({
       title: 'Not Found',
       detail: `No route for ${routePath}`,
       requestId: resolvedRequestId,
+      traceparent: resolvedTraceparent,
       extensions: { error_code: 'AUTH-404-NOT-FOUND' }
     }),
     'application/problem+json',
@@ -2814,7 +2976,10 @@ const handleApiRoute = async (
         options.supportedPermissionScopes || listSupportedRoutePermissionScopes()
     });
   }
-  const requestId = resolveRequestId({ headers });
+  const resolvedTraceContext = options.traceContext || resolveTraceContext({
+    headers
+  });
+  const requestId = resolvedTraceContext.requestId;
   const handlers = options.handlers || createRouteHandlers(config, {
     dependencyProbe,
     authService,
@@ -2834,7 +2999,8 @@ const handleApiRoute = async (
     handlers,
     routeDefinitions,
     routeDeclarationLookup,
-    corsPolicy: options.corsPolicy || createCorsPolicy(config)
+    corsPolicy: options.corsPolicy || createCorsPolicy(config),
+    traceContext: resolvedTraceContext
   });
 };
 
@@ -2872,16 +3038,26 @@ const createServer = (config, options = {}) => {
   const corsPolicy = createCorsPolicy(config);
 
   return http.createServer(async (req, res) => {
-    const requestId = requestIdFrom(req);
+    const traceContext = resolveTraceContext({
+      requestId: requestIdFrom(req),
+      headers: req.headers
+    });
+    const requestId = traceContext.requestId;
     req.headers['x-request-id'] = requestId;
+    if (traceContext.traceparent) {
+      req.headers.traceparent = traceContext.traceparent;
+    }
 
-    const bodyResult = await readJsonBody(req, jsonBodyLimitBytes);
+    const bodyResult = await readJsonBody(req, jsonBodyLimitBytes, traceContext);
     if (bodyResult.error) {
       const parsedBodyRoutePath = parseRequestPath(req.url || '/');
-      const routeSpecificBodyError = withOwnerTransferParseProblemContract({
-        problemResponse: bodyResult.error,
-        routePath: parsedBodyRoutePath.pathname
-      });
+      const routeSpecificBodyError = withTraceContextHeaders(
+        withOwnerTransferParseProblemContract({
+          problemResponse: bodyResult.error,
+          routePath: parsedBodyRoutePath.pathname
+        }),
+        traceContext
+      );
 
       res.statusCode = routeSpecificBodyError.status;
       const responseHeaders = applyCorsPolicyToHeaders(
@@ -2924,27 +3100,33 @@ const createServer = (config, options = {}) => {
           supportedPermissionCodes,
           supportedPermissionScopes,
           corsPolicy,
-          validateRouteDefinitions: false
+          validateRouteDefinitions: false,
+          traceContext
         }
       );
     } catch (error) {
       console.error('[api] unhandled route error', {
         request_id: requestId,
+        traceparent: traceContext.traceparent,
         error_summary: summarizeErrorForLog(error)
       });
-      route = buildInternalServerProblem(requestId);
+      route = buildInternalServerProblem(
+        requestId,
+        traceContext.traceparent
+      );
     }
+    const routeWithTrace = withTraceContextHeaders(route, traceContext);
 
-    res.statusCode = route.status;
+    res.statusCode = routeWithTrace.status;
     const routeHeaders = applyCorsPolicyToHeaders(
-      route.headers,
+      routeWithTrace.headers,
       corsPolicy,
       req.headers.origin
     );
     for (const [header, value] of Object.entries(routeHeaders)) {
       res.setHeader(header, value);
     }
-    res.end(route.body);
+    res.end(routeWithTrace.body);
   });
 };
 

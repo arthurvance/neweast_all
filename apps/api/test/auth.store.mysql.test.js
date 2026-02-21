@@ -5707,3 +5707,86 @@ test('listTenantMembershipRoleBindings rejects role ids with surrounding whitesp
     }
   );
 });
+
+test('recordAuditEvent persists MySQL datetime but returns ISO occurred_at', async () => {
+  let auditInsertParams = null;
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO audit_events')) {
+      auditInsertParams = params;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.recordAuditEvent({
+    domain: 'platform',
+    requestId: 'req-audit-occurred-at-format',
+    traceparent: '00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01',
+    eventType: 'auth.audit.occurred_at.format',
+    targetType: 'user',
+    targetId: 'user-audit-occurred-at-format',
+    result: 'success',
+    occurredAt: '2026-02-21T12:34:56.789Z'
+  });
+
+  assert.ok(Array.isArray(auditInsertParams));
+  assert.equal(auditInsertParams[14], '2026-02-21 12:34:56.789');
+  assert.equal(result.occurred_at, '2026-02-21T12:34:56.789Z');
+  assert.equal(
+    result.traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+});
+
+test('listAuditEvents normalizes MySQL datetime string occurred_at payloads to ISO-8601 output', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT COUNT(*) AS total')
+      && normalizedSql.includes('FROM audit_events')
+    ) {
+      return [{ total: 1 }];
+    }
+    if (
+      normalizedSql.includes('SELECT event_id')
+      && normalizedSql.includes('FROM audit_events')
+      && normalizedSql.includes('ORDER BY occurred_at DESC, event_id DESC')
+    ) {
+      return [
+        {
+          event_id: 'audit-occurred-at-list-1',
+          domain: 'platform',
+          tenant_id: null,
+          request_id: 'req-audit-list-occurred-at',
+          traceparent: '00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01',
+          event_type: 'auth.audit.occurred_at.list',
+          actor_user_id: 'actor-audit-list',
+          actor_session_id: 'session-audit-list',
+          target_type: 'user',
+          target_id: 'target-audit-list',
+          result: 'success',
+          before_state: null,
+          after_state: null,
+          metadata: null,
+          occurred_at: '2026-02-21 12:34:56.789'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.listAuditEvents({
+    domain: 'platform'
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.events.length, 1);
+  assert.equal(result.events[0].occurred_at, '2026-02-21T12:34:56.789Z');
+  assert.equal(
+    result.events[0].traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+});

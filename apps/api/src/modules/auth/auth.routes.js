@@ -70,26 +70,29 @@ const mapProvisionUnexpectedError = (error) => {
 
 const createAuthHandlers = (authService = createAuthService()) => {
   const handlers = {
-    login: async ({ requestId, body }) =>
+    login: async ({ requestId, body, traceparent = null }) =>
       authService.login({
         requestId,
         phone: body.phone,
         password: body.password,
-        entryDomain: body.entry_domain
+        entryDomain: body.entry_domain,
+        traceparent
       }),
 
-    otpSend: async ({ requestId, body }) =>
+    otpSend: async ({ requestId, body, traceparent = null }) =>
       authService.sendOtp({
         requestId,
-        phone: body.phone
+        phone: body.phone,
+        traceparent
       }),
 
-    otpLogin: async ({ requestId, body }) =>
+    otpLogin: async ({ requestId, body, traceparent = null }) =>
       authService.loginWithOtp({
         requestId,
         phone: body.phone,
         otpCode: body.otp_code,
-        entryDomain: body.entry_domain
+        entryDomain: body.entry_domain,
+        traceparent
       }),
 
     tenantOptions: async ({ requestId, authorization, authorizationContext = null }) =>
@@ -161,17 +164,24 @@ const createAuthHandlers = (authService = createAuthService()) => {
       }
     },
 
-    refresh: async ({ requestId, body }) =>
+    refresh: async ({ requestId, body, traceparent = null }) =>
       authService.refresh({
         requestId,
-        refreshToken: body.refresh_token
+        refreshToken: body.refresh_token,
+        traceparent
       }),
 
-    logout: async ({ requestId, authorization, authorizationContext = null }) =>
+    logout: async ({
+      requestId,
+      authorization,
+      authorizationContext = null,
+      traceparent = null
+    }) =>
       authService.logout({
         requestId,
         accessToken: extractBearerToken(authorization),
-        authorizationContext
+        authorizationContext,
+        traceparent
       }),
 
     changePassword: async ({

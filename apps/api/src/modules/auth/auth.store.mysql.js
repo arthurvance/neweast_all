@@ -1,6 +1,7 @@
 const { setTimeout: sleep } = require('node:timers/promises');
 const { createHash, randomUUID } = require('node:crypto');
 const { log } = require('../../common/logger');
+const { normalizeTraceparent } = require('../../common/trace-context');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxRetries: 2,
@@ -34,6 +35,8 @@ const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
 const AUDIT_EVENT_REDACTION_KEY_PATTERN =
   /(password|token|secret|credential|private[_-]?key|access[_-]?key|api[_-]?key|signing[_-]?key)/i;
 const MAX_AUDIT_QUERY_PAGE_SIZE = 200;
+const MYSQL_AUDIT_DATETIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$/;
 
 const normalizeUserStatus = (status) => {
   if (typeof status !== 'string') {
@@ -276,15 +279,65 @@ const normalizeAuditStringOrNull = (value, maxLength = 256) => {
   return normalized;
 };
 
-const normalizeAuditOccurredAt = (value) => {
+const normalizeAuditTraceparentOrNull = (value) => {
+  const normalized = normalizeAuditStringOrNull(value, 128);
+  if (!normalized) {
+    return null;
+  }
+  return normalizeTraceparent(normalized);
+};
+
+const parseMySqlAuditDateTimeAsUtc = (value) => {
+  const normalizedValue = String(value || '').trim();
+  const match = MYSQL_AUDIT_DATETIME_PATTERN.exec(normalizedValue);
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const fraction = String(match[7] || '');
+  const milliseconds = Number((fraction + '000').slice(0, 3));
+  const epochMs = Date.UTC(year, month - 1, day, hour, minute, second, milliseconds);
+  if (Number.isNaN(epochMs)) {
+    return null;
+  }
+  return new Date(epochMs);
+};
+
+const resolveAuditOccurredAtDate = (value) => {
   if (value === null || value === undefined) {
-    return new Date().toISOString();
+    return new Date();
   }
-  const dateValue = value instanceof Date ? value : new Date(value);
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return new Date();
+    }
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsedMySqlDateTime = parseMySqlAuditDateTimeAsUtc(value);
+    if (parsedMySqlDateTime) {
+      return parsedMySqlDateTime;
+    }
+  }
+  const dateValue = new Date(value);
   if (Number.isNaN(dateValue.getTime())) {
-    return new Date().toISOString();
+    return new Date();
   }
-  return dateValue.toISOString();
+  return dateValue;
+};
+
+const normalizeAuditOccurredAt = (value) =>
+  resolveAuditOccurredAtDate(value).toISOString();
+
+const formatAuditDateTimeForMySql = (dateValue) => {
+  const resolvedDateValue = resolveAuditOccurredAtDate(dateValue);
+  const iso = resolvedDateValue.toISOString();
+  return `${iso.slice(0, 19).replace('T', ' ')}.${iso.slice(20, 23)}`;
 };
 
 const safeParseJsonValue = (value) => {
@@ -337,7 +390,7 @@ const toAuditEventRecord = (row) => ({
   domain: normalizeAuditDomain(row?.domain),
   tenant_id: normalizeAuditStringOrNull(row?.tenant_id, 64),
   request_id: normalizeAuditStringOrNull(row?.request_id, 128) || 'request_id_unset',
-  traceparent: normalizeAuditStringOrNull(row?.traceparent, 128),
+  traceparent: normalizeAuditTraceparentOrNull(row?.traceparent),
   event_type: normalizeAuditStringOrNull(row?.event_type, 128) || '',
   actor_user_id: normalizeAuditStringOrNull(row?.actor_user_id, 64),
   actor_session_id: normalizeAuditStringOrNull(row?.actor_session_id, 128),
@@ -2095,11 +2148,12 @@ const createMySqlAuthStore = ({
     const normalizedEventId = normalizeAuditStringOrNull(eventId, 64) || randomUUID();
     const normalizedRequestId =
       normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset';
-    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+    const normalizedTraceparent = normalizeAuditTraceparentOrNull(traceparent);
     const normalizedActorUserId = normalizeAuditStringOrNull(actorUserId, 64);
     const normalizedActorSessionId = normalizeAuditStringOrNull(actorSessionId, 128);
     const normalizedTargetId = normalizeAuditStringOrNull(targetId, 128);
     const normalizedOccurredAt = normalizeAuditOccurredAt(occurredAt);
+    const persistedOccurredAt = formatAuditDateTimeForMySql(normalizedOccurredAt);
     const sanitizedBeforeState = sanitizeAuditState(beforeState);
     const sanitizedAfterState = sanitizeAuditState(afterState);
     const sanitizedMetadata = sanitizeAuditState(metadata);
@@ -2140,7 +2194,7 @@ const createMySqlAuthStore = ({
         sanitizedBeforeState === null ? null : JSON.stringify(sanitizedBeforeState),
         sanitizedAfterState === null ? null : JSON.stringify(sanitizedAfterState),
         sanitizedMetadata === null ? null : JSON.stringify(sanitizedMetadata),
-        normalizedOccurredAt
+        persistedOccurredAt
       ]
     );
     return {
@@ -2178,6 +2232,7 @@ const createMySqlAuthStore = ({
     eventType = null,
     result = null,
     requestId = null,
+    traceparent = null,
     actorUserId = null,
     targetType = null,
     targetId = null
@@ -2219,6 +2274,17 @@ const createMySqlAuthStore = ({
       whereClauses.push('request_id = ?');
       whereArgs.push(normalizedRequestId);
     }
+    let normalizedTraceparent = null;
+    if (traceparent !== null && traceparent !== undefined) {
+      normalizedTraceparent = normalizeAuditTraceparentOrNull(traceparent);
+      if (!normalizedTraceparent) {
+        throw new Error('listAuditEvents requires valid traceparent');
+      }
+    }
+    if (normalizedTraceparent) {
+      whereClauses.push('traceparent = ?');
+      whereArgs.push(normalizedTraceparent);
+    }
     const normalizedActorUserId = normalizeAuditStringOrNull(actorUserId, 64);
     if (normalizedActorUserId) {
       whereClauses.push('actor_user_id = ?');
@@ -2238,12 +2304,12 @@ const createMySqlAuthStore = ({
     const fromDate = from ? new Date(from) : null;
     if (fromDate && !Number.isNaN(fromDate.getTime())) {
       whereClauses.push('occurred_at >= ?');
-      whereArgs.push(fromDate.toISOString());
+      whereArgs.push(formatAuditDateTimeForMySql(fromDate));
     }
     const toDate = to ? new Date(to) : null;
     if (toDate && !Number.isNaN(toDate.getTime())) {
       whereClauses.push('occurred_at <= ?');
-      whereArgs.push(toDate.toISOString());
+      whereArgs.push(formatAuditDateTimeForMySql(toDate));
     }
     if (
       fromDate && toDate

@@ -24,6 +24,8 @@ const dependencyProbe = async () => ({
 });
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TRACEPARENT_PATTERN =
+  /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/i;
 const cloneRouteDefinitions = (routeDefinitions = []) =>
   routeDefinitions.map((routeDefinition) => ({
     ...routeDefinition
@@ -785,10 +787,42 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     64
   );
   assert.equal(
+    payload.paths['/platform/audit/events'].get.parameters.some(
+      (parameter) => parameter.in === 'query' && parameter.name === 'traceparent'
+    ),
+    true
+  );
+  assert.equal(
+    payload.paths['/platform/audit/events'].get.parameters.find(
+      (parameter) => parameter.in === 'query' && parameter.name === 'traceparent'
+    ).schema.pattern,
+    '^[0-9a-fA-F]{2}-[0-9a-fA-F]{32}-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$'
+  );
+  assert.equal(
+    payload.paths['/tenant/audit/events'].get.parameters.some(
+      (parameter) => parameter.in === 'query' && parameter.name === 'traceparent'
+    ),
+    true
+  );
+  assert.equal(
+    payload.paths['/tenant/audit/events'].get.parameters.find(
+      (parameter) => parameter.in === 'query' && parameter.name === 'traceparent'
+    ).schema.pattern,
+    '^[0-9a-fA-F]{2}-[0-9a-fA-F]{32}-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$'
+  );
+  assert.equal(
     payload.paths['/tenant/audit/events'].get.parameters.some(
       (parameter) => parameter.in === 'query' && parameter.name === 'tenant_id'
     ),
     false
+  );
+  assert.equal(
+    payload.components.schemas.ProblemDetails.properties.traceparent.nullable,
+    true
+  );
+  assert.equal(
+    payload.components.schemas.ProblemDetails.required.includes('traceparent'),
+    true
   );
   assert.ok(
     payload.paths['/tenant/members'].get.responses['400'].content['application/problem+json']
@@ -2325,6 +2359,185 @@ test('dispatchApiRoute sanitizes and bounds request_id from headers', async () =
   assert.equal(payload.request_id.length, 128);
 });
 
+test('dispatchApiRoute generates server-root traceparent when inbound traceparent is missing', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer trace-generated-token',
+      'x-request-id': 'req-trace-generated'
+    },
+    body: {
+      phone: '13812345678'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async (
+        requestId,
+        _authorization,
+        _body,
+        _authorizationContext,
+        traceparent
+      ) => ({
+        ok: true,
+        request_id: requestId,
+        traceparent
+      }),
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.request_id, 'req-trace-generated');
+  assert.match(payload.traceparent, TRACEPARENT_PATTERN);
+  assert.equal(route.headers['x-request-id'], 'req-trace-generated');
+  assert.match(route.headers.traceparent, TRACEPARENT_PATTERN);
+});
+
+test('dispatchApiRoute forwards traceparent to auth login handler', async () => {
+  const inboundTraceparent =
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+  const route = await dispatchApiRoute({
+    pathname: '/auth/login',
+    method: 'POST',
+    headers: {
+      'x-request-id': 'req-auth-login-trace-forward',
+      traceparent: inboundTraceparent
+    },
+    body: {
+      phone: '13800000000',
+      password: 'Passw0rd!',
+      entry_domain: 'platform'
+    },
+    handlers: {
+      authLogin: async (requestId, body, traceparent) => ({
+        ok: true,
+        request_id: requestId,
+        phone: body.phone,
+        traceparent
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.request_id, 'req-auth-login-trace-forward');
+  assert.equal(payload.phone, '13800000000');
+  assert.equal(payload.traceparent, inboundTraceparent);
+  assert.equal(route.headers['x-request-id'], 'req-auth-login-trace-forward');
+  assert.equal(route.headers.traceparent, inboundTraceparent);
+});
+
+test('dispatchApiRoute fail-closes invalid inbound traceparent without server-root fallback', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer trace-invalid-token',
+      'x-request-id': 'req-trace-invalid',
+      traceparent: 'invalid-traceparent'
+    },
+    body: {
+      phone: '13812345678'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async (
+        requestId,
+        _authorization,
+        _body,
+        _authorizationContext,
+        traceparent
+      ) => ({
+        ok: true,
+        request_id: requestId,
+        traceparent
+      }),
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.request_id, 'req-trace-invalid');
+  assert.equal(payload.traceparent, null);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(route.headers, 'traceparent'),
+    false
+  );
+});
+
+test('dispatchApiRoute rejects forbidden traceparent version regardless of casing', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/auth/platform/member-admin/provision-user',
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer trace-invalid-version-token',
+      'x-request-id': 'req-trace-version-invalid',
+      traceparent: 'FF-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01'
+    },
+    body: {
+      phone: '13812345678'
+    },
+    handlers: {
+      authPlatformMemberAdminProvisionUser: async (
+        requestId,
+        _authorization,
+        _body,
+        _authorizationContext,
+        traceparent
+      ) => ({
+        ok: true,
+        request_id: requestId,
+        traceparent
+      }),
+      authorizeRoute: async () => ({
+        user_id: 'operator-user',
+        session_id: 'operator-session'
+      })
+    }
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.request_id, 'req-trace-version-invalid');
+  assert.equal(payload.traceparent, null);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(route.headers, 'traceparent'),
+    false
+  );
+});
+
+test('dispatchApiRoute keeps traceparent field stable in Problem Details and response headers', async () => {
+  const route = await dispatchApiRoute({
+    pathname: '/not-found',
+    method: 'GET',
+    headers: {
+      'x-request-id': 'req-problem-trace',
+      traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    },
+    handlers: {}
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.request_id, 'req-problem-trace');
+  assert.equal(
+    payload.traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(route.headers['x-request-id'], 'req-problem-trace');
+  assert.equal(
+    route.headers.traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+});
+
 test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async () => {
   const calls = [];
   const dispatchProvisionRequest = (idempotencyHeaderValue) =>
@@ -2564,6 +2777,8 @@ test('dispatchApiRoute keeps default idempotency store isolated per handlers ins
 
 test('dispatchApiRoute emits idempotency degradation audit when idempotency store is unavailable', async () => {
   const idempotencyEvents = [];
+  const traceparent =
+    '00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01';
 
   const route = await dispatchApiRoute({
     pathname: '/auth/platform/member-admin/provision-user',
@@ -2571,7 +2786,8 @@ test('dispatchApiRoute emits idempotency degradation audit when idempotency stor
     requestId: 'req-idempotency-store-unavailable',
     headers: {
       authorization: 'Bearer fake-token',
-      'idempotency-key': 'idem-store-unavailable-001'
+      'idempotency-key': 'idem-store-unavailable-001',
+      traceparent
     },
     body: {
       phone: '13800000051'
@@ -2613,6 +2829,10 @@ test('dispatchApiRoute emits idempotency degradation audit when idempotency stor
   );
   assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-store-unavailable');
   assert.equal(idempotencyEvents[0].authorizationContext.user_id, 'operator-user');
+  assert.equal(
+    idempotencyEvents[0].traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
 });
 
 test('dispatchApiRoute emits idempotency degradation audit when pending replay entry disappears unexpectedly', async () => {
@@ -3319,6 +3539,67 @@ test('dispatchApiRoute preserves legacy auth idempotency reservation for non-5xx
   assert.equal(executionCalls, 1);
 });
 
+test('dispatchApiRoute rebinds replayed response traceparent to current request trace context', async () => {
+  let executionCalls = 0;
+  const handlers = {
+    authPlatformMemberAdminProvisionUser: async (requestId, _authorization, _body, _ctx, traceparent) => {
+      executionCalls += 1;
+      return {
+        ok: true,
+        request_id: requestId,
+        traceparent
+      };
+    },
+    authorizeRoute: async () => ({
+      user_id: 'operator-user',
+      session_id: 'operator-session'
+    })
+  };
+
+  const dispatchProvision = ({ requestId, traceparent }) =>
+    dispatchApiRoute({
+      pathname: '/auth/platform/member-admin/provision-user',
+      method: 'POST',
+      requestId,
+      headers: {
+        authorization: 'Bearer fake-token',
+        'idempotency-key': 'idem-replay-traceparent-rebind-001',
+        traceparent
+      },
+      body: {
+        phone: '13800000088'
+      },
+      handlers
+    });
+
+  const firstTraceparent =
+    '00-11111111111111111111111111111111-2222222222222222-01';
+  const secondTraceparent =
+    '00-33333333333333333333333333333333-4444444444444444-01';
+
+  const first = await dispatchProvision({
+    requestId: 'req-replay-traceparent-first',
+    traceparent: firstTraceparent
+  });
+  const second = await dispatchProvision({
+    requestId: 'req-replay-traceparent-second',
+    traceparent: secondTraceparent
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(executionCalls, 1);
+
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(firstPayload.request_id, 'req-replay-traceparent-first');
+  assert.equal(firstPayload.traceparent, firstTraceparent);
+  assert.equal(first.headers.traceparent, firstTraceparent);
+  assert.equal(secondPayload.request_id, 'req-replay-traceparent-second');
+  assert.equal(secondPayload.traceparent, secondTraceparent);
+  assert.equal(second.headers.traceparent, secondTraceparent);
+});
+
 test('dispatchApiRoute returns empty body for HEAD authorization failures', async () => {
   let healthCalls = 0;
   const customRouteDefinitions = [
@@ -3916,7 +4197,8 @@ test('createServer wraps unexpected route errors as Problem Details 500', async 
       headers: {
         accept: 'application/problem+json',
         'content-type': 'application/json',
-        'x-request-id': 'req-create-server-internal'
+        'x-request-id': 'req-create-server-internal',
+        traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
       }
     });
     const payload = await response.json();
@@ -3924,11 +4206,24 @@ test('createServer wraps unexpected route errors as Problem Details 500', async 
     assert.match(String(response.headers.get('content-type') || ''), /application\/problem\+json/i);
     assert.equal(payload.error_code, 'AUTH-500-INTERNAL');
     assert.equal(payload.request_id, 'req-create-server-internal');
+    assert.equal(
+      payload.traceparent,
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    );
+    assert.equal(
+      response.headers.get('x-request-id'),
+      'req-create-server-internal'
+    );
+    assert.equal(
+      response.headers.get('traceparent'),
+      '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    );
     assert.ok(
       capturedConsoleErrors.some(
         ([message, details]) =>
           message === '[api] unhandled route error'
           && details?.request_id === 'req-create-server-internal'
+          && details?.traceparent === '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
           && String(details?.error_summary || '').includes(
             'authService.login is not a function'
           )
@@ -3973,11 +4268,15 @@ test('createServer keeps request_id stable when unexpected route errors occur wi
 
     assert.equal(response.status, 500);
     assert.ok(payload.request_id);
+    assert.match(payload.traceparent, TRACEPARENT_PATTERN);
+    assert.equal(response.headers.get('x-request-id'), payload.request_id);
+    assert.equal(response.headers.get('traceparent'), payload.traceparent);
     assert.ok(
       capturedConsoleErrors.some(
         ([message, details]) =>
           message === '[api] unhandled route error'
           && details?.request_id === payload.request_id
+          && details?.traceparent === payload.traceparent
       )
     );
   } finally {

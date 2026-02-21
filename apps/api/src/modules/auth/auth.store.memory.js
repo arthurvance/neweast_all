@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { normalizeTraceparent } = require('../../common/trace-context');
 
 const createInMemoryAuthStore = ({
   seedUsers = [],
@@ -918,6 +919,14 @@ const createInMemoryAuthStore = ({
     return normalized;
   };
 
+  const normalizeAuditTraceparentOrNull = (value) => {
+    const normalized = normalizeAuditStringOrNull(value, 128);
+    if (!normalized) {
+      return null;
+    }
+    return normalizeTraceparent(normalized);
+  };
+
   const normalizeAuditOccurredAt = (value) => {
     if (value === null || value === undefined) {
       return new Date().toISOString();
@@ -990,7 +999,7 @@ const createInMemoryAuthStore = ({
     domain: normalizeAuditDomain(event.domain),
     tenant_id: normalizeAuditStringOrNull(event.tenant_id, 64),
     request_id: normalizeAuditStringOrNull(event.request_id, 128) || 'request_id_unset',
-    traceparent: normalizeAuditStringOrNull(event.traceparent, 128),
+    traceparent: normalizeAuditTraceparentOrNull(event.traceparent),
     event_type: normalizeAuditStringOrNull(event.event_type, 128) || '',
     actor_user_id: normalizeAuditStringOrNull(event.actor_user_id, 64),
     actor_session_id: normalizeAuditStringOrNull(event.actor_session_id, 128),
@@ -1423,7 +1432,7 @@ const createInMemoryAuthStore = ({
       domain: normalizedDomain,
       tenant_id: normalizedTenantId,
       request_id: normalizeAuditStringOrNull(requestId, 128) || 'request_id_unset',
-      traceparent: normalizeAuditStringOrNull(traceparent, 128),
+      traceparent: normalizeAuditTraceparentOrNull(traceparent),
       event_type: normalizedEventType,
       actor_user_id: normalizeAuditStringOrNull(actorUserId, 64),
       actor_session_id: normalizeAuditStringOrNull(actorSessionId, 128),
@@ -1460,6 +1469,7 @@ const createInMemoryAuthStore = ({
       eventType = null,
       result = null,
       requestId = null,
+      traceparent = null,
       actorUserId = null,
       targetType = null,
       targetId = null
@@ -1475,6 +1485,13 @@ const createInMemoryAuthStore = ({
       const normalizedEventType = normalizeAuditStringOrNull(eventType, 128);
       const normalizedResult = normalizeAuditResult(result);
       const normalizedRequestId = normalizeAuditStringOrNull(requestId, 128);
+      let normalizedTraceparent = null;
+      if (traceparent !== null && traceparent !== undefined) {
+        normalizedTraceparent = normalizeAuditTraceparentOrNull(traceparent);
+        if (!normalizedTraceparent) {
+          throw new Error('listAuditEvents requires valid traceparent');
+        }
+      }
       const normalizedActorUserId = normalizeAuditStringOrNull(actorUserId, 64);
       const normalizedTargetType = normalizeAuditStringOrNull(targetType, 64);
       const normalizedTargetId = normalizeAuditStringOrNull(targetId, 128);
@@ -1502,6 +1519,12 @@ const createInMemoryAuthStore = ({
           return false;
         }
         if (normalizedRequestId && normalizeAuditStringOrNull(event.request_id, 128) !== normalizedRequestId) {
+          return false;
+        }
+        if (
+          normalizedTraceparent
+          && normalizeAuditTraceparentOrNull(event.traceparent) !== normalizedTraceparent
+        ) {
           return false;
         }
         if (normalizedActorUserId && normalizeAuditStringOrNull(event.actor_user_id, 64) !== normalizedActorUserId) {

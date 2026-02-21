@@ -986,6 +986,16 @@ const buildOpenApiSpec = () => {
           },
           {
             in: 'query',
+            name: 'traceparent',
+            required: false,
+            schema: {
+              type: 'string',
+              maxLength: 128,
+              pattern: '^[0-9a-fA-F]{2}-[0-9a-fA-F]{32}-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$'
+            }
+          },
+          {
+            in: 'query',
             name: 'actor_user_id',
             required: false,
             schema: { type: 'string', maxLength: 64 }
@@ -3528,6 +3538,16 @@ const buildOpenApiSpec = () => {
             name: 'request_id',
             required: false,
             schema: { type: 'string', maxLength: 128 }
+          },
+          {
+            in: 'query',
+            name: 'traceparent',
+            required: false,
+            schema: {
+              type: 'string',
+              maxLength: 128,
+              pattern: '^[0-9a-fA-F]{2}-[0-9a-fA-F]{32}-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$'
+            }
           },
           {
             in: 'query',
@@ -7127,13 +7147,21 @@ const buildOpenApiSpec = () => {
       },
       ProblemDetails: {
         type: 'object',
-        required: ['title', 'status', 'request_id', 'error_code', 'retryable'],
+        required: [
+          'title',
+          'status',
+          'request_id',
+          'traceparent',
+          'error_code',
+          'retryable'
+        ],
         properties: {
           type: { type: 'string' },
           title: { type: 'string' },
           status: { type: 'integer' },
           detail: { type: 'string' },
           request_id: { type: 'string' },
+          traceparent: { type: 'string', nullable: true },
           error_code: { type: 'string' },
           retryable: { type: 'boolean' },
           degradation_reason: { type: 'string' },

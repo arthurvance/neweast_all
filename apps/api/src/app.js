@@ -16,6 +16,7 @@ const {
 const { checkDependencies } = require('./infrastructure/connectivity');
 const { connectMySql } = require('./infrastructure/mysql-client');
 const { buildProblemDetails } = require('./common/problem-details');
+const { extract: extractTraceContext } = require('./common/trace-context');
 const { log } = require('./common/logger');
 const {
   createAuthService,
@@ -136,6 +137,33 @@ const resolveJsonBodyLimitBytes = (value) => {
     return DEFAULT_JSON_BODY_LIMIT_BYTES;
   }
   return Math.floor(parsed);
+};
+
+const resolveRequestTraceContext = (req) => {
+  const requestId = requestIdFrom(req);
+  const extractedTraceContext = extractTraceContext({
+    source: req?.headers || {},
+    channel: 'http',
+    fallbackRequestId: requestId,
+    generateTraceparentOnMissing: true
+  });
+  return {
+    requestId,
+    traceparent: extractedTraceContext.traceparent
+  };
+};
+
+const applyTraceContextHeaders = (res, traceContext = {}) => {
+  const requestId = String(traceContext?.requestId || '').trim();
+  if (requestId) {
+    res.setHeader('x-request-id', requestId);
+  }
+  const traceparent = String(traceContext?.traceparent || '').trim();
+  if (traceparent) {
+    res.setHeader('traceparent', traceparent);
+    return;
+  }
+  res.removeHeader('traceparent');
 };
 
 const ensureAuthSchemaPreflight = async ({ dbClient }) => {
@@ -331,9 +359,18 @@ const createApiApp = async (config, options = {}) => {
 
   expressApp.disable('x-powered-by');
 
-  expressApp.use((req, _res, next) => {
-    req.request_id = requestIdFrom(req);
+  expressApp.use((req, res, next) => {
+    const traceContext = resolveRequestTraceContext(req);
+    req.request_id = traceContext.requestId;
+    req.traceparent = traceContext.traceparent;
+    req.trace_context = traceContext;
     req.headers['x-request-id'] = req.request_id;
+    if (req.traceparent) {
+      req.headers.traceparent = req.traceparent;
+    } else {
+      delete req.headers.traceparent;
+    }
+    applyTraceContextHeaders(res, traceContext);
     next();
   });
 
@@ -358,8 +395,10 @@ const createApiApp = async (config, options = {}) => {
         title,
         detail,
         requestId: req.request_id,
+        traceparent: req.traceparent,
         extensions: { error_code: errorCode }
       });
+      applyTraceContextHeaders(res, req.trace_context);
       if (forceCloseConnection) {
         res.setHeader('connection', 'close');
         res.once('finish', () => {
@@ -493,6 +532,7 @@ const createApiApp = async (config, options = {}) => {
         headers: req.headers,
         body: req.body || {},
         requestId: req.request_id,
+        traceContext: req.trace_context,
         handlers,
         routeDefinitions,
         routeDeclarationLookup
@@ -547,6 +587,7 @@ const createApiApp = async (config, options = {}) => {
   expressApp.use((error, req, res, _next) => {
     log('error', 'Unhandled API error', {
       request_id: req.request_id || 'request_id_unset',
+      traceparent: req.traceparent,
       detail: error.message
     });
 
@@ -555,10 +596,12 @@ const createApiApp = async (config, options = {}) => {
       title: 'Internal Server Error',
       detail: 'Unexpected server failure',
       requestId: req.request_id,
+      traceparent: req.traceparent,
       extensions: {
         error_code: 'AUTH-500-INTERNAL'
       }
     });
+    applyTraceContextHeaders(res, req.trace_context);
     res.status(500).type('application/problem+json').json(payload);
   });
 

@@ -422,22 +422,25 @@ const createRouteHandlers = (config, options = {}) => {
 
     authPing: (requestId) => authPing(requestId),
 
-    authLogin: async (requestId, body) =>
+    authLogin: async (requestId, body, traceparent = null) =>
       auth.login({
         requestId,
-        body: body || {}
+        body: body || {},
+        traceparent
       }),
 
-    authOtpSend: async (requestId, body) =>
+    authOtpSend: async (requestId, body, traceparent = null) =>
       auth.otpSend({
         requestId,
-        body: body || {}
+        body: body || {},
+        traceparent
       }),
 
-    authOtpLogin: async (requestId, body) =>
+    authOtpLogin: async (requestId, body, traceparent = null) =>
       auth.otpLogin({
         requestId,
-        body: body || {}
+        body: body || {},
+        traceparent
       }),
 
     authTenantOptions: async (requestId, authorization, authorizationContext) =>
@@ -885,17 +888,24 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
-    authRefresh: async (requestId, body) =>
+    authRefresh: async (requestId, body, traceparent = null) =>
       auth.refresh({
         requestId,
-        body: body || {}
+        body: body || {},
+        traceparent
       }),
 
-    authLogout: async (requestId, authorization, authorizationContext) =>
+    authLogout: async (
+      requestId,
+      authorization,
+      authorizationContext,
+      traceparent = null
+    ) =>
       auth.logout({
         requestId,
         authorization,
-        authorizationContext
+        authorizationContext,
+        traceparent
       }),
 
     authChangePassword: async (

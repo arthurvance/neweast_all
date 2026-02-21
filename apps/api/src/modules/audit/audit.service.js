@@ -1,4 +1,5 @@
 const { log } = require('../../common/logger');
+const { normalizeTraceparent } = require('../../common/trace-context');
 const { AuthProblemError } = require('../auth/auth.service');
 const {
   resolveRoutePreauthorizedContext
@@ -25,6 +26,7 @@ const PLATFORM_AUDIT_ALLOWED_QUERY_KEYS = new Set([
   'event_type',
   'result',
   'request_id',
+  'traceparent',
   'actor_user_id',
   'target_type',
   'target_id',
@@ -39,6 +41,7 @@ const TENANT_AUDIT_ALLOWED_QUERY_KEYS = new Set([
   'event_type',
   'result',
   'request_id',
+  'traceparent',
   'actor_user_id',
   'target_type',
   'target_id'
@@ -178,6 +181,22 @@ const normalizeOptionalAuditResultQuery = ({ query, key } = {}) => {
   return normalized;
 };
 
+const normalizeOptionalTraceparentQuery = ({ query, key } = {}) => {
+  const value = normalizeOptionalStrictQueryString({
+    query,
+    key,
+    maxLength: 128
+  });
+  if (value === null) {
+    return null;
+  }
+  const normalizedTraceparent = normalizeTraceparent(value);
+  if (!normalizedTraceparent) {
+    throw auditErrors.invalidPayload();
+  }
+  return normalizedTraceparent;
+};
+
 const resolveActiveTenantId = (authorizationContext = null) =>
   normalizeRequiredString(
     authorizationContext?.active_tenant_id
@@ -245,6 +264,18 @@ const normalizeRequiredDependencyString = (value, maxLength) => {
   return normalized;
 };
 
+const normalizeOptionalDependencyTraceparent = (value) => {
+  const normalized = normalizeOptionalDependencyString(value, 128);
+  if (!normalized) {
+    return null;
+  }
+  const normalizedTraceparent = normalizeTraceparent(normalized);
+  if (!normalizedTraceparent) {
+    throwAuditQueryResultInvalid();
+  }
+  return normalizedTraceparent;
+};
+
 const normalizeDependencyResult = (value) => {
   const normalized = normalizeRequiredDependencyString(value, 16).toLowerCase();
   if (!VALID_AUDIT_RESULT.has(normalized)) {
@@ -308,7 +339,7 @@ const normalizeAuditEventFromDependency = ({
     domain: normalizedDomain,
     tenant_id: normalizedTenantId,
     request_id: normalizeRequiredDependencyString(event.request_id, 128),
-    traceparent: normalizeOptionalDependencyString(event.traceparent, 128),
+    traceparent: normalizeOptionalDependencyTraceparent(event.traceparent),
     event_type: normalizeRequiredDependencyString(event.event_type, 128),
     actor_user_id: normalizeOptionalDependencyString(event.actor_user_id, 64),
     actor_session_id: normalizeOptionalDependencyString(event.actor_session_id, 128),
@@ -398,6 +429,10 @@ const parseAuditQuery = ({
       query,
       key: 'request_id',
       maxLength: 128
+    }),
+    traceparent: normalizeOptionalTraceparentQuery({
+      query,
+      key: 'traceparent'
     }),
     actorUserId: normalizeOptionalStrictQueryString({
       query,
@@ -516,6 +551,7 @@ const createAuditService = ({ authService } = {}) => {
         eventType: parsedQuery.eventType,
         result: parsedQuery.result,
         requestId: parsedQuery.requestId,
+        traceparent: parsedQuery.traceparent,
         actorUserId: parsedQuery.actorUserId,
         targetType: parsedQuery.targetType,
         targetId: parsedQuery.targetId
@@ -584,6 +620,7 @@ const createAuditService = ({ authService } = {}) => {
         eventType: parsedQuery.eventType,
         result: parsedQuery.result,
         requestId: parsedQuery.requestId,
+        traceparent: parsedQuery.traceparent,
         actorUserId: parsedQuery.actorUserId,
         targetType: parsedQuery.targetType,
         targetId: parsedQuery.targetId

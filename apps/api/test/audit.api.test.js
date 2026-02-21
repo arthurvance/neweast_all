@@ -196,6 +196,68 @@ test('GET /platform/audit/events supports tenant_id and result filters', async (
   assert.equal(payload.events[0].event_type, 'auth.org.status.updated');
 });
 
+test('GET /platform/audit/events supports traceparent filter with pagination', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    requestId: 'req-platform-audit-trace-filter-login',
+    phone: PLATFORM_AUDITOR_PHONE,
+    entryDomain: 'platform'
+  });
+  const traceparentA = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+  const traceparentB = '00-11111111111111111111111111111111-2222222222222222-01';
+
+  await seedAuditEvent(harness.authService, {
+    domain: 'platform',
+    requestId: 'audit-platform-trace-1',
+    traceparent: traceparentA,
+    eventType: 'auth.org.status.updated',
+    actorUserId: 'platform-auditor',
+    targetType: 'org',
+    targetId: 'tenant-a',
+    result: 'success',
+    occurredAt: '2026-02-20T10:10:00.000Z'
+  });
+  await seedAuditEvent(harness.authService, {
+    domain: 'platform',
+    requestId: 'audit-platform-trace-2',
+    traceparent: traceparentA,
+    eventType: 'auth.org.status.updated',
+    actorUserId: 'platform-auditor',
+    targetType: 'org',
+    targetId: 'tenant-b',
+    result: 'success',
+    occurredAt: '2026-02-20T10:11:00.000Z'
+  });
+  await seedAuditEvent(harness.authService, {
+    domain: 'platform',
+    requestId: 'audit-platform-trace-3',
+    traceparent: traceparentB,
+    eventType: 'auth.org.status.updated',
+    actorUserId: 'platform-auditor',
+    targetType: 'org',
+    targetId: 'tenant-c',
+    result: 'success',
+    occurredAt: '2026-02-20T10:12:00.000Z'
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: `/platform/audit/events?traceparent=${encodeURIComponent(traceparentA)}&page=1&page_size=1`,
+    method: 'GET',
+    requestId: 'req-platform-audit-trace-filter',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.total, 2);
+  assert.equal(payload.events.length, 1);
+  assert.equal(payload.events[0].traceparent, traceparentA);
+});
+
 test('GET /tenant/audit/events is forced to active_tenant_id and blocks cross-tenant reads', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
@@ -245,6 +307,72 @@ test('GET /tenant/audit/events is forced to active_tenant_id and blocks cross-te
   assert.equal(payload.events.length, 1);
   assert.equal(payload.events[0].tenant_id, 'tenant-a');
   assert.equal(payload.events[0].request_id, 'audit-tenant-a-1');
+});
+
+test('GET /tenant/audit/events supports traceparent filter and keeps tenant isolation', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    requestId: 'req-tenant-audit-trace-login',
+    phone: TENANT_AUDITOR_PHONE,
+    entryDomain: 'tenant'
+  });
+  const traceparentA = '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01';
+  const traceparentB = '00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01';
+
+  await seedAuditEvent(harness.authService, {
+    domain: 'tenant',
+    tenantId: 'tenant-a',
+    requestId: 'audit-tenant-trace-a1',
+    traceparent: traceparentA,
+    eventType: 'auth.tenant_role_permission_grants.updated',
+    actorUserId: 'tenant-auditor',
+    targetType: 'role_permission_grants',
+    targetId: 'tenant_role_a',
+    result: 'success',
+    occurredAt: '2026-02-20T11:20:00.000Z'
+  });
+  await seedAuditEvent(harness.authService, {
+    domain: 'tenant',
+    tenantId: 'tenant-a',
+    requestId: 'audit-tenant-trace-a2',
+    traceparent: traceparentB,
+    eventType: 'auth.tenant_role_permission_grants.updated',
+    actorUserId: 'tenant-auditor',
+    targetType: 'role_permission_grants',
+    targetId: 'tenant_role_a',
+    result: 'success',
+    occurredAt: '2026-02-20T11:21:00.000Z'
+  });
+  await seedAuditEvent(harness.authService, {
+    domain: 'tenant',
+    tenantId: 'tenant-b',
+    requestId: 'audit-tenant-trace-b1',
+    traceparent: traceparentA,
+    eventType: 'auth.tenant_role_permission_grants.updated',
+    actorUserId: 'tenant-auditor',
+    targetType: 'role_permission_grants',
+    targetId: 'tenant_role_b',
+    result: 'success',
+    occurredAt: '2026-02-20T11:22:00.000Z'
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: `/tenant/audit/events?traceparent=${encodeURIComponent(traceparentA)}`,
+    method: 'GET',
+    requestId: 'req-tenant-audit-trace-filter',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.total, 1);
+  assert.equal(payload.events.length, 1);
+  assert.equal(payload.events[0].tenant_id, 'tenant-a');
+  assert.equal(payload.events[0].traceparent, traceparentA);
 });
 
 test('GET /tenant/audit/events rejects unsupported tenant_id query override', async () => {

@@ -97,3 +97,40 @@ test('listPlatformAuditEvents fails closed when tenant filter is violated by dep
     }
   );
 });
+
+test('audit service fails closed when dependency returns invalid traceparent', async () => {
+  const service = createAuditService({
+    authService: {
+      authorizeRoute: async () => ({
+        user_id: 'platform-auditor',
+        session_id: 'platform-session'
+      }),
+      listAuditEvents: async () => ({
+        total: 1,
+        events: [
+          {
+            ...VALID_EVENT,
+            domain: 'platform',
+            tenant_id: null,
+            traceparent: 'not-a-valid-traceparent'
+          }
+        ]
+      })
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      service.listPlatformAuditEvents({
+        requestId: 'req-audit-service-test',
+        accessToken: 'token'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.extensions?.degradation_reason, 'audit-query-result-invalid');
+      return true;
+    }
+  );
+});

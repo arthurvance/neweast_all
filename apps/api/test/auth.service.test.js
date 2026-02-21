@@ -1135,6 +1135,32 @@ test('login failure keeps unified semantics and does not leak account state', as
   assert.equal(lastAudit.phone_masked, '139****9999');
 });
 
+test('login audit events include traceparent when provided', async () => {
+  const service = createService();
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+  const requestId = 'req-login-traceparent-audit';
+
+  const result = await service.login({
+    requestId,
+    phone: '13800000000',
+    password: 'Passw0rd!',
+    entryDomain: 'platform',
+    traceparent
+  });
+
+  assert.ok(result.access_token);
+  const domainBoundAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === requestId && event.type === 'auth.domain.bound'
+  );
+  const loginSucceededAudit = service._internals.auditTrail.find(
+    (event) => event.request_id === requestId && event.type === 'auth.login.succeeded'
+  );
+  assert.ok(domainBoundAudit);
+  assert.ok(loginSucceededAudit);
+  assert.equal(domainBoundAudit.traceparent, traceparent);
+  assert.equal(loginSucceededAudit.traceparent, traceparent);
+});
+
 test('refresh rotation invalidates previous refresh token immediately', async () => {
   const service = createService();
   const login = await service.login({
@@ -4283,6 +4309,76 @@ test('sendOtp normalizes string getSentAt value and keeps cooldown seconds bound
   );
 
   assert.equal(upsertCalled, false);
+});
+
+test('sendOtp keeps traceparent isolated for concurrent same request_id', async () => {
+  let releaseFirstGetSentAt = null;
+  const firstGetSentAtGate = new Promise((resolve) => {
+    releaseFirstGetSentAt = resolve;
+  });
+  let markFirstGetSentAtEntered = null;
+  const firstGetSentAtEntered = new Promise((resolve) => {
+    markFirstGetSentAtEntered = resolve;
+  });
+
+  const otpStore = {
+    upsertOtp: async () => ({ sent_at_ms: Date.now() }),
+    getSentAt: async ({ phone }) => {
+      if (phone === '13800000000') {
+        markFirstGetSentAtEntered();
+        await firstGetSentAtGate;
+      }
+      return null;
+    },
+    verifyAndConsumeOtp: async () => ({ ok: false, reason: 'missing' })
+  };
+
+  const service = createAuthService({
+    seedUsers,
+    otpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  const requestId = 'req-otp-concurrent-shared-request-id';
+  const traceparentA =
+    '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01';
+  const traceparentB =
+    '00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01';
+
+  const first = service.sendOtp({
+    requestId,
+    phone: '13800000000',
+    traceparent: traceparentA
+  });
+  await firstGetSentAtEntered;
+
+  const second = service.sendOtp({
+    requestId,
+    phone: '13800000001',
+    traceparent: traceparentB
+  });
+  await second;
+
+  releaseFirstGetSentAt();
+  await first;
+
+  const sendSucceededEvents = service._internals.auditTrail.filter(
+    (event) =>
+      event.type === 'auth.otp.send.succeeded' && event.request_id === requestId
+  );
+  assert.equal(sendSucceededEvents.length, 2);
+
+  const phoneAEvent = sendSucceededEvents.find(
+    (event) => event.phone_masked === '138****0000'
+  );
+  const phoneBEvent = sendSucceededEvents.find(
+    (event) => event.phone_masked === '138****0001'
+  );
+
+  assert.ok(phoneAEvent);
+  assert.ok(phoneBEvent);
+  assert.equal(phoneAEvent.traceparent, traceparentA);
+  assert.equal(phoneBEvent.traceparent, traceparentB);
 });
 
 test('authorizeRoute returns AUTH-403-FORBIDDEN when tenant permission snapshot denies action', async () => {
@@ -9682,6 +9778,44 @@ test('updatePlatformUserStatus persists audit event with request_id and tracepar
   assert.equal(auditEvents.events[0].target_id, 'platform-status-audit-user');
 });
 
+test('updatePlatformUserStatus fail-closes invalid traceparent in persisted audit event', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-status-audit-invalid-trace-user',
+        phone: '13835550144',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-status-audit-invalid-trace-operator-login'
+  );
+
+  const result = await service.updatePlatformUserStatus({
+    requestId: 'req-platform-status-audit-invalid-trace',
+    traceparent: 'not-a-valid-traceparent',
+    userId: 'platform-status-audit-invalid-trace-user',
+    nextStatus: 'disabled',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id,
+    reason: 'audit-check-invalid-trace'
+  });
+  assert.equal(result.current_status, 'disabled');
+
+  const auditEvents = await service.listAuditEvents({
+    domain: 'platform',
+    requestId: 'req-platform-status-audit-invalid-trace',
+    eventType: 'auth.platform.user.status.updated'
+  });
+  assert.equal(auditEvents.total, 1);
+  assert.equal(auditEvents.events[0].traceparent, null);
+});
+
 test('updatePlatformUserStatus skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
   const userStatusById = new Map([['platform-user-atomic-audit', 'active']]);
   const service = createAuthService({
@@ -9744,6 +9878,31 @@ test('listAuditEvents maps dependency failures to AUTH-503-AUDIT-DEPENDENCY-UNAV
       assert.equal(error.status, 503);
       assert.equal(error.errorCode, 'AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE');
       assert.equal(error.extensions?.degradation_reason, 'invalid connection state');
+      return true;
+    }
+  );
+});
+
+test('listAuditEvents rejects invalid traceparent filter with AUTH-400-INVALID-PAYLOAD', async () => {
+  const service = createAuthService({
+    authStore: {
+      listAuditEvents: async () => {
+        throw new Error('listAuditEvents-should-not-be-called');
+      }
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.listAuditEvents({
+        domain: 'platform',
+        traceparent: 'not-a-valid-traceparent'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
       return true;
     }
   );
@@ -10237,9 +10396,12 @@ test('recordIdempotencyEvent records degraded outcomes with dedicated audit meta
     user_id: 'idempotency-operator-user',
     session_id: 'idempotency-operator-session'
   };
+  const traceparent =
+    '00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01';
 
   await service.recordIdempotencyEvent({
     requestId: 'req-idempotency-store-unavailable-audit',
+    traceparent,
     outcome: 'store_unavailable',
     routeKey: 'POST /auth/platform/member-admin/provision-user',
     idempotencyKey: 'idem-store-unavailable-audit',
@@ -10261,6 +10423,10 @@ test('recordIdempotencyEvent records degraded outcomes with dedicated audit meta
   assert.equal(degradedEvents[1].idempotency_outcome, 'pending_timeout');
   assert.equal(degradedEvents[0].user_id, 'idempotency-operator-user');
   assert.equal(degradedEvents[0].session_id, 'idempotency-operator-session');
+  assert.equal(
+    degradedEvents[0].traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
 });
 
 test('recordIdempotencyEvent classifies unknown outcomes without mislabeling as replay hit', async () => {
