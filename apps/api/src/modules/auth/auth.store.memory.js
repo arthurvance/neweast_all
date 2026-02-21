@@ -66,6 +66,7 @@ const createInMemoryAuthStore = ({
       hook(payload);
     }
   };
+  const KNOWN_PLATFORM_PERMISSION_CODE_SET = new Set(KNOWN_PLATFORM_PERMISSION_CODES);
   const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
   const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
   const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -475,19 +476,51 @@ const createInMemoryAuthStore = ({
     }
     return permission;
   };
+  const createPlatformRolePermissionGrantDataError = (
+    reason = 'platform-role-permission-grants-invalid'
+  ) => {
+    const error = new Error('platform role permission grants invalid');
+    error.code = 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID';
+    error.reason = String(reason || 'platform-role-permission-grants-invalid')
+      .trim()
+      .toLowerCase();
+    return error;
+  };
 
   const listPlatformRolePermissionGrantsForRoleId = (roleId) => {
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
     if (!normalizedRoleId) {
       return [];
     }
-    return [
-      ...new Set(
-        (platformRolePermissionGrantsByRoleId.get(normalizedRoleId) || [])
-          .map((permissionCode) => normalizePlatformPermissionCode(permissionCode))
-          .filter((permissionCode) => permissionCode.length > 0)
-      )
-    ].sort((left, right) => left.localeCompare(right));
+    const normalizedPermissionCodeKeys = [];
+    const seenPermissionCodeKeys = new Set();
+    for (const permissionCode of platformRolePermissionGrantsByRoleId.get(normalizedRoleId) || []) {
+      if (typeof permissionCode !== 'string') {
+        throw createPlatformRolePermissionGrantDataError(
+          'platform-role-permission-grants-invalid-permission-code'
+        );
+      }
+      const normalizedPermissionCode = normalizePlatformPermissionCode(permissionCode);
+      const permissionCodeKey = toPlatformPermissionCodeKey(normalizedPermissionCode);
+      if (
+        permissionCode !== normalizedPermissionCode
+        || !normalizedPermissionCode
+        || CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)
+        || !KNOWN_PLATFORM_PERMISSION_CODE_SET.has(permissionCodeKey)
+      ) {
+        throw createPlatformRolePermissionGrantDataError(
+          'platform-role-permission-grants-invalid-permission-code'
+        );
+      }
+      if (seenPermissionCodeKeys.has(permissionCodeKey)) {
+        throw createPlatformRolePermissionGrantDataError(
+          'platform-role-permission-grants-duplicate-permission-code'
+        );
+      }
+      seenPermissionCodeKeys.add(permissionCodeKey);
+      normalizedPermissionCodeKeys.push(permissionCodeKey);
+    }
+    return normalizedPermissionCodeKeys.sort((left, right) => left.localeCompare(right));
   };
 
   const replacePlatformRolePermissionGrantsForRoleId = ({

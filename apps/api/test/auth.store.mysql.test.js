@@ -5664,6 +5664,165 @@ test('replaceTenantRolePermissionGrantsAndSyncSnapshots rejects malformed affect
   );
 });
 
+test('listPlatformRolePermissionGrants rejects malformed permission codes from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM platform_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+    ) {
+      return [
+        { permission_code: 'platform.member_admin.view' },
+        { permission_code: '   ' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformRolePermissionGrants({
+        roleId: 'platform_role_permission_target'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listPlatformRolePermissionGrants rejects duplicate permission codes from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT permission_code')
+      && normalizedSql.includes('FROM platform_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id = ?')
+    ) {
+      return [
+        { permission_code: 'platform.member_admin.view' },
+        { permission_code: 'PLATFORM.MEMBER_ADMIN.VIEW' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformRolePermissionGrants({
+        roleId: 'platform_role_permission_duplicate_target'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listPlatformRolePermissionGrantsByRoleIds rejects unexpected role rows from storage', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM platform_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+    ) {
+      return [
+        {
+          role_id: 'platform_role_permission_batch_expected',
+          permission_code: 'platform.member_admin.view'
+        },
+        {
+          role_id: 'platform_role_permission_batch_unexpected',
+          permission_code: 'platform.billing.view'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformRolePermissionGrantsByRoleIds({
+        roleIds: ['platform_role_permission_batch_expected']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listPlatformRolePermissionGrantsByRoleIds rejects role rows with uppercase role_id', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM platform_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+    ) {
+      return [
+        {
+          role_id: 'PLATFORM_ROLE_PERMISSION_BATCH_CASE_TARGET',
+          permission_code: 'platform.member_admin.view'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformRolePermissionGrantsByRoleIds({
+        roleIds: ['platform_role_permission_batch_case_target']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listPlatformRolePermissionGrantsByRoleIds rejects duplicate permission codes from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM platform_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+    ) {
+      return [
+        {
+          role_id: 'platform_role_permission_batch_duplicate_target',
+          permission_code: 'platform.member_admin.view'
+        },
+        {
+          role_id: 'platform_role_permission_batch_duplicate_target',
+          permission_code: 'PLATFORM.MEMBER_ADMIN.VIEW'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformRolePermissionGrantsByRoleIds({
+        roleIds: ['platform_role_permission_batch_duplicate_target']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
 test('listTenantRolePermissionGrants rejects malformed permission codes from storage rows', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5816,6 +5975,37 @@ test('listTenantRolePermissionGrantsByRoleIds rejects role rows with surrounding
   );
 });
 
+test('listTenantRolePermissionGrantsByRoleIds rejects role rows with uppercase role_id', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT role_id, permission_code')
+      && normalizedSql.includes('FROM tenant_role_permission_grants')
+      && normalizedSql.includes('WHERE role_id IN')
+    ) {
+      return [
+        {
+          role_id: 'TENANT_ROLE_PERMISSION_BATCH_CASE_TARGET',
+          permission_code: 'tenant.member_admin.view'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantRolePermissionGrantsByRoleIds({
+        roleIds: ['tenant_role_permission_batch_case_target']
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
+      return true;
+    }
+  );
+});
+
 test('listTenantMembershipRoleBindings rejects role ids with surrounding whitespace from storage rows', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5837,6 +6027,35 @@ test('listTenantMembershipRoleBindings rejects role ids with surrounding whitesp
       store.listTenantMembershipRoleBindings({
         membershipId: 'membership-role-binding-whitespace',
         tenantId: 'tenant-role-binding-whitespace'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID');
+      return true;
+    }
+  );
+});
+
+test('listTenantMembershipRoleBindings rejects role ids with uppercase role_id from storage rows', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT mr.role_id')
+      && normalizedSql.includes('FROM auth_tenant_membership_roles mr')
+      && normalizedSql.includes('JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id')
+    ) {
+      return [
+        { role_id: 'TENANT_ROLE_BINDING_CASE_TARGET' }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listTenantMembershipRoleBindings({
+        membershipId: 'membership-role-binding-case',
+        tenantId: 'tenant-role-binding-case'
       }),
     (error) => {
       assert.equal(error?.code, 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID');

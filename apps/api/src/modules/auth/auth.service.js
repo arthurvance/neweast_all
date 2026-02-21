@@ -3658,17 +3658,28 @@ const createAuthService = (options = {}) => {
     }
 
     for (const grantEntry of Array.isArray(grantEntries) ? grantEntries : []) {
-      const roleId = String(
-        (grantEntry?.roleId ?? grantEntry?.role_id) || ''
-      ).trim();
-      if (!roleId) {
+      const rawRoleId = resolveRawCamelSnakeField(
+        grantEntry,
+        'roleId',
+        'role_id'
+      );
+      const strictRoleId = normalizeStrictRequiredStringField(rawRoleId);
+      const roleId = strictRoleId.toLowerCase();
+      if (
+        !strictRoleId
+        || strictRoleId !== roleId
+        || CONTROL_CHAR_PATTERN.test(strictRoleId)
+        || !ROLE_ID_ADDRESSABLE_PATTERN.test(roleId)
+      ) {
         throw errors.platformSnapshotDegraded({
           reason: 'platform-role-permission-grants-invalid'
         });
       }
       const roleIdKey = normalizePlatformRoleIdKey(roleId);
       if (!grantsByRoleIdKey.has(roleIdKey)) {
-        continue;
+        throw errors.platformSnapshotDegraded({
+          reason: 'platform-role-permission-grants-invalid'
+        });
       }
       const hasPermissionCodes = (
         Array.isArray(grantEntry?.permissionCodes)
@@ -3684,8 +3695,12 @@ const createAuthService = (options = {}) => {
         : grantEntry.permission_codes;
       const dedupedCodes = new Map();
       for (const permissionCode of permissionCodes) {
-        const normalizedPermissionCode = normalizePlatformPermissionCode(permissionCode);
-        if (!normalizedPermissionCode) {
+        const normalizedPermissionCode = normalizeStrictRequiredStringField(permissionCode);
+        const permissionCodeKey = toPlatformPermissionCodeKey(normalizedPermissionCode);
+        if (
+          !normalizedPermissionCode
+          || normalizedPermissionCode !== permissionCodeKey
+        ) {
           throw errors.platformSnapshotDegraded({
             reason: 'platform-role-permission-grants-invalid'
           });
@@ -3695,11 +3710,15 @@ const createAuthService = (options = {}) => {
             reason: 'platform-role-permission-grants-invalid'
           });
         }
-        const permissionCodeKey = toPlatformPermissionCodeKey(normalizedPermissionCode);
         if (
           !isPlatformPermissionCode(normalizedPermissionCode)
           || !SUPPORTED_PLATFORM_PERMISSION_CODE_SET.has(permissionCodeKey)
         ) {
+          throw errors.platformSnapshotDegraded({
+            reason: 'platform-role-permission-grants-invalid'
+          });
+        }
+        if (dedupedCodes.has(permissionCodeKey)) {
           throw errors.platformSnapshotDegraded({
             reason: 'platform-role-permission-grants-invalid'
           });
@@ -3873,15 +3892,23 @@ const createAuthService = (options = {}) => {
         'roleId',
         'role_id'
       );
-      const roleId = normalizeStrictRequiredStringField(rawRoleId).toLowerCase();
-      if (!roleId) {
+      const strictRoleId = normalizeStrictRequiredStringField(rawRoleId);
+      const roleId = strictRoleId.toLowerCase();
+      if (
+        !strictRoleId
+        || strictRoleId !== roleId
+        || CONTROL_CHAR_PATTERN.test(strictRoleId)
+        || !ROLE_ID_ADDRESSABLE_PATTERN.test(roleId)
+      ) {
         throw errors.tenantMemberDependencyUnavailable({
           reason: 'tenant-role-permission-grants-invalid'
         });
       }
       const roleIdKey = normalizePlatformRoleIdKey(roleId);
       if (!grantsByRoleIdKey.has(roleIdKey)) {
-        continue;
+        throw errors.tenantMemberDependencyUnavailable({
+          reason: 'tenant-role-permission-grants-invalid'
+        });
       }
       if (seenGrantEntriesByRoleIdKey.has(roleIdKey)) {
         throw errors.tenantMemberDependencyUnavailable({
@@ -3905,7 +3932,13 @@ const createAuthService = (options = {}) => {
       for (const permissionCode of permissionCodes) {
         const normalizedPermissionCode =
           normalizeStrictRequiredStringField(permissionCode);
+        const permissionCodeKey = toTenantPermissionCodeKey(normalizedPermissionCode);
         if (!normalizedPermissionCode) {
+          throw errors.tenantMemberDependencyUnavailable({
+            reason: 'tenant-role-permission-grants-invalid'
+          });
+        }
+        if (normalizedPermissionCode !== permissionCodeKey) {
           throw errors.tenantMemberDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
@@ -3915,11 +3948,15 @@ const createAuthService = (options = {}) => {
             reason: 'tenant-role-permission-grants-invalid'
           });
         }
-        const permissionCodeKey = toTenantPermissionCodeKey(normalizedPermissionCode);
         if (
           !isTenantPermissionCode(normalizedPermissionCode)
           || !SUPPORTED_TENANT_PERMISSION_CODE_SET.has(permissionCodeKey)
         ) {
+          throw errors.tenantMemberDependencyUnavailable({
+            reason: 'tenant-role-permission-grants-invalid'
+          });
+        }
+        if (dedupedCodes.has(permissionCodeKey)) {
           throw errors.tenantMemberDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
@@ -7317,10 +7354,12 @@ const createAuthService = (options = {}) => {
     const normalizedRoleIds = [];
     const seenRoleIds = new Set();
     for (const roleId of roleIds) {
-      const normalizedRoleId = normalizeStrictRequiredStringField(roleId)
-        .toLowerCase();
+      const strictRoleId = normalizeStrictRequiredStringField(roleId);
+      const normalizedRoleId = strictRoleId.toLowerCase();
       if (
-        !normalizedRoleId
+        !strictRoleId
+        || strictRoleId !== normalizedRoleId
+        || !normalizedRoleId
         || normalizedRoleId.length > MAX_PLATFORM_ROLE_ID_LENGTH
         || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
         || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)

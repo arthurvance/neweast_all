@@ -2926,6 +2926,24 @@ const buildOpenApiSpec = () => {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/TenantRolePermissionGrantsReadResponse'
+                },
+                examples: {
+                  final_authorization_read: {
+                    value: {
+                      role_id: 'tenant_permission_target',
+                      permission_codes: [
+                        'tenant.billing.operate',
+                        'tenant.member_admin.operate'
+                      ],
+                      available_permission_codes: [
+                        'tenant.billing.operate',
+                        'tenant.billing.view',
+                        'tenant.member_admin.operate',
+                        'tenant.member_admin.view'
+                      ],
+                      request_id: 'req-tenant-role-permission-read'
+                    }
+                  }
                 }
               }
             }
@@ -3087,6 +3105,25 @@ const buildOpenApiSpec = () => {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/TenantRolePermissionGrantsWriteResponse'
+                },
+                examples: {
+                  final_authorization_write: {
+                    value: {
+                      role_id: 'tenant_permission_target',
+                      permission_codes: [
+                        'tenant.billing.operate',
+                        'tenant.member_admin.operate'
+                      ],
+                      available_permission_codes: [
+                        'tenant.billing.operate',
+                        'tenant.billing.view',
+                        'tenant.member_admin.operate',
+                        'tenant.member_admin.view'
+                      ],
+                      affected_user_count: 2,
+                      request_id: 'req-tenant-role-permission-write'
+                    }
+                  }
                 }
               }
             }
@@ -4174,6 +4211,26 @@ const buildOpenApiSpec = () => {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/PlatformRolePermissionGrantsReadResponse'
+                },
+                examples: {
+                  final_authorization_read: {
+                    value: {
+                      role_id: 'platform_permission_editor',
+                      permission_codes: [
+                        'platform.billing.operate',
+                        'platform.member_admin.operate'
+                      ],
+                      available_permission_codes: [
+                        'platform.billing.operate',
+                        'platform.billing.view',
+                        'platform.member_admin.operate',
+                        'platform.member_admin.view',
+                        'platform.system_config.operate',
+                        'platform.system_config.view'
+                      ],
+                      request_id: 'req-platform-role-permission-read'
+                    }
+                  }
                 }
               }
             }
@@ -4259,6 +4316,27 @@ const buildOpenApiSpec = () => {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/PlatformRolePermissionGrantsWriteResponse'
+                },
+                examples: {
+                  final_authorization_write: {
+                    value: {
+                      role_id: 'platform_permission_editor',
+                      permission_codes: [
+                        'platform.billing.operate',
+                        'platform.member_admin.operate'
+                      ],
+                      available_permission_codes: [
+                        'platform.billing.operate',
+                        'platform.billing.view',
+                        'platform.member_admin.operate',
+                        'platform.member_admin.view',
+                        'platform.system_config.operate',
+                        'platform.system_config.view'
+                      ],
+                      affected_user_count: 3,
+                      request_id: 'req-platform-role-permission-write'
+                    }
+                  }
                 }
               }
             }
@@ -7188,9 +7266,12 @@ const buildOpenApiSpec = () => {
         properties: {
           permission_codes: {
             type: 'array',
-            uniqueItems: true,
             maxItems: 64,
-            description: '仅允许 tenant.* 权限码，按大小写不敏感语义判重',
+            description: '仅允许 tenant.* 最终授权权限点；服务端按大小写不敏感语义去重、排序并持久化，不接受权限树中间态节点。',
+            example: [
+              'tenant.member_admin.operate',
+              'tenant.billing.view'
+            ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
@@ -7216,6 +7297,11 @@ const buildOpenApiSpec = () => {
           },
           permission_codes: {
             type: 'array',
+            description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
+            example: [
+              'tenant.billing.operate',
+              'tenant.member_admin.operate'
+            ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
@@ -7223,6 +7309,13 @@ const buildOpenApiSpec = () => {
           },
           available_permission_codes: {
             type: 'array',
+            description: '当前租户权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
+            example: [
+              'tenant.billing.operate',
+              'tenant.billing.view',
+              'tenant.member_admin.operate',
+              'tenant.member_admin.view'
+            ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
@@ -7250,6 +7343,11 @@ const buildOpenApiSpec = () => {
           },
           permission_codes: {
             type: 'array',
+            description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
+            example: [
+              'tenant.billing.operate',
+              'tenant.member_admin.operate'
+            ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
@@ -7257,6 +7355,13 @@ const buildOpenApiSpec = () => {
           },
           available_permission_codes: {
             type: 'array',
+            description: '当前租户权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
+            example: [
+              'tenant.billing.operate',
+              'tenant.billing.view',
+              'tenant.member_admin.operate',
+              'tenant.member_admin.view'
+            ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
@@ -7276,9 +7381,12 @@ const buildOpenApiSpec = () => {
         properties: {
           permission_codes: {
             type: 'array',
-            uniqueItems: true,
             maxItems: 64,
-            description: '仅允许 platform.* 权限码，按大小写不敏感语义判重',
+            description: '仅允许 platform.* 最终授权权限点；服务端按大小写不敏感语义去重、排序并持久化，不接受权限树中间态节点。',
+            example: [
+              'platform.member_admin.operate',
+              'platform.billing.view'
+            ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'
@@ -7304,6 +7412,11 @@ const buildOpenApiSpec = () => {
           },
           permission_codes: {
             type: 'array',
+            description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
+            example: [
+              'platform.billing.operate',
+              'platform.member_admin.operate'
+            ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'
@@ -7311,6 +7424,15 @@ const buildOpenApiSpec = () => {
           },
           available_permission_codes: {
             type: 'array',
+            description: '当前平台权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
+            example: [
+              'platform.billing.operate',
+              'platform.billing.view',
+              'platform.member_admin.operate',
+              'platform.member_admin.view',
+              'platform.system_config.operate',
+              'platform.system_config.view'
+            ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'
@@ -7338,6 +7460,11 @@ const buildOpenApiSpec = () => {
           },
           permission_codes: {
             type: 'array',
+            description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
+            example: [
+              'platform.billing.operate',
+              'platform.member_admin.operate'
+            ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'
@@ -7345,6 +7472,15 @@ const buildOpenApiSpec = () => {
           },
           available_permission_codes: {
             type: 'array',
+            description: '当前平台权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
+            example: [
+              'platform.billing.operate',
+              'platform.billing.view',
+              'platform.member_admin.operate',
+              'platform.member_admin.view',
+              'platform.system_config.operate',
+              'platform.system_config.view'
+            ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'

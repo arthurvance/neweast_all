@@ -1200,6 +1200,76 @@ test('GET /platform/roles/:role_id/permissions fails closed when downstream payl
   }
 });
 
+test('GET /platform/roles/:role_id/permissions returns deterministically sorted permission arrays', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-read-sort-stability');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-read-sort-stability',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_read_sort_stability',
+      code: 'PERMISSION_READ_SORT_STABILITY',
+      name: '权限读取稳定排序角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalListPlatformRolePermissionGrants =
+    harness.authService.listPlatformRolePermissionGrants;
+  harness.authService.listPlatformRolePermissionGrants = async ({ roleId }) => {
+    if (String(roleId || '').trim().toLowerCase() === 'platform_permission_read_sort_stability') {
+      return {
+        role_id: 'platform_permission_read_sort_stability',
+        permission_codes: [
+          'platform.member_admin.view',
+          'platform.member_admin.operate'
+        ],
+        available_permission_codes: [
+          'platform.system_config.view',
+          'platform.member_admin.view',
+          'platform.billing.view',
+          'platform.member_admin.operate'
+        ]
+      };
+    }
+    return originalListPlatformRolePermissionGrants({ roleId });
+  };
+
+  try {
+    const getPermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_read_sort_stability/permissions',
+      method: 'GET',
+      requestId: 'req-platform-role-permission-read-sort-stability',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(getPermissions.status, 200);
+    const payload = JSON.parse(getPermissions.body);
+    assert.deepEqual(payload.permission_codes, [
+      'platform.member_admin.operate',
+      'platform.member_admin.view'
+    ]);
+    assert.deepEqual(payload.available_permission_codes, [
+      'platform.billing.view',
+      'platform.member_admin.operate',
+      'platform.member_admin.view',
+      'platform.system_config.view'
+    ]);
+  } finally {
+    harness.authService.listPlatformRolePermissionGrants =
+      originalListPlatformRolePermissionGrants;
+  }
+});
+
 test('GET /platform/roles/:role_id/permissions fails closed when downstream payload includes unknown catalog permissions', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-read-unknown-catalog');
@@ -1404,6 +1474,68 @@ test('PUT /platform/roles/:role_id/permissions fails closed when permission cata
   }
 });
 
+test('PUT /platform/roles/:role_id/permissions fails closed before write when permission catalog payload is malformed', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-write-catalog-malformed');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-write-catalog-malformed',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_write_catalog_malformed',
+      code: 'PERMISSION_WRITE_CATALOG_MALFORMED',
+      name: '权限写入目录畸形回包角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const originalListPlatformPermissionCatalog = harness.authService.listPlatformPermissionCatalog;
+  const originalReplacePlatformRolePermissionGrants =
+    harness.authService.replacePlatformRolePermissionGrants;
+  let replacePlatformRolePermissionGrantsCalls = 0;
+  harness.authService.listPlatformPermissionCatalog = () => ({
+    malformed: true
+  });
+  harness.authService.replacePlatformRolePermissionGrants = async ({ roleId }) => {
+    replacePlatformRolePermissionGrantsCalls += 1;
+    return {
+      role_id: roleId,
+      permission_codes: [],
+      affected_user_count: 0
+    };
+  };
+
+  try {
+    const replacePermissions = await dispatchApiRoute({
+      pathname: '/platform/roles/platform_permission_write_catalog_malformed/permissions',
+      method: 'PUT',
+      requestId: 'req-platform-role-permission-write-catalog-malformed',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        permission_codes: []
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(replacePermissions.status, 503);
+    const payload = JSON.parse(replacePermissions.body);
+    assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(payload.request_id, 'req-platform-role-permission-write-catalog-malformed');
+    assert.equal(replacePlatformRolePermissionGrantsCalls, 0);
+  } finally {
+    harness.authService.listPlatformPermissionCatalog = originalListPlatformPermissionCatalog;
+    harness.authService.replacePlatformRolePermissionGrants =
+      originalReplacePlatformRolePermissionGrants;
+  }
+});
+
 test('PUT /platform/roles/:role_id/permissions allows disabled role definitions to be configured', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-disabled-1');
@@ -1496,7 +1628,45 @@ test('PUT /platform/roles/:role_id/permissions rejects non-platform or unknown p
   assert.equal(payload.error_code, 'ROLE-400-INVALID-PAYLOAD');
 });
 
-test('PUT /platform/roles/:role_id/permissions rejects duplicated permission codes (case-insensitive)', async () => {
+test('PUT /platform/roles/:role_id/permissions rejects permission codes with leading or trailing whitespace', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-whitespace-1');
+
+  const createRole = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-permission-whitespace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      role_id: 'platform_permission_whitespace_role',
+      code: 'PERMISSION_WHITESPACE_ROLE',
+      name: '权限码空白校验角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRole.status, 200);
+
+  const replacePermissions = await dispatchApiRoute({
+    pathname: '/platform/roles/platform_permission_whitespace_role/permissions',
+    method: 'PUT',
+    requestId: 'req-platform-role-permission-whitespace-replace-1',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      permission_codes: [' platform.member_admin.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replacePermissions.status, 400);
+  const payload = JSON.parse(replacePermissions.body);
+  assert.equal(payload.error_code, 'ROLE-400-INVALID-PAYLOAD');
+});
+
+test('PUT /platform/roles/:role_id/permissions canonicalizes duplicated permission codes (case-insensitive)', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-permission-dup-1');
 
@@ -1532,9 +1702,9 @@ test('PUT /platform/roles/:role_id/permissions rejects duplicated permission cod
     },
     handlers: harness.handlers
   });
-  assert.equal(replacePermissions.status, 400);
+  assert.equal(replacePermissions.status, 200);
   const payload = JSON.parse(replacePermissions.body);
-  assert.equal(payload.error_code, 'ROLE-400-INVALID-PAYLOAD');
+  assert.deepEqual(payload.permission_codes, ['platform.member_admin.view']);
 });
 
 test('PUT /platform/roles/:role_id/permissions rejects oversized permission_codes payload', async () => {

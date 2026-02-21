@@ -441,16 +441,20 @@ const parseReplaceRolePermissionsPayload = (payload) => {
       throw tenantRoleErrors.invalidPayload('permission_codes 不允许包含控制字符');
     }
     const normalizedPermissionCodeKey = normalizedPermissionCode.toLowerCase();
-    if (dedupedPermissionCodes.has(normalizedPermissionCodeKey)) {
-      throw tenantRoleErrors.invalidPayload('permission_codes 不允许重复');
+    if (!TENANT_PERMISSION_CODE_PATTERN.test(normalizedPermissionCodeKey)) {
+      throw tenantRoleErrors.invalidPayload('permission_codes 仅允许 tenant.* 权限码');
     }
-    dedupedPermissionCodes.set(
-      normalizedPermissionCodeKey,
-      normalizedPermissionCode
-    );
+    if (!dedupedPermissionCodes.has(normalizedPermissionCodeKey)) {
+      dedupedPermissionCodes.set(
+        normalizedPermissionCodeKey,
+        normalizedPermissionCodeKey
+      );
+    }
   }
+  const permissionCodes = [...dedupedPermissionCodes.values()]
+    .sort((left, right) => left.localeCompare(right));
   return {
-    permissionCodes: [...dedupedPermissionCodes.values()]
+    permissionCodes
   };
 };
 
@@ -1608,10 +1612,15 @@ const createTenantRoleService = ({ authService } = {}) => {
       }
     });
 
+    const resolvedSortedPermissionCodes = [...normalizedPermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+    const resolvedSortedAvailablePermissionCodes = [...normalizedAvailablePermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+
     return {
       role_id: normalizedRoleId,
-      permission_codes: [...normalizedPermissionCodes],
-      available_permission_codes: [...normalizedAvailablePermissionCodes],
+      permission_codes: resolvedSortedPermissionCodes,
+      available_permission_codes: resolvedSortedAvailablePermissionCodes,
       request_id: resolvedRequestId
     };
   };
@@ -1678,6 +1687,60 @@ const createTenantRoleService = ({ authService } = {}) => {
     assertAuthServiceMethod('replaceTenantRolePermissionGrants');
     assertAuthServiceMethod('listTenantPermissionCatalog');
 
+    let availablePermissionCodes;
+    try {
+      availablePermissionCodes = normalizeStrictTenantPermissionCodes({
+        permissionCodes: authService.listTenantPermissionCatalog(),
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant permission catalog dependency unavailable',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
+    if (!Array.isArray(availablePermissionCodes)) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant permission catalog dependency unavailable',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
+    const availablePermissionSet = new Set(availablePermissionCodes);
+    const hasUnsupportedRequestedPermission = parsedPayload.permissionCodes.some(
+      (permissionCode) => !availablePermissionSet.has(permissionCode)
+    );
+    if (hasUnsupportedRequestedPermission) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'payload validation failed',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-400-INVALID-PAYLOAD'
+        }
+      });
+      throw tenantRoleErrors.invalidPayload('permission_codes 包含未注册权限码');
+    }
+
     let updated;
     try {
       updated = await authService.replaceTenantRolePermissionGrants({
@@ -1714,27 +1777,6 @@ const createTenantRoleService = ({ authService } = {}) => {
       throw mappedError;
     }
 
-    let availablePermissionCodes;
-    try {
-      availablePermissionCodes = normalizeStrictTenantPermissionCodes({
-        permissionCodes: authService.listTenantPermissionCatalog(),
-        minCount: 0,
-        maxCount: Number.POSITIVE_INFINITY
-      });
-    } catch (_error) {
-      addAuditEvent({
-        type: 'tenant.role.permissions.update.rejected',
-        requestId: resolvedRequestId,
-        operatorUserId: operatorContext.operatorUserId,
-        targetRoleId: normalizedRoleId,
-        detail: 'tenant permission catalog dependency unavailable',
-        metadata: {
-          tenant_id: operatorContext.activeTenantId,
-          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
-        }
-      });
-      throw tenantRoleErrors.dependencyUnavailable();
-    }
     const rawResultRoleId =
       Object.prototype.hasOwnProperty.call(updated || {}, 'role_id')
         ? updated?.role_id
@@ -1757,7 +1799,6 @@ const createTenantRoleService = ({ authService } = {}) => {
       .sort((left, right) => left.localeCompare(right));
     const resolvedPermissionCodes = [...(normalizedPermissionCodes || [])]
       .sort((left, right) => left.localeCompare(right));
-    const availablePermissionSet = new Set(availablePermissionCodes || []);
     const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
       && normalizedPermissionCodes.some((permissionCode) =>
         !availablePermissionSet.has(permissionCode)
@@ -1802,10 +1843,15 @@ const createTenantRoleService = ({ authService } = {}) => {
       }
     });
 
+    const resolvedSortedPermissionCodes = [...normalizedPermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+    const resolvedSortedAvailablePermissionCodes = [...availablePermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+
     return {
       role_id: normalizedRoleId,
-      permission_codes: [...normalizedPermissionCodes],
-      available_permission_codes: [...availablePermissionCodes],
+      permission_codes: resolvedSortedPermissionCodes,
+      available_permission_codes: resolvedSortedAvailablePermissionCodes,
       affected_user_count: normalizedAffectedUserCount,
       request_id: resolvedRequestId
     };

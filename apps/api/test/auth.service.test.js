@@ -3503,6 +3503,82 @@ test('listPlatformRolePermissionGrants fails closed when grants dependency conta
   }
 });
 
+test('listPlatformRolePermissionGrants fails closed when grants dependency returns unexpected role id', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListPlatformRolePermissionGrantsByRoleIds =
+    authStore.listPlatformRolePermissionGrantsByRoleIds;
+  authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'platform_role_permission_unexpected',
+      permissionCodes: ['platform.member_admin.view']
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.listPlatformRolePermissionGrants({
+          roleId: 'sys_admin'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+        assert.equal(
+          error.extensions.degradation_reason,
+          'platform-role-permission-grants-invalid'
+        );
+        return true;
+      }
+    );
+  } finally {
+    authStore.listPlatformRolePermissionGrantsByRoleIds =
+      originalListPlatformRolePermissionGrantsByRoleIds;
+  }
+});
+
+test('listPlatformRolePermissionGrants fails closed when grants dependency returns uppercase permission code', async () => {
+  const service = createAuthService({
+    seedUsers: [buildPlatformRoleFactsOperatorSeed()]
+  });
+
+  const authStore = service._internals.authStore;
+  const originalListPlatformRolePermissionGrantsByRoleIds =
+    authStore.listPlatformRolePermissionGrantsByRoleIds;
+  authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'sys_admin',
+      permissionCodes: ['PLATFORM.MEMBER_ADMIN.VIEW']
+    }
+  ];
+
+  try {
+    await assert.rejects(
+      () =>
+        service.listPlatformRolePermissionGrants({
+          roleId: 'sys_admin'
+        }),
+      (error) => {
+        assert.ok(error instanceof AuthProblemError);
+        assert.equal(error.status, 503);
+        assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+        assert.equal(
+          error.extensions.degradation_reason,
+          'platform-role-permission-grants-invalid'
+        );
+        return true;
+      }
+    );
+  } finally {
+    authStore.listPlatformRolePermissionGrantsByRoleIds =
+      originalListPlatformRolePermissionGrantsByRoleIds;
+  }
+});
+
 test('replacePlatformRolePermissionGrants re-loads affected users after write and resyncs newly matched users', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
@@ -12200,6 +12276,78 @@ test('listTenantRolePermissionGrants fails closed when grants dependency returns
   );
 });
 
+test('listTenantRolePermissionGrants fails closed when grants dependency returns uppercase role id', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_grant_case_target',
+    code: 'TENANT_ROLE_BINDING_GRANT_CASE_TARGET',
+    name: 'Tenant Role Binding Grant Case Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'TENANT_ROLE_BINDING_GRANT_CASE_TARGET',
+      permissionCodes: ['tenant.member_admin.view']
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_grant_case_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantRolePermissionGrants fails closed when grants dependency returns uppercase permission code', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  await service.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_role_binding_grant_permission_case_target',
+    code: 'TENANT_ROLE_BINDING_GRANT_PERMISSION_CASE_TARGET',
+    name: 'Tenant Role Binding Grant Permission Case Target',
+    scope: 'tenant',
+    tenantId: 'tenant-role-binding',
+    isSystem: false
+  });
+
+  service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
+    {
+      roleId: 'tenant_role_binding_grant_permission_case_target',
+      permissionCodes: ['TENANT.MEMBER_ADMIN.VIEW']
+    }
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantRolePermissionGrants({
+        tenantId: 'tenant-role-binding',
+        roleId: 'tenant_role_binding_grant_permission_case_target'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
 test('listTenantMemberRoleBindings fails closed when store returns malformed role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
@@ -12269,6 +12417,30 @@ test('listTenantMemberRoleBindings fails closed when store returns role ids with
 
   service._internals.authStore.listTenantMembershipRoleBindings = async () => [
     ' tenant_role_valid'
+  ];
+
+  await assert.rejects(
+    () =>
+      service.listTenantMemberRoleBindings({
+        tenantId: 'tenant-role-binding',
+        membershipId: 'membership-role-binding-1'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE');
+      return true;
+    }
+  );
+});
+
+test('listTenantMemberRoleBindings fails closed when store returns role ids with uppercase characters', async () => {
+  const service = createAuthService({
+    seedUsers: [buildTenantRoleBindingSeed()]
+  });
+
+  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+    'TENANT_ROLE_VALID'
   ];
 
   await assert.rejects(

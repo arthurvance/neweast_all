@@ -500,6 +500,51 @@ test('0019 down migration drops system_sensitive_configs and removes sys_admin s
   assert.match(sql, /DROP TABLE IF EXISTS system_sensitive_configs/i);
 });
 
+test('0020 migration normalizes and prunes role permission grants to final authorization set', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0020_permission_grants_final_authorization_cleanup.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TEMPORARY TABLE tmp_platform_role_permission_grants_final_authorization/i);
+  assert.match(sql, /LOWER\(TRIM\(grants\.permission_code\)\)/i);
+  assert.match(sql, /GROUP_CONCAT\(\s*NULLIF\(TRIM\(grants\.created_by_user_id\), ''\)/i);
+  assert.match(sql, /GROUP_CONCAT\(\s*NULLIF\(TRIM\(grants\.updated_by_user_id\), ''\)/i);
+  assert.match(sql, /SUBSTRING_INDEX\(/i);
+  assert.match(sql, /catalog\.scope = 'platform'/i);
+  assert.match(sql, /platform\.system_config\.view/i);
+  assert.match(sql, /platform\.system_config\.operate/i);
+  assert.match(sql, /DELETE\s+grants\s+FROM\s+platform_role_permission_grants/i);
+  assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
+  assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
+  assert.match(sql, /EXISTS\s*\(\s*SELECT 1\s*FROM tmp_platform_role_permission_grants_final_authorization/i);
+  assert.match(sql, /CREATE TEMPORARY TABLE tmp_tenant_role_permission_grants_final_authorization/i);
+  assert.match(sql, /catalog\.scope = 'tenant'/i);
+  assert.match(sql, /tenant\.member_admin\.view/i);
+  assert.match(sql, /tenant\.member_admin\.operate/i);
+  assert.match(sql, /tenant\.billing\.view/i);
+  assert.match(sql, /tenant\.billing\.operate/i);
+  assert.match(sql, /DELETE\s+grants\s+FROM\s+tenant_role_permission_grants/i);
+  assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
+  assert.match(sql, /EXISTS\s*\(\s*SELECT 1\s*FROM tmp_tenant_role_permission_grants_final_authorization/i);
+});
+
+test('0020 down migration is an explicit no-op rollback marker', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0020_permission_grants_final_authorization_cleanup.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /rollback is intentionally no-op/i);
+  assert.match(sql, /SELECT/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

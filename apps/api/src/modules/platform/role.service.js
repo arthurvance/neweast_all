@@ -17,6 +17,7 @@ const MAX_ROLE_CODE_LENGTH = 64;
 const MAX_ROLE_NAME_LENGTH = 128;
 const MAX_PERMISSION_CODES_PAYLOAD_LENGTH = 64;
 const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const PLATFORM_PERMISSION_CODE_PATTERN = /^platform\.[A-Za-z0-9._-]+$/;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const VALID_ROLE_STATUS = new Set(['active', 'disabled']);
 const CREATE_ROLE_ALLOWED_FIELDS = new Set([
@@ -364,17 +365,27 @@ const parseReplaceRolePermissionsPayload = (payload) => {
     if (!normalizedPermissionCode) {
       throw roleErrors.invalidPayload('permission_codes 不能为空字符串');
     }
-    const normalizedPermissionCodeKey = normalizedPermissionCode.toLowerCase();
-    if (dedupedPermissionCodes.has(normalizedPermissionCodeKey)) {
-      throw roleErrors.invalidPayload('permission_codes 不允许重复');
+    if (permissionCode !== normalizedPermissionCode) {
+      throw roleErrors.invalidPayload('permission_codes 不能包含前后空白字符');
     }
-    dedupedPermissionCodes.set(
-      normalizedPermissionCodeKey,
-      normalizedPermissionCode
-    );
+    if (CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)) {
+      throw roleErrors.invalidPayload('permission_codes 不允许包含控制字符');
+    }
+    const normalizedPermissionCodeKey = normalizedPermissionCode.toLowerCase();
+    if (!PLATFORM_PERMISSION_CODE_PATTERN.test(normalizedPermissionCodeKey)) {
+      throw roleErrors.invalidPayload('permission_codes 仅允许 platform.* 权限码');
+    }
+    if (!dedupedPermissionCodes.has(normalizedPermissionCodeKey)) {
+      dedupedPermissionCodes.set(
+        normalizedPermissionCodeKey,
+        normalizedPermissionCodeKey
+      );
+    }
   }
+  const permissionCodes = [...dedupedPermissionCodes.values()]
+    .sort((left, right) => left.localeCompare(right));
   return {
-    permissionCodes: [...dedupedPermissionCodes.values()]
+    permissionCodes
   };
 };
 
@@ -528,6 +539,7 @@ const normalizeStrictPlatformPermissionCodes = ({
     if (
       !normalizedPermissionCode
       || CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)
+      || !PLATFORM_PERMISSION_CODE_PATTERN.test(normalizedPermissionCode)
       || seenPermissionCodes.has(normalizedPermissionCode)
     ) {
       return null;
@@ -863,10 +875,15 @@ const createPlatformRoleService = ({ authService } = {}) => {
       }
     });
 
+    const resolvedSortedPermissionCodes = [...normalizedPermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+    const resolvedSortedAvailablePermissionCodes = [...normalizedAvailablePermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+
     return {
       role_id: normalizedRoleId,
-      permission_codes: [...normalizedPermissionCodes],
-      available_permission_codes: [...normalizedAvailablePermissionCodes],
+      permission_codes: resolvedSortedPermissionCodes,
+      available_permission_codes: resolvedSortedAvailablePermissionCodes,
       request_id: resolvedRequestId
     };
   };
@@ -932,6 +949,57 @@ const createPlatformRoleService = ({ authService } = {}) => {
     assertAuthServiceMethod('listPlatformRolePermissionGrants');
     assertAuthServiceMethod('listPlatformPermissionCatalog');
 
+    let availablePermissionCodes;
+    try {
+      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
+        permissionCodes: authService.listPlatformPermissionCatalog(),
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform permission catalog dependency unavailable',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
+    if (!Array.isArray(availablePermissionCodes)) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'platform permission catalog dependency unavailable',
+        metadata: {
+          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw roleErrors.dependencyUnavailable();
+    }
+    const availablePermissionSet = new Set(availablePermissionCodes);
+    const hasUnsupportedRequestedPermission = parsedPayload.permissionCodes.some(
+      (permissionCode) => !availablePermissionSet.has(permissionCode)
+    );
+    if (hasUnsupportedRequestedPermission) {
+      addAuditEvent({
+        type: 'platform.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'payload validation failed',
+        metadata: {
+          error_code: 'ROLE-400-INVALID-PAYLOAD'
+        }
+      });
+      throw roleErrors.invalidPayload('permission_codes 包含未注册权限码');
+    }
+
     try {
       await authService.listPlatformRolePermissionGrants({
         roleId: normalizedRoleId
@@ -993,26 +1061,6 @@ const createPlatformRoleService = ({ authService } = {}) => {
       throw mappedError;
     }
 
-    let availablePermissionCodes;
-    try {
-      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
-        permissionCodes: authService.listPlatformPermissionCatalog(),
-        minCount: 0,
-        maxCount: Number.POSITIVE_INFINITY
-      });
-    } catch (_error) {
-      addAuditEvent({
-        type: 'platform.role.permissions.update.rejected',
-        requestId: resolvedRequestId,
-        operatorUserId: operatorContext.operatorUserId,
-        targetRoleId: normalizedRoleId,
-        detail: 'platform permission catalog dependency unavailable',
-        metadata: {
-          error_code: 'ROLE-503-DEPENDENCY-UNAVAILABLE'
-        }
-      });
-      throw roleErrors.dependencyUnavailable();
-    }
     const rawResultRoleId =
       Object.prototype.hasOwnProperty.call(updated || {}, 'role_id')
         ? updated?.role_id
@@ -1035,7 +1083,6 @@ const createPlatformRoleService = ({ authService } = {}) => {
       .sort((left, right) => left.localeCompare(right));
     const resolvedPermissionCodes = [...(normalizedPermissionCodes || [])]
       .sort((left, right) => left.localeCompare(right));
-    const availablePermissionSet = new Set(availablePermissionCodes || []);
     const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
       && normalizedPermissionCodes.some((permissionCode) =>
         !availablePermissionSet.has(permissionCode)
@@ -1078,10 +1125,15 @@ const createPlatformRoleService = ({ authService } = {}) => {
       }
     });
 
+    const resolvedSortedPermissionCodes = [...normalizedPermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+    const resolvedSortedAvailablePermissionCodes = [...availablePermissionCodes]
+      .sort((left, right) => left.localeCompare(right));
+
     return {
       role_id: normalizedRoleId,
-      permission_codes: [...normalizedPermissionCodes],
-      available_permission_codes: [...availablePermissionCodes],
+      permission_codes: resolvedSortedPermissionCodes,
+      available_permission_codes: resolvedSortedAvailablePermissionCodes,
       affected_user_count: normalizedAffectedUserCount,
       request_id: resolvedRequestId
     };

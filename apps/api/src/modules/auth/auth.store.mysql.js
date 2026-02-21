@@ -23,6 +23,15 @@ const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
 const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
 const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
 const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
+const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
+  'platform.member_admin.view',
+  'platform.member_admin.operate',
+  'platform.system_config.view',
+  'platform.system_config.operate',
+  'platform.billing.view',
+  'platform.billing.operate'
+]);
+const KNOWN_PLATFORM_PERMISSION_CODE_SET = new Set(KNOWN_PLATFORM_PERMISSION_CODES);
 const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
   'tenant.member_admin.view',
   'tenant.member_admin.operate',
@@ -651,6 +660,54 @@ const normalizePlatformPermissionCodes = (permissionCodes = []) => {
   }
   return [...deduped.values()];
 };
+const createPlatformRolePermissionGrantDataError = (
+  reason = 'platform-role-permission-grants-invalid'
+) => {
+  const error = new Error('platform role permission grants invalid');
+  error.code = 'ERR_PLATFORM_ROLE_PERMISSION_GRANTS_INVALID';
+  error.reason = String(reason || 'platform-role-permission-grants-invalid')
+    .trim()
+    .toLowerCase();
+  return error;
+};
+const normalizeStrictPlatformPermissionCodeFromGrantRow = (
+  permissionCode,
+  reason = 'platform-role-permission-grants-invalid'
+) => {
+  if (typeof permissionCode !== 'string') {
+    throw createPlatformRolePermissionGrantDataError(reason);
+  }
+  const normalizedPermissionCode = normalizePlatformPermissionCode(permissionCode);
+  const permissionCodeKey = toPlatformPermissionCodeKey(normalizedPermissionCode);
+  if (
+    permissionCode !== normalizedPermissionCode
+    || !normalizedPermissionCode
+    || CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)
+    || !KNOWN_PLATFORM_PERMISSION_CODE_SET.has(permissionCodeKey)
+  ) {
+    throw createPlatformRolePermissionGrantDataError(reason);
+  }
+  return permissionCodeKey;
+};
+const normalizeStrictRoleIdFromPlatformGrantRow = (
+  roleId,
+  reason = 'platform-role-permission-grants-invalid-role-id'
+) => {
+  if (typeof roleId !== 'string') {
+    throw createPlatformRolePermissionGrantDataError(reason);
+  }
+  const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
+  if (
+    roleId !== roleId.trim()
+    || roleId !== normalizedRoleId
+    || !normalizedRoleId
+    || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
+    || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
+  ) {
+    throw createPlatformRolePermissionGrantDataError(reason);
+  }
+  return normalizedRoleId;
+};
 const toPlatformPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
   const normalizedPermissionCodeSet = new Set(
     normalizePlatformPermissionCodes(permissionCodes)
@@ -734,6 +791,7 @@ const normalizeStrictRoleIdFromTenantGrantRow = (
   const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
   if (
     roleId !== roleId.trim()
+    || roleId !== normalizedRoleId
     || !normalizedRoleId
     || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
     || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
@@ -762,6 +820,7 @@ const normalizeStrictTenantMembershipRoleIdFromBindingRow = (
   const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
   if (
     roleId !== roleId.trim()
+    || roleId !== normalizedRoleId
     || !normalizedRoleId
     || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
     || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
@@ -2792,11 +2851,22 @@ const createMySqlAuthStore = ({
         `,
         [normalizedRoleId]
       );
-      return [...new Set(
-        (Array.isArray(rows) ? rows : [])
-          .map((row) => normalizePlatformPermissionCode(row?.permission_code))
-          .filter((permissionCode) => permissionCode.length > 0)
-      )];
+      const normalizedPermissionCodeKeys = [];
+      const seenPermissionCodeKeys = new Set();
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const permissionCodeKey = normalizeStrictPlatformPermissionCodeFromGrantRow(
+          row?.permission_code,
+          'platform-role-permission-grants-invalid-permission-code'
+        );
+        if (seenPermissionCodeKeys.has(permissionCodeKey)) {
+          throw createPlatformRolePermissionGrantDataError(
+            'platform-role-permission-grants-duplicate-permission-code'
+          );
+        }
+        seenPermissionCodeKeys.add(permissionCodeKey);
+        normalizedPermissionCodeKeys.push(permissionCodeKey);
+      }
+      return normalizedPermissionCodeKeys;
     },
 
     listPlatformRolePermissionGrantsByRoleIds: async ({ roleIds = [] } = {}) => {
@@ -2822,17 +2892,35 @@ const createMySqlAuthStore = ({
       for (const roleId of normalizedRoleIds) {
         grantsByRoleId.set(roleId, []);
       }
+      const seenGrantPermissionCodeKeysByRoleId = new Map(
+        normalizedRoleIds.map((roleId) => [roleId, new Set()])
+      );
       for (const row of Array.isArray(rows) ? rows : []) {
-        const roleId = normalizePlatformRoleCatalogRoleId(row?.role_id);
-        const permissionCode = normalizePlatformPermissionCode(row?.permission_code);
-        if (!roleId || !permissionCode || !grantsByRoleId.has(roleId)) {
-          continue;
+        const roleId = normalizeStrictRoleIdFromPlatformGrantRow(
+          row?.role_id,
+          'platform-role-permission-grants-invalid-role-id'
+        );
+        if (!grantsByRoleId.has(roleId)) {
+          throw createPlatformRolePermissionGrantDataError(
+            'platform-role-permission-grants-unexpected-role-id'
+          );
         }
-        grantsByRoleId.get(roleId).push(permissionCode);
+        const permissionCodeKey = normalizeStrictPlatformPermissionCodeFromGrantRow(
+          row?.permission_code,
+          'platform-role-permission-grants-invalid-permission-code'
+        );
+        const seenPermissionCodeKeys = seenGrantPermissionCodeKeysByRoleId.get(roleId);
+        if (seenPermissionCodeKeys.has(permissionCodeKey)) {
+          throw createPlatformRolePermissionGrantDataError(
+            'platform-role-permission-grants-duplicate-permission-code'
+          );
+        }
+        seenPermissionCodeKeys.add(permissionCodeKey);
+        grantsByRoleId.get(roleId).push(permissionCodeKey);
       }
       return [...grantsByRoleId.entries()].map(([roleId, permissionCodes]) => ({
         roleId,
-        permissionCodes: [...new Set(permissionCodes)]
+        permissionCodes: [...permissionCodes]
       }));
     },
 
@@ -2902,11 +2990,22 @@ const createMySqlAuthStore = ({
               `,
               [normalizedRoleId]
             );
-            return [...new Set(
-              (Array.isArray(grantRows) ? grantRows : [])
-                .map((row) => normalizePlatformPermissionCode(row?.permission_code))
-                .filter((permissionCode) => permissionCode.length > 0)
-            )];
+            const savedPermissionCodeKeys = [];
+            const seenSavedPermissionCodeKeys = new Set();
+            for (const row of Array.isArray(grantRows) ? grantRows : []) {
+              const permissionCodeKey = normalizeStrictPlatformPermissionCodeFromGrantRow(
+                row?.permission_code,
+                'platform-role-permission-grants-invalid-permission-code'
+              );
+              if (seenSavedPermissionCodeKeys.has(permissionCodeKey)) {
+                throw createPlatformRolePermissionGrantDataError(
+                  'platform-role-permission-grants-duplicate-permission-code'
+                );
+              }
+              seenSavedPermissionCodeKeys.add(permissionCodeKey);
+              savedPermissionCodeKeys.push(permissionCodeKey);
+            }
+            return savedPermissionCodeKeys;
           })
       });
     },
@@ -2981,11 +3080,21 @@ const createMySqlAuthStore = ({
               `,
               [normalizedRoleId]
             );
-            const previousPermissionCodes = [...new Set(
-              (Array.isArray(previousGrantRows) ? previousGrantRows : [])
-                .map((row) => normalizePlatformPermissionCode(row?.permission_code))
-                .filter((permissionCode) => permissionCode.length > 0)
-            )];
+            const previousPermissionCodes = [];
+            const seenPreviousPermissionCodeKeys = new Set();
+            for (const row of Array.isArray(previousGrantRows) ? previousGrantRows : []) {
+              const permissionCodeKey = normalizeStrictPlatformPermissionCodeFromGrantRow(
+                row?.permission_code,
+                'platform-role-permission-grants-invalid-permission-code'
+              );
+              if (seenPreviousPermissionCodeKeys.has(permissionCodeKey)) {
+                throw createPlatformRolePermissionGrantDataError(
+                  'platform-role-permission-grants-duplicate-permission-code'
+                );
+              }
+              seenPreviousPermissionCodeKeys.add(permissionCodeKey);
+              previousPermissionCodes.push(permissionCodeKey);
+            }
 
             await tx.query(
               `
@@ -3054,19 +3163,36 @@ const createMySqlAuthStore = ({
                 for (const roleIdKey of missingGrantRoleIds) {
                   grantCodesByRoleId.set(roleIdKey, []);
                 }
+                const seenGrantPermissionCodeKeysByRoleId = new Map(
+                  missingGrantRoleIds.map((roleIdKey) => [roleIdKey, new Set()])
+                );
                 for (const row of Array.isArray(grantRows) ? grantRows : []) {
-                  const roleIdKey = normalizePlatformRoleCatalogRoleId(row?.role_id);
-                  const permissionCode = normalizePlatformPermissionCode(row?.permission_code);
-                  if (!roleIdKey || !permissionCode || !grantCodesByRoleId.has(roleIdKey)) {
-                    continue;
+                  const roleIdKey = normalizeStrictRoleIdFromPlatformGrantRow(
+                    row?.role_id,
+                    'platform-role-permission-grants-invalid-role-id'
+                  );
+                  if (!grantCodesByRoleId.has(roleIdKey)) {
+                    throw createPlatformRolePermissionGrantDataError(
+                      'platform-role-permission-grants-unexpected-role-id'
+                    );
                   }
-                  grantCodesByRoleId.get(roleIdKey).push(permissionCode);
+                  const permissionCodeKey = normalizeStrictPlatformPermissionCodeFromGrantRow(
+                    row?.permission_code,
+                    'platform-role-permission-grants-invalid-permission-code'
+                  );
+                  const seenPermissionCodeKeys = seenGrantPermissionCodeKeysByRoleId.get(
+                    roleIdKey
+                  );
+                  if (seenPermissionCodeKeys.has(permissionCodeKey)) {
+                    throw createPlatformRolePermissionGrantDataError(
+                      'platform-role-permission-grants-duplicate-permission-code'
+                    );
+                  }
+                  seenPermissionCodeKeys.add(permissionCodeKey);
+                  grantCodesByRoleId.get(roleIdKey).push(permissionCodeKey);
                 }
                 for (const roleIdKey of missingGrantRoleIds) {
-                  const dedupedCodes = [
-                    ...new Set(normalizePlatformPermissionCodes(grantCodesByRoleId.get(roleIdKey)))
-                  ];
-                  grantCodesByRoleId.set(roleIdKey, dedupedCodes);
+                  grantCodesByRoleId.set(roleIdKey, [...(grantCodesByRoleId.get(roleIdKey) || [])]);
                 }
               }
 
