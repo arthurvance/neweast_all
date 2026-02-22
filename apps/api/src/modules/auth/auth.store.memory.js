@@ -2782,6 +2782,104 @@ const createInMemoryAuthStore = ({
 
     findUserById: async (userId) => clone(usersById.get(String(userId)) || null),
 
+    listPlatformUsers: async ({
+      page = 1,
+      pageSize = 20,
+      status = null,
+      keyword = null
+    } = {}) => {
+      const resolvedPage = Number(page);
+      const resolvedPageSize = Number(pageSize);
+      if (
+        !Number.isInteger(resolvedPage)
+        || resolvedPage <= 0
+        || !Number.isInteger(resolvedPageSize)
+        || resolvedPageSize <= 0
+      ) {
+        throw new Error('listPlatformUsers requires positive integer page and pageSize');
+      }
+      const normalizedStatusFilter =
+        status === null || status === undefined || String(status).trim() === ''
+          ? null
+          : normalizeOrgStatus(status);
+      if (
+        normalizedStatusFilter !== null
+        && !VALID_PLATFORM_USER_STATUS.has(normalizedStatusFilter)
+      ) {
+        throw new Error('listPlatformUsers status filter must be active or disabled');
+      }
+      const normalizedKeyword = keyword === null || keyword === undefined
+        ? ''
+        : String(keyword).trim();
+      const normalizedKeywordForMatch = normalizedKeyword.toLowerCase();
+      if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
+        throw new Error('listPlatformUsers keyword cannot contain control chars');
+      }
+
+      const rows = [];
+      for (const [userId, userRecord] of usersById.entries()) {
+        if (!platformDomainKnownByUserId.has(userId)) {
+          continue;
+        }
+        const userDomains = domainsByUserId.get(userId) || new Set();
+        const platformStatus = userDomains.has('platform') ? 'active' : 'disabled';
+        if (
+          normalizedStatusFilter !== null
+          && platformStatus !== normalizedStatusFilter
+        ) {
+          continue;
+        }
+        const phone = String(userRecord?.phone || '').trim();
+        if (normalizedKeywordForMatch) {
+          const userIdForMatch = String(userId).toLowerCase();
+          const phoneForMatch = phone.toLowerCase();
+          const matched =
+            userIdForMatch.includes(normalizedKeywordForMatch)
+            || phoneForMatch.includes(normalizedKeywordForMatch);
+          if (!matched) {
+            continue;
+          }
+        }
+        rows.push({
+          user_id: String(userId),
+          phone,
+          status: platformStatus
+        });
+      }
+
+      rows.sort((left, right) =>
+        String(left.user_id).localeCompare(String(right.user_id))
+      );
+
+      const total = rows.length;
+      const offset = (resolvedPage - 1) * resolvedPageSize;
+      return {
+        total,
+        items: rows.slice(offset, offset + resolvedPageSize)
+      };
+    },
+
+    getPlatformUserById: async ({ userId } = {}) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return null;
+      }
+      if (!platformDomainKnownByUserId.has(normalizedUserId)) {
+        return null;
+      }
+      const userRecord = usersById.get(normalizedUserId);
+      if (!userRecord) {
+        return null;
+      }
+      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+      const platformStatus = userDomains.has('platform') ? 'active' : 'disabled';
+      return {
+        user_id: normalizedUserId,
+        phone: String(userRecord.phone || '').trim(),
+        status: platformStatus
+      };
+    },
+
     recordAuditEvent: async (payload = {}) =>
       persistAuditEvent(payload),
 

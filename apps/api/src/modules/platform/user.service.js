@@ -4,15 +4,21 @@ const {
   resolveRoutePreauthorizedContext
 } = require('../auth/route-preauthorization');
 const {
-  PLATFORM_USER_PERMISSION_CODE,
+  PLATFORM_USER_VIEW_PERMISSION_CODE,
+  PLATFORM_USER_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_SCOPE
 } = require('./user.constants');
 
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_USER_ID_LENGTH = 64;
+const MAX_USER_PHONE_LENGTH = 32;
+const MAX_QUERY_KEYWORD_LENGTH = 64;
+const MAX_QUERY_PAGE_SIZE = 100;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const UPDATE_USER_STATUS_ALLOWED_FIELDS = new Set(['user_id', 'status', 'reason']);
+const LIST_USER_ALLOWED_QUERY_FIELDS = new Set(['page', 'page_size', 'status', 'keyword']);
+const GET_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const SOFT_DELETE_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const VALID_USER_STATUSES = new Set(['active', 'disabled']);
 
@@ -45,6 +51,24 @@ const maskPhone = (phone) => {
   return `${normalizedPhone.slice(0, 2)}${'*'.repeat(normalizedPhone.length - 4)}${normalizedPhone.slice(-2)}`;
 };
 
+const maskKeywordForAudit = (keyword) => {
+  const normalizedKeyword = String(keyword || '').trim();
+  if (!normalizedKeyword) {
+    return null;
+  }
+  const maskedPhone = maskPhone(normalizedKeyword);
+  if (maskedPhone) {
+    return maskedPhone;
+  }
+  if (normalizedKeyword.length <= 2) {
+    return `${normalizedKeyword[0] || '*'}*`;
+  }
+  if (normalizedKeyword.length <= 6) {
+    return `${normalizedKeyword.slice(0, 1)}***${normalizedKeyword.slice(-1)}`;
+  }
+  return `${normalizedKeyword.slice(0, 2)}***${normalizedKeyword.slice(-2)}`;
+};
+
 const normalizeUserStatus = (status) => {
   const normalizedStatus = String(status || '').trim().toLowerCase();
   if (normalizedStatus === 'enabled') {
@@ -58,10 +82,13 @@ const isResolvedOperatorIdentifier = (value) => {
   return normalized.length > 0 && normalized.toLowerCase() !== 'unknown';
 };
 
-const resolveAuthorizedOperatorContext = (authorizationContext = null) => {
+const resolveAuthorizedOperatorContext = ({
+  authorizationContext = null,
+  expectedPermissionCode = PLATFORM_USER_OPERATE_PERMISSION_CODE
+} = {}) => {
   const preauthorizedContext = resolveRoutePreauthorizedContext({
     authorizationContext,
-    expectedPermissionCode: PLATFORM_USER_PERMISSION_CODE,
+    expectedPermissionCode,
     expectedScope: PLATFORM_USER_SCOPE,
     expectedEntryDomain: PLATFORM_USER_SCOPE
   });
@@ -137,6 +164,119 @@ const userErrors = {
 
 const mapOperatorContextError = (error) =>
   error instanceof AuthProblemError ? error : userErrors.dependencyUnavailable();
+
+const parseStrictPositiveInteger = ({
+  value,
+  field,
+  max = Number.MAX_SAFE_INTEGER
+}) => {
+  const normalizedRaw = String(value ?? '').trim();
+  if (!/^\d+$/.test(normalizedRaw)) {
+    throw userErrors.invalidPayload(`${field} 必须为正整数`);
+  }
+  const parsed = Number(normalizedRaw);
+  if (
+    !Number.isInteger(parsed)
+    || parsed <= 0
+    || parsed > max
+  ) {
+    throw userErrors.invalidPayload(`${field} 必须为正整数`);
+  }
+  return parsed;
+};
+
+const parseListUserQuery = (query) => {
+  if (!isPlainObject(query)) {
+    throw userErrors.invalidPayload();
+  }
+  const unknownQueryKeys = Object.keys(query).filter(
+    (key) => !LIST_USER_ALLOWED_QUERY_FIELDS.has(key)
+  );
+  if (unknownQueryKeys.length > 0) {
+    throw userErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+
+  const page = Object.prototype.hasOwnProperty.call(query, 'page')
+    ? parseStrictPositiveInteger({
+      value: query.page,
+      field: 'page'
+    })
+    : 1;
+  const pageSize = Object.prototype.hasOwnProperty.call(query, 'page_size')
+    ? parseStrictPositiveInteger({
+      value: query.page_size,
+      field: 'page_size',
+      max: MAX_QUERY_PAGE_SIZE
+    })
+    : 20;
+
+  let status = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'status')) {
+    if (typeof query.status !== 'string') {
+      throw userErrors.invalidPayload('status 必须为 active 或 disabled');
+    }
+    const normalizedStatus = normalizeUserStatus(query.status);
+    if (!VALID_USER_STATUSES.has(normalizedStatus)) {
+      throw userErrors.invalidPayload('status 必须为 active 或 disabled');
+    }
+    status = normalizedStatus;
+  }
+
+  let keyword = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'keyword')) {
+    if (typeof query.keyword !== 'string') {
+      throw userErrors.invalidPayload('keyword 必须为字符串');
+    }
+    const normalizedKeyword = query.keyword.trim();
+    if (normalizedKeyword.length > MAX_QUERY_KEYWORD_LENGTH) {
+      throw userErrors.invalidPayload(
+        `keyword 长度不能超过 ${MAX_QUERY_KEYWORD_LENGTH}`
+      );
+    }
+    if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
+      throw userErrors.invalidPayload('keyword 不能包含控制字符');
+    }
+    keyword = normalizedKeyword || null;
+  }
+
+  return {
+    page,
+    pageSize,
+    status,
+    keyword
+  };
+};
+
+const parseGetUserParams = (params) => {
+  if (!isPlainObject(params)) {
+    throw userErrors.invalidPayload();
+  }
+  const unknownParamKeys = Object.keys(params).filter(
+    (key) => !GET_USER_ALLOWED_PARAM_FIELDS.has(key)
+  );
+  if (unknownParamKeys.length > 0) {
+    throw userErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (!Object.prototype.hasOwnProperty.call(params, 'user_id')) {
+    throw userErrors.invalidPayload('user_id 不能为空');
+  }
+  if (typeof params.user_id !== 'string') {
+    throw userErrors.invalidPayload('user_id 必须为字符串');
+  }
+  const userId = normalizeRequiredString(params.user_id);
+  if (!userId) {
+    throw userErrors.invalidPayload('user_id 不能为空');
+  }
+  if (CONTROL_CHAR_PATTERN.test(userId)) {
+    throw userErrors.invalidPayload('user_id 不能包含控制字符');
+  }
+  if (userId.length > MAX_USER_ID_LENGTH) {
+    throw userErrors.invalidPayload(`user_id 长度不能超过 ${MAX_USER_ID_LENGTH}`);
+  }
+  return {
+    userId
+  };
+};
 
 const parseUpdateUserStatusPayload = (payload) => {
   if (!isPlainObject(payload)) {
@@ -262,13 +402,59 @@ const createPlatformUserService = ({ authService } = {}) => {
     }
   };
 
+  const resolveAuthStore = () => authService?._internals?.authStore || null;
+
+  const assertAuthStoreMethod = (methodName) => {
+    const authStore = resolveAuthStore();
+    if (!authStore || typeof authStore[methodName] !== 'function') {
+      throw userErrors.dependencyUnavailable();
+    }
+    return authStore;
+  };
+
+  const normalizeUserReadModel = (candidate) => {
+    if (!isPlainObject(candidate)) {
+      throw userErrors.dependencyUnavailable();
+    }
+    const userId = normalizeRequiredString(
+      candidate.user_id ?? candidate.userId
+    );
+    const status = normalizeUserStatus(
+      candidate.status ?? candidate.platform_status ?? candidate.platformStatus
+    );
+    const phoneRaw = candidate.phone ?? candidate.phone_number ?? candidate.phoneNumber;
+    const phone = typeof phoneRaw === 'string' ? phoneRaw.trim() : '';
+    if (!userId || userId.length > MAX_USER_ID_LENGTH || CONTROL_CHAR_PATTERN.test(userId)) {
+      throw userErrors.dependencyUnavailable();
+    }
+    if (!VALID_USER_STATUSES.has(status)) {
+      throw userErrors.dependencyUnavailable();
+    }
+    if (
+      !phone
+      || phone.length > MAX_USER_PHONE_LENGTH
+      || CONTROL_CHAR_PATTERN.test(phone)
+    ) {
+      throw userErrors.dependencyUnavailable();
+    }
+    return {
+      user_id: userId,
+      phone,
+      status
+    };
+  };
+
   const resolveOperatorContext = async ({
     requestId,
     accessToken,
-    authorizationContext = null
+    authorizationContext = null,
+    expectedPermissionCode = PLATFORM_USER_OPERATE_PERMISSION_CODE
   }) => {
     const preAuthorizedOperatorContext =
-      resolveAuthorizedOperatorContext(authorizationContext);
+      resolveAuthorizedOperatorContext({
+        authorizationContext,
+        expectedPermissionCode
+      });
     let operatorUserId = preAuthorizedOperatorContext?.operatorUserId || 'unknown';
     let operatorSessionId = preAuthorizedOperatorContext?.operatorSessionId || 'unknown';
     if (!preAuthorizedOperatorContext) {
@@ -276,7 +462,7 @@ const createPlatformUserService = ({ authService } = {}) => {
       const authorized = await authService.authorizeRoute({
         requestId,
         accessToken,
-        permissionCode: PLATFORM_USER_PERMISSION_CODE,
+        permissionCode: expectedPermissionCode,
         scope: PLATFORM_USER_SCOPE,
         authorizationContext
       });
@@ -292,6 +478,271 @@ const createPlatformUserService = ({ authService } = {}) => {
     return {
       operatorUserId,
       operatorSessionId
+    };
+  };
+
+  const listUsers = async ({
+    requestId,
+    accessToken,
+    query = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    let parsedQuery;
+    try {
+      parsedQuery = parseListUserQuery(query);
+    } catch (error) {
+      addAuditEvent({
+        type: 'platform.user.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'query validation failed',
+        metadata: {
+          error_code: error?.errorCode || userErrors.invalidPayload().errorCode
+        }
+      });
+      throw error;
+    }
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        expectedPermissionCode: PLATFORM_USER_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'platform.user.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const { operatorUserId } = operatorContext;
+    let result;
+    try {
+      const authStore = assertAuthStoreMethod('listPlatformUsers');
+      result = await authStore.listPlatformUsers({
+        page: parsedQuery.page,
+        pageSize: parsedQuery.pageSize,
+        status: parsedQuery.status,
+        keyword: parsedQuery.keyword
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'platform.user.list.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          detail: 'platform user list dependency rejected',
+          metadata: {
+            error_code: error.errorCode
+          }
+        });
+        throw error;
+      }
+      addAuditEvent({
+        type: 'platform.user.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'platform user list dependency unavailable',
+        metadata: {
+          error_code: 'USR-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw userErrors.dependencyUnavailable();
+    }
+
+    const total = Number(result?.total);
+    if (!Array.isArray(result?.items) || !Number.isInteger(total) || total < 0) {
+      addAuditEvent({
+        type: 'platform.user.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'platform user list dependency returned invalid payload',
+        metadata: {
+          error_code: 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: 'PLATFORM-USER-LIST-RESULT-INVALID'
+        }
+      });
+      throw userErrors.dependencyUnavailable();
+    }
+
+    let items;
+    try {
+      items = result.items.map((item) => normalizeUserReadModel(item));
+    } catch (_error) {
+      addAuditEvent({
+        type: 'platform.user.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'platform user list dependency returned invalid item schema',
+        metadata: {
+          error_code: 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: 'PLATFORM-USER-LIST-ITEM-INVALID'
+        }
+      });
+      throw userErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'platform.user.listed',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      detail: 'platform users listed',
+      metadata: {
+        total,
+        page: parsedQuery.page,
+        page_size: parsedQuery.pageSize,
+        result_count: items.length,
+        status: parsedQuery.status,
+        keyword: maskKeywordForAudit(parsedQuery.keyword)
+      }
+    });
+
+    return {
+      items,
+      total,
+      page: parsedQuery.page,
+      page_size: parsedQuery.pageSize,
+      request_id: resolvedRequestId
+    };
+  };
+
+  const getUser = async ({
+    requestId,
+    accessToken,
+    params = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    let parsedParams;
+    try {
+      parsedParams = parseGetUserParams(params);
+    } catch (error) {
+      addAuditEvent({
+        type: 'platform.user.get.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'path parameter validation failed',
+        metadata: {
+          error_code: error?.errorCode || userErrors.invalidPayload().errorCode
+        }
+      });
+      throw error;
+    }
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        expectedPermissionCode: PLATFORM_USER_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'platform.user.get.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetUserId: parsedParams.userId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+
+    const { operatorUserId } = operatorContext;
+    let foundUser = null;
+    try {
+      const authStore = assertAuthStoreMethod('getPlatformUserById');
+      foundUser = await authStore.getPlatformUserById({
+        userId: parsedParams.userId
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'platform.user.get.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          targetUserId: parsedParams.userId,
+          detail: 'platform user read dependency rejected',
+          metadata: {
+            error_code: error.errorCode
+          }
+        });
+        throw error;
+      }
+      addAuditEvent({
+        type: 'platform.user.get.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'platform user read dependency unavailable',
+        metadata: {
+          error_code: 'USR-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw userErrors.dependencyUnavailable();
+    }
+
+    if (!foundUser) {
+      addAuditEvent({
+        type: 'platform.user.get.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'target user not found',
+        metadata: {
+          error_code: 'USR-404-USER-NOT-FOUND'
+        }
+      });
+      throw userErrors.userNotFound();
+    }
+
+    let normalizedUser;
+    try {
+      normalizedUser = normalizeUserReadModel(foundUser);
+    } catch (_error) {
+      addAuditEvent({
+        type: 'platform.user.get.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'platform user read dependency returned invalid payload',
+        metadata: {
+          error_code: 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: 'PLATFORM-USER-GET-RESULT-INVALID'
+        }
+      });
+      throw userErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'platform.user.got',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      targetUserId: normalizedUser.user_id,
+      detail: 'platform user detail loaded',
+      metadata: {
+        status: normalizedUser.status
+      }
+    });
+
+    return {
+      ...normalizedUser,
+      request_id: resolvedRequestId
     };
   };
 
@@ -801,6 +1252,8 @@ const createPlatformUserService = ({ authService } = {}) => {
   };
 
   return {
+    listUsers,
+    getUser,
     createUser,
     updateUserStatus,
     softDeleteUser,

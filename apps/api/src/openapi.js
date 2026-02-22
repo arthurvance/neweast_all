@@ -7535,6 +7535,119 @@ const buildOpenApiSpec = () => {
       }
     },
     '/platform/users': {
+      get: {
+        summary: 'List platform users with filters and pagination',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'query',
+            name: 'page',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              default: 1
+            }
+          },
+          {
+            in: 'query',
+            name: 'page_size',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 100,
+              default: 20
+            }
+          },
+          {
+            in: 'query',
+            name: 'status',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: ['active', 'disabled']
+            }
+          },
+          {
+            in: 'query',
+            name: 'keyword',
+            required: false,
+            schema: {
+              type: 'string',
+              maxLength: 64
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Platform users listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformUserListResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid query filters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'USR-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Platform user governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台用户治理依赖暂不可用，请稍后重试',
+                      error_code: 'USR-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       post: {
         summary: 'Create or reuse platform user by phone',
         security: [{ bearerAuth: [] }],
@@ -7759,6 +7872,112 @@ const buildOpenApiSpec = () => {
       }
     },
     '/platform/users/{user_id}': {
+      get: {
+        summary: 'Get platform user detail',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'user_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: PLATFORM_USER_ID_MAX_LENGTH,
+              pattern: PLATFORM_USER_ID_PATTERN
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Platform user detail loaded',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformUserDetailResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid user_id path parameter',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'USR-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Target platform user not found or has no platform-domain access',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  user_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标平台用户不存在或无 platform 域访问',
+                      error_code: 'USR-404-USER-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Platform user governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台用户治理依赖暂不可用，请稍后重试',
+                      error_code: 'USR-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       delete: {
         summary: 'Soft-delete platform user and revoke all sessions',
         description: '平台用户软删除后，撤销该用户在 platform/tenant 域的全部活跃会话与 refresh token；重复执行保持幂等语义。',
@@ -9419,6 +9638,66 @@ const buildOpenApiSpec = () => {
           },
           error_code: { type: 'string' },
           retryable: { type: 'boolean' }
+        }
+      },
+      PlatformUserReadModel: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['user_id', 'phone', 'status'],
+        properties: {
+          user_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: PLATFORM_USER_ID_MAX_LENGTH,
+            pattern: PLATFORM_USER_ID_PATTERN
+          },
+          phone: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 32
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          }
+        }
+      },
+      PlatformUserDetailResponse: {
+        allOf: [
+          { $ref: '#/components/schemas/PlatformUserReadModel' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['request_id'],
+            properties: {
+              request_id: { type: 'string' }
+            }
+          }
+        ]
+      },
+      PlatformUserListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['items', 'total', 'page', 'page_size', 'request_id'],
+        properties: {
+          items: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/PlatformUserReadModel' }
+          },
+          total: {
+            type: 'integer',
+            minimum: 0
+          },
+          page: {
+            type: 'integer',
+            minimum: 1
+          },
+          page_size: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 100
+          },
+          request_id: { type: 'string' }
         }
       },
       CreatePlatformUserRequest: {

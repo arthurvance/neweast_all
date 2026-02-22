@@ -8,6 +8,7 @@ import {
   isTenantRefreshResultBoundToCurrentSession
 } from './tenant-mutation.mjs';
 import { createLatestRequestExecutor } from './latest-request.mjs';
+import PlatformGovernanceWorkbench from './features/platform-governance/PlatformGovernanceWorkbench';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const OTP_RESEND_UNTIL_STORAGE_KEY_PREFIX = 'neweast.auth.otp.resend_until_ms';
@@ -844,6 +845,22 @@ export default function App() {
           <h2 style={{ margin: 0 }}>已登录工作台</h2>
           <p style={{ margin: 0 }}>入口域：{sessionState?.entry_domain || 'platform'}</p>
           <p style={{ margin: 0 }}>会话：{sessionState?.session_id || '-'}</p>
+          {sessionState?.entry_domain === 'platform' ? (
+            <section
+              data-testid="platform-governance-panel"
+              style={{
+                display: 'grid',
+                gap: 8,
+                background: '#fff',
+                borderRadius: 6,
+                border: '1px solid #e5e7eb',
+                padding: 10
+              }}
+            >
+              <p style={{ margin: 0 }}>平台治理工作台（用户管理 + 角色管理）</p>
+              <PlatformGovernanceWorkbench accessToken={sessionState?.access_token} />
+            </section>
+          ) : null}
           {sessionState?.entry_domain === 'tenant' ? (
             <>
               <p style={{ margin: 0 }}>

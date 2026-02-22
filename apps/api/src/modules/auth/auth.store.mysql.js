@@ -3319,6 +3319,135 @@ const createMySqlAuthStore = ({
       return toUserRecord(rows[0]);
     },
 
+    listPlatformUsers: async ({
+      page = 1,
+      pageSize = 20,
+      status = null,
+      keyword = null
+    } = {}) => {
+      const resolvedPage = Number(page);
+      const resolvedPageSize = Number(pageSize);
+      if (
+        !Number.isInteger(resolvedPage)
+        || resolvedPage <= 0
+        || !Number.isInteger(resolvedPageSize)
+        || resolvedPageSize <= 0
+      ) {
+        throw new Error('listPlatformUsers requires positive integer page and pageSize');
+      }
+
+      const normalizedStatusFilter =
+        status === null || status === undefined || String(status).trim() === ''
+          ? null
+          : normalizeOrgStatus(status);
+      if (
+        normalizedStatusFilter !== null
+        && !VALID_PLATFORM_USER_STATUS.has(normalizedStatusFilter)
+      ) {
+        throw new Error('listPlatformUsers status filter must be active or disabled');
+      }
+
+      const normalizedKeyword = keyword === null || keyword === undefined
+        ? ''
+        : String(keyword).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
+        throw new Error('listPlatformUsers keyword cannot contain control chars');
+      }
+
+      const whereClauses = ["da.domain = 'platform'"];
+      const whereArgs = [];
+      if (normalizedStatusFilter !== null) {
+        whereClauses.push('da.status = ?');
+        whereArgs.push(normalizedStatusFilter);
+      }
+      if (normalizedKeyword.length > 0) {
+        whereClauses.push('(u.id LIKE ? OR u.phone LIKE ?)');
+        const keywordLike = `%${normalizedKeyword}%`;
+        whereArgs.push(keywordLike, keywordLike);
+      }
+      const whereSql = whereClauses.length > 0
+        ? `WHERE ${whereClauses.join(' AND ')}`
+        : '';
+
+      const countRows = await dbClient.query(
+        `
+          SELECT COUNT(*) AS total
+          FROM users u
+          INNER JOIN auth_user_domain_access da
+            ON da.user_id = u.id
+          ${whereSql}
+        `,
+        whereArgs
+      );
+      const total = Number(countRows?.[0]?.total || 0);
+
+      const offset = (resolvedPage - 1) * resolvedPageSize;
+      const rows = await dbClient.query(
+        `
+          SELECT u.id AS user_id,
+                 u.phone AS phone,
+                 da.status AS platform_status
+          FROM users u
+          INNER JOIN auth_user_domain_access da
+            ON da.user_id = u.id
+          ${whereSql}
+          ORDER BY u.id ASC
+          LIMIT ? OFFSET ?
+        `,
+        [...whereArgs, resolvedPageSize, offset]
+      );
+
+      const items = (Array.isArray(rows) ? rows : []).map((row) => {
+        const normalizedStatus = normalizeOrgStatus(row.platform_status);
+        if (!VALID_PLATFORM_USER_STATUS.has(normalizedStatus)) {
+          throw new Error('listPlatformUsers returned invalid platform status');
+        }
+        return {
+          user_id: String(row.user_id || '').trim(),
+          phone: String(row.phone || '').trim(),
+          status: normalizedStatus
+        };
+      });
+
+      return {
+        total,
+        items
+      };
+    },
+
+    getPlatformUserById: async ({ userId } = {}) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT u.id AS user_id,
+                 u.phone AS phone,
+                 da.status AS platform_status
+          FROM users u
+          LEFT JOIN auth_user_domain_access da
+            ON da.user_id = u.id AND da.domain = 'platform'
+          WHERE u.id = ?
+          LIMIT 1
+        `,
+        [normalizedUserId]
+      );
+      const row = rows?.[0];
+      if (!row || row.platform_status === null || row.platform_status === undefined) {
+        return null;
+      }
+      const normalizedStatus = normalizeOrgStatus(row.platform_status);
+      if (!VALID_PLATFORM_USER_STATUS.has(normalizedStatus)) {
+        throw new Error('getPlatformUserById returned invalid platform status');
+      }
+      return {
+        user_id: String(row.user_id || '').trim(),
+        phone: String(row.phone || '').trim(),
+        status: normalizedStatus
+      };
+    },
+
     recordAuditEvent: async (payload = {}) =>
       recordAuditEvent(payload),
 

@@ -546,6 +546,603 @@ const createOtpApiServer = async () => {
   };
 };
 
+const createPlatformGovernanceApiServer = async () => {
+  const requests = [];
+  const responses = [];
+  const permissionCatalog = [
+    'platform.member_admin.view',
+    'platform.member_admin.operate',
+    'platform.billing.view',
+    'platform.billing.operate',
+    'platform.system_config.view',
+    'platform.system_config.operate'
+  ];
+
+  let nextUserId = 3;
+  let nextRoleId = 3;
+  const users = new Map([
+    ['platform-user-1', { user_id: 'platform-user-1', phone: '13800000011', status: 'active', deleted: false }],
+    ['platform-user-2', { user_id: 'platform-user-2', phone: '13800000012', status: 'disabled', deleted: false }]
+  ]);
+  const roles = new Map([
+    [
+      'sys_admin',
+      {
+        role_id: 'sys_admin',
+        code: 'SYS_ADMIN',
+        name: '系统管理员',
+        status: 'active',
+        is_system: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ],
+    [
+      'platform_member_admin',
+      {
+        role_id: 'platform_member_admin',
+        code: 'PLATFORM_MEMBER_ADMIN',
+        name: '平台成员治理',
+        status: 'active',
+        is_system: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ]
+  ]);
+  const rolePermissions = new Map([
+    ['sys_admin', [...permissionCatalog]],
+    ['platform_member_admin', ['platform.member_admin.view', 'platform.member_admin.operate']]
+  ]);
+
+  const normalizeRoleIds = (roleEntries = []) => {
+    const deduped = new Set();
+    for (const roleEntry of Array.isArray(roleEntries) ? roleEntries : []) {
+      const normalizedRoleId = String(roleEntry?.role_id || '').trim().toLowerCase();
+      if (normalizedRoleId) {
+        deduped.add(normalizedRoleId);
+      }
+    }
+    return [...deduped];
+  };
+
+  const buildPermissionContext = (roleIds = []) => {
+    const permissionSet = new Set();
+    for (const roleId of roleIds) {
+      const grants = rolePermissions.get(String(roleId || '').trim().toLowerCase()) || [];
+      for (const permissionCode of grants) {
+        permissionSet.add(permissionCode);
+      }
+    }
+    return {
+      scope_label: '平台权限（角色并集）',
+      can_view_member_admin: permissionSet.has('platform.member_admin.view'),
+      can_operate_member_admin: permissionSet.has('platform.member_admin.operate'),
+      can_view_billing: permissionSet.has('platform.billing.view'),
+      can_operate_billing: permissionSet.has('platform.billing.operate')
+    };
+  };
+
+  const readRequestBody = async (req) => {
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    if (chunks.length <= 0) {
+      return {};
+    }
+    const text = Buffer.concat(chunks).toString('utf8');
+    if (!text.trim()) {
+      return {};
+    }
+    try {
+      return JSON.parse(text);
+    } catch (_error) {
+      return {};
+    }
+  };
+
+  const server = http.createServer(async (req, res) => {
+    const method = req.method || 'GET';
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const pathname = url.pathname;
+    const body = await readRequestBody(req);
+    const requestId = String(req.headers['x-request-id'] || `req-platform-ui-${Date.now()}`);
+
+    requests.push({
+      method,
+      path: req.url || '/',
+      body
+    });
+
+    const sendJson = ({ status, contentType, payload }) => {
+      res.statusCode = status;
+      res.setHeader('content-type', contentType);
+      responses.push({
+        method,
+        path: req.url || '/',
+        status,
+        headers: {
+          'content-type': contentType
+        },
+        body: payload
+      });
+      res.end(JSON.stringify(payload));
+    };
+
+    const sendProblem = ({
+      status = 400,
+      title = 'Bad Request',
+      detail = '请求失败',
+      errorCode = 'APP-400-BAD-REQUEST',
+      retryable = false
+    }) =>
+      sendJson({
+        status,
+        contentType: 'application/problem+json',
+        payload: {
+          type: 'about:blank',
+          title,
+          status,
+          detail,
+          error_code: errorCode,
+          request_id: requestId,
+          retryable
+        }
+      });
+
+    if (method === 'POST' && pathname === '/auth/login') {
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          token_type: 'Bearer',
+          access_token: 'platform-governance-access-token',
+          refresh_token: 'platform-governance-refresh-token',
+          expires_in: 900,
+          refresh_expires_in: 1209600,
+          session_id: 'platform-governance-session',
+          entry_domain: body.entry_domain || 'platform',
+          active_tenant_id: null,
+          tenant_selection_required: false,
+          tenant_options: [],
+          tenant_permission_context: null,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/platform/users') {
+      const page = Number(url.searchParams.get('page') || 1);
+      const pageSize = Number(url.searchParams.get('page_size') || 20);
+      const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
+      const keyword = String(url.searchParams.get('keyword') || '').trim();
+      const listedUsers = [...users.values()].filter((user) => !user.deleted);
+      const filteredUsers = listedUsers.filter((user) => {
+        if (statusFilter && user.status !== statusFilter) {
+          return false;
+        }
+        if (!keyword) {
+          return true;
+        }
+        return user.user_id.includes(keyword) || user.phone.includes(keyword);
+      });
+      const offset = (Math.max(1, page) - 1) * Math.max(1, pageSize);
+      const pageItems = filteredUsers.slice(offset, offset + Math.max(1, pageSize));
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          items: pageItems.map((user) => ({
+            user_id: user.user_id,
+            phone: user.phone,
+            status: user.status
+          })),
+          total: filteredUsers.length,
+          page: Math.max(1, page),
+          page_size: Math.max(1, pageSize),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/platform/users') {
+      const phone = String(body.phone || '').trim();
+      if (!/^1\d{10}$/.test(phone)) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const userId = `platform-user-${nextUserId++}`;
+      users.set(userId, {
+        user_id: userId,
+        phone,
+        status: 'active',
+        deleted: false
+      });
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          user_id: userId,
+          created_user: true,
+          reused_existing_user: false,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/platform/users/status') {
+      const userId = String(body.user_id || '').trim();
+      const status = String(body.status || '').trim().toLowerCase();
+      const target = users.get(userId);
+      if (!target || target.deleted) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台用户不存在或无 platform 域访问',
+          errorCode: 'USR-404-USER-NOT-FOUND'
+        });
+        return;
+      }
+      const nextStatus = status === 'enabled' ? 'active' : status;
+      if (nextStatus !== 'active' && nextStatus !== 'disabled') {
+        sendProblem({
+          status: 400,
+          detail: 'status 必须为 active 或 disabled',
+          errorCode: 'USR-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const previousStatus = target.status;
+      target.status = nextStatus;
+      users.set(userId, target);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          user_id: userId,
+          previous_status: previousStatus,
+          current_status: nextStatus,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const userDetailMatch = pathname.match(/^\/platform\/users\/([^/]+)$/);
+    if (userDetailMatch && method === 'GET') {
+      const userId = decodeURIComponent(userDetailMatch[1] || '');
+      const target = users.get(userId);
+      if (!target || target.deleted) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台用户不存在或无 platform 域访问',
+          errorCode: 'USR-404-USER-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          user_id: target.user_id,
+          phone: target.phone,
+          status: target.status,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (userDetailMatch && method === 'DELETE') {
+      const userId = decodeURIComponent(userDetailMatch[1] || '');
+      const target = users.get(userId);
+      if (!target || target.deleted) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台用户不存在或无 platform 域访问',
+          errorCode: 'USR-404-USER-NOT-FOUND'
+        });
+        return;
+      }
+      target.deleted = true;
+      target.status = 'disabled';
+      users.set(userId, target);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          user_id: userId,
+          previous_status: 'active',
+          current_status: 'disabled',
+          revoked_session_count: 1,
+          revoked_refresh_token_count: 1,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/platform/roles') {
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          roles: [...roles.values()].map((role) => ({
+            ...role,
+            request_id: requestId
+          })),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/platform/roles') {
+      const roleId = String(body.role_id || '').trim().toLowerCase();
+      if (!roleId) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'ROLE-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      if (roles.has(roleId)) {
+        sendProblem({
+          status: 409,
+          title: 'Conflict',
+          detail: '角色标识冲突，请使用其他 role_id',
+          errorCode: 'ROLE-409-ROLE-ID-CONFLICT'
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const createdRole = {
+        role_id: roleId,
+        code: String(body.code || `ROLE_${nextRoleId}`).trim() || `ROLE_${nextRoleId}`,
+        name: String(body.name || `角色 ${nextRoleId}`).trim() || `角色 ${nextRoleId}`,
+        status: String(body.status || 'active').trim().toLowerCase() || 'active',
+        is_system: false,
+        created_at: now,
+        updated_at: now
+      };
+      nextRoleId += 1;
+      roles.set(roleId, createdRole);
+      rolePermissions.set(
+        roleId,
+        roleId.includes('billing')
+          ? ['platform.billing.view', 'platform.billing.operate']
+          : ['platform.member_admin.view']
+      );
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...createdRole,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const roleItemMatch = pathname.match(/^\/platform\/roles\/([^/]+)$/);
+    if (roleItemMatch && method === 'PATCH') {
+      const roleId = decodeURIComponent(roleItemMatch[1] || '').trim().toLowerCase();
+      const target = roles.get(roleId);
+      if (!target) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台角色不存在',
+          errorCode: 'ROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      if (target.is_system) {
+        sendProblem({
+          status: 403,
+          title: 'Forbidden',
+          detail: '受保护系统角色不允许编辑或删除',
+          errorCode: 'ROLE-403-SYSTEM-ROLE-PROTECTED'
+        });
+        return;
+      }
+      const updated = {
+        ...target,
+        code: String(body.code || target.code),
+        name: String(body.name || target.name),
+        status: String(body.status || target.status).trim().toLowerCase() || target.status,
+        updated_at: new Date().toISOString()
+      };
+      roles.set(roleId, updated);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...updated,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (roleItemMatch && method === 'DELETE') {
+      const roleId = decodeURIComponent(roleItemMatch[1] || '').trim().toLowerCase();
+      const target = roles.get(roleId);
+      if (!target) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台角色不存在',
+          errorCode: 'ROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      if (target.is_system) {
+        sendProblem({
+          status: 403,
+          title: 'Forbidden',
+          detail: '受保护系统角色不允许编辑或删除',
+          errorCode: 'ROLE-403-SYSTEM-ROLE-PROTECTED'
+        });
+        return;
+      }
+      roles.delete(roleId);
+      rolePermissions.delete(roleId);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          role_id: roleId,
+          code: target.code,
+          name: target.name,
+          status: 'disabled',
+          is_system: false,
+          created_at: target.created_at,
+          updated_at: new Date().toISOString(),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const rolePermissionMatch = pathname.match(/^\/platform\/roles\/([^/]+)\/permissions$/);
+    if (rolePermissionMatch && method === 'GET') {
+      const roleId = decodeURIComponent(rolePermissionMatch[1] || '').trim().toLowerCase();
+      if (!roles.has(roleId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台角色不存在',
+          errorCode: 'ROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          role_id: roleId,
+          permission_codes: rolePermissions.get(roleId) || [],
+          available_permission_codes: permissionCatalog,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (rolePermissionMatch && method === 'PUT') {
+      const roleId = decodeURIComponent(rolePermissionMatch[1] || '').trim().toLowerCase();
+      if (!roles.has(roleId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台角色不存在',
+          errorCode: 'ROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      const nextPermissions = [...new Set(
+        (Array.isArray(body.permission_codes) ? body.permission_codes : [])
+          .map((permissionCode) => String(permissionCode || '').trim())
+          .filter((permissionCode) => permissionCode.startsWith('platform.'))
+      )];
+      rolePermissions.set(roleId, nextPermissions);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          role_id: roleId,
+          permission_codes: nextPermissions,
+          available_permission_codes: permissionCatalog,
+          affected_user_count: 1,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/auth/platform/role-facts/replace') {
+      const userId = String(body.user_id || '').trim();
+      const targetUser = users.get(userId);
+      if (!targetUser || targetUser.deleted) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台用户不存在或无 platform 域访问',
+          errorCode: 'AUTH-404-USER-NOT-FOUND'
+        });
+        return;
+      }
+      const roleIds = normalizeRoleIds(body.roles);
+      if (roleIds.length < 1 || roleIds.length > 5) {
+        sendProblem({
+          status: 400,
+          detail: 'roles must include 1 to 5 entries',
+          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const context = buildPermissionContext(roleIds);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          synced: true,
+          reason: 'platform-role-facts-updated',
+          platform_permission_context: context,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    sendJson({
+      status: 404,
+      contentType: 'application/problem+json',
+      payload: {
+        type: 'about:blank',
+        title: 'Not Found',
+        status: 404,
+        detail: `No route for ${pathname}`,
+        error_code: 'AUTH-404-NOT-FOUND',
+        request_id: requestId,
+        retryable: false
+      }
+    });
+  });
+
+  const apiPort = await reservePort();
+  await new Promise((resolveListen, rejectListen) => {
+    server.listen(apiPort, '127.0.0.1', (error) => {
+      if (error) {
+        rejectListen(error);
+        return;
+      }
+      resolveListen();
+    });
+  });
+
+  return {
+    apiPort,
+    requests,
+    responses,
+    close: async () => {
+      await new Promise((resolveClose) => server.close(() => resolveClose()));
+    }
+  };
+};
+
 const createRealApiServer = async () => {
   const config = readConfig({
     ALLOW_MOCK_BACKENDS: 'true'
@@ -1560,6 +2157,528 @@ test('chrome regression validates tenant permission UI against real API authoriz
     })()`,
     10000,
     'tenant-b UI permissions should match expected visibility/operability'
+  );
+
+  if (vite.exitCode !== null) {
+    throw new Error(`vite process exited early (${vite.exitCode}): ${viteLogs.stderr || viteLogs.stdout}`);
+  }
+  if (chrome.exitCode !== null) {
+    throw new Error(
+      `chrome process exited early (${chrome.exitCode}): ${chromeLogs.stderr || chromeLogs.stdout}`
+    );
+  }
+});
+
+test('chrome regression validates platform governance workbench with modal/drawer and permission convergence', async (t) => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-platform-governance');
+  mkdirSync(evidenceDir, { recursive: true });
+
+  const chromeBinary = resolveChromeBinary();
+  const api = await createPlatformGovernanceApiServer();
+  const webPort = await reservePort();
+  const cdpPort = await reservePort();
+  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-platform-governance-'));
+
+  let vite = null;
+  let chrome = null;
+  let cdp = null;
+  let screenshotPath = '';
+
+  const viteLogs = { stdout: '', stderr: '' };
+  const chromeLogs = { stdout: '', stderr: '' };
+
+  t.after(async () => {
+    await cdp?.close();
+    await stopProcess(chrome);
+    await stopProcess(vite);
+    await api.close();
+    rmSync(chromeProfileDir, { recursive: true, force: true });
+  });
+
+  vite = spawn(
+    'pnpm',
+    [
+      '--dir',
+      'apps/web',
+      'exec',
+      'vite',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(webPort),
+      '--strictPort',
+      '--config',
+      'vite.config.js'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      env: {
+        ...process.env,
+        VITE_PROXY_TARGET: `http://127.0.0.1:${api.apiPort}`
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  vite.stdout.on('data', (data) => {
+    viteLogs.stdout += String(data);
+  });
+  vite.stderr.on('data', (data) => {
+    viteLogs.stderr += String(data);
+  });
+
+  await waitForHttp(`http://127.0.0.1:${webPort}/`, 30000, 'vite web server');
+
+  chrome = spawn(
+    chromeBinary,
+    [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${chromeProfileDir}`,
+      '--headless=new',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--no-first-run',
+      '--no-default-browser-check',
+      'about:blank'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  chrome.stdout.on('data', (data) => {
+    chromeLogs.stdout += String(data);
+  });
+  chrome.stderr.on('data', (data) => {
+    chromeLogs.stderr += String(data);
+  });
+
+  const version = await (
+    await waitForHttp(`http://127.0.0.1:${cdpPort}/json/version`, 20000, 'chrome devtools endpoint')
+  ).json();
+  cdp = new CdpClient(version.webSocketDebuggerUrl);
+  await cdp.connect();
+
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+
+  await cdp.send(
+    'Page.navigate',
+    { url: `http://127.0.0.1:${webPort}/` },
+    sessionId
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'page title should be visible'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const phone = document.querySelector('[data-testid="input-phone"]');
+      const password = document.querySelector('[data-testid="input-password"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(phone, '13800000011');
+      phone.dispatchEvent(new Event('input', { bubbles: true }));
+      phone.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(password, 'Passw0rd!');
+      password.dispatchEvent(new Event('input', { bubbles: true }));
+      password.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="button-submit-login"]').click(); return true; })()`
+  );
+
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-governance-panel"]'))`,
+    10000,
+    'platform governance panel should be visible after platform login'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-user-id-platform-user-1"]'))`,
+    10000,
+    'platform user table should load initial user list'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="platform-user-filter-keyword"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, '000012');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const submit = document.querySelector('[data-testid="platform-users-module"] button[type="submit"]');
+      submit?.click();
+      return true;
+    })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path.includes('/platform/users?') && request.path.includes('keyword=000012'),
+    8000,
+    'platform user list filter request should carry keyword query'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-create-open"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-user-create-phone"]'))`,
+    5000,
+    'create user modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="platform-user-create-phone"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, '13800000013');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-create-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/platform/users' && request.method === 'POST',
+    8000,
+    'platform user create request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="platform-user-detail-drawer"]');
+      const text = String(drawer?.textContent || '');
+      return (
+        Boolean(drawer)
+        && text.includes('user_id: platform-user-3')
+        && text.includes('latest_action: create')
+      );
+    })()`,
+    10000,
+    'newly created platform user detail should be visible in drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="platform-user-filter-keyword"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const submit = document.querySelector('[data-testid="platform-users-module"] button[type="submit"]');
+      submit?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-user-status-platform-user-1"]'))`,
+    10000,
+    'platform user list should include platform-user-1 after clearing filter'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-status-platform-user-1"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-user-status-reason"]'))`,
+    5000,
+    'status action modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="platform-user-status-reason"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter.call(input, 'manual-governance');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-status-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/platform/users/status' && request.method === 'POST',
+    8000,
+    'platform user status request should reach API stub'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-detail-platform-user-1"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="platform-user-detail-drawer"]');
+      return Boolean(drawer) && String(drawer.textContent || '').includes('request_id');
+    })()`,
+    5000,
+    'platform user detail drawer should show request_id trace'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-tab-roles"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-roles-module"]'))`,
+    8000,
+    'platform role module should be visible'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-create-open"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-role-edit-role-id"]'))`,
+    5000,
+    'role edit modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const roleId = document.querySelector('[data-testid="platform-role-edit-role-id"]');
+      const code = document.querySelector('[data-testid="platform-role-edit-code"]');
+      const name = document.querySelector('[data-testid="platform-role-edit-name"]');
+      setter.call(roleId, 'platform_billing_admin');
+      roleId.dispatchEvent(new Event('input', { bubbles: true }));
+      roleId.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(code, 'PLATFORM_BILLING_ADMIN');
+      code.dispatchEvent(new Event('input', { bubbles: true }));
+      code.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(name, '平台账单治理');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      name.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-create-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/platform/roles' && request.method === 'POST',
+    8000,
+    'platform role create request should reach API stub'
+  );
+
+  const protectedEditDisabled = await evaluate(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-role-edit-sys_admin"]')?.disabled)`
+  );
+  assert.equal(
+    protectedEditDisabled,
+    true,
+    'sys_admin edit action should be disabled by protected-role policy'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-detail-platform_member_admin"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-role-permission-tree"]'))`,
+    5000,
+    'platform role permission tree should be visible in drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-permission-save"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'PUT'
+      && request.path.includes('/platform/roles/platform_member_admin/permissions'),
+    8000,
+    'platform role permission save request should reach API stub'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const userIdInput = document.querySelector('[data-testid="platform-role-facts-user-id"]');
+      const roleIdsInput = document.querySelector('[data-testid="platform-role-facts-role-ids"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(userIdInput, 'platform-user-1');
+      userIdInput.dispatchEvent(new Event('input', { bubbles: true }));
+      userIdInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(roleIdsInput, 'platform_member_admin,platform_billing_admin');
+      roleIdsInput.dispatchEvent(new Event('input', { bubbles: true }));
+      roleIdsInput.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-facts-submit"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/auth/platform/role-facts/replace' && request.method === 'POST',
+    8000,
+    'platform role-facts replace request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const memberMenu = document.querySelector('[data-testid="platform-menu-member-admin"]');
+      const billingMenu = document.querySelector('[data-testid="platform-menu-billing"]');
+      const memberAction = document.querySelector('[data-testid="platform-action-member-admin"]');
+      const billingAction = document.querySelector('[data-testid="platform-action-billing"]');
+      return Boolean(memberMenu) && Boolean(billingMenu) && Boolean(memberAction) && Boolean(billingAction);
+    })()`,
+    8000,
+    'role assignment should converge platform permission context in UI'
+  );
+
+  const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
+  screenshotPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.png`);
+  writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+
+  const loginRequest = api.requests.find((request) => request.path === '/auth/login');
+  assert.deepEqual(loginRequest?.body, {
+    phone: '13800000011',
+    password: 'Passw0rd!',
+    entry_domain: 'platform'
+  });
+
+  const createUserRequest = api.requests.find(
+    (request) => request.path === '/platform/users' && request.method === 'POST'
+  );
+  assert.equal(createUserRequest?.body?.phone, '13800000013');
+
+  const updateStatusRequest = api.requests.find(
+    (request) => request.path === '/platform/users/status' && request.method === 'POST'
+  );
+  assert.equal(updateStatusRequest?.body?.user_id, 'platform-user-1');
+  assert.equal(updateStatusRequest?.body?.status, 'disabled');
+  assert.equal(updateStatusRequest?.body?.reason, 'manual-governance');
+
+  const createRoleRequest = api.requests.find(
+    (request) => request.path === '/platform/roles' && request.method === 'POST'
+  );
+  assert.equal(createRoleRequest?.body?.role_id, 'platform_billing_admin');
+
+  const replaceRoleFactsRequest = api.requests.find(
+    (request) => request.path === '/auth/platform/role-facts/replace' && request.method === 'POST'
+  );
+  assert.equal(replaceRoleFactsRequest?.body?.user_id, 'platform-user-1');
+  assert.deepEqual(
+    replaceRoleFactsRequest?.body?.roles?.map((entry) => entry.role_id).sort(),
+    ['platform_billing_admin', 'platform_member_admin']
+  );
+
+  const reportPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.json`);
+  writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        generated_at: new Date().toISOString(),
+        web_url: `http://127.0.0.1:${webPort}/`,
+        api_stub_url: `http://127.0.0.1:${api.apiPort}`,
+        chrome_binary: chromeBinary,
+        screenshots: [resolve(screenshotPath)],
+        assertions: {
+          platform_user_list_filter: true,
+          platform_user_create_modal: true,
+          platform_user_status_modal: true,
+          platform_user_detail_drawer: true,
+          platform_role_create_modal: true,
+          protected_role_guard: true,
+          platform_permission_tree_save: true,
+          platform_role_facts_convergence: true
+        },
+        requests: api.requests,
+        responses: api.responses
+      },
+      null,
+      2
+    )
   );
 
   if (vite.exitCode !== null) {

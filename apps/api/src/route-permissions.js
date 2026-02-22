@@ -14,10 +14,13 @@ const {
   PLATFORM_ROLE_SCOPE
 } = require('./modules/platform/role.constants');
 const {
+  PLATFORM_USER_LIST_PATH,
+  PLATFORM_USER_GET_PATH,
   PLATFORM_USER_CREATE_PATH,
   PLATFORM_USER_SOFT_DELETE_PATH,
   PLATFORM_USER_STATUS_PATH,
-  PLATFORM_USER_PERMISSION_CODE,
+  PLATFORM_USER_VIEW_PERMISSION_CODE,
+  PLATFORM_USER_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_SCOPE
 } = require('./modules/platform/user.constants');
 const {
@@ -643,24 +646,38 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     scope: PLATFORM_ROLE_SCOPE
   },
   {
+    method: 'GET',
+    path: PLATFORM_USER_LIST_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_USER_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_USER_SCOPE
+  },
+  {
+    method: 'GET',
+    path: PLATFORM_USER_GET_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_USER_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_USER_SCOPE
+  },
+  {
     method: 'POST',
     path: PLATFORM_USER_CREATE_PATH,
     access: 'protected',
-    permission_code: PLATFORM_USER_PERMISSION_CODE,
+    permission_code: PLATFORM_USER_OPERATE_PERMISSION_CODE,
     scope: PLATFORM_USER_SCOPE
   },
   {
     method: 'DELETE',
     path: PLATFORM_USER_SOFT_DELETE_PATH,
     access: 'protected',
-    permission_code: PLATFORM_USER_PERMISSION_CODE,
+    permission_code: PLATFORM_USER_OPERATE_PERMISSION_CODE,
     scope: PLATFORM_USER_SCOPE
   },
   {
     method: 'POST',
     path: PLATFORM_USER_STATUS_PATH,
     access: 'protected',
-    permission_code: PLATFORM_USER_PERMISSION_CODE,
+    permission_code: PLATFORM_USER_OPERATE_PERMISSION_CODE,
     scope: PLATFORM_USER_SCOPE
   },
   {

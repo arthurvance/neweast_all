@@ -3,15 +3,19 @@ const {
   resolveRoutePreauthorizedContext
 } = require('../auth/route-preauthorization');
 const {
-  PLATFORM_USER_PERMISSION_CODE,
+  PLATFORM_USER_VIEW_PERMISSION_CODE,
+  PLATFORM_USER_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_SCOPE
 } = require('./user.constants');
 
-const hasTrustedPreauthorizedContext = (authorizationContext = null) =>
+const hasTrustedPreauthorizedContext = ({
+  authorizationContext = null,
+  expectedPermissionCode = PLATFORM_USER_OPERATE_PERMISSION_CODE
+}) =>
   Boolean(
     resolveRoutePreauthorizedContext({
       authorizationContext,
-      expectedPermissionCode: PLATFORM_USER_PERMISSION_CODE,
+      expectedPermissionCode,
       expectedScope: PLATFORM_USER_SCOPE,
       expectedEntryDomain: PLATFORM_USER_SCOPE
     })
@@ -19,9 +23,15 @@ const hasTrustedPreauthorizedContext = (authorizationContext = null) =>
 
 const resolveAccessToken = ({
   authorization,
-  authorizationContext = null
+  authorizationContext = null,
+  expectedPermissionCode = PLATFORM_USER_OPERATE_PERMISSION_CODE
 }) => {
-  if (hasTrustedPreauthorizedContext(authorizationContext)) {
+  if (
+    hasTrustedPreauthorizedContext({
+      authorizationContext,
+      expectedPermissionCode
+    })
+  ) {
     return null;
   }
   const normalizedAuthorization = String(authorization || '').trim();
@@ -34,16 +44,50 @@ const resolveAccessToken = ({
 const createPlatformUserHandlers = (platformUserService) => {
   if (
     !platformUserService
+    || typeof platformUserService.listUsers !== 'function'
+    || typeof platformUserService.getUser !== 'function'
     || typeof platformUserService.createUser !== 'function'
     || typeof platformUserService.updateUserStatus !== 'function'
     || typeof platformUserService.softDeleteUser !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformUserHandlers requires a platformUserService with createUser, updateUserStatus, and softDeleteUser'
+      'createPlatformUserHandlers requires a platformUserService with listUsers, getUser, createUser, updateUserStatus, and softDeleteUser'
     );
   }
 
   return {
+    listUsers: async ({
+      requestId,
+      authorization,
+      query,
+      authorizationContext = null
+    }) =>
+      platformUserService.listUsers({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_USER_VIEW_PERMISSION_CODE
+        }),
+        query: query || {},
+        authorizationContext
+      }),
+    getUser: async ({
+      requestId,
+      authorization,
+      params,
+      authorizationContext = null
+    }) =>
+      platformUserService.getUser({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_USER_VIEW_PERMISSION_CODE
+        }),
+        params: params || {},
+        authorizationContext
+      }),
     createUser: async ({
       requestId,
       authorization,
@@ -54,7 +98,8 @@ const createPlatformUserHandlers = (platformUserService) => {
         requestId,
         accessToken: resolveAccessToken({
           authorization,
-          authorizationContext
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_USER_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
         authorizationContext
@@ -70,7 +115,8 @@ const createPlatformUserHandlers = (platformUserService) => {
         requestId,
         accessToken: resolveAccessToken({
           authorization,
-          authorizationContext
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_USER_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
         traceparent,
@@ -87,7 +133,8 @@ const createPlatformUserHandlers = (platformUserService) => {
         requestId,
         accessToken: resolveAccessToken({
           authorization,
-          authorizationContext
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_USER_OPERATE_PERMISSION_CODE
         }),
         params: params || {},
         traceparent,

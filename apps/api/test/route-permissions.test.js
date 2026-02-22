@@ -435,6 +435,30 @@ test('platform user create route exposes explicit permission declaration', () =>
   assert.equal(createPlatformUser.permission_code, 'platform.member_admin.operate');
 });
 
+test('platform user list route exposes explicit permission declaration', () => {
+  const listPlatformUsers = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/users'
+  });
+
+  assert.ok(listPlatformUsers);
+  assert.equal(listPlatformUsers.access, 'protected');
+  assert.equal(listPlatformUsers.scope, 'platform');
+  assert.equal(listPlatformUsers.permission_code, 'platform.member_admin.view');
+});
+
+test('platform user get route exposes explicit permission declaration', () => {
+  const getPlatformUser = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/users/platform-user-route-1'
+  });
+
+  assert.ok(getPlatformUser);
+  assert.equal(getPlatformUser.access, 'protected');
+  assert.equal(getPlatformUser.scope, 'platform');
+  assert.equal(getPlatformUser.permission_code, 'platform.member_admin.view');
+});
+
 test('platform user status route exposes explicit permission declaration', () => {
   const updatePlatformUserStatus = findRouteDefinition({
     method: 'POST',

@@ -38,6 +38,28 @@ const createHarness = ({
     revoked_session_count: 2,
     revoked_refresh_token_count: 2
   }),
+  listPlatformUsers = async ({ page, pageSize, status, keyword }) => ({
+    total: 1,
+    items: [
+      {
+        user_id: 'platform-user-default',
+        phone: '13800000040',
+        status: 'active'
+      }
+    ],
+    page,
+    page_size: pageSize,
+    status: status || null,
+    keyword: keyword || null
+  }),
+  getPlatformUserById = async ({ userId }) =>
+    String(userId || '').trim() === 'platform-user-default'
+      ? {
+        user_id: 'platform-user-default',
+        phone: '13800000040',
+        status: 'active'
+      }
+      : null,
   recordIdempotencyEvent = async () => {},
   authIdempotencyStore = null
 } = {}) => {
@@ -45,6 +67,8 @@ const createHarness = ({
   const provisionCalls = [];
   const statusCalls = [];
   const softDeleteCalls = [];
+  const listCalls = [];
+  const getCalls = [];
   const idempotencyEvents = [];
   const authService = {
     authorizeRoute: async (payload) => {
@@ -68,7 +92,17 @@ const createHarness = ({
       return recordIdempotencyEvent(payload);
     },
     _internals: {
-      auditTrail: []
+      auditTrail: [],
+      authStore: {
+        listPlatformUsers: async (payload) => {
+          listCalls.push(payload);
+          return listPlatformUsers(payload);
+        },
+        getPlatformUserById: async (payload) => {
+          getCalls.push(payload);
+          return getPlatformUserById(payload);
+        }
+      }
     }
   };
 
@@ -88,6 +122,8 @@ const createHarness = ({
     provisionCalls,
     statusCalls,
     softDeleteCalls,
+    listCalls,
+    getCalls,
     idempotencyEvents
   };
 };
@@ -95,12 +131,209 @@ const createHarness = ({
 test('createPlatformUserHandlers fails fast when platform user service capability is missing', () => {
   assert.throws(
     () => createPlatformUserHandlers(),
-    /requires a platformUserService with createUser, updateUserStatus, and softDeleteUser/
+    /requires a platformUserService with/
   );
   assert.throws(
     () => createPlatformUserHandlers({}),
-    /requires a platformUserService with createUser, updateUserStatus, and softDeleteUser/
+    /requires a platformUserService with/
   );
+});
+
+test('GET /platform/users returns paged platform users and forwards filters', async () => {
+  const harness = createHarness({
+    listPlatformUsers: async ({ page, pageSize, status, keyword }) => ({
+      total: 2,
+      items: [
+        {
+          user_id: 'platform-user-list-1',
+          phone: '13800000041',
+          status: 'disabled'
+        },
+        {
+          user_id: 'platform-user-list-2',
+          phone: '13800000042',
+          status: 'disabled'
+        }
+      ],
+      page,
+      page_size: pageSize,
+      status,
+      keyword
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users?page=2&page_size=5&status=disabled&keyword=1380',
+    method: 'GET',
+    requestId: 'req-platform-user-list',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.total, 2);
+  assert.equal(payload.page, 2);
+  assert.equal(payload.page_size, 5);
+  assert.equal(payload.request_id, 'req-platform-user-list');
+  assert.equal(payload.items.length, 2);
+  assert.equal(payload.items[0].status, 'disabled');
+  assert.equal(payload.items[1].user_id, 'platform-user-list-2');
+  assert.equal(harness.listCalls.length, 1);
+  assert.equal(harness.listCalls[0].page, 2);
+  assert.equal(harness.listCalls[0].pageSize, 5);
+  assert.equal(harness.listCalls[0].status, 'disabled');
+  assert.equal(harness.listCalls[0].keyword, '1380');
+});
+
+test('GET /platform/users masks keyword in audit metadata', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users?page=1&page_size=20&keyword=13800000041',
+    method: 'GET',
+    requestId: 'req-platform-user-list-keyword-mask',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const lastAuditEvent = harness.platformUserService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent?.type, 'platform.user.listed');
+  assert.equal(lastAuditEvent?.keyword, '138****0041');
+});
+
+test('GET /platform/users maps invalid upstream list read model to USR-503-DEPENDENCY-UNAVAILABLE', async () => {
+  const harness = createHarness({
+    listPlatformUsers: async () => ({
+      total: 1,
+      items: [
+        {
+          user_id: 'platform-user-list-invalid-phone',
+          phone: '',
+          status: 'active'
+        }
+      ]
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users?page=1&page_size=20',
+    method: 'GET',
+    requestId: 'req-platform-user-list-invalid-model',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(payload.request_id, 'req-platform-user-list-invalid-model');
+});
+
+test('GET /platform/users/:user_id returns detail payload with request_id', async () => {
+  const harness = createHarness({
+    getPlatformUserById: async ({ userId }) => ({
+      user_id: userId,
+      phone: '13800000049',
+      status: 'active'
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-detail-1',
+    method: 'GET',
+    requestId: 'req-platform-user-get',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.deepEqual(payload, {
+    user_id: 'platform-user-detail-1',
+    phone: '13800000049',
+    status: 'active',
+    request_id: 'req-platform-user-get'
+  });
+  assert.equal(harness.getCalls.length, 1);
+  assert.equal(harness.getCalls[0].userId, 'platform-user-detail-1');
+});
+
+test('GET /platform/users/:user_id maps invalid upstream read model to USR-503-DEPENDENCY-UNAVAILABLE', async () => {
+  const harness = createHarness({
+    getPlatformUserById: async () => ({
+      user_id: 'platform-user-detail-invalid-phone',
+      phone: '',
+      status: 'active'
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-detail-invalid-phone',
+    method: 'GET',
+    requestId: 'req-platform-user-get-invalid-model',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-503-DEPENDENCY-UNAVAILABLE');
+  assert.equal(payload.request_id, 'req-platform-user-get-invalid-model');
+});
+
+test('GET /platform/users rejects page_size greater than 100', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users?page=1&page_size=101',
+    method: 'GET',
+    requestId: 'req-platform-user-list-invalid-page-size',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-400-INVALID-PAYLOAD');
+  assert.equal(payload.detail, 'page_size 必须为正整数');
+  assert.equal(payload.request_id, 'req-platform-user-list-invalid-page-size');
+  assert.equal(harness.listCalls.length, 0);
+});
+
+test('GET /platform/users/:user_id returns USR-404-USER-NOT-FOUND when target is missing', async () => {
+  const harness = createHarness({
+    getPlatformUserById: async () => null
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-detail-missing',
+    method: 'GET',
+    requestId: 'req-platform-user-get-not-found',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-404-USER-NOT-FOUND');
+  assert.equal(payload.detail, '目标平台用户不存在或无 platform 域访问');
+  assert.equal(payload.request_id, 'req-platform-user-get-not-found');
 });
 
 test('createPlatformUser maps non-auth operator authorization failures to USR-503-DEPENDENCY-UNAVAILABLE', async () => {

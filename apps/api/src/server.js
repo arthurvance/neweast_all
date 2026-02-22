@@ -23,6 +23,8 @@ const {
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY
 } = require('./modules/platform/role.constants');
 const {
+  PLATFORM_USER_LIST_ROUTE_KEY,
+  PLATFORM_USER_GET_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
@@ -2875,12 +2877,34 @@ const createRouteTable = ({
               handlers.platformCreateUser(
                 requestId,
                 headers.authorization,
-                body || {},
-                getAuthorizationContext()
-              ),
+              body || {},
+              getAuthorizationContext()
+            ),
             requestId
           )
       }),
+    [PLATFORM_USER_LIST_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformListUsers(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_USER_GET_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformGetUser(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     [PLATFORM_USER_SOFT_DELETE_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,

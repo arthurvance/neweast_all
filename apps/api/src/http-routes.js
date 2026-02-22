@@ -918,6 +918,32 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformListUsers: async (
+      requestId,
+      authorization,
+      query,
+      authorizationContext
+    ) =>
+      platformUser.listUsers({
+        requestId,
+        authorization,
+        query: query || {},
+        authorizationContext
+      }),
+
+    platformGetUser: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext
+    ) =>
+      platformUser.getUser({
+        requestId,
+        authorization,
+        params: params || {},
+        authorizationContext
+      }),
+
     platformCreateUser: async (
       requestId,
       authorization,
