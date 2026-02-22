@@ -46,6 +46,10 @@ const {
   PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY
 } = require('./modules/platform/integration-contract.constants');
 const {
+  PLATFORM_INTEGRATION_RECOVERY_QUEUE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
+} = require('./modules/platform/integration-recovery.constants');
+const {
   PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
   TENANT_AUDIT_EVENTS_ROUTE_KEY
 } = require('./modules/audit/audit.constants');
@@ -196,7 +200,8 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_INTEGRATION_CONTRACT_CREATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
-  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY
+  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_MEMBER_CREATE_ROUTE_KEY,
@@ -224,7 +229,8 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_INTEGRATION_CONTRACT_CREATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
-  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY
+  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
@@ -244,7 +250,8 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_INTEGRATION_CONTRACT_CREATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
-  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY
+  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
@@ -298,6 +305,10 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   ],
   [
     PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [
+    PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
     IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
   ]
 ]);
@@ -806,6 +817,8 @@ const normalizeRouteParamsForRoute = ({
     || routeKey === PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY
     || routeKey === PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY
     || routeKey === PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY
+    || routeKey === PLATFORM_INTEGRATION_RECOVERY_QUEUE_ROUTE_KEY
+    || routeKey === PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
   ) {
     normalizedRouteParams.integration_id = String(
       normalizedRouteParams.integration_id || ''
@@ -815,6 +828,11 @@ const normalizeRouteParamsForRoute = ({
     normalizedRouteParams.contract_version = String(
       normalizedRouteParams.contract_version || ''
     ).trim();
+  }
+  if (routeKey === PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY) {
+    normalizedRouteParams.recovery_id = String(
+      normalizedRouteParams.recovery_id || ''
+    ).trim().toLowerCase();
   }
   return normalizedRouteParams;
 };
@@ -2661,6 +2679,35 @@ const createRouteTable = ({
           runAuthRouteWithTrace(
             () =>
               handlers.platformActivateIntegrationContract(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_INTEGRATION_RECOVERY_QUEUE_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformListIntegrationRecoveryQueue(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformReplayIntegrationRecoveryQueueItem(
                 requestId,
                 headers.authorization,
                 getRouteParams(),

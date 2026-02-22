@@ -43,9 +43,19 @@ const PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT_ENUM = [
   'compatible',
   'incompatible'
 ];
+const PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM = [
+  'pending',
+  'retrying',
+  'succeeded',
+  'failed',
+  'dlq',
+  'replayed'
+];
 const PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN =
   '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN = '^[A-Fa-f0-9]{64}$';
+const PLATFORM_INTEGRATION_RECOVERY_ID_PATTERN =
+  '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
 const TENANT_MEMBERSHIP_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_USER_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]+$';
 const PLATFORM_USER_ID_MAX_LENGTH = 64;
@@ -6799,6 +6809,333 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/integrations/{integration_id}/recovery/queue': {
+      get: {
+        summary: 'List platform integration retry-recovery queue items',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'query',
+            name: 'status',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM
+            }
+          },
+          {
+            in: 'query',
+            name: 'limit',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 200,
+              default: 50
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Recovery queue listed',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformIntegrationRecoveryQueueListResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid integration_id or query filters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'INT-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration catalog entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  integration_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标集成目录不存在',
+                      error_code: 'INT-404-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Recovery governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '集成恢复治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'dependency-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay': {
+      post: {
+        summary: 'Replay a failed or DLQ platform integration recovery queue item',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'path',
+            name: 'recovery_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_RECOVERY_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ReplayPlatformIntegrationRecoveryRequest'
+              },
+              examples: {
+                replay: {
+                  value: {
+                    reason: 'manual replay after downstream rollback'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Recovery queue replay accepted',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformIntegrationRecoveryReplayResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'INT-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration or recovery queue entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  integration_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标集成目录不存在',
+                      error_code: 'INT-404-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  recovery_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标恢复队列项不存在',
+                      error_code: 'INT-404-RECOVERY-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Replay status conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  replay_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '恢复队列状态冲突，当前不可重放',
+                      error_code: 'INT-409-RECOVERY-REPLAY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      previous_status: 'succeeded',
+                      requested_status: 'replayed'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Recovery governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '集成恢复治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'dependency-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/users': {
       post: {
         summary: 'Create or reuse platform user by phone',
@@ -9675,6 +10012,219 @@ const buildOpenApiSpec = () => {
             }
           }
         ]
+      },
+      PlatformIntegrationRecoveryQueueItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'recovery_id',
+          'integration_id',
+          'contract_type',
+          'contract_version',
+          'request_id',
+          'attempt_count',
+          'max_attempts',
+          'status',
+          'retryable',
+          'payload_snapshot',
+          'created_at',
+          'updated_at'
+        ],
+        properties: {
+          recovery_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_RECOVERY_ID_PATTERN
+          },
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          contract_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          request_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          traceparent: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          idempotency_key: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          attempt_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          max_attempts: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 5
+          },
+          next_retry_at: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          },
+          last_attempt_at: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          },
+          status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM
+          },
+          failure_code: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          failure_detail: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 65535,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,65535}$'
+          },
+          last_http_status: {
+            type: 'integer',
+            minimum: 100,
+            maximum: 599,
+            nullable: true
+          },
+          retryable: { type: 'boolean' },
+          payload_snapshot: {
+            type: ['object', 'array'],
+            additionalProperties: true
+          },
+          response_snapshot: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          created_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          updated_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updated_at: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      PlatformIntegrationRecoveryQueueListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'integration_id',
+          'lifecycle_status',
+          'status',
+          'limit',
+          'queue',
+          'request_id'
+        ],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          lifecycle_status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+          },
+          status: {
+            type: ['string', 'null'],
+            enum: [...PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM, null]
+          },
+          limit: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 200
+          },
+          queue: {
+            type: 'array',
+            items: {
+              $ref: '#/components/schemas/PlatformIntegrationRecoveryQueueItem'
+            }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      ReplayPlatformIntegrationRecoveryRequest: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          }
+        }
+      },
+      PlatformIntegrationRecoveryReplayResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'recovery',
+          'previous_status',
+          'current_status',
+          'replayed',
+          'request_id'
+        ],
+        properties: {
+          recovery: {
+            $ref: '#/components/schemas/PlatformIntegrationRecoveryQueueItem'
+          },
+          previous_status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM
+          },
+          current_status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM
+          },
+          replayed: { type: 'boolean' },
+          request_id: { type: 'string' }
+        }
       },
       ReplacePlatformRoleFactsRequest: {
         type: 'object',

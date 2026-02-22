@@ -327,6 +327,27 @@ test('platform integration contract routes expose explicit permission declaratio
   }
 });
 
+test('platform integration recovery routes expose explicit permission declarations', () => {
+  const listRecoveryQueue = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/integrations/demo-integration/recovery/queue'
+  });
+  const replayRecoveryQueueItem = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/demo-integration/recovery/queue/recovery-001/replay'
+  });
+
+  assert.ok(listRecoveryQueue);
+  assert.equal(listRecoveryQueue.access, 'protected');
+  assert.equal(listRecoveryQueue.scope, 'platform');
+  assert.equal(listRecoveryQueue.permission_code, 'platform.member_admin.view');
+
+  assert.ok(replayRecoveryQueueItem);
+  assert.equal(replayRecoveryQueueItem.access, 'protected');
+  assert.equal(replayRecoveryQueueItem.scope, 'platform');
+  assert.equal(replayRecoveryQueueItem.permission_code, 'platform.member_admin.operate');
+});
+
 test('platform role-facts replace route exposes explicit permission declaration', () => {
   const replaceRoleFacts = findRouteDefinition({
     method: 'POST',

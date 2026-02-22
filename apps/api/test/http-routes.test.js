@@ -374,3 +374,112 @@ test('createRouteHandlers enforces shared auth service identity for platformInte
     /authService and platformIntegrationContractService to share the same authService instance/
   );
 });
+
+test('createRouteHandlers wires platform integration recovery handlers with provided service', async () => {
+  const recoveryCalls = [];
+  const platformIntegrationRecoveryService = {
+    listRecoveryQueue: async (payload) => {
+      recoveryCalls.push({ method: 'list', payload });
+      return {
+        integration_id: payload.integrationId,
+        lifecycle_status: 'active',
+        status: payload.query.status || null,
+        limit: Number(payload.query.limit || 50),
+        queue: [],
+        request_id: payload.requestId
+      };
+    },
+    replayRecoveryQueueItem: async (payload) => {
+      recoveryCalls.push({ method: 'replay', payload });
+      return {
+        recovery: {
+          recovery_id: payload.recoveryId,
+          integration_id: payload.integrationId,
+          contract_type: 'openapi',
+          contract_version: 'v2026.02.22',
+          request_id: 'req-source',
+          traceparent: null,
+          idempotency_key: null,
+          attempt_count: 1,
+          max_attempts: 5,
+          next_retry_at: '2026-02-22T00:00:00.000Z',
+          last_attempt_at: '2026-02-22T00:00:00.000Z',
+          status: 'replayed',
+          failure_code: null,
+          failure_detail: null,
+          last_http_status: null,
+          retryable: true,
+          payload_snapshot: { ok: true },
+          response_snapshot: null,
+          created_by_user_id: null,
+          updated_by_user_id: 'operator',
+          created_at: '2026-02-22T00:00:00.000Z',
+          updated_at: '2026-02-22T00:00:00.000Z'
+        },
+        previous_status: 'dlq',
+        current_status: 'replayed',
+        replayed: true,
+        request_id: payload.requestId
+      };
+    }
+  };
+
+  const handlers = createRouteHandlers(
+    readConfig({ ALLOW_MOCK_BACKENDS: 'true' }),
+    {
+      dependencyProbe,
+      authService: {},
+      platformIntegrationRecoveryService
+    }
+  );
+
+  const listed = await handlers.platformListIntegrationRecoveryQueue(
+    'req-http-routes-platform-integration-recovery-list',
+    'Bearer fake-token',
+    { integration_id: 'erp-outbound-main' },
+    { status: 'dlq', limit: '20' },
+    null
+  );
+  assert.equal(listed.integration_id, 'erp-outbound-main');
+  assert.equal(recoveryCalls[0].method, 'list');
+
+  const replayed = await handlers.platformReplayIntegrationRecoveryQueueItem(
+    'req-http-routes-platform-integration-recovery-replay',
+    'Bearer fake-token',
+    {
+      integration_id: 'erp-outbound-main',
+      recovery_id: 'recovery-001'
+    },
+    {
+      reason: 'manual replay'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(replayed.current_status, 'replayed');
+  assert.equal(recoveryCalls[1].method, 'replay');
+  assert.equal(
+    handlers._internals.platformIntegrationRecoveryService,
+    platformIntegrationRecoveryService
+  );
+});
+
+test('createRouteHandlers enforces shared auth service identity for platformIntegrationRecoveryService', () => {
+  assert.throws(
+    () =>
+      createRouteHandlers(
+        readConfig({ ALLOW_MOCK_BACKENDS: 'true' }),
+        {
+          authService: { serviceName: 'primary-auth' },
+          platformIntegrationRecoveryService: {
+            listRecoveryQueue: async () => ({}),
+            replayRecoveryQueueItem: async () => ({}),
+            _internals: {
+              authService: { serviceName: 'other-auth' }
+            }
+          }
+        }
+      ),
+    /authService and platformIntegrationRecoveryService to share the same authService instance/
+  );
+});

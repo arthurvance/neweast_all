@@ -648,6 +648,53 @@ test('0022 down migration drops compatibility checks before contract versions', 
   );
 });
 
+test('0023 migration defines integration retry recovery queue table with dedup and scheduling indexes', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0023_platform_integration_retry_recovery.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_integration_retry_recovery_queue/i);
+  assert.match(sql, /recovery_id VARCHAR\(64\) NOT NULL/i);
+  assert.match(sql, /contract_type ENUM\('openapi', 'event'\) NOT NULL/i);
+  assert.match(sql, /request_id VARCHAR\(128\) NOT NULL/i);
+  assert.match(sql, /idempotency_key VARCHAR\(128\) NOT NULL DEFAULT ''/i);
+  assert.match(sql, /attempt_count INT UNSIGNED NOT NULL DEFAULT 0/i);
+  assert.match(sql, /max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 5/i);
+  assert.match(
+    sql,
+    /status ENUM\('pending', 'retrying', 'succeeded', 'failed', 'dlq', 'replayed'\)\s+NOT NULL DEFAULT 'pending'/i
+  );
+  assert.match(
+    sql,
+    /UNIQUE KEY uk_platform_integration_recovery_dedup\s*\(\s*integration_id,\s*contract_type,\s*contract_version,\s*request_id,\s*idempotency_key\s*\)/i
+  );
+  assert.match(
+    sql,
+    /KEY idx_platform_integration_recovery_status_next_retry_at\s*\(\s*status,\s*next_retry_at\s*\)/i
+  );
+  assert.match(
+    sql,
+    /KEY idx_platform_integration_recovery_integration_status\s*\(\s*integration_id,\s*status\s*\)/i
+  );
+  assert.match(sql, /KEY idx_platform_integration_recovery_request_id\s*\(\s*request_id\s*\)/i);
+});
+
+test('0023 down migration drops platform integration retry recovery queue table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0023_platform_integration_retry_recovery.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP TABLE IF EXISTS platform_integration_retry_recovery_queue/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

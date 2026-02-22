@@ -1,5 +1,9 @@
 const { randomUUID } = require('node:crypto');
 const { normalizeTraceparent } = require('../../common/trace-context');
+const {
+  isRetryableDeliveryFailure,
+  computeRetrySchedule
+} = require('../integration');
 
 const createInMemoryAuthStore = ({
   seedUsers = [],
@@ -21,6 +25,8 @@ const createInMemoryAuthStore = ({
   const platformIntegrationCatalogCodeIndex = new Map();
   const platformIntegrationContractVersionsByKey = new Map();
   const platformIntegrationContractChecksById = new Map();
+  const platformIntegrationRecoveryQueueByRecoveryId = new Map();
+  const platformIntegrationRecoveryDedupIndex = new Map();
   let nextPlatformIntegrationContractVersionId = 1;
   let nextPlatformIntegrationContractCheckId = 1;
   const platformRolePermissionGrantsByRoleId = new Map();
@@ -67,6 +73,14 @@ const createInMemoryAuthStore = ({
     'compatible',
     'incompatible'
   ]);
+  const VALID_PLATFORM_INTEGRATION_RECOVERY_STATUS = new Set([
+    'pending',
+    'retrying',
+    'succeeded',
+    'failed',
+    'dlq',
+    'replayed'
+  ]);
   const MAX_PLATFORM_INTEGRATION_ID_LENGTH = 64;
   const MAX_PLATFORM_INTEGRATION_CODE_LENGTH = 64;
   const MAX_PLATFORM_INTEGRATION_NAME_LENGTH = 128;
@@ -83,8 +97,19 @@ const createInMemoryAuthStore = ({
   const MAX_PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_NOTES_LENGTH = 4096;
   const MAX_PLATFORM_INTEGRATION_CONTRACT_DIFF_SUMMARY_LENGTH = 65535;
   const MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_ID_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_TRACEPARENT_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_IDEMPOTENCY_KEY_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_CODE_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_DETAIL_LENGTH = 65535;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_REASON_LENGTH = 256;
+  const MAX_PLATFORM_INTEGRATION_RECOVERY_LIST_LIMIT = 200;
   const PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS = 3000;
   const MAX_PLATFORM_INTEGRATION_TIMEOUT_MS = 300000;
+  const DEFAULT_PLATFORM_INTEGRATION_RECOVERY_CLAIM_LEASE_MS = Math.min(
+    5 * 60 * 1000,
+    MAX_PLATFORM_INTEGRATION_TIMEOUT_MS
+  );
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
@@ -365,6 +390,14 @@ const createInMemoryAuthStore = ({
     String(evaluationResult || '').trim().toLowerCase();
   const normalizePlatformIntegrationContractSchemaChecksum = (schemaChecksum) =>
     String(schemaChecksum || '').trim().toLowerCase();
+  const normalizePlatformIntegrationRecoveryId = (recoveryId) =>
+    String(recoveryId || '').trim().toLowerCase();
+  const normalizePlatformIntegrationRecoveryStatus = (status) =>
+    String(status || '').trim().toLowerCase();
+  const normalizePlatformIntegrationRecoveryIdempotencyKey = (idempotencyKey) =>
+    idempotencyKey === null || idempotencyKey === undefined
+      ? ''
+      : String(idempotencyKey || '').trim();
   const PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
   const toPlatformIntegrationContractVersionKey = ({
     integrationId,
@@ -383,6 +416,20 @@ const createInMemoryAuthStore = ({
     [
       normalizePlatformIntegrationId(integrationId),
       normalizePlatformIntegrationContractType(contractType)
+    ].join('::');
+  const toPlatformIntegrationRecoveryDedupKey = ({
+    integrationId,
+    contractType,
+    contractVersion,
+    requestId,
+    idempotencyKey
+  } = {}) =>
+    [
+      normalizePlatformIntegrationId(integrationId),
+      normalizePlatformIntegrationContractType(contractType),
+      normalizePlatformIntegrationContractVersion(contractVersion),
+      String(requestId || '').trim(),
+      normalizePlatformIntegrationRecoveryIdempotencyKey(idempotencyKey)
     ].join('::');
   const normalizePlatformIntegrationOptionalText = (value) => {
     if (value === null || value === undefined) {
@@ -508,6 +555,22 @@ const createInMemoryAuthStore = ({
       normalizePlatformIntegrationLifecycleStatus(previousStatus) || null;
     error.requestedStatus =
       normalizePlatformIntegrationLifecycleStatus(requestedStatus) || null;
+    return error;
+  };
+  const createPlatformIntegrationRecoveryReplayConflictError = ({
+    integrationId = null,
+    recoveryId = null,
+    previousStatus = null,
+    requestedStatus = 'replayed'
+  } = {}) => {
+    const error = new Error('platform integration recovery replay conflict');
+    error.code = 'ERR_PLATFORM_INTEGRATION_RECOVERY_REPLAY_CONFLICT';
+    error.integrationId = normalizePlatformIntegrationId(integrationId) || null;
+    error.recoveryId = normalizePlatformIntegrationRecoveryId(recoveryId) || null;
+    error.previousStatus =
+      normalizePlatformIntegrationRecoveryStatus(previousStatus) || null;
+    error.requestedStatus =
+      normalizePlatformIntegrationRecoveryStatus(requestedStatus) || 'replayed';
     return error;
   };
   const normalizePlatformPermissionCode = (permissionCode) =>
@@ -857,6 +920,183 @@ const createInMemoryAuthStore = ({
         checkedAt: entry.checkedAt
       }
       : null;
+  const toPlatformIntegrationRecoveryQueueRecord = (entry = {}) => {
+    const normalizedRecoveryId = normalizePlatformIntegrationRecoveryId(
+      entry.recoveryId || entry.recovery_id
+    );
+    const normalizedIntegrationId = normalizePlatformIntegrationId(
+      entry.integrationId || entry.integration_id
+    );
+    const normalizedContractType = normalizePlatformIntegrationContractType(
+      entry.contractType || entry.contract_type
+    );
+    const normalizedContractVersion = normalizePlatformIntegrationContractVersion(
+      entry.contractVersion || entry.contract_version
+    );
+    const normalizedRequestId = String(
+      entry.requestId || entry.request_id || ''
+    ).trim();
+    const normalizedTraceparent = normalizePlatformIntegrationOptionalText(
+      entry.traceparent
+    );
+    const normalizedIdempotencyKey = normalizePlatformIntegrationRecoveryIdempotencyKey(
+      entry.idempotencyKey ?? entry.idempotency_key
+    );
+    const normalizedAttemptCount = Number(
+      entry.attemptCount ?? entry.attempt_count ?? 0
+    );
+    const normalizedMaxAttempts = Number(
+      entry.maxAttempts ?? entry.max_attempts ?? 5
+    );
+    const normalizedStatus = normalizePlatformIntegrationRecoveryStatus(
+      entry.status || 'pending'
+    );
+    const normalizedFailureCode = normalizePlatformIntegrationOptionalText(
+      entry.failureCode || entry.failure_code
+    );
+    const normalizedFailureDetail = normalizePlatformIntegrationOptionalText(
+      entry.failureDetail || entry.failure_detail
+    );
+    const normalizedLastHttpStatus =
+      (entry.lastHttpStatus === undefined || entry.lastHttpStatus === null)
+      && (entry.last_http_status === undefined || entry.last_http_status === null)
+        ? null
+        : Number(entry.lastHttpStatus ?? entry.last_http_status);
+    const normalizedRetryable = Boolean(entry.retryable ?? true);
+    const normalizedPayloadSnapshot = normalizePlatformIntegrationJsonForStorage({
+      value: entry.payloadSnapshot ?? entry.payload_snapshot
+    });
+    const normalizedResponseSnapshot = normalizePlatformIntegrationJsonForStorage({
+      value: entry.responseSnapshot ?? entry.response_snapshot
+    });
+    const normalizedNextRetryAtRaw = entry.nextRetryAt ?? entry.next_retry_at;
+    const normalizedLastAttemptAtRaw = entry.lastAttemptAt ?? entry.last_attempt_at;
+    const normalizedNextRetryAt =
+      normalizedNextRetryAtRaw === null || normalizedNextRetryAtRaw === undefined
+        ? null
+        : new Date(normalizedNextRetryAtRaw).toISOString();
+    const normalizedLastAttemptAt =
+      normalizedLastAttemptAtRaw === null || normalizedLastAttemptAtRaw === undefined
+        ? null
+        : new Date(normalizedLastAttemptAtRaw).toISOString();
+    const normalizedCreatedAt = String(
+      entry.createdAt || entry.created_at || new Date().toISOString()
+    ).trim();
+    const normalizedUpdatedAt = String(
+      entry.updatedAt || entry.updated_at || new Date().toISOString()
+    ).trim();
+    if (
+      !normalizedRecoveryId
+      || normalizedRecoveryId.length > MAX_PLATFORM_INTEGRATION_RECOVERY_ID_LENGTH
+      || !isValidPlatformIntegrationId(normalizedIntegrationId)
+      || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      || !normalizedContractVersion
+      || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      || !normalizedRequestId
+      || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH
+      || (
+        normalizedTraceparent !== null
+        && normalizedTraceparent.length > MAX_PLATFORM_INTEGRATION_RECOVERY_TRACEPARENT_LENGTH
+      )
+      || normalizedIdempotencyKey.length > MAX_PLATFORM_INTEGRATION_RECOVERY_IDEMPOTENCY_KEY_LENGTH
+      || !Number.isInteger(normalizedAttemptCount)
+      || normalizedAttemptCount < 0
+      || !Number.isInteger(normalizedMaxAttempts)
+      || normalizedMaxAttempts < 1
+      || normalizedMaxAttempts > 5
+      || !VALID_PLATFORM_INTEGRATION_RECOVERY_STATUS.has(normalizedStatus)
+      || (
+        normalizedFailureCode !== null
+        && normalizedFailureCode.length > MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_CODE_LENGTH
+      )
+      || (
+        normalizedFailureDetail !== null
+        && normalizedFailureDetail.length > MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_DETAIL_LENGTH
+      )
+      || (
+        normalizedLastHttpStatus !== null
+        && (
+          !Number.isInteger(normalizedLastHttpStatus)
+          || normalizedLastHttpStatus < 100
+          || normalizedLastHttpStatus > 599
+        )
+      )
+      || normalizedPayloadSnapshot === undefined
+      || normalizedPayloadSnapshot === null
+      || normalizedResponseSnapshot === undefined
+      || !normalizedCreatedAt
+      || !normalizedUpdatedAt
+      || (
+        normalizedNextRetryAt !== null
+        && Number.isNaN(new Date(normalizedNextRetryAt).getTime())
+      )
+      || (
+        normalizedLastAttemptAt !== null
+        && Number.isNaN(new Date(normalizedLastAttemptAt).getTime())
+      )
+    ) {
+      throw new Error('invalid platform integration recovery queue entry');
+    }
+    return {
+      recoveryId: normalizedRecoveryId,
+      integrationId: normalizedIntegrationId,
+      contractType: normalizedContractType,
+      contractVersion: normalizedContractVersion,
+      requestId: normalizedRequestId,
+      traceparent: normalizedTraceparent,
+      idempotencyKey: normalizedIdempotencyKey || null,
+      attemptCount: normalizedAttemptCount,
+      maxAttempts: normalizedMaxAttempts,
+      nextRetryAt: normalizedNextRetryAt,
+      lastAttemptAt: normalizedLastAttemptAt,
+      status: normalizedStatus,
+      failureCode: normalizedFailureCode,
+      failureDetail: normalizedFailureDetail,
+      lastHttpStatus: normalizedLastHttpStatus,
+      retryable: normalizedRetryable,
+      payloadSnapshot: normalizedPayloadSnapshot,
+      responseSnapshot: normalizedResponseSnapshot,
+      createdByUserId: normalizePlatformIntegrationOptionalText(
+        entry.createdByUserId || entry.created_by_user_id
+      ),
+      updatedByUserId: normalizePlatformIntegrationOptionalText(
+        entry.updatedByUserId || entry.updated_by_user_id
+      ),
+      createdAt: normalizedCreatedAt,
+      updatedAt: normalizedUpdatedAt
+    };
+  };
+  const clonePlatformIntegrationRecoveryQueueRecord = (entry = null) =>
+    entry
+      ? {
+        recoveryId: entry.recoveryId,
+        integrationId: entry.integrationId,
+        contractType: entry.contractType,
+        contractVersion: entry.contractVersion,
+        requestId: entry.requestId,
+        traceparent: entry.traceparent,
+        idempotencyKey: entry.idempotencyKey,
+        attemptCount: Number(entry.attemptCount),
+        maxAttempts: Number(entry.maxAttempts),
+        nextRetryAt: entry.nextRetryAt,
+        lastAttemptAt: entry.lastAttemptAt,
+        status: entry.status,
+        failureCode: entry.failureCode,
+        failureDetail: entry.failureDetail,
+        lastHttpStatus: entry.lastHttpStatus,
+        retryable: Boolean(entry.retryable),
+        payloadSnapshot: entry.payloadSnapshot
+          ? structuredClone(entry.payloadSnapshot)
+          : null,
+        responseSnapshot: entry.responseSnapshot
+          ? structuredClone(entry.responseSnapshot)
+          : null,
+        createdByUserId: entry.createdByUserId,
+        updatedByUserId: entry.updatedByUserId,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt
+      }
+      : null;
 
   const findPlatformRoleCatalogRecordStateByRoleId = (roleId) => {
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
@@ -913,6 +1153,41 @@ const createInMemoryAuthStore = ({
       key: contractKey,
       record: platformIntegrationContractVersionsByKey.get(contractKey)
     };
+  };
+  const findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId = (
+    recoveryId
+  ) => {
+    const normalizedRecoveryId = normalizePlatformIntegrationRecoveryId(recoveryId);
+    if (!normalizedRecoveryId) {
+      return null;
+    }
+    if (!platformIntegrationRecoveryQueueByRecoveryId.has(normalizedRecoveryId)) {
+      return null;
+    }
+    return {
+      recoveryId: normalizedRecoveryId,
+      record: platformIntegrationRecoveryQueueByRecoveryId.get(normalizedRecoveryId)
+    };
+  };
+  const findPlatformIntegrationRecoveryQueueRecordStateByDedupKey = ({
+    integrationId,
+    contractType,
+    contractVersion,
+    requestId,
+    idempotencyKey
+  } = {}) => {
+    const dedupKey = toPlatformIntegrationRecoveryDedupKey({
+      integrationId,
+      contractType,
+      contractVersion,
+      requestId,
+      idempotencyKey
+    });
+    const recoveryId = platformIntegrationRecoveryDedupIndex.get(dedupKey);
+    if (!recoveryId) {
+      return null;
+    }
+    return findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId(recoveryId);
   };
 
   const normalizePlatformPermission = (
@@ -1524,6 +1799,71 @@ const createInMemoryAuthStore = ({
     platformIntegrationContractVersionsByKey.set(contractKey, merged);
     return clonePlatformIntegrationContractVersionRecord(merged);
   };
+  const upsertPlatformIntegrationRecoveryQueueRecord = ({
+    entry = {},
+    preserveTerminalStatus = false
+  } = {}) => {
+    const normalizedRecord = toPlatformIntegrationRecoveryQueueRecord(entry);
+    const dedupState = findPlatformIntegrationRecoveryQueueRecordStateByDedupKey({
+      integrationId: normalizedRecord.integrationId,
+      contractType: normalizedRecord.contractType,
+      contractVersion: normalizedRecord.contractVersion,
+      requestId: normalizedRecord.requestId,
+      idempotencyKey: normalizedRecord.idempotencyKey
+    });
+    const recoveryIdState = findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId(
+      normalizedRecord.recoveryId
+    );
+    if (
+      dedupState
+      && recoveryIdState
+      && dedupState.recoveryId !== recoveryIdState.recoveryId
+    ) {
+      throw new Error('duplicate platform integration recovery queue entry');
+    }
+    if (!dedupState && recoveryIdState) {
+      throw new Error('duplicate platform integration recovery queue entry');
+    }
+    const existingState = dedupState || null;
+    const existing = existingState?.record || null;
+    const nowIso = new Date().toISOString();
+    const persistedRecoveryId = existingState?.recoveryId || normalizedRecord.recoveryId;
+    const merged = toPlatformIntegrationRecoveryQueueRecord({
+      ...existing,
+      ...normalizedRecord,
+      recoveryId: persistedRecoveryId,
+      status:
+        preserveTerminalStatus
+        && (
+          existing?.status === 'succeeded'
+          || existing?.status === 'replayed'
+        )
+          ? existing.status
+          : normalizedRecord.status,
+      createdAt: existing?.createdAt || normalizedRecord.createdAt || nowIso,
+      updatedAt: nowIso
+    });
+    if (existing) {
+      const previousDedupKey = toPlatformIntegrationRecoveryDedupKey({
+        integrationId: existing.integrationId,
+        contractType: existing.contractType,
+        contractVersion: existing.contractVersion,
+        requestId: existing.requestId,
+        idempotencyKey: existing.idempotencyKey
+      });
+      platformIntegrationRecoveryDedupIndex.delete(previousDedupKey);
+    }
+    platformIntegrationRecoveryQueueByRecoveryId.set(persistedRecoveryId, merged);
+    const dedupKey = toPlatformIntegrationRecoveryDedupKey({
+      integrationId: merged.integrationId,
+      contractType: merged.contractType,
+      contractVersion: merged.contractVersion,
+      requestId: merged.requestId,
+      idempotencyKey: merged.idempotencyKey
+    });
+    platformIntegrationRecoveryDedupIndex.set(dedupKey, persistedRecoveryId);
+    return clonePlatformIntegrationRecoveryQueueRecord(merged);
+  };
 
   upsertPlatformRoleCatalogRecord({
     roleId: 'sys_admin',
@@ -1675,6 +2015,37 @@ const createInMemoryAuthStore = ({
     } catch (_error) {
       return null;
     }
+  };
+
+  const resolvePlatformIntegrationNetworkErrorCodeFromSnapshot = (snapshot = null) => {
+    const parsedSnapshot = safeParseJsonValue(snapshot);
+    if (!parsedSnapshot || typeof parsedSnapshot !== 'object' || Array.isArray(parsedSnapshot)) {
+      return null;
+    }
+    return normalizePlatformIntegrationOptionalText(
+      parsedSnapshot.network_error_code
+      ?? parsedSnapshot.networkErrorCode
+      ?? parsedSnapshot.error_code
+      ?? parsedSnapshot.errorCode
+    );
+  };
+
+  const isPlatformIntegrationRecoveryFailureRetryable = ({
+    retryable = true,
+    lastHttpStatus = null,
+    failureCode = null,
+    responseSnapshot = null
+  } = {}) => {
+    if (!Boolean(retryable)) {
+      return false;
+    }
+    return isRetryableDeliveryFailure({
+      httpStatus: lastHttpStatus,
+      errorCode: failureCode,
+      networkErrorCode: resolvePlatformIntegrationNetworkErrorCodeFromSnapshot(
+        responseSnapshot
+      )
+    });
   };
 
   const sanitizeAuditState = (value, depth = 0) => {
@@ -5676,6 +6047,838 @@ const createInMemoryAuthStore = ({
           restoreMapFromSnapshot(
             platformIntegrationContractVersionsByKey,
             snapshot.platformIntegrationContractVersionsByKey
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    listPlatformIntegrationRecoveryQueueEntries: async ({
+      integrationId,
+      status = null,
+      limit = 50
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedStatus = status === null || status === undefined
+        ? null
+        : normalizePlatformIntegrationRecoveryStatus(status);
+      const normalizedLimit = Number(limit);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || (
+          normalizedStatus !== null
+          && !VALID_PLATFORM_INTEGRATION_RECOVERY_STATUS.has(normalizedStatus)
+        )
+        || !Number.isInteger(normalizedLimit)
+        || normalizedLimit < 1
+        || normalizedLimit > MAX_PLATFORM_INTEGRATION_RECOVERY_LIST_LIMIT
+      ) {
+        throw new Error('listPlatformIntegrationRecoveryQueueEntries received invalid input');
+      }
+      return [...platformIntegrationRecoveryQueueByRecoveryId.values()]
+        .filter((entry) => {
+          if (entry.integrationId !== normalizedIntegrationId) {
+            return false;
+          }
+          if (normalizedStatus !== null && entry.status !== normalizedStatus) {
+            return false;
+          }
+          return true;
+        })
+        .sort((left, right) => {
+          const leftCreatedAt = new Date(left.createdAt).getTime();
+          const rightCreatedAt = new Date(right.createdAt).getTime();
+          if (leftCreatedAt !== rightCreatedAt) {
+            return rightCreatedAt - leftCreatedAt;
+          }
+          return String(right.recoveryId || '').localeCompare(
+            String(left.recoveryId || '')
+          );
+        })
+        .slice(0, normalizedLimit)
+        .map((entry) => clonePlatformIntegrationRecoveryQueueRecord(entry));
+    },
+
+    findPlatformIntegrationRecoveryQueueEntryByRecoveryId: async ({
+      integrationId,
+      recoveryId
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedRecoveryId = normalizePlatformIntegrationRecoveryId(recoveryId);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !normalizedRecoveryId
+        || normalizedRecoveryId.length > MAX_PLATFORM_INTEGRATION_RECOVERY_ID_LENGTH
+      ) {
+        return null;
+      }
+      const existingState = findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId(
+        normalizedRecoveryId
+      );
+      if (!existingState?.record) {
+        return null;
+      }
+      if (existingState.record.integrationId !== normalizedIntegrationId) {
+        return null;
+      }
+      return clonePlatformIntegrationRecoveryQueueRecord(existingState.record);
+    },
+
+    upsertPlatformIntegrationRecoveryQueueEntry: async ({
+      recoveryId = randomUUID(),
+      integrationId,
+      contractType,
+      contractVersion,
+      requestId,
+      traceparent = null,
+      idempotencyKey = '',
+      attemptCount = 0,
+      maxAttempts = 5,
+      nextRetryAt = null,
+      lastAttemptAt = null,
+      status = 'pending',
+      failureCode = null,
+      failureDetail = null,
+      lastHttpStatus = null,
+      retryable = true,
+      payloadSnapshot,
+      responseSnapshot = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationRecoveryQueueByRecoveryId: structuredClone(
+            platformIntegrationRecoveryQueueByRecoveryId
+          ),
+          platformIntegrationRecoveryDedupIndex: structuredClone(
+            platformIntegrationRecoveryDedupIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedRecoveryId = normalizePlatformIntegrationRecoveryId(recoveryId);
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedContractType =
+          normalizePlatformIntegrationContractType(contractType);
+        const normalizedContractVersion =
+          normalizePlatformIntegrationContractVersion(contractVersion);
+        const normalizedRequestId = String(requestId || '').trim();
+        const normalizedTraceparent = normalizePlatformIntegrationOptionalText(traceparent);
+        const normalizedIdempotencyKey =
+          normalizePlatformIntegrationRecoveryIdempotencyKey(idempotencyKey);
+        const normalizedAttemptCount = Number(attemptCount);
+        const normalizedMaxAttempts = Number(maxAttempts);
+        const normalizedNextRetryAt = nextRetryAt === null || nextRetryAt === undefined
+          ? null
+          : new Date(nextRetryAt).toISOString();
+        const normalizedLastAttemptAt = lastAttemptAt === null || lastAttemptAt === undefined
+          ? null
+          : new Date(lastAttemptAt).toISOString();
+        const normalizedStatus = normalizePlatformIntegrationRecoveryStatus(status);
+        const normalizedFailureCode = normalizePlatformIntegrationOptionalText(failureCode);
+        const normalizedFailureDetail = normalizePlatformIntegrationOptionalText(
+          failureDetail
+        );
+        const normalizedLastHttpStatus = lastHttpStatus === null || lastHttpStatus === undefined
+          ? null
+          : Number(lastHttpStatus);
+        const normalizedPayloadSnapshot = normalizePlatformIntegrationJsonForStorage({
+          value: payloadSnapshot
+        });
+        const normalizedResponseSnapshot = normalizePlatformIntegrationJsonForStorage({
+          value: responseSnapshot
+        });
+        const normalizedOperatorUserId = normalizePlatformIntegrationOptionalText(
+          operatorUserId
+        );
+        if (
+          !normalizedRecoveryId
+          || normalizedRecoveryId.length > MAX_PLATFORM_INTEGRATION_RECOVERY_ID_LENGTH
+          || !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !findPlatformIntegrationCatalogRecordStateByIntegrationId(
+            normalizedIntegrationId
+          )
+          || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+          || !normalizedContractVersion
+          || normalizedContractVersion.length
+            > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+          || !normalizedRequestId
+          || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH
+          || (
+            normalizedTraceparent !== null
+            && normalizedTraceparent.length
+              > MAX_PLATFORM_INTEGRATION_RECOVERY_TRACEPARENT_LENGTH
+          )
+          || normalizedIdempotencyKey.length
+            > MAX_PLATFORM_INTEGRATION_RECOVERY_IDEMPOTENCY_KEY_LENGTH
+          || !Number.isInteger(normalizedAttemptCount)
+          || normalizedAttemptCount < 0
+          || !Number.isInteger(normalizedMaxAttempts)
+          || normalizedMaxAttempts < 1
+          || normalizedMaxAttempts > 5
+          || (
+            normalizedNextRetryAt !== null
+            && Number.isNaN(new Date(normalizedNextRetryAt).getTime())
+          )
+          || (
+            normalizedLastAttemptAt !== null
+            && Number.isNaN(new Date(normalizedLastAttemptAt).getTime())
+          )
+          || !VALID_PLATFORM_INTEGRATION_RECOVERY_STATUS.has(normalizedStatus)
+          || (
+            normalizedFailureCode !== null
+            && normalizedFailureCode.length > MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_CODE_LENGTH
+          )
+          || (
+            normalizedFailureDetail !== null
+            && normalizedFailureDetail.length > MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_DETAIL_LENGTH
+          )
+          || (
+            normalizedLastHttpStatus !== null
+            && (
+              !Number.isInteger(normalizedLastHttpStatus)
+              || normalizedLastHttpStatus < 100
+              || normalizedLastHttpStatus > 599
+            )
+          )
+          || normalizedPayloadSnapshot === null
+          || normalizedPayloadSnapshot === undefined
+          || normalizedResponseSnapshot === undefined
+        ) {
+          throw new Error('upsertPlatformIntegrationRecoveryQueueEntry received invalid input');
+        }
+        const existingState = findPlatformIntegrationRecoveryQueueRecordStateByDedupKey({
+          integrationId: normalizedIntegrationId,
+          contractType: normalizedContractType,
+          contractVersion: normalizedContractVersion,
+          requestId: normalizedRequestId,
+          idempotencyKey: normalizedIdempotencyKey
+        });
+        const existingRecord = existingState?.record || null;
+        if (
+          existingRecord
+          && (
+            existingRecord.status === 'succeeded'
+            || existingRecord.status === 'replayed'
+          )
+        ) {
+          return {
+            ...clonePlatformIntegrationRecoveryQueueRecord(existingRecord),
+            inserted: false,
+            auditRecorded: false
+          };
+        }
+        const persistedRecord = upsertPlatformIntegrationRecoveryQueueRecord({
+          entry: {
+            recoveryId: normalizedRecoveryId,
+            integrationId: normalizedIntegrationId,
+            contractType: normalizedContractType,
+            contractVersion: normalizedContractVersion,
+            requestId: normalizedRequestId,
+            traceparent: normalizedTraceparent,
+            idempotencyKey: normalizedIdempotencyKey,
+            attemptCount: normalizedAttemptCount,
+            maxAttempts: normalizedMaxAttempts,
+            nextRetryAt: normalizedNextRetryAt,
+            lastAttemptAt: normalizedLastAttemptAt,
+            status: normalizedStatus,
+            failureCode: normalizedFailureCode,
+            failureDetail: normalizedFailureDetail,
+            lastHttpStatus: normalizedLastHttpStatus,
+            retryable: Boolean(retryable),
+            payloadSnapshot: normalizedPayloadSnapshot,
+            responseSnapshot: normalizedResponseSnapshot,
+            createdByUserId:
+              existingRecord?.createdByUserId || normalizedOperatorUserId,
+            updatedByUserId: normalizedOperatorUserId
+          },
+          preserveTerminalStatus: true
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.recovery.retry_scheduled',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration_recovery',
+              targetId: persistedRecord.recoveryId,
+              result: 'success',
+              beforeState: existingRecord
+                ? {
+                  status: existingRecord.status,
+                  attempt_count: existingRecord.attemptCount,
+                  next_retry_at: existingRecord.nextRetryAt
+                }
+                : null,
+              afterState: {
+                status: persistedRecord.status,
+                attempt_count: persistedRecord.attemptCount,
+                next_retry_at: persistedRecord.nextRetryAt
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration recovery schedule audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...persistedRecord,
+          inserted: !existingRecord,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryQueueByRecoveryId,
+            snapshot.platformIntegrationRecoveryQueueByRecoveryId
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryDedupIndex,
+            snapshot.platformIntegrationRecoveryDedupIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    claimNextDuePlatformIntegrationRecoveryQueueEntry: async ({
+      integrationId = null,
+      now = new Date().toISOString(),
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const normalizedNow = new Date(now);
+      if (Number.isNaN(normalizedNow.getTime())) {
+        throw new Error(
+          'claimNextDuePlatformIntegrationRecoveryQueueEntry received invalid now'
+        );
+      }
+      const normalizedIntegrationId = integrationId === null || integrationId === undefined
+        ? null
+        : normalizePlatformIntegrationId(integrationId);
+      if (
+        normalizedIntegrationId !== null
+        && !isValidPlatformIntegrationId(normalizedIntegrationId)
+      ) {
+        throw new Error(
+          'claimNextDuePlatformIntegrationRecoveryQueueEntry received invalid integrationId'
+        );
+      }
+      const normalizedNowIso = normalizedNow.toISOString();
+      const normalizedNowEpochMs = normalizedNow.getTime();
+      const staleRetryingThresholdMs =
+        normalizedNow.getTime() - DEFAULT_PLATFORM_INTEGRATION_RECOVERY_CLAIM_LEASE_MS;
+      const claimLeaseExpiresAtIso = new Date(
+        normalizedNow.getTime() + DEFAULT_PLATFORM_INTEGRATION_RECOVERY_CLAIM_LEASE_MS
+      ).toISOString();
+      const normalizedOperatorUserId = normalizePlatformIntegrationOptionalText(operatorUserId);
+      const normalizedOperatorSessionId = normalizePlatformIntegrationOptionalText(
+        operatorSessionId
+      );
+      const normalizedAuditContext = auditContext && typeof auditContext === 'object'
+        ? auditContext
+        : null;
+      const auditRequestId = String(normalizedAuditContext?.requestId || '').trim()
+        || 'request_id_unset';
+      const auditTraceparent = normalizedAuditContext?.traceparent || null;
+      const auditActorUserId = normalizePlatformIntegrationOptionalText(
+        normalizedAuditContext?.actorUserId || normalizedOperatorUserId
+      );
+      const auditActorSessionId = normalizePlatformIntegrationOptionalText(
+        normalizedAuditContext?.actorSessionId || normalizedOperatorSessionId
+      );
+      const isStaleRetryingEntry = (entry) => {
+        if (entry.status !== 'retrying') {
+          return false;
+        }
+        if (entry.nextRetryAt !== null) {
+          return new Date(entry.nextRetryAt).getTime() <= normalizedNowEpochMs;
+        }
+        if (entry.lastAttemptAt === null) {
+          return true;
+        }
+        return new Date(entry.lastAttemptAt).getTime() <= staleRetryingThresholdMs;
+      };
+      const staleRetryingRecords = [];
+      for (const entry of [...platformIntegrationRecoveryQueueByRecoveryId.values()]) {
+        if (
+          normalizedIntegrationId !== null
+          && entry.integrationId !== normalizedIntegrationId
+        ) {
+          continue;
+        }
+        if (!isStaleRetryingEntry(entry) || entry.attemptCount < entry.maxAttempts) {
+          continue;
+        }
+        staleRetryingRecords.push(entry);
+      }
+      if (staleRetryingRecords.length > 0) {
+        const staleSweepSnapshot = {
+          platformIntegrationRecoveryQueueByRecoveryId: structuredClone(
+            platformIntegrationRecoveryQueueByRecoveryId
+          ),
+          platformIntegrationRecoveryDedupIndex: structuredClone(
+            platformIntegrationRecoveryDedupIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        };
+        try {
+          for (const staleEntry of staleRetryingRecords) {
+            upsertPlatformIntegrationRecoveryQueueRecord({
+              entry: {
+                ...staleEntry,
+                status: 'dlq',
+                nextRetryAt: null,
+                updatedByUserId: normalizedOperatorUserId,
+                updatedAt: normalizedNowIso
+              }
+            });
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: auditRequestId,
+              traceparent: auditTraceparent,
+              eventType: 'platform.integration.recovery.retry_exhausted',
+              actorUserId: auditActorUserId,
+              actorSessionId: auditActorSessionId,
+              targetType: 'integration_recovery',
+              targetId: staleEntry.recoveryId,
+              result: 'failed',
+              beforeState: {
+                status: staleEntry.status,
+                attempt_count: staleEntry.attemptCount,
+                max_attempts: staleEntry.maxAttempts,
+                next_retry_at: staleEntry.nextRetryAt,
+                last_attempt_at: staleEntry.lastAttemptAt
+              },
+              afterState: {
+                status: 'dlq',
+                attempt_count: staleEntry.attemptCount,
+                max_attempts: staleEntry.maxAttempts,
+                next_retry_at: null,
+                last_attempt_at: staleEntry.lastAttemptAt
+              },
+              metadata: {
+                exhausted_by: 'stale-retrying-claim-sweep'
+              }
+            });
+          }
+        } catch (error) {
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryQueueByRecoveryId,
+            staleSweepSnapshot.platformIntegrationRecoveryQueueByRecoveryId
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryDedupIndex,
+            staleSweepSnapshot.platformIntegrationRecoveryDedupIndex
+          );
+          restoreAuditEventsFromSnapshot(staleSweepSnapshot.auditEvents);
+          const auditWriteError = new Error(
+            'platform integration recovery claim sweep audit write failed'
+          );
+          auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+          auditWriteError.cause = error;
+          throw auditWriteError;
+        }
+      }
+      const candidateRecord = [...platformIntegrationRecoveryQueueByRecoveryId.values()]
+        .filter((entry) => {
+          if (entry.status === 'pending') {
+            if (
+              entry.nextRetryAt !== null
+              && new Date(entry.nextRetryAt).getTime() > normalizedNowEpochMs
+            ) {
+              return false;
+            }
+          } else if (entry.status === 'replayed') {
+            if (
+              entry.nextRetryAt !== null
+              && new Date(entry.nextRetryAt).getTime() > normalizedNowEpochMs
+            ) {
+              return false;
+            }
+          } else if (entry.status === 'retrying') {
+            if (!isStaleRetryingEntry(entry)) {
+              return false;
+            }
+          } else {
+            return false;
+          }
+          if (entry.attemptCount >= entry.maxAttempts) {
+            return false;
+          }
+          if (
+            normalizedIntegrationId !== null
+            && entry.integrationId !== normalizedIntegrationId
+          ) {
+            return false;
+          }
+          return true;
+        })
+        .sort((left, right) => {
+          const leftDueAt = new Date(left.nextRetryAt || left.createdAt).getTime();
+          const rightDueAt = new Date(right.nextRetryAt || right.createdAt).getTime();
+          if (leftDueAt !== rightDueAt) {
+            return leftDueAt - rightDueAt;
+          }
+          const leftCreatedAt = new Date(left.createdAt).getTime();
+          const rightCreatedAt = new Date(right.createdAt).getTime();
+          if (leftCreatedAt !== rightCreatedAt) {
+            return leftCreatedAt - rightCreatedAt;
+          }
+          return String(left.recoveryId || '').localeCompare(
+            String(right.recoveryId || '')
+          );
+        })[0] || null;
+      if (!candidateRecord) {
+        return null;
+      }
+      const updatedRecord = upsertPlatformIntegrationRecoveryQueueRecord({
+        entry: {
+          ...candidateRecord,
+          attemptCount: Math.min(
+            candidateRecord.maxAttempts,
+            candidateRecord.attemptCount + 1
+          ),
+          status: 'retrying',
+          nextRetryAt: claimLeaseExpiresAtIso,
+          lastAttemptAt: normalizedNowIso,
+          updatedByUserId: normalizedOperatorUserId,
+          updatedAt: normalizedNowIso
+        }
+      });
+      return {
+        ...updatedRecord,
+        previousStatus: candidateRecord.status,
+        currentStatus: updatedRecord.status
+      };
+    },
+
+    completePlatformIntegrationRecoveryQueueAttempt: async ({
+      integrationId,
+      recoveryId,
+      succeeded = false,
+      retryable = true,
+      nextRetryAt = null,
+      failureCode = null,
+      failureDetail = null,
+      lastHttpStatus = null,
+      responseSnapshot = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationRecoveryQueueByRecoveryId: structuredClone(
+            platformIntegrationRecoveryQueueByRecoveryId
+          ),
+          platformIntegrationRecoveryDedupIndex: structuredClone(
+            platformIntegrationRecoveryDedupIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedRecoveryId = normalizePlatformIntegrationRecoveryId(recoveryId);
+        const normalizedFailureCode = normalizePlatformIntegrationOptionalText(failureCode);
+        const normalizedFailureDetail = normalizePlatformIntegrationOptionalText(
+          failureDetail
+        );
+        const normalizedLastHttpStatus = lastHttpStatus === null || lastHttpStatus === undefined
+          ? null
+          : Number(lastHttpStatus);
+        const normalizedResponseSnapshot = normalizePlatformIntegrationJsonForStorage({
+          value: responseSnapshot
+        });
+        const normalizedNextRetryAt = nextRetryAt === null || nextRetryAt === undefined
+          ? null
+          : new Date(nextRetryAt).toISOString();
+        const normalizedOperatorUserId = normalizePlatformIntegrationOptionalText(
+          operatorUserId
+        );
+        if (
+          !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !normalizedRecoveryId
+          || normalizedRecoveryId.length > MAX_PLATFORM_INTEGRATION_RECOVERY_ID_LENGTH
+          || (
+            normalizedFailureCode !== null
+            && normalizedFailureCode.length > MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_CODE_LENGTH
+          )
+          || (
+            normalizedFailureDetail !== null
+            && normalizedFailureDetail.length > MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_DETAIL_LENGTH
+          )
+          || (
+            normalizedLastHttpStatus !== null
+            && (
+              !Number.isInteger(normalizedLastHttpStatus)
+              || normalizedLastHttpStatus < 100
+              || normalizedLastHttpStatus > 599
+            )
+          )
+          || normalizedResponseSnapshot === undefined
+          || (
+            normalizedNextRetryAt !== null
+            && Number.isNaN(new Date(normalizedNextRetryAt).getTime())
+          )
+        ) {
+          throw new Error(
+            'completePlatformIntegrationRecoveryQueueAttempt received invalid input'
+          );
+        }
+        const existingState = findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId(
+          normalizedRecoveryId
+        );
+        const existingRecord = existingState?.record || null;
+        if (!existingRecord || existingRecord.integrationId !== normalizedIntegrationId) {
+          return null;
+        }
+        let nextStatus = 'succeeded';
+        let persistedRetryable = false;
+        let persistedFailureCode = null;
+        let persistedFailureDetail = null;
+        let persistedLastHttpStatus = null;
+        let persistedNextRetryAt = null;
+        const completionNowIso = new Date().toISOString();
+        if (!succeeded) {
+          persistedRetryable = isPlatformIntegrationRecoveryFailureRetryable({
+            retryable,
+            lastHttpStatus: normalizedLastHttpStatus,
+            failureCode: normalizedFailureCode,
+            responseSnapshot: normalizedResponseSnapshot
+          });
+          persistedFailureCode = normalizedFailureCode;
+          persistedFailureDetail = normalizedFailureDetail;
+          persistedLastHttpStatus = normalizedLastHttpStatus;
+          const retrySchedule = persistedRetryable
+            ? computeRetrySchedule({
+              attemptCount: existingRecord.attemptCount,
+              maxAttempts: existingRecord.maxAttempts,
+              now: completionNowIso
+            })
+            : {
+              exhausted: true,
+              nextRetryAt: null
+            };
+          nextStatus = retrySchedule.exhausted ? 'dlq' : 'pending';
+          persistedNextRetryAt = retrySchedule.exhausted
+            ? null
+            : (normalizedNextRetryAt || retrySchedule.nextRetryAt || completionNowIso);
+        }
+        const updatedRecord = upsertPlatformIntegrationRecoveryQueueRecord({
+          entry: {
+            ...existingRecord,
+            status: nextStatus,
+            nextRetryAt: persistedNextRetryAt,
+            failureCode: persistedFailureCode,
+            failureDetail: persistedFailureDetail,
+            lastHttpStatus: persistedLastHttpStatus,
+            retryable: persistedRetryable,
+            responseSnapshot: normalizedResponseSnapshot,
+            updatedByUserId: normalizedOperatorUserId,
+            updatedAt: completionNowIso
+          }
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          const emitAuditEvent = (eventType) =>
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType,
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration_recovery',
+              targetId: normalizedRecoveryId,
+              result: updatedRecord.status === 'succeeded' ? 'success' : 'failed',
+              beforeState: {
+                status: existingRecord.status
+              },
+              afterState: {
+                status: updatedRecord.status,
+                attempt_count: updatedRecord.attemptCount,
+                next_retry_at: updatedRecord.nextRetryAt
+              }
+            });
+          try {
+            if (updatedRecord.status === 'succeeded') {
+              emitAuditEvent('platform.integration.recovery.reprocess_succeeded');
+            } else {
+              emitAuditEvent('platform.integration.recovery.reprocess_failed');
+              if (updatedRecord.status === 'dlq') {
+                emitAuditEvent('platform.integration.recovery.retry_exhausted');
+              }
+            }
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration recovery completion audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...updatedRecord,
+          previousStatus: existingRecord.status,
+          currentStatus: updatedRecord.status,
+          exhausted: updatedRecord.status === 'dlq',
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryQueueByRecoveryId,
+            snapshot.platformIntegrationRecoveryQueueByRecoveryId
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryDedupIndex,
+            snapshot.platformIntegrationRecoveryDedupIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    replayPlatformIntegrationRecoveryQueueEntry: async ({
+      integrationId,
+      recoveryId,
+      reason = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationRecoveryQueueByRecoveryId: structuredClone(
+            platformIntegrationRecoveryQueueByRecoveryId
+          ),
+          platformIntegrationRecoveryDedupIndex: structuredClone(
+            platformIntegrationRecoveryDedupIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedRecoveryId = normalizePlatformIntegrationRecoveryId(recoveryId);
+        const normalizedReason = normalizePlatformIntegrationOptionalText(reason);
+        const normalizedOperatorUserId = normalizePlatformIntegrationOptionalText(
+          operatorUserId
+        );
+        if (
+          !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !normalizedRecoveryId
+          || normalizedRecoveryId.length > MAX_PLATFORM_INTEGRATION_RECOVERY_ID_LENGTH
+          || (
+            normalizedReason !== null
+            && normalizedReason.length > MAX_PLATFORM_INTEGRATION_RECOVERY_REASON_LENGTH
+          )
+        ) {
+          throw new Error('replayPlatformIntegrationRecoveryQueueEntry received invalid input');
+        }
+        const existingState = findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId(
+          normalizedRecoveryId
+        );
+        const existingRecord = existingState?.record || null;
+        if (!existingRecord || existingRecord.integrationId !== normalizedIntegrationId) {
+          return null;
+        }
+        if (
+          existingRecord.status !== 'failed'
+          && existingRecord.status !== 'dlq'
+        ) {
+          throw createPlatformIntegrationRecoveryReplayConflictError({
+            integrationId: normalizedIntegrationId,
+            recoveryId: normalizedRecoveryId,
+            previousStatus: existingRecord.status,
+            requestedStatus: 'replayed'
+          });
+        }
+        const updatedRecord = upsertPlatformIntegrationRecoveryQueueRecord({
+          entry: {
+            ...existingRecord,
+            status: 'replayed',
+            attemptCount: 0,
+            nextRetryAt: new Date().toISOString(),
+            lastAttemptAt: null,
+            failureCode: null,
+            failureDetail: null,
+            lastHttpStatus: null,
+            retryable: true,
+            updatedByUserId: normalizedOperatorUserId,
+            updatedAt: new Date().toISOString()
+          }
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.recovery.replayed',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration_recovery',
+              targetId: normalizedRecoveryId,
+              result: 'success',
+              beforeState: {
+                status: existingRecord.status
+              },
+              afterState: {
+                status: updatedRecord.status,
+                reason: normalizedReason
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration recovery replay audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...updatedRecord,
+          previousStatus: existingRecord.status,
+          currentStatus: updatedRecord.status,
+          reason: normalizedReason,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryQueueByRecoveryId,
+            snapshot.platformIntegrationRecoveryQueueByRecoveryId
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationRecoveryDedupIndex,
+            snapshot.platformIntegrationRecoveryDedupIndex
           );
           restoreAuditEventsFromSnapshot(snapshot.auditEvents);
         }

@@ -6956,6 +6956,47 @@ const createContractVersionRow = ({
   created_at: '2026-02-22T00:00:00.000Z',
   updated_at: '2026-02-22T00:00:00.000Z'
 });
+const createRecoveryQueueRow = ({
+  recoveryId = 'recovery-001',
+  integrationId = 'integration-recovery-test',
+  contractType = 'openapi',
+  contractVersion = 'v2026.02.22',
+  requestId = 'req-source-recovery-001',
+  status = 'pending',
+  attemptCount = 0,
+  maxAttempts = 5,
+  nextRetryAt = null,
+  lastAttemptAt = null
+} = {}) => ({
+  recovery_id: recoveryId,
+  integration_id: integrationId,
+  contract_type: contractType,
+  contract_version: contractVersion,
+  request_id: requestId,
+  traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+  idempotency_key: `idem-${recoveryId}`,
+  attempt_count: attemptCount,
+  max_attempts: maxAttempts,
+  next_retry_at: nextRetryAt,
+  last_attempt_at: lastAttemptAt,
+  status,
+  failure_code: status === 'pending' ? null : 'HTTP_500',
+  failure_detail: status === 'pending' ? null : 'downstream timeout',
+  last_http_status: status === 'pending' ? null : 500,
+  retryable: 1,
+  payload_snapshot: JSON.stringify({
+    order_id: 'ORDER-001'
+  }),
+  response_snapshot: status === 'pending'
+    ? null
+    : JSON.stringify({
+      message: 'timeout'
+    }),
+  created_by_user_id: 'platform-operator',
+  updated_by_user_id: 'platform-operator',
+  created_at: '2026-02-22T00:00:00.000Z',
+  updated_at: '2026-02-22T00:00:00.000Z'
+});
 
 test('createPlatformIntegrationContractVersion maps mysql duplicate conflict as contract_version conflict', async () => {
   const store = createStore(async (sql) => {
@@ -7132,4 +7173,491 @@ test('activatePlatformIntegrationContractVersion can activate candidate when com
   assert.ok(queryTrace.includes('scope-lock'));
   assert.ok(queryTrace.includes('target-lock'));
   assert.ok(queryTrace.indexOf('scope-lock') < queryTrace.indexOf('target-lock'));
+});
+
+test('listPlatformIntegrationRecoveryQueueEntries fails closed when mysql returns malformed row', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('FROM platform_integration_retry_recovery_queue')) {
+      return [
+        {
+          integration_id: 'integration-recovery-test'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformIntegrationRecoveryQueueEntries({
+        integrationId: 'integration-recovery-test'
+      }),
+    /listPlatformIntegrationRecoveryQueueEntries result malformed/
+  );
+});
+
+test('claimNextDuePlatformIntegrationRecoveryQueueEntry transitions pending item to retrying with incremented attempt_count', async () => {
+  const nowIso = '2026-02-22T00:00:00.000Z';
+  const staleRetryingThresholdIso = '2026-02-21T23:55:00.000Z';
+  const claimLeaseExpiresAtIso = '2026-02-22T00:05:00.000Z';
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE SKIP LOCKED')
+      && normalizedSql.includes('attempt_count >= max_attempts')
+    ) {
+      assert.equal(params?.[0], nowIso);
+      assert.equal(params?.[1], staleRetryingThresholdIso);
+      return [];
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE SKIP LOCKED')
+      && normalizedSql.includes('attempt_count < max_attempts')
+    ) {
+      assert.equal(params?.[0], nowIso);
+      assert.equal(params?.[1], nowIso);
+      assert.equal(params?.[2], staleRetryingThresholdIso);
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-claim-001',
+          status: 'pending',
+          attemptCount: 0,
+          nextRetryAt: null
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_retry_recovery_queue')
+      && normalizedSql.includes("SET status = 'retrying'")
+    ) {
+      assert.equal(params?.[0], 1);
+      assert.equal(params?.[1], claimLeaseExpiresAtIso);
+      assert.equal(params?.[2], nowIso);
+      assert.equal(params?.[4], 'recovery-claim-001');
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('WHERE recovery_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-claim-001',
+          status: 'retrying',
+          attemptCount: 1,
+          lastAttemptAt: nowIso
+        })
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const claimed = await store.claimNextDuePlatformIntegrationRecoveryQueueEntry({
+    now: nowIso
+  });
+
+  assert.equal(claimed?.recoveryId, 'recovery-claim-001');
+  assert.equal(claimed?.attemptCount, 1);
+  assert.equal(claimed?.status, 'retrying');
+  assert.equal(claimed?.previousStatus, 'pending');
+  assert.equal(claimed?.currentStatus, 'retrying');
+});
+
+test('claimNextDuePlatformIntegrationRecoveryQueueEntry settles stale exhausted retrying entries to dlq before claim', async () => {
+  const nowIso = '2026-02-22T00:00:00.000Z';
+  const staleRetryingThresholdIso = '2026-02-21T23:55:00.000Z';
+  let staleSweepSelectCalled = false;
+  let dlqSweepCalled = false;
+  let staleSweepAuditRecorded = false;
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE SKIP LOCKED')
+      && normalizedSql.includes('attempt_count >= max_attempts')
+    ) {
+      staleSweepSelectCalled = true;
+      assert.equal(params?.[0], nowIso);
+      assert.equal(params?.[1], staleRetryingThresholdIso);
+      assert.equal(params?.[2], 'integration-recovery-test');
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-stale-exhausted-001',
+          status: 'retrying',
+          attemptCount: 5,
+          maxAttempts: 5,
+          nextRetryAt: nowIso,
+          lastAttemptAt: staleRetryingThresholdIso
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_retry_recovery_queue')
+      && normalizedSql.includes("SET status = 'dlq'")
+      && normalizedSql.includes('WHERE recovery_id IN')
+    ) {
+      dlqSweepCalled = true;
+      assert.equal(params?.[0], null);
+      assert.equal(params?.[1], 'recovery-stale-exhausted-001');
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO audit_events')) {
+      staleSweepAuditRecorded = true;
+      assert.equal(params?.[1], 'platform');
+      assert.equal(params?.[3], 'request_id_unset');
+      assert.equal(params?.[5], 'platform.integration.recovery.retry_exhausted');
+      assert.equal(params?.[9], 'recovery-stale-exhausted-001');
+      assert.equal(params?.[10], 'failed');
+      assert.equal(
+        JSON.parse(String(params?.[13] || '{}')).exhausted_by,
+        'stale-retrying-claim-sweep'
+      );
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE SKIP LOCKED')
+      && normalizedSql.includes('attempt_count < max_attempts')
+    ) {
+      assert.equal(params?.[0], nowIso);
+      assert.equal(params?.[1], nowIso);
+      assert.equal(params?.[2], staleRetryingThresholdIso);
+      assert.equal(params?.[3], 'integration-recovery-test');
+      return [];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const claimed = await store.claimNextDuePlatformIntegrationRecoveryQueueEntry({
+    integrationId: 'integration-recovery-test',
+    now: nowIso
+  });
+
+  assert.equal(dlqSweepCalled, true);
+  assert.equal(staleSweepSelectCalled, true);
+  assert.equal(staleSweepAuditRecorded, true);
+  assert.equal(claimed, null);
+});
+
+test('replayPlatformIntegrationRecoveryQueueEntry rejects non-failed status with typed conflict error', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-replay-conflict-001',
+          status: 'pending',
+          attemptCount: 1
+        })
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.replayPlatformIntegrationRecoveryQueueEntry({
+        integrationId: 'integration-recovery-test',
+        recoveryId: 'recovery-replay-conflict-001'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_INTEGRATION_RECOVERY_REPLAY_CONFLICT');
+      assert.equal(error?.integrationId, 'integration-recovery-test');
+      assert.equal(error?.recoveryId, 'recovery-replay-conflict-001');
+      assert.equal(error?.previousStatus, 'pending');
+      assert.equal(error?.requestedStatus, 'replayed');
+      return true;
+    }
+  );
+});
+
+test('replayPlatformIntegrationRecoveryQueueEntry resets attempt state for reprocessing', async () => {
+  const replayDueIso = '2026-02-22T00:00:00.000Z';
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-replay-reset-001',
+          status: 'dlq',
+          attemptCount: 5,
+          maxAttempts: 5,
+          nextRetryAt: null,
+          lastAttemptAt: '2026-02-22T00:00:00.000Z'
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_retry_recovery_queue')
+      && normalizedSql.includes("SET status = 'replayed'")
+      && normalizedSql.includes('attempt_count = 0')
+      && normalizedSql.includes('last_attempt_at = NULL')
+    ) {
+      assert.equal(params?.[0], null);
+      assert.equal(params?.[1], 'integration-recovery-test');
+      assert.equal(params?.[2], 'recovery-replay-reset-001');
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('AND recovery_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('FOR UPDATE')
+    ) {
+      const replayedRow = createRecoveryQueueRow({
+        recoveryId: 'recovery-replay-reset-001',
+        status: 'replayed',
+        attemptCount: 0,
+        maxAttempts: 5,
+        nextRetryAt: replayDueIso,
+        lastAttemptAt: null
+      });
+      replayedRow.failure_code = null;
+      replayedRow.failure_detail = null;
+      replayedRow.last_http_status = null;
+      return [replayedRow];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const replayed = await store.replayPlatformIntegrationRecoveryQueueEntry({
+    integrationId: 'integration-recovery-test',
+    recoveryId: 'recovery-replay-reset-001'
+  });
+
+  assert.equal(replayed?.status, 'replayed');
+  assert.equal(replayed?.attemptCount, 0);
+  assert.equal(replayed?.lastAttemptAt, null);
+  assert.equal(replayed?.nextRetryAt, replayDueIso);
+  assert.equal(replayed?.previousStatus, 'dlq');
+  assert.equal(replayed?.currentStatus, 'replayed');
+});
+
+test('upsertPlatformIntegrationRecoveryQueueEntry keeps terminal replayed record immutable for same dedup key', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('idempotency_key = ?')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-terminal-001',
+          requestId: 'req-source-terminal-001',
+          status: 'replayed',
+          attemptCount: 5,
+          nextRetryAt: null
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('INSERT INTO platform_integration_retry_recovery_queue')
+      || normalizedSql.includes('UPDATE platform_integration_retry_recovery_queue')
+    ) {
+      assert.fail(`unexpected mutation query: ${normalizedSql}`);
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const persisted = await store.upsertPlatformIntegrationRecoveryQueueEntry({
+    recoveryId: 'recovery-terminal-new-id',
+    integrationId: 'integration-recovery-test',
+    contractType: 'openapi',
+    contractVersion: 'v2026.02.22',
+    requestId: 'req-source-terminal-001',
+    idempotencyKey: 'idem-recovery-terminal-001',
+    attemptCount: 0,
+    maxAttempts: 5,
+    nextRetryAt: '2026-02-22T00:00:00.000Z',
+    status: 'pending',
+    payloadSnapshot: {
+      order_id: 'ORDER-001'
+    },
+    responseSnapshot: null,
+    operatorUserId: 'platform-operator'
+  });
+
+  assert.equal(persisted.recoveryId, 'recovery-terminal-001');
+  assert.equal(persisted.status, 'replayed');
+  assert.equal(persisted.attemptCount, 5);
+  assert.equal(persisted.nextRetryAt, null);
+  assert.equal(persisted.inserted, false);
+  assert.equal(persisted.auditRecorded, false);
+});
+
+test('completePlatformIntegrationRecoveryQueueAttempt transitions to dlq when retry budget is exhausted', async () => {
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('AND recovery_id = ?')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-complete-dlq-001',
+          status: 'retrying',
+          attemptCount: 5,
+          maxAttempts: 5
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('SET status = ?')
+      && normalizedSql.includes('failure_code = ?')
+    ) {
+      assert.equal(params?.[0], 'dlq');
+      assert.equal(params?.[1], null);
+      assert.equal(params?.[2], 'HTTP_500');
+      assert.equal(params?.[3], 'downstream timeout');
+      assert.equal(params?.[4], 500);
+      assert.equal(params?.[5], 1);
+      assert.equal(params?.[8], 'integration-recovery-test');
+      assert.equal(params?.[9], 'recovery-complete-dlq-001');
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('AND recovery_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-complete-dlq-001',
+          status: 'dlq',
+          attemptCount: 5,
+          maxAttempts: 5,
+          nextRetryAt: null,
+          lastAttemptAt: '2026-02-22T00:00:00.000Z'
+        })
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const completed = await store.completePlatformIntegrationRecoveryQueueAttempt({
+    integrationId: 'integration-recovery-test',
+    recoveryId: 'recovery-complete-dlq-001',
+    succeeded: false,
+    retryable: true,
+    failureCode: 'HTTP_500',
+    failureDetail: 'downstream timeout',
+    lastHttpStatus: 500,
+    responseSnapshot: {
+      message: 'timeout'
+    }
+  });
+
+  assert.equal(completed?.previousStatus, 'retrying');
+  assert.equal(completed?.currentStatus, 'dlq');
+  assert.equal(completed?.status, 'dlq');
+  assert.equal(completed?.exhausted, true);
+  assert.equal(completed?.retryable, true);
+});
+
+test('completePlatformIntegrationRecoveryQueueAttempt sends non-retryable failures to dlq even when retryable flag is true', async () => {
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('AND recovery_id = ?')
+    ) {
+      return [
+        createRecoveryQueueRow({
+          recoveryId: 'recovery-complete-non-retryable-001',
+          status: 'retrying',
+          attemptCount: 1,
+          maxAttempts: 5
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('SET status = ?')
+      && normalizedSql.includes('failure_code = ?')
+    ) {
+      assert.equal(params?.[0], 'dlq');
+      assert.equal(params?.[1], null);
+      assert.equal(params?.[2], 'HTTP_400');
+      assert.equal(params?.[3], 'business validation failed');
+      assert.equal(params?.[4], 400);
+      assert.equal(params?.[5], 0);
+      assert.equal(params?.[8], 'integration-recovery-test');
+      assert.equal(params?.[9], 'recovery-complete-non-retryable-001');
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_retry_recovery_queue')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('AND recovery_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('FOR UPDATE')
+    ) {
+      const updatedRow = createRecoveryQueueRow({
+        recoveryId: 'recovery-complete-non-retryable-001',
+        status: 'dlq',
+        attemptCount: 1,
+        maxAttempts: 5,
+        nextRetryAt: null,
+        lastAttemptAt: '2026-02-22T00:00:00.000Z'
+      });
+      updatedRow.failure_code = 'HTTP_400';
+      updatedRow.failure_detail = 'business validation failed';
+      updatedRow.last_http_status = 400;
+      updatedRow.retryable = 0;
+      updatedRow.response_snapshot = JSON.stringify({
+        message: 'bad request',
+        error_code: 'VALIDATION_ERROR'
+      });
+      return [updatedRow];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const completed = await store.completePlatformIntegrationRecoveryQueueAttempt({
+    integrationId: 'integration-recovery-test',
+    recoveryId: 'recovery-complete-non-retryable-001',
+    succeeded: false,
+    retryable: true,
+    failureCode: 'HTTP_400',
+    failureDetail: 'business validation failed',
+    lastHttpStatus: 400,
+    responseSnapshot: {
+      message: 'bad request',
+      error_code: 'VALIDATION_ERROR'
+    }
+  });
+
+  assert.equal(completed?.previousStatus, 'retrying');
+  assert.equal(completed?.currentStatus, 'dlq');
+  assert.equal(completed?.status, 'dlq');
+  assert.equal(completed?.exhausted, true);
+  assert.equal(completed?.retryable, false);
 });

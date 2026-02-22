@@ -123,6 +123,19 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs/owner-transfer']);
   assert.ok(payload.paths['/platform/audit/events']);
   assert.ok(payload.paths['/platform/system-configs/{config_key}']);
+  assert.ok(payload.paths['/platform/integrations']);
+  assert.ok(payload.paths['/platform/integrations/{integration_id}']);
+  assert.ok(payload.paths['/platform/integrations/{integration_id}/lifecycle']);
+  assert.ok(payload.paths['/platform/integrations/{integration_id}/contracts']);
+  assert.ok(payload.paths['/platform/integrations/{integration_id}/contracts/compatibility-check']);
+  assert.ok(payload.paths['/platform/integrations/{integration_id}/contracts/consistency-check']);
+  assert.ok(
+    payload.paths['/platform/integrations/{integration_id}/contracts/{contract_version}/activate']
+  );
+  assert.ok(payload.paths['/platform/integrations/{integration_id}/recovery/queue']);
+  assert.ok(
+    payload.paths['/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay']
+  );
   assert.ok(payload.paths['/platform/users']);
   assert.ok(payload.paths['/platform/users/{user_id}']);
   assert.ok(payload.paths['/platform/users/status']);
@@ -291,6 +304,17 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
+  assert.ok(
+    payload.paths['/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay']
+      .post.parameters.some(
+        (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+      )
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay']
+      .post.requestBody.required,
+    false
+  );
   assert.equal(
     payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
@@ -418,6 +442,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
+    payload.paths['/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay']
+      .post.parameters.find(
+        (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+      ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
     payload.components.schemas.UpdateSystemConfigRequest.properties.encrypted_value.pattern,
     '^enc:v1:[A-Za-z0-9_-]{16}:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]+$'
   );
@@ -525,6 +556,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.paths['/platform/users/status'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).description,
+    '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay']
+      .post.parameters.find(
+        (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+      ).description,
     '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键'
   );
   assert.ok(payload.paths['/auth/login'].post.responses['400']);
