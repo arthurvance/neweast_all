@@ -22,6 +22,12 @@ const {
 const {
   createPlatformIntegrationRecoveryService
 } = require('./modules/platform/integration-recovery.service');
+const {
+  createPlatformIntegrationFreezeHandlers
+} = require('./modules/platform/integration-freeze.routes');
+const {
+  createPlatformIntegrationFreezeService
+} = require('./modules/platform/integration-freeze.service');
 const { createAuditHandlers } = require('./modules/audit/audit.routes');
 const { createAuditService } = require('./modules/audit/audit.service');
 const { createTenantMemberHandlers } = require('./modules/tenant/member.routes');
@@ -621,6 +627,13 @@ const createRouteHandlers = (config, options = {}) => {
   const platformIntegrationRecovery = createPlatformIntegrationRecoveryHandlers(
     platformIntegrationRecoveryService
   );
+  const platformIntegrationFreezeService =
+    createPlatformIntegrationFreezeService({
+      authService
+    });
+  const platformIntegrationFreeze = createPlatformIntegrationFreezeHandlers(
+    platformIntegrationFreezeService
+  );
   const auditService =
     options.auditService
     || (
@@ -1183,6 +1196,47 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformGetIntegrationFreezeStatus: async (
+      requestId,
+      authorization,
+      authorizationContext
+    ) =>
+      platformIntegrationFreeze.getFreezeStatus({
+        requestId,
+        authorization,
+        authorizationContext
+      }),
+
+    platformActivateIntegrationFreeze: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformIntegrationFreeze.activateFreeze({
+        requestId,
+        authorization,
+        body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
+    platformReleaseIntegrationFreeze: async (
+      requestId,
+      authorization,
+      body,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformIntegrationFreeze.releaseFreeze({
+        requestId,
+        authorization,
+        body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
     authTenantMemberAdminProvisionUser: async (
       requestId,
       authorization,
@@ -1479,6 +1533,7 @@ const createRouteHandlers = (config, options = {}) => {
     platformIntegrationService,
     platformIntegrationContractService,
     platformIntegrationRecoveryService,
+    platformIntegrationFreezeService,
     auditService,
     tenantMemberService,
     tenantRoleService

@@ -375,6 +375,147 @@ test('createRouteHandlers enforces shared auth service identity for platformInte
   );
 });
 
+test('createRouteHandlers wires platform integration freeze handlers with auth-backed service', async () => {
+  const freezeCalls = [];
+  const now = '2026-02-22T00:00:00.000Z';
+  let activeFreeze = null;
+  let latestFreeze = null;
+  const authService = {
+    authorizeRoute: async ({
+      requestId,
+      permissionCode,
+      scope
+    }) => {
+      freezeCalls.push({
+        method: 'authorizeRoute',
+        requestId,
+        permissionCode,
+        scope
+      });
+      return {
+        user_id: 'platform-freeze-operator',
+        session_id: 'session-freeze-operator'
+      };
+    },
+    _internals: {
+      authStore: {
+        findActivePlatformIntegrationFreeze: async () => {
+          freezeCalls.push({ method: 'findActive' });
+          return activeFreeze;
+        },
+        findLatestPlatformIntegrationFreeze: async () => {
+          freezeCalls.push({ method: 'findLatest' });
+          return latestFreeze;
+        },
+        activatePlatformIntegrationFreeze: async (payload) => {
+          freezeCalls.push({ method: 'activate', payload });
+          const freezeRecord = {
+            freeze_id: 'release-window-http-routes-001',
+            status: 'active',
+            freeze_reason: payload.freezeReason,
+            rollback_reason: null,
+            frozen_at: now,
+            released_at: null,
+            frozen_by_user_id: payload.operatorUserId,
+            released_by_user_id: null,
+            request_id: payload.requestId,
+            traceparent: payload.traceparent || null,
+            created_at: now,
+            updated_at: now
+          };
+          activeFreeze = freezeRecord;
+          latestFreeze = freezeRecord;
+          return freezeRecord;
+        },
+        releasePlatformIntegrationFreeze: async (payload) => {
+          freezeCalls.push({ method: 'release', payload });
+          const releasedRecord = {
+            freeze_id: activeFreeze?.freeze_id || 'release-window-http-routes-001',
+            status: 'released',
+            freeze_reason: activeFreeze?.freeze_reason || 'release window opened',
+            rollback_reason: payload.rollbackReason,
+            frozen_at: activeFreeze?.frozen_at || now,
+            released_at: now,
+            frozen_by_user_id: activeFreeze?.frozen_by_user_id || payload.operatorUserId,
+            released_by_user_id: payload.operatorUserId,
+            request_id: payload.requestId,
+            traceparent: payload.traceparent || null,
+            created_at: activeFreeze?.created_at || now,
+            updated_at: now,
+            previous_status: 'active',
+            current_status: 'released'
+          };
+          activeFreeze = null;
+          latestFreeze = releasedRecord;
+          return releasedRecord;
+        }
+      }
+    }
+  };
+
+  const handlers = createRouteHandlers(
+    readConfig({ ALLOW_MOCK_BACKENDS: 'true' }),
+    {
+      dependencyProbe,
+      authService
+    }
+  );
+
+  const initialStatus = await handlers.platformGetIntegrationFreezeStatus(
+    'req-http-routes-platform-integration-freeze-status-initial',
+    'Bearer fake-token',
+    null
+  );
+  assert.equal(initialStatus.frozen, false);
+  assert.equal(initialStatus.active_freeze, null);
+  assert.equal(initialStatus.latest_freeze, null);
+
+  const activated = await handlers.platformActivateIntegrationFreeze(
+    'req-http-routes-platform-integration-freeze-activate',
+    'Bearer fake-token',
+    {
+      freeze_reason: 'release window opened'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(activated.freeze_id, 'release-window-http-routes-001');
+  assert.equal(activated.status, 'active');
+
+  const released = await handlers.platformReleaseIntegrationFreeze(
+    'req-http-routes-platform-integration-freeze-release',
+    'Bearer fake-token',
+    {
+      rollback_reason: 'release completed'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(released.freeze_id, 'release-window-http-routes-001');
+  assert.equal(released.status, 'released');
+  assert.equal(released.released, true);
+
+  assert.ok(freezeCalls.some((entry) => entry.method === 'findActive'));
+  assert.ok(freezeCalls.some((entry) => entry.method === 'findLatest'));
+  assert.ok(
+    freezeCalls.some(
+      (entry) =>
+        entry.method === 'activate'
+        && entry.payload.requestId === 'req-http-routes-platform-integration-freeze-activate'
+        && entry.payload.traceparent
+    )
+  );
+  assert.ok(
+    freezeCalls.some(
+      (entry) =>
+        entry.method === 'release'
+        && entry.payload.rollbackReason === 'release completed'
+        && entry.payload.requestId === 'req-http-routes-platform-integration-freeze-release'
+    )
+  );
+  assert.equal(typeof handlers._internals.platformIntegrationFreezeService, 'object');
+});
+
 test('createRouteHandlers wires platform integration recovery handlers with provided service', async () => {
   const recoveryCalls = [];
   const platformIntegrationRecoveryService = {

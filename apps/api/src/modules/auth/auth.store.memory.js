@@ -9,7 +9,7 @@ const createInMemoryAuthStore = ({
   seedUsers = [],
   hashPassword,
   faultInjector = null
-}) => {
+} = {}) => {
   const usersByPhone = new Map();
   const usersById = new Map();
   const sessionsById = new Map();
@@ -27,6 +27,7 @@ const createInMemoryAuthStore = ({
   const platformIntegrationContractChecksById = new Map();
   const platformIntegrationRecoveryQueueByRecoveryId = new Map();
   const platformIntegrationRecoveryDedupIndex = new Map();
+  const platformIntegrationFreezeById = new Map();
   let nextPlatformIntegrationContractVersionId = 1;
   let nextPlatformIntegrationContractCheckId = 1;
   const platformRolePermissionGrantsByRoleId = new Map();
@@ -81,6 +82,10 @@ const createInMemoryAuthStore = ({
     'dlq',
     'replayed'
   ]);
+  const VALID_PLATFORM_INTEGRATION_FREEZE_STATUS = new Set([
+    'active',
+    'released'
+  ]);
   const MAX_PLATFORM_INTEGRATION_ID_LENGTH = 64;
   const MAX_PLATFORM_INTEGRATION_CODE_LENGTH = 64;
   const MAX_PLATFORM_INTEGRATION_NAME_LENGTH = 128;
@@ -104,6 +109,11 @@ const createInMemoryAuthStore = ({
   const MAX_PLATFORM_INTEGRATION_RECOVERY_FAILURE_DETAIL_LENGTH = 65535;
   const MAX_PLATFORM_INTEGRATION_RECOVERY_REASON_LENGTH = 256;
   const MAX_PLATFORM_INTEGRATION_RECOVERY_LIST_LIMIT = 200;
+  const MAX_PLATFORM_INTEGRATION_FREEZE_ID_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_FREEZE_REASON_LENGTH = 256;
+  const MAX_PLATFORM_INTEGRATION_FREEZE_REQUEST_ID_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_FREEZE_TRACEPARENT_LENGTH = 128;
+  const MAX_OPERATOR_USER_ID_LENGTH = 64;
   const PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS = 3000;
   const MAX_PLATFORM_INTEGRATION_TIMEOUT_MS = 300000;
   const DEFAULT_PLATFORM_INTEGRATION_RECOVERY_CLAIM_LEASE_MS = Math.min(
@@ -394,6 +404,10 @@ const createInMemoryAuthStore = ({
     String(recoveryId || '').trim().toLowerCase();
   const normalizePlatformIntegrationRecoveryStatus = (status) =>
     String(status || '').trim().toLowerCase();
+  const normalizePlatformIntegrationFreezeId = (freezeId) =>
+    String(freezeId || '').trim().toLowerCase();
+  const normalizePlatformIntegrationFreezeStatus = (status) =>
+    String(status || '').trim().toLowerCase();
   const normalizePlatformIntegrationRecoveryIdempotencyKey = (idempotencyKey) =>
     idempotencyKey === null || idempotencyKey === undefined
       ? ''
@@ -571,6 +585,23 @@ const createInMemoryAuthStore = ({
       normalizePlatformIntegrationRecoveryStatus(previousStatus) || null;
     error.requestedStatus =
       normalizePlatformIntegrationRecoveryStatus(requestedStatus) || 'replayed';
+    return error;
+  };
+  const createPlatformIntegrationFreezeActiveConflictError = ({
+    freezeId = null,
+    frozenAt = null,
+    freezeReason = null
+  } = {}) => {
+    const error = new Error('platform integration freeze already active');
+    error.code = 'ERR_PLATFORM_INTEGRATION_FREEZE_ACTIVE_CONFLICT';
+    error.freezeId = normalizePlatformIntegrationFreezeId(freezeId) || null;
+    error.frozenAt = String(frozenAt || '').trim() || null;
+    error.freezeReason = normalizePlatformIntegrationOptionalText(freezeReason) || null;
+    return error;
+  };
+  const createPlatformIntegrationFreezeReleaseConflictError = () => {
+    const error = new Error('platform integration freeze release conflict');
+    error.code = 'ERR_PLATFORM_INTEGRATION_FREEZE_RELEASE_CONFLICT';
     return error;
   };
   const normalizePlatformPermissionCode = (permissionCode) =>
@@ -1097,6 +1128,122 @@ const createInMemoryAuthStore = ({
         updatedAt: entry.updatedAt
       }
       : null;
+  const toPlatformIntegrationFreezeRecord = (entry = {}) => {
+    const normalizedFreezeId = normalizePlatformIntegrationFreezeId(
+      entry.freezeId || entry.freeze_id
+    );
+    const normalizedStatus = normalizePlatformIntegrationFreezeStatus(
+      entry.status || 'active'
+    );
+    const normalizedFreezeReason = normalizePlatformIntegrationOptionalText(
+      entry.freezeReason || entry.freeze_reason
+    );
+    const normalizedRollbackReason = normalizePlatformIntegrationOptionalText(
+      entry.rollbackReason || entry.rollback_reason
+    );
+    const normalizedFrozenAt = String(
+      entry.frozenAt || entry.frozen_at || new Date().toISOString()
+    ).trim();
+    const releasedAtRaw = entry.releasedAt ?? entry.released_at ?? null;
+    const normalizedReleasedAt =
+      releasedAtRaw === null || releasedAtRaw === undefined
+        ? null
+        : new Date(releasedAtRaw).toISOString();
+    const normalizedRequestId = String(
+      entry.requestId || entry.request_id || ''
+    ).trim();
+    const normalizedTraceparent = normalizePlatformIntegrationOptionalText(
+      entry.traceparent
+    );
+    const normalizedCreatedAt = String(
+      entry.createdAt || entry.created_at || new Date().toISOString()
+    ).trim();
+    const normalizedUpdatedAt = String(
+      entry.updatedAt || entry.updated_at || new Date().toISOString()
+    ).trim();
+    const normalizedFrozenByUserId = normalizePlatformIntegrationOptionalText(
+      entry.frozenByUserId || entry.frozen_by_user_id
+    );
+    const normalizedReleasedByUserId = normalizePlatformIntegrationOptionalText(
+      entry.releasedByUserId || entry.released_by_user_id
+    );
+    if (
+      !normalizedFreezeId
+      || normalizedFreezeId.length > MAX_PLATFORM_INTEGRATION_FREEZE_ID_LENGTH
+      || !VALID_PLATFORM_INTEGRATION_FREEZE_STATUS.has(normalizedStatus)
+      || !normalizedFreezeReason
+      || normalizedFreezeReason.length > MAX_PLATFORM_INTEGRATION_FREEZE_REASON_LENGTH
+      || (
+        normalizedRollbackReason !== null
+        && normalizedRollbackReason.length > MAX_PLATFORM_INTEGRATION_FREEZE_REASON_LENGTH
+      )
+      || !normalizedFrozenAt
+      || Number.isNaN(new Date(normalizedFrozenAt).getTime())
+      || (
+        normalizedReleasedAt !== null
+        && Number.isNaN(new Date(normalizedReleasedAt).getTime())
+      )
+      || (
+        normalizedStatus === 'active'
+        && normalizedReleasedAt !== null
+      )
+      || (
+        normalizedStatus === 'released'
+        && normalizedReleasedAt === null
+      )
+      || (
+        normalizedFrozenByUserId !== null
+        && normalizedFrozenByUserId.length > MAX_OPERATOR_USER_ID_LENGTH
+      )
+      || (
+        normalizedReleasedByUserId !== null
+        && normalizedReleasedByUserId.length > MAX_OPERATOR_USER_ID_LENGTH
+      )
+      || !normalizedRequestId
+      || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_FREEZE_REQUEST_ID_LENGTH
+      || (
+        normalizedTraceparent !== null
+        && normalizedTraceparent.length > MAX_PLATFORM_INTEGRATION_FREEZE_TRACEPARENT_LENGTH
+      )
+      || !normalizedCreatedAt
+      || Number.isNaN(new Date(normalizedCreatedAt).getTime())
+      || !normalizedUpdatedAt
+      || Number.isNaN(new Date(normalizedUpdatedAt).getTime())
+    ) {
+      throw new Error('invalid platform integration freeze entry');
+    }
+    return {
+      freezeId: normalizedFreezeId,
+      status: normalizedStatus,
+      freezeReason: normalizedFreezeReason,
+      rollbackReason: normalizedRollbackReason,
+      frozenAt: normalizedFrozenAt,
+      releasedAt: normalizedReleasedAt,
+      frozenByUserId: normalizedFrozenByUserId,
+      releasedByUserId: normalizedReleasedByUserId,
+      requestId: normalizedRequestId,
+      traceparent: normalizedTraceparent,
+      createdAt: normalizedCreatedAt,
+      updatedAt: normalizedUpdatedAt
+    };
+  };
+  const clonePlatformIntegrationFreezeRecord = (entry = null) =>
+    entry
+      ? {
+        freezeId: entry.freezeId,
+        status: entry.status,
+        freezeReason: entry.freezeReason,
+        rollbackReason: entry.rollbackReason,
+        frozenAt: entry.frozenAt,
+        releasedAt: entry.releasedAt,
+        frozenByUserId: entry.frozenByUserId,
+        releasedByUserId: entry.releasedByUserId,
+        requestId: entry.requestId,
+        traceparent: entry.traceparent,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt
+      }
+      : null;
 
   const findPlatformRoleCatalogRecordStateByRoleId = (roleId) => {
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
@@ -1188,6 +1335,71 @@ const createInMemoryAuthStore = ({
       return null;
     }
     return findPlatformIntegrationRecoveryQueueRecordStateByRecoveryId(recoveryId);
+  };
+  const comparePlatformIntegrationFreezeRecords = (left, right) => {
+    const leftFrozenAt = new Date(left?.frozenAt || 0).getTime();
+    const rightFrozenAt = new Date(right?.frozenAt || 0).getTime();
+    if (leftFrozenAt !== rightFrozenAt) {
+      return rightFrozenAt - leftFrozenAt;
+    }
+    return String(right?.freezeId || '').localeCompare(String(left?.freezeId || ''));
+  };
+  const findActivePlatformIntegrationFreezeRecordState = () => {
+    const activeEntries = [];
+    for (const [freezeId, entry] of platformIntegrationFreezeById.entries()) {
+      if (entry?.status !== 'active') {
+        continue;
+      }
+      activeEntries.push({
+        freezeId,
+        record: entry
+      });
+    }
+    if (activeEntries.length === 0) {
+      return null;
+    }
+    activeEntries.sort((left, right) =>
+      comparePlatformIntegrationFreezeRecords(left.record, right.record)
+    );
+    return activeEntries[0];
+  };
+  const findLatestPlatformIntegrationFreezeRecordState = () => {
+    const entries = [];
+    for (const [freezeId, record] of platformIntegrationFreezeById.entries()) {
+      entries.push({
+        freezeId,
+        record
+      });
+    }
+    if (entries.length === 0) {
+      return null;
+    }
+    entries.sort((left, right) =>
+      comparePlatformIntegrationFreezeRecords(left.record, right.record)
+    );
+    return entries[0];
+  };
+  const findActivePlatformIntegrationFreezeForWriteGate = () => {
+    const activeState = findActivePlatformIntegrationFreezeRecordState();
+    if (!activeState?.record) {
+      return null;
+    }
+    const activeFreeze = toPlatformIntegrationFreezeRecord(activeState.record);
+    if (!activeFreeze) {
+      throw new Error('platform integration freeze gate state malformed');
+    }
+    return activeFreeze;
+  };
+  const assertPlatformIntegrationWriteAllowedByFreezeGate = () => {
+    const activeFreeze = findActivePlatformIntegrationFreezeForWriteGate();
+    if (!activeFreeze) {
+      return;
+    }
+    throw createPlatformIntegrationFreezeActiveConflictError({
+      freezeId: activeFreeze.freezeId,
+      frozenAt: activeFreeze.frozenAt,
+      freezeReason: activeFreeze.freezeReason
+    });
   };
 
   const normalizePlatformPermission = (
@@ -1863,6 +2075,20 @@ const createInMemoryAuthStore = ({
     });
     platformIntegrationRecoveryDedupIndex.set(dedupKey, persistedRecoveryId);
     return clonePlatformIntegrationRecoveryQueueRecord(merged);
+  };
+  const upsertPlatformIntegrationFreezeRecord = (entry = {}) => {
+    const normalizedRecord = toPlatformIntegrationFreezeRecord(entry);
+    const existing = platformIntegrationFreezeById.get(normalizedRecord.freezeId) || null;
+    const nowIso = new Date().toISOString();
+    const merged = toPlatformIntegrationFreezeRecord({
+      ...existing,
+      ...normalizedRecord,
+      freezeId: normalizedRecord.freezeId,
+      createdAt: existing?.createdAt || normalizedRecord.createdAt || nowIso,
+      updatedAt: normalizedRecord.updatedAt || nowIso
+    });
+    platformIntegrationFreezeById.set(merged.freezeId, merged);
+    return clonePlatformIntegrationFreezeRecord(merged);
   };
 
   upsertPlatformRoleCatalogRecord({
@@ -5188,6 +5414,7 @@ const createInMemoryAuthStore = ({
         )
           ? normalizedRequestedIntegrationId
           : randomUUID();
+        assertPlatformIntegrationWriteAllowedByFreezeGate();
         if (
           findPlatformIntegrationCatalogRecordStateByIntegrationId(
             normalizedIntegrationId
@@ -5328,6 +5555,7 @@ const createInMemoryAuthStore = ({
         if (!hasUpdates) {
           throw new Error('updatePlatformIntegrationCatalogEntry requires update fields');
         }
+        assertPlatformIntegrationWriteAllowedByFreezeGate();
         const updatedRecord = upsertPlatformIntegrationCatalogRecord({
           ...existingRecord,
           integrationId: existingRecord.integrationId,
@@ -5442,6 +5670,7 @@ const createInMemoryAuthStore = ({
         ) {
           throw new Error('transitionPlatformIntegrationLifecycle received invalid input');
         }
+        assertPlatformIntegrationWriteAllowedByFreezeGate();
         const existingState = findPlatformIntegrationCatalogRecordStateByIntegrationId(
           normalizedIntegrationId
         );
@@ -5516,6 +5745,278 @@ const createInMemoryAuthStore = ({
           restoreMapFromSnapshot(
             platformIntegrationCatalogCodeIndex,
             snapshot.platformIntegrationCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    findActivePlatformIntegrationFreeze: async () => {
+      const activeState = findActivePlatformIntegrationFreezeRecordState();
+      if (!activeState?.record) {
+        return null;
+      }
+      const normalizedRecord = toPlatformIntegrationFreezeRecord(activeState.record);
+      if (!normalizedRecord) {
+        throw new Error('findActivePlatformIntegrationFreeze result malformed');
+      }
+      return clonePlatformIntegrationFreezeRecord(normalizedRecord);
+    },
+
+    findLatestPlatformIntegrationFreeze: async () => {
+      const latestState = findLatestPlatformIntegrationFreezeRecordState();
+      if (!latestState?.record) {
+        return null;
+      }
+      const normalizedRecord = toPlatformIntegrationFreezeRecord(latestState.record);
+      if (!normalizedRecord) {
+        throw new Error('findLatestPlatformIntegrationFreeze result malformed');
+      }
+      return clonePlatformIntegrationFreezeRecord(normalizedRecord);
+    },
+
+    activatePlatformIntegrationFreeze: async ({
+      freezeId = randomUUID(),
+      freezeReason,
+      operatorUserId = null,
+      operatorSessionId = null,
+      requestId,
+      traceparent = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationFreezeById: structuredClone(platformIntegrationFreezeById),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const freezeIdProvided = freezeId !== undefined && freezeId !== null;
+        const normalizedRequestedFreezeId =
+          normalizePlatformIntegrationFreezeId(freezeId);
+        if (
+          freezeIdProvided
+          && (
+            !normalizedRequestedFreezeId
+            || normalizedRequestedFreezeId.length > MAX_PLATFORM_INTEGRATION_FREEZE_ID_LENGTH
+          )
+        ) {
+          throw new Error('activatePlatformIntegrationFreeze received invalid freezeId');
+        }
+        const normalizedFreezeId =
+          normalizedRequestedFreezeId && normalizedRequestedFreezeId.length > 0
+            ? normalizedRequestedFreezeId
+            : randomUUID();
+        const normalizedFreezeReason =
+          normalizePlatformIntegrationOptionalText(freezeReason);
+        const normalizedRequestId = String(requestId || '').trim();
+        const normalizedTraceparent = normalizePlatformIntegrationOptionalText(traceparent);
+        if (
+          !normalizedFreezeReason
+          || normalizedFreezeReason.length > MAX_PLATFORM_INTEGRATION_FREEZE_REASON_LENGTH
+          || !normalizedRequestId
+          || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_FREEZE_REQUEST_ID_LENGTH
+          || (
+            normalizedTraceparent !== null
+            && normalizedTraceparent.length > MAX_PLATFORM_INTEGRATION_FREEZE_TRACEPARENT_LENGTH
+          )
+        ) {
+          throw new Error('activatePlatformIntegrationFreeze received invalid input');
+        }
+        const activeState = findActivePlatformIntegrationFreezeRecordState();
+        if (activeState?.record) {
+          const activeFreeze = toPlatformIntegrationFreezeRecord(activeState.record);
+          if (!activeFreeze) {
+            throw new Error('activatePlatformIntegrationFreeze active row malformed');
+          }
+          throw createPlatformIntegrationFreezeActiveConflictError({
+            freezeId: activeFreeze.freezeId,
+            frozenAt: activeFreeze.frozenAt,
+            freezeReason: activeFreeze.freezeReason
+          });
+        }
+        if (platformIntegrationFreezeById.has(normalizedFreezeId)) {
+          throw createPlatformIntegrationFreezeActiveConflictError();
+        }
+        const nowIso = new Date().toISOString();
+        const createdRecord = upsertPlatformIntegrationFreezeRecord({
+          freezeId: normalizedFreezeId,
+          status: 'active',
+          freezeReason: normalizedFreezeReason,
+          rollbackReason: null,
+          frozenAt: nowIso,
+          releasedAt: null,
+          frozenByUserId: normalizePlatformIntegrationOptionalText(operatorUserId),
+          releasedByUserId: null,
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          createdAt: nowIso,
+          updatedAt: nowIso
+        });
+        if (!createdRecord) {
+          throw new Error('activatePlatformIntegrationFreeze result unavailable');
+        }
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            invokeFaultInjector('beforePlatformIntegrationFreezeActivateAuditWrite', {
+              freezeId: normalizedFreezeId,
+              requestId: normalizedRequestId
+            });
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || normalizedRequestId).trim()
+                || 'request_id_unset',
+              traceparent: auditContext.traceparent ?? normalizedTraceparent,
+              eventType: 'platform.integration.freeze.activated',
+              actorUserId: auditContext.actorUserId || operatorUserId,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId,
+              targetType: 'integration_freeze',
+              targetId: normalizedFreezeId,
+              result: 'success',
+              beforeState: null,
+              afterState: {
+                freeze_id: createdRecord.freezeId,
+                status: createdRecord.status,
+                freeze_reason: createdRecord.freezeReason,
+                frozen_at: createdRecord.frozenAt
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration freeze activate audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...createdRecord,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationFreezeById,
+            snapshot.platformIntegrationFreezeById
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    releasePlatformIntegrationFreeze: async ({
+      rollbackReason = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      requestId = 'request_id_unset',
+      traceparent = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationFreezeById: structuredClone(platformIntegrationFreezeById),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedRollbackReason =
+          normalizePlatformIntegrationOptionalText(rollbackReason);
+        const normalizedRequestId = String(requestId || '').trim();
+        const normalizedTraceparent = normalizePlatformIntegrationOptionalText(traceparent);
+        if (
+          (
+            normalizedRollbackReason !== null
+            && normalizedRollbackReason.length > MAX_PLATFORM_INTEGRATION_FREEZE_REASON_LENGTH
+          )
+          || !normalizedRequestId
+          || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_FREEZE_REQUEST_ID_LENGTH
+          || (
+            normalizedTraceparent !== null
+            && normalizedTraceparent.length > MAX_PLATFORM_INTEGRATION_FREEZE_TRACEPARENT_LENGTH
+          )
+        ) {
+          throw new Error('releasePlatformIntegrationFreeze received invalid input');
+        }
+        const activeState = findActivePlatformIntegrationFreezeRecordState();
+        if (!activeState?.record) {
+          throw createPlatformIntegrationFreezeReleaseConflictError();
+        }
+        const activeRecord = toPlatformIntegrationFreezeRecord(activeState.record);
+        if (!activeRecord) {
+          throw new Error('releasePlatformIntegrationFreeze active row malformed');
+        }
+        const nowIso = new Date().toISOString();
+        const releasedRecord = upsertPlatformIntegrationFreezeRecord({
+          ...activeRecord,
+          status: 'released',
+          rollbackReason: normalizedRollbackReason,
+          releasedAt: nowIso,
+          releasedByUserId: normalizePlatformIntegrationOptionalText(operatorUserId),
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          updatedAt: nowIso
+        });
+        if (!releasedRecord) {
+          throw new Error('releasePlatformIntegrationFreeze result unavailable');
+        }
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            invokeFaultInjector('beforePlatformIntegrationFreezeReleaseAuditWrite', {
+              freezeId: activeRecord.freezeId,
+              requestId: normalizedRequestId
+            });
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || normalizedRequestId).trim()
+                || 'request_id_unset',
+              traceparent: auditContext.traceparent ?? normalizedTraceparent,
+              eventType: 'platform.integration.freeze.released',
+              actorUserId: auditContext.actorUserId || operatorUserId,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId,
+              targetType: 'integration_freeze',
+              targetId: activeRecord.freezeId,
+              result: 'success',
+              beforeState: {
+                status: activeRecord.status,
+                freeze_reason: activeRecord.freezeReason,
+                frozen_at: activeRecord.frozenAt
+              },
+              afterState: {
+                status: releasedRecord.status,
+                rollback_reason: releasedRecord.rollbackReason,
+                released_at: releasedRecord.releasedAt
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration freeze release audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...releasedRecord,
+          previousStatus: activeRecord.status,
+          currentStatus: releasedRecord.status,
+          released: true,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationFreezeById,
+            snapshot.platformIntegrationFreezeById
           );
           restoreAuditEventsFromSnapshot(snapshot.auditEvents);
         }
@@ -5672,6 +6173,7 @@ const createInMemoryAuthStore = ({
         ) {
           throw new Error('createPlatformIntegrationContractVersion integration not found');
         }
+        assertPlatformIntegrationWriteAllowedByFreezeGate();
         if (
           findPlatformIntegrationContractVersionRecordState({
             integrationId: normalizedIntegrationId,
@@ -5954,6 +6456,7 @@ const createInMemoryAuthStore = ({
         ) {
           throw new Error('activatePlatformIntegrationContractVersion received invalid input');
         }
+        assertPlatformIntegrationWriteAllowedByFreezeGate();
         const targetState = findPlatformIntegrationContractVersionRecordState({
           integrationId: normalizedIntegrationId,
           contractType: normalizedContractType,

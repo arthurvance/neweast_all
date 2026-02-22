@@ -698,6 +698,250 @@ test('GET /platform/integrations/:integration_id fails closed when store returns
   assert.equal(payload.request_id, 'req-platform-integration-get-overlong-field');
 });
 
+test('platform integration write routes are blocked while freeze window is active and emit blocked audit events', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-freeze-gate-login'
+  });
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const setupCreateRoute = await dispatchApiRoute({
+    pathname: '/platform/integrations',
+    method: 'POST',
+    requestId: 'req-platform-integration-freeze-gate-setup-create',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      integration_id: 'integration-freeze-gate-target',
+      code: 'INTEGRATION_FREEZE_GATE_TARGET',
+      name: 'integration freeze gate target',
+      direction: 'outbound',
+      protocol: 'https',
+      auth_mode: 'hmac',
+      lifecycle_status: 'draft'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(setupCreateRoute.status, 200);
+
+  const activateFreezeRoute = await dispatchApiRoute({
+    pathname: '/platform/integrations/freeze',
+    method: 'POST',
+    requestId: 'req-platform-integration-freeze-gate-activate',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent,
+      'idempotency-key': 'idem-platform-integration-freeze-gate-activate'
+    },
+    body: {
+      freeze_id: 'release-window-gate-001',
+      freeze_reason: 'release window gate active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(activateFreezeRoute.status, 200);
+  const activatedFreeze = JSON.parse(activateFreezeRoute.body);
+  assert.equal(activatedFreeze.status, 'active');
+
+  const createBlockedRoute = await dispatchApiRoute({
+    pathname: '/platform/integrations',
+    method: 'POST',
+    requestId: 'req-platform-integration-freeze-gate-create-blocked',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent
+    },
+    body: {
+      integration_id: 'integration-freeze-gate-blocked-create',
+      code: 'INTEGRATION_FREEZE_GATE_BLOCKED_CREATE',
+      name: 'blocked create',
+      direction: 'outbound',
+      protocol: 'https',
+      auth_mode: 'hmac'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createBlockedRoute.status, 409);
+  assert.equal(createBlockedRoute.headers['content-type'], 'application/problem+json');
+  const createBlockedPayload = JSON.parse(createBlockedRoute.body);
+  assert.equal(createBlockedPayload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+  assert.equal(createBlockedPayload.freeze_id, activatedFreeze.freeze_id);
+  assert.equal(
+    createBlockedPayload.request_id,
+    'req-platform-integration-freeze-gate-create-blocked'
+  );
+
+  const updateBlockedRoute = await dispatchApiRoute({
+    pathname: '/platform/integrations/integration-freeze-gate-target',
+    method: 'PATCH',
+    requestId: 'req-platform-integration-freeze-gate-update-blocked',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent
+    },
+    body: {
+      name: 'blocked update'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(updateBlockedRoute.status, 409);
+  assert.equal(updateBlockedRoute.headers['content-type'], 'application/problem+json');
+  const updateBlockedPayload = JSON.parse(updateBlockedRoute.body);
+  assert.equal(updateBlockedPayload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+  assert.equal(updateBlockedPayload.freeze_id, activatedFreeze.freeze_id);
+  assert.equal(
+    updateBlockedPayload.request_id,
+    'req-platform-integration-freeze-gate-update-blocked'
+  );
+
+  const lifecycleBlockedRoute = await dispatchApiRoute({
+    pathname: '/platform/integrations/integration-freeze-gate-target/lifecycle',
+    method: 'POST',
+    requestId: 'req-platform-integration-freeze-gate-lifecycle-blocked',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent
+    },
+    body: {
+      status: 'active',
+      reason: 'blocked by active freeze'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(lifecycleBlockedRoute.status, 409);
+  assert.equal(lifecycleBlockedRoute.headers['content-type'], 'application/problem+json');
+  const lifecycleBlockedPayload = JSON.parse(lifecycleBlockedRoute.body);
+  assert.equal(lifecycleBlockedPayload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+  assert.equal(lifecycleBlockedPayload.freeze_id, activatedFreeze.freeze_id);
+  assert.equal(
+    lifecycleBlockedPayload.request_id,
+    'req-platform-integration-freeze-gate-lifecycle-blocked'
+  );
+
+  const blockedRequestIds = [
+    'req-platform-integration-freeze-gate-create-blocked',
+    'req-platform-integration-freeze-gate-update-blocked',
+    'req-platform-integration-freeze-gate-lifecycle-blocked'
+  ];
+  for (const blockedRequestId of blockedRequestIds) {
+    const auditRoute = await dispatchApiRoute({
+      pathname: `/platform/audit/events?request_id=${blockedRequestId}&event_type=platform.integration.freeze.change_blocked`,
+      method: 'GET',
+      requestId: `${blockedRequestId}-audit`,
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(auditRoute.status, 200);
+    const auditPayload = JSON.parse(auditRoute.body);
+    assert.equal(auditPayload.total, 1);
+    assert.equal(
+      auditPayload.events[0].event_type,
+      'platform.integration.freeze.change_blocked'
+    );
+  }
+});
+
+test('platform integration create is blocked when freeze activates during an in-flight write', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-freeze-race-login'
+  });
+
+  const authStore = harness.authService._internals.authStore;
+  const originalCreate = authStore.createPlatformIntegrationCatalogEntry;
+  let signalCreateEntered;
+  const createEntered = new Promise((resolve) => {
+    signalCreateEntered = resolve;
+  });
+  let releaseCreate;
+  const releaseCreateGate = new Promise((resolve) => {
+    releaseCreate = resolve;
+  });
+
+  authStore.createPlatformIntegrationCatalogEntry = async (...args) => {
+    signalCreateEntered();
+    await releaseCreateGate;
+    return originalCreate(...args);
+  };
+
+  try {
+    const createPromise = dispatchApiRoute({
+      pathname: '/platform/integrations',
+      method: 'POST',
+      requestId: 'req-platform-integration-freeze-race-create',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      body: {
+        integration_id: 'integration-freeze-race-target',
+        code: 'INTEGRATION_FREEZE_RACE_TARGET',
+        name: 'integration freeze race target',
+        direction: 'outbound',
+        protocol: 'https',
+        auth_mode: 'hmac',
+        lifecycle_status: 'draft'
+      },
+      handlers: harness.handlers
+    });
+
+    await createEntered;
+
+    const activateFreezeRoute = await dispatchApiRoute({
+      pathname: '/platform/integrations/freeze',
+      method: 'POST',
+      requestId: 'req-platform-integration-freeze-race-activate',
+      headers: {
+        authorization: `Bearer ${login.access_token}`,
+        'idempotency-key': 'idem-platform-integration-freeze-race-activate'
+      },
+      body: {
+        freeze_id: 'release-window-race-001',
+        freeze_reason: 'activate during in-flight create'
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(activateFreezeRoute.status, 200);
+    const activatedFreeze = JSON.parse(activateFreezeRoute.body);
+    assert.equal(activatedFreeze.status, 'active');
+
+    releaseCreate();
+    const createRoute = await createPromise;
+    assert.equal(createRoute.status, 409);
+    assert.equal(createRoute.headers['content-type'], 'application/problem+json');
+    const createPayload = JSON.parse(createRoute.body);
+    assert.equal(createPayload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+    assert.equal(createPayload.freeze_id, activatedFreeze.freeze_id);
+    assert.equal(createPayload.request_id, 'req-platform-integration-freeze-race-create');
+
+    const blockedAuditRoute = await dispatchApiRoute({
+      pathname: '/platform/audit/events?request_id=req-platform-integration-freeze-race-create&event_type=platform.integration.freeze.change_blocked',
+      method: 'GET',
+      requestId: 'req-platform-integration-freeze-race-create-audit-query',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(blockedAuditRoute.status, 200);
+    const blockedAuditPayload = JSON.parse(blockedAuditRoute.body);
+    assert.equal(blockedAuditPayload.total, 1);
+    assert.equal(
+      blockedAuditPayload.events[0].event_type,
+      'platform.integration.freeze.change_blocked'
+    );
+  } finally {
+    authStore.createPlatformIntegrationCatalogEntry = originalCreate;
+    releaseCreate();
+  }
+});
+
 test('POST /platform/integrations requires platform.member_admin.operate permission', async () => {
   const harness = createHarness();
   const login = await loginByPhone({

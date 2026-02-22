@@ -50,6 +50,11 @@ const {
   PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
 } = require('./modules/platform/integration-recovery.constants');
 const {
+  PLATFORM_INTEGRATION_FREEZE_STATUS_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
+} = require('./modules/platform/integration-freeze.constants');
+const {
   PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
   TENANT_AUDIT_EVENTS_ROUTE_KEY
 } = require('./modules/audit/audit.constants');
@@ -201,7 +206,9 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
-  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_MEMBER_CREATE_ROUTE_KEY,
@@ -230,7 +237,9 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
-  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
@@ -251,7 +260,9 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
-  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
@@ -309,6 +320,14 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   ],
   [
     PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [
+    PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [
+    PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY,
     IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
   ]
 ]);
@@ -2711,6 +2730,48 @@ const createRouteTable = ({
                 requestId,
                 headers.authorization,
                 getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_INTEGRATION_FREEZE_STATUS_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformGetIntegrationFreezeStatus(
+            requestId,
+            headers.authorization,
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformActivateIntegrationFreeze(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformReleaseIntegrationFreeze(
+                requestId,
+                headers.authorization,
                 body || {},
                 getAuthorizationContext(),
                 traceparent

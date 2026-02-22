@@ -287,6 +287,33 @@ test('platform integration routes expose explicit permission declarations', () =
   }
 });
 
+test('platform integration freeze routes expose explicit permission declarations', () => {
+  const getFreezeStatus = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/integrations/freeze'
+  });
+  const activateFreeze = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/freeze'
+  });
+  const releaseFreeze = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/freeze/release'
+  });
+
+  assert.ok(getFreezeStatus);
+  assert.equal(getFreezeStatus.access, 'protected');
+  assert.equal(getFreezeStatus.scope, 'platform');
+  assert.equal(getFreezeStatus.permission_code, 'platform.member_admin.view');
+
+  for (const route of [activateFreeze, releaseFreeze]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'platform');
+    assert.equal(route.permission_code, 'platform.member_admin.operate');
+  }
+});
+
 test('platform integration contract routes expose explicit permission declarations', () => {
   const listContracts = findRouteDefinition({
     method: 'GET',

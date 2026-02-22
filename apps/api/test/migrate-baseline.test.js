@@ -695,6 +695,51 @@ test('0023 down migration drops platform integration retry recovery queue table'
   assert.match(sql, /DROP TABLE IF EXISTS platform_integration_retry_recovery_queue/i);
 });
 
+test('0024 migration defines integration freeze control table with single active window constraint', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0024_platform_integration_freeze_control.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_integration_freeze_control/i);
+  assert.match(sql, /freeze_id VARCHAR\(64\) NOT NULL/i);
+  assert.match(sql, /status ENUM\('active', 'released'\) NOT NULL DEFAULT 'active'/i);
+  assert.match(sql, /freeze_reason VARCHAR\(256\) NOT NULL/i);
+  assert.match(sql, /rollback_reason VARCHAR\(256\) NULL/i);
+  assert.match(sql, /frozen_at TIMESTAMP\(3\) NOT NULL DEFAULT CURRENT_TIMESTAMP\(3\)/i);
+  assert.match(sql, /released_at TIMESTAMP\(3\) NULL/i);
+  assert.match(sql, /request_id VARCHAR\(128\) NOT NULL/i);
+  assert.match(sql, /traceparent VARCHAR\(128\) NULL/i);
+  assert.match(
+    sql,
+    /active_window_slot TINYINT\s+GENERATED ALWAYS AS \(CASE WHEN status = 'active' THEN 1 ELSE NULL END\) STORED/i
+  );
+  assert.match(
+    sql,
+    /UNIQUE KEY uk_platform_integration_freeze_active_window\s*\(\s*active_window_slot\s*\)/i
+  );
+  assert.match(
+    sql,
+    /KEY idx_platform_integration_freeze_status_frozen_at\s*\(\s*status,\s*frozen_at\s*\)/i
+  );
+  assert.match(sql, /KEY idx_platform_integration_freeze_request_id\s*\(\s*request_id\s*\)/i);
+});
+
+test('0024 down migration drops integration freeze control table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0024_platform_integration_freeze_control.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP TABLE IF EXISTS platform_integration_freeze_control/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

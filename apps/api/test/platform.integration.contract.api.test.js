@@ -3882,6 +3882,240 @@ test('contract consistency check keeps idempotency replay semantics stable', asy
   assert.equal(replayAuditPayload.total, 0);
 });
 
+test('contract governance write routes are blocked while freeze window is active and emit blocked audit events', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-freeze-gate'
+  });
+  const integrationId = 'integration-contract-freeze-gate';
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-freeze-gate-create-integration'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-freeze-gate-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-freeze-gate-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-freeze-gate-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const evaluateRoute = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-freeze-gate-evaluate-v1-v2',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    diffSummary: {
+      breaking_changes: []
+    }
+  });
+  assert.equal(evaluateRoute.status, 200);
+
+  const activateFreezeRoute = await dispatchApiRoute({
+    pathname: '/platform/integrations/freeze',
+    method: 'POST',
+    requestId: 'req-platform-integration-contract-freeze-gate-activate-freeze',
+    headers: {
+      authorization: `Bearer ${login.access_token}`,
+      traceparent,
+      'idempotency-key': 'idem-platform-integration-contract-freeze-gate-activate'
+    },
+    body: {
+      freeze_id: 'release-window-contract-gate-001',
+      freeze_reason: 'block contract writes during release'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(activateFreezeRoute.status, 200);
+  const activatedFreeze = JSON.parse(activateFreezeRoute.body);
+  assert.equal(activatedFreeze.status, 'active');
+
+  const createV3Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v3',
+    requestId: 'req-platform-integration-contract-freeze-gate-create-v3-blocked',
+    schemaChecksum: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+  });
+  assert.equal(createV3Route.status, 409);
+  const createV3Payload = JSON.parse(createV3Route.body);
+  assert.equal(createV3Payload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+  assert.equal(createV3Payload.freeze_id, activatedFreeze.freeze_id);
+  assert.equal(
+    createV3Payload.request_id,
+    'req-platform-integration-contract-freeze-gate-create-v3-blocked'
+  );
+
+  const activateV2Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-freeze-gate-activate-v2-blocked'
+  });
+  assert.equal(activateV2Route.status, 409);
+  const activateV2Payload = JSON.parse(activateV2Route.body);
+  assert.equal(activateV2Payload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+  assert.equal(activateV2Payload.freeze_id, activatedFreeze.freeze_id);
+  assert.equal(
+    activateV2Payload.request_id,
+    'req-platform-integration-contract-freeze-gate-activate-v2-blocked'
+  );
+
+  const blockedRequestIds = [
+    'req-platform-integration-contract-freeze-gate-create-v3-blocked',
+    'req-platform-integration-contract-freeze-gate-activate-v2-blocked'
+  ];
+  for (const blockedRequestId of blockedRequestIds) {
+    const auditRoute = await dispatchApiRoute({
+      pathname: `/platform/audit/events?request_id=${blockedRequestId}&event_type=platform.integration.freeze.change_blocked`,
+      method: 'GET',
+      requestId: `${blockedRequestId}-audit`,
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(auditRoute.status, 200);
+    const auditPayload = JSON.parse(auditRoute.body);
+    assert.equal(auditPayload.total, 1);
+    assert.equal(
+      auditPayload.events[0].event_type,
+      'platform.integration.freeze.change_blocked'
+    );
+  }
+});
+
+test('contract create is blocked when freeze activates during an in-flight write', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-freeze-race-login'
+  });
+  const integrationId = 'integration-contract-freeze-race';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-freeze-race-create-integration'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const authStore = harness.authService._internals.authStore;
+  const originalCreateContractVersion =
+    authStore.createPlatformIntegrationContractVersion;
+  let signalCreateEntered;
+  const createEntered = new Promise((resolve) => {
+    signalCreateEntered = resolve;
+  });
+  let releaseCreate;
+  const releaseCreateGate = new Promise((resolve) => {
+    releaseCreate = resolve;
+  });
+
+  authStore.createPlatformIntegrationContractVersion = async (...args) => {
+    signalCreateEntered();
+    await releaseCreateGate;
+    return originalCreateContractVersion(...args);
+  };
+
+  try {
+    const createPromise = createContractVersion({
+      handlers: harness.handlers,
+      accessToken: login.access_token,
+      integrationId,
+      contractVersion: 'v-race',
+      requestId: 'req-platform-integration-contract-freeze-race-create',
+      schemaChecksum: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    });
+    await createEntered;
+
+    const activateFreezeRoute = await dispatchApiRoute({
+      pathname: '/platform/integrations/freeze',
+      method: 'POST',
+      requestId: 'req-platform-integration-contract-freeze-race-activate',
+      headers: {
+        authorization: `Bearer ${login.access_token}`,
+        'idempotency-key': 'idem-platform-integration-contract-freeze-race-activate'
+      },
+      body: {
+        freeze_id: 'release-window-contract-race-001',
+        freeze_reason: 'activate during in-flight contract create'
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(activateFreezeRoute.status, 200);
+    const activatedFreeze = JSON.parse(activateFreezeRoute.body);
+    assert.equal(activatedFreeze.status, 'active');
+
+    releaseCreate();
+    const createRoute = await createPromise;
+    assert.equal(createRoute.status, 409);
+    assert.equal(createRoute.headers['content-type'], 'application/problem+json');
+    const createPayload = JSON.parse(createRoute.body);
+    assert.equal(createPayload.error_code, 'INT-409-INTEGRATION-FREEZE-BLOCKED');
+    assert.equal(createPayload.freeze_id, activatedFreeze.freeze_id);
+    assert.equal(
+      createPayload.request_id,
+      'req-platform-integration-contract-freeze-race-create'
+    );
+
+    const blockedAuditRoute = await dispatchApiRoute({
+      pathname: '/platform/audit/events?request_id=req-platform-integration-contract-freeze-race-create&event_type=platform.integration.freeze.change_blocked',
+      method: 'GET',
+      requestId: 'req-platform-integration-contract-freeze-race-create-audit-query',
+      headers: {
+        authorization: `Bearer ${login.access_token}`
+      },
+      handlers: harness.handlers
+    });
+    assert.equal(blockedAuditRoute.status, 200);
+    const blockedAuditPayload = JSON.parse(blockedAuditRoute.body);
+    assert.equal(blockedAuditPayload.total, 1);
+    assert.equal(
+      blockedAuditPayload.events[0].event_type,
+      'platform.integration.freeze.change_blocked'
+    );
+  } finally {
+    authStore.createPlatformIntegrationContractVersion = originalCreateContractVersion;
+    releaseCreate();
+  }
+});
+
 test('contract governance write routes require platform.member_admin.operate permission', async () => {
   const harness = createHarness();
   const operatorLogin = await loginByPhone({

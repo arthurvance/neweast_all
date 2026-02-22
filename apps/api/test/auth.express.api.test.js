@@ -2703,21 +2703,34 @@ test('createApiApp boots with auth schema created only from official migrations'
     return;
   }
 
-  await adminConnection.execute('DROP TABLE IF EXISTS refresh_tokens');
-  await adminConnection.execute('DROP TABLE IF EXISTS auth_sessions');
-  await adminConnection.execute('DROP TABLE IF EXISTS auth_user_platform_roles');
-  await adminConnection.execute('DROP TABLE IF EXISTS auth_tenant_membership_roles');
-  await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenants');
-  await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenant_membership_history');
-  await adminConnection.execute('DROP TABLE IF EXISTS auth_user_domain_access');
-  await adminConnection.execute('DROP TABLE IF EXISTS tenant_role_permission_grants');
-  await adminConnection.execute('DROP TABLE IF EXISTS platform_role_permission_grants');
-  await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
-  await adminConnection.execute('DROP TABLE IF EXISTS audit_events');
-  await adminConnection.execute('DROP TABLE IF EXISTS system_sensitive_configs');
-  await adminConnection.execute('DROP TABLE IF EXISTS memberships');
-  await adminConnection.execute('DROP TABLE IF EXISTS orgs');
-  await adminConnection.execute('DROP TABLE IF EXISTS users');
+  await adminConnection.execute('SET FOREIGN_KEY_CHECKS = 0');
+  try {
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_integration_freeze_control');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_integration_retry_recovery_queue');
+    await adminConnection.execute(
+      'DROP TABLE IF EXISTS platform_integration_contract_compatibility_checks'
+    );
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_integration_contract_versions');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_integration_catalog');
+    await adminConnection.execute('DROP TABLE IF EXISTS refresh_tokens');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_sessions');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_platform_roles');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_tenant_membership_roles');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenants');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenant_membership_history');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_domain_access');
+    await adminConnection.execute('DROP TABLE IF EXISTS tenant_role_permission_grants');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_role_permission_grants');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
+    await adminConnection.execute('DROP TABLE IF EXISTS audit_events');
+    await adminConnection.execute('DROP TABLE IF EXISTS system_sensitive_configs');
+    await adminConnection.execute('DROP TABLE IF EXISTS memberships');
+    await adminConnection.execute('DROP TABLE IF EXISTS orgs');
+    await adminConnection.execute('DROP TABLE IF EXISTS users');
+  } finally {
+    await adminConnection.execute('SET FOREIGN_KEY_CHECKS = 1');
+  }
+
   await adminConnection.execute(
     `
       CREATE TABLE IF NOT EXISTS users (
@@ -2748,8 +2761,14 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0014_tenant_role_permission_grants.sql');
   await runMigrationSql(adminConnection, '0015_auth_tenant_membership_roles.sql');
   await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
+  await runMigrationSql(adminConnection, '0017_owner_transfer_takeover_role_cleanup.sql');
   await runMigrationSql(adminConnection, '0018_audit_events.sql');
   await runMigrationSql(adminConnection, '0019_system_sensitive_configs.sql');
+  await runMigrationSql(adminConnection, '0020_permission_grants_final_authorization_cleanup.sql');
+  await runMigrationSql(adminConnection, '0021_platform_integration_catalog.sql');
+  await runMigrationSql(adminConnection, '0022_platform_integration_contract_versions.sql');
+  await runMigrationSql(adminConnection, '0023_platform_integration_retry_recovery.sql');
+  await runMigrationSql(adminConnection, '0024_platform_integration_freeze_control.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();

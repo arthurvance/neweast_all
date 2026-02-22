@@ -25,6 +25,8 @@ const MAX_DIFF_SUMMARY_LENGTH = 65535;
 const MAX_BREAKING_CHANGE_COUNT = 4294967295;
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_LIST_SIZE = 200;
+const MAX_FREEZE_ID_LENGTH = 64;
+const MAX_FREEZE_REASON_LENGTH = 256;
 
 const VALID_CONTRACT_TYPES = new Set(PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM);
 const VALID_CONTRACT_STATUSES = new Set(PLATFORM_INTEGRATION_CONTRACT_STATUS_ENUM);
@@ -285,6 +287,22 @@ const integrationContractErrors = {
       }
     }),
 
+  freezeBlocked: ({
+    freezeId = null,
+    frozenAt = null
+  } = {}) =>
+    integrationContractProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: '发布冻结窗口生效，当前契约变更操作已阻断',
+      errorCode: 'INT-409-INTEGRATION-FREEZE-BLOCKED',
+      extensions: {
+        retryable: false,
+        freeze_id: freezeId,
+        frozen_at: frozenAt
+      }
+    }),
+
   consistencyBlocked: ({
     reason = 'consistency_check_blocked',
     integrationId = null,
@@ -366,6 +384,12 @@ const mapStoreError = (error) => {
   if (normalizedErrorCode === 'ERR_PLATFORM_INTEGRATION_CONTRACT_ACTIVATION_BLOCKED') {
     return integrationContractErrors.activationBlocked({
       reason: normalizeActivationBlockedReason(error?.reason)
+    });
+  }
+  if (normalizedErrorCode === 'ERR_PLATFORM_INTEGRATION_FREEZE_ACTIVE_CONFLICT') {
+    return integrationContractErrors.freezeBlocked({
+      freezeId: normalizeStrictRequiredString(error?.freezeId).toLowerCase() || null,
+      frozenAt: normalizeStoreIsoTimestamp(error?.frozenAt) || null
     });
   }
   return integrationContractErrors.dependencyUnavailable({
@@ -460,6 +484,41 @@ const mapContractRecord = ({
     created_at: createdAt,
     updated_at: updatedAt,
     request_id: String(requestId || '').trim() || 'request_id_unset'
+  };
+};
+
+const mapActiveFreezeRecordForWriteGate = ({
+  record
+} = {}) => {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const freezeId = normalizeStrictRequiredString(
+    record.freezeId === undefined ? record.freeze_id : record.freezeId
+  ).toLowerCase();
+  const status = String(record.status || '').trim().toLowerCase();
+  const freezeReason = normalizeStrictRequiredString(
+    record.freezeReason === undefined ? record.freeze_reason : record.freezeReason
+  );
+  const frozenAtRaw = record.frozenAt === undefined ? record.frozen_at : record.frozenAt;
+  const frozenAt = normalizeStoreIsoTimestamp(
+    frozenAtRaw instanceof Date ? frozenAtRaw : String(frozenAtRaw || '')
+  );
+  if (
+    !freezeId
+    || freezeId.length > MAX_FREEZE_ID_LENGTH
+    || status !== 'active'
+    || !freezeReason
+    || freezeReason.length > MAX_FREEZE_REASON_LENGTH
+    || !frozenAt
+  ) {
+    return null;
+  }
+  return {
+    freeze_id: freezeId,
+    status,
+    freeze_reason: freezeReason,
+    frozen_at: frozenAt
   };
 };
 
@@ -1095,6 +1154,163 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
     return authStore;
   };
 
+  const recordFreezeChangeBlockedAuditEvent = async ({
+    requestId,
+    traceparent = null,
+    operatorUserId = null,
+    operatorSessionId = null,
+    integrationId = null,
+    contractType = null,
+    contractVersion = null,
+    changeOperation = 'unknown',
+    activeFreeze = null,
+    changePayload = null
+  } = {}) => {
+    const authStore = assertAuthStoreMethod('recordAuditEvent');
+    const normalizedTargetId = [
+      String(integrationId || '').trim(),
+      String(contractType || '').trim(),
+      String(contractVersion || '').trim()
+    ]
+      .filter((value) => value.length > 0)
+      .join(':');
+    try {
+      await authStore.recordAuditEvent({
+        domain: 'platform',
+        requestId,
+        traceparent,
+        eventType: 'platform.integration.freeze.change_blocked',
+        actorUserId: operatorUserId,
+        actorSessionId: operatorSessionId,
+        targetType: 'integration_contract',
+        targetId: normalizedTargetId || String(integrationId || '').trim() || null,
+        result: 'rejected',
+        beforeState: activeFreeze
+          ? {
+            freeze_id: activeFreeze.freeze_id,
+            status: activeFreeze.status,
+            freeze_reason: activeFreeze.freeze_reason,
+            frozen_at: activeFreeze.frozen_at
+          }
+          : null,
+        afterState: null,
+        metadata: {
+          change_operation: String(changeOperation || '').trim() || 'unknown',
+          contract_type: String(contractType || '').trim() || null,
+          contract_version: String(contractVersion || '').trim() || null,
+          change_payload: isPlainObject(changePayload) ? changePayload : null
+        }
+      });
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+  };
+
+  const maybeRecordFreezeBlockedAuditEvent = async ({
+    mappedError = null,
+    requestId,
+    traceparent = null,
+    operatorUserId = null,
+    operatorSessionId = null,
+    integrationId = null,
+    contractType = null,
+    contractVersion = null,
+    changeOperation = 'unknown',
+    changePayload = null
+  } = {}) => {
+    if (
+      !(mappedError instanceof AuthProblemError)
+      || mappedError.errorCode !== 'INT-409-INTEGRATION-FREEZE-BLOCKED'
+    ) {
+      return;
+    }
+    let activeFreeze = null;
+    try {
+      const authStore = assertAuthStoreMethod('findActivePlatformIntegrationFreeze');
+      activeFreeze = mapActiveFreezeRecordForWriteGate({
+        record: await authStore.findActivePlatformIntegrationFreeze()
+      });
+    } catch (_error) {
+      activeFreeze = null;
+    }
+    if (!activeFreeze) {
+      const freezeId = normalizeStrictRequiredString(
+        mappedError?.extensions?.freeze_id
+      ).toLowerCase();
+      const frozenAt = normalizeStoreIsoTimestamp(mappedError?.extensions?.frozen_at);
+      if (freezeId && frozenAt) {
+        activeFreeze = {
+          freeze_id: freezeId,
+          status: 'active',
+          freeze_reason: null,
+          frozen_at: frozenAt
+        };
+      }
+    }
+    if (!activeFreeze) {
+      return;
+    }
+    await recordFreezeChangeBlockedAuditEvent({
+      requestId,
+      traceparent,
+      operatorUserId,
+      operatorSessionId,
+      integrationId,
+      contractType,
+      contractVersion,
+      changeOperation,
+      activeFreeze,
+      changePayload
+    });
+  };
+
+  const assertNotFrozenForWrite = async ({
+    requestId,
+    traceparent = null,
+    operatorUserId = null,
+    operatorSessionId = null,
+    integrationId = null,
+    contractType = null,
+    contractVersion = null,
+    changeOperation = 'unknown',
+    changePayload = null
+  } = {}) => {
+    const authStore = assertAuthStoreMethod('findActivePlatformIntegrationFreeze');
+    let activeFreezeRecord;
+    try {
+      activeFreezeRecord = await authStore.findActivePlatformIntegrationFreeze();
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+    if (!activeFreezeRecord) {
+      return;
+    }
+    const activeFreeze = mapActiveFreezeRecordForWriteGate({
+      record: activeFreezeRecord
+    });
+    if (!activeFreeze) {
+      throw integrationContractErrors.dependencyUnavailable({
+        reason: 'integration-freeze-state-malformed'
+      });
+    }
+    await recordFreezeChangeBlockedAuditEvent({
+      requestId,
+      traceparent,
+      operatorUserId,
+      operatorSessionId,
+      integrationId,
+      contractType,
+      contractVersion,
+      changeOperation,
+      activeFreeze,
+      changePayload
+    });
+    throw integrationContractErrors.freezeBlocked({
+      freezeId: activeFreeze.freeze_id,
+      frozenAt: activeFreeze.frozen_at
+    });
+  };
+
   const resolvePreauthorizedOperatorContext = ({
     authorizationContext = null,
     expectedPermissionCode = PLATFORM_INTEGRATION_CONTRACT_OPERATE_PERMISSION_CODE
@@ -1365,6 +1581,22 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
         integrationId: normalizedIntegrationId
       });
     }
+    await assertNotFrozenForWrite({
+      requestId: resolvedRequestId,
+      traceparent,
+      operatorUserId: operatorContext.operatorUserId,
+      operatorSessionId: operatorContext.operatorSessionId,
+      integrationId: normalizedIntegrationId,
+      contractType: parsedPayload.contractType,
+      contractVersion: parsedPayload.contractVersion,
+      changeOperation: 'create',
+      changePayload: {
+        integration_id: normalizedIntegrationId,
+        contract_type: parsedPayload.contractType,
+        contract_version: parsedPayload.contractVersion,
+        status: parsedPayload.status
+      }
+    });
     const authStore = assertAuthStoreMethod('createPlatformIntegrationContractVersion');
     let createdRecord;
     try {
@@ -1387,7 +1619,25 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
         }
       });
     } catch (error) {
-      throw mapStoreError(error);
+      const mappedError = mapStoreError(error);
+      await maybeRecordFreezeBlockedAuditEvent({
+        mappedError,
+        requestId: resolvedRequestId,
+        traceparent,
+        operatorUserId: operatorContext.operatorUserId,
+        operatorSessionId: operatorContext.operatorSessionId,
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        contractVersion: parsedPayload.contractVersion,
+        changeOperation: 'create',
+        changePayload: {
+          integration_id: normalizedIntegrationId,
+          contract_type: parsedPayload.contractType,
+          contract_version: parsedPayload.contractVersion,
+          status: parsedPayload.status
+        }
+      });
+      throw mappedError;
     }
     const mapped = mapContractRecord({
       record: createdRecord,
@@ -2056,6 +2306,23 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
       }
     }
 
+    await assertNotFrozenForWrite({
+      requestId: resolvedRequestId,
+      traceparent,
+      operatorUserId: operatorContext.operatorUserId,
+      operatorSessionId: operatorContext.operatorSessionId,
+      integrationId: normalizedIntegrationId,
+      contractType: parsedPayload.contractType,
+      contractVersion: mappedCandidate.contract_version,
+      changeOperation: 'activate',
+      changePayload: {
+        integration_id: normalizedIntegrationId,
+        contract_type: parsedPayload.contractType,
+        baseline_version: baselineVersion,
+        contract_version: mappedCandidate.contract_version
+      }
+    });
+
     const activateStore = assertAuthStoreMethod('activatePlatformIntegrationContractVersion');
     let activatedRecord;
     try {
@@ -2073,7 +2340,25 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
         }
       });
     } catch (error) {
-      throw mapStoreError(error);
+      const mappedError = mapStoreError(error);
+      await maybeRecordFreezeBlockedAuditEvent({
+        mappedError,
+        requestId: resolvedRequestId,
+        traceparent,
+        operatorUserId: operatorContext.operatorUserId,
+        operatorSessionId: operatorContext.operatorSessionId,
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        contractVersion: mappedCandidate.contract_version,
+        changeOperation: 'activate',
+        changePayload: {
+          integration_id: normalizedIntegrationId,
+          contract_type: parsedPayload.contractType,
+          baseline_version: baselineVersion,
+          contract_version: mappedCandidate.contract_version
+        }
+      });
+      throw mappedError;
     }
     const mapped = mapContractRecord({
       record: activatedRecord,

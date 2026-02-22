@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, mkdirSync, symlinkSync, utimesSync, writeFileSync } = require('node:fs');
-const { join, resolve } = require('node:path');
+const { join, relative, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const {
   DEFAULT_GROUP_DEFINITIONS,
@@ -23,6 +23,7 @@ test('default group definitions include required capability groups in stable ord
     'build',
     'test',
     'integration-contract-consistency',
+    'integration-release-window',
     'smoke'
   ]);
 });
@@ -112,6 +113,72 @@ test('classifyFailureReason maps integration contract consistency gate output to
       'unexpected runtime error'
     ),
     'integration-contract-consistency-check-failed'
+  );
+});
+
+test('integration release window group is blocking and bound to FR56/FR58 command contract', () => {
+  const group = DEFAULT_GROUP_DEFINITIONS.find(
+    (candidate) => candidate.id === 'integration-release-window'
+  );
+  assert.ok(group);
+  assert.equal(group.blocking, true);
+  assert.deepEqual(group.fr_mapping, ['FR56', 'FR58']);
+  assert.equal(group.checks.length, 1);
+  assert.equal(
+    group.checks[0].command,
+    'pnpm --dir apps/api check:integration-release-window'
+  );
+});
+
+test('classifyFailureReason maps integration release window gate output to deterministic reason', () => {
+  assert.equal(
+    classifyFailureReason(
+      'integration-release-window',
+      JSON.stringify({
+        gate: 'integration-release-window',
+        blocking: true,
+        checks: [
+          {
+            id: 'freeze.block.integration_create',
+            passed: false,
+            status: 409,
+            detail: 'INT-409-INTEGRATION-FREEZE-BLOCKED'
+          }
+        ]
+      })
+    ),
+    'integration-release-window-blocked'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-release-window',
+      JSON.stringify({
+        gate: 'integration-release-window',
+        blocking: true,
+        checks: [
+          {
+            id: 'release-window.runtime',
+            passed: false,
+            detail: 'socket hang up'
+          }
+        ]
+      })
+    ),
+    'integration-release-window-check-failed'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-release-window',
+      'INT-409-INTEGRATION-FREEZE-ACTIVE'
+    ),
+    'integration-release-window-blocked'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-release-window',
+      'unexpected runtime error'
+    ),
+    'integration-release-window-check-failed'
   );
 });
 
@@ -833,6 +900,52 @@ test('collectEvidenceInputs fails closed when smoke references missing chrome re
   );
   assert.equal(missingChromeIssues.length, 1);
   assert.match(missingChromeIssues[0].details, /references missing chrome report/);
+});
+
+test('collectEvidenceInputs accepts workspace-relative chrome report paths from smoke artifacts', () => {
+  const workspaceRoot = resolveWorkspaceRoot(__dirname);
+  const artifactsRoot = join(workspaceRoot, 'artifacts');
+  mkdirSync(artifactsRoot, { recursive: true });
+  const tempRoot = mkdtempSync(join(artifactsRoot, 'release-gate-evidence-workspace-relative-'));
+  const smokeDir = join(tempRoot, 'smoke');
+  const chromeDir = join(tempRoot, 'chrome-regression');
+  mkdirSync(smokeDir, { recursive: true });
+  mkdirSync(chromeDir, { recursive: true });
+
+  const chromePngPath = join(chromeDir, 'chrome-regression-2026-02-21T00-00-00-000Z.png');
+  const chromeJsonPath = join(chromeDir, 'chrome-regression-2026-02-21T00-00-00-000Z.json');
+  writeFileSync(chromePngPath, Buffer.from('png-binary'));
+  writeFileSync(
+    chromeJsonPath,
+    JSON.stringify({
+      generated_at: '2026-02-21T00:00:01.000Z',
+      screenshots: [chromePngPath]
+    })
+  );
+
+  const workspaceRelativeChromeReport = relative(workspaceRoot, chromeJsonPath).replace(/\\/g, '/');
+  const smokeJsonPath = join(smokeDir, 'smoke-2026-02-21T00-00-00-000Z.json');
+  writeFileSync(
+    smokeJsonPath,
+    JSON.stringify({
+      generated_at: '2026-02-21T00:00:02.000Z',
+      passed: true,
+      chrome_regression: {
+        report: workspaceRelativeChromeReport
+      }
+    })
+  );
+
+  const evidence = collectEvidenceInputs({
+    smokeDir,
+    chromeDir,
+    runStartedAtMs: 0,
+    nowMs: Date.parse('2026-02-21T00:01:00.000Z'),
+    staleWindowMs: 10 * 60 * 1000
+  });
+
+  assert.equal(evidence.chrome_report, workspaceRelativeChromeReport);
+  assert.ok(!evidence.issues.some((issue) => issue.reason === 'missing-chrome-evidence'));
 });
 
 test('collectEvidenceInputs fails closed when smoke references chrome report outside configured chrome directory', () => {

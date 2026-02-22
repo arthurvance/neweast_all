@@ -126,6 +126,8 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/integrations']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}/lifecycle']);
+  assert.ok(payload.paths['/platform/integrations/freeze']);
+  assert.ok(payload.paths['/platform/integrations/freeze/release']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}/contracts']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}/contracts/compatibility-check']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}/contracts/consistency-check']);
@@ -305,6 +307,16 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     )
   );
   assert.ok(
+    payload.paths['/platform/integrations/freeze'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/integrations/freeze/release'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
     payload.paths['/platform/integrations/{integration_id}/recovery/queue/{recovery_id}/replay']
       .post.parameters.some(
         (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
@@ -437,6 +449,18 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.equal(
     payload.paths['/platform/system-configs/{config_key}'].put.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/freeze'].post.parameters.find(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    ).schema.pattern,
+    '^(?=.*\\S)[^,]{1,128}$'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/freeze/release'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
@@ -1479,6 +1503,35 @@ test('openapi endpoint is exposed with auth placeholder', () => {
       'application/problem+json'
     ].examples.system_role_protected.value.error_code,
     'ROLE-403-SYSTEM-ROLE-PROTECTED'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations'].post.responses['409'].content[
+      'application/problem+json'
+    ].examples.freeze_blocked.value.error_code,
+    'INT-409-INTEGRATION-FREEZE-BLOCKED'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/{integration_id}'].patch.responses['409'].content[
+      'application/problem+json'
+    ].examples.freeze_blocked.value.freeze_id,
+    'release-window-2026-02-22'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/{integration_id}/lifecycle'].post.responses['409']
+      .content['application/problem+json'].examples.freeze_blocked.value.error_code,
+    'INT-409-INTEGRATION-FREEZE-BLOCKED'
+  );
+  assert.equal(
+    payload.paths['/platform/integrations/{integration_id}/contracts'].post.responses['409']
+      .content['application/problem+json'].examples.freeze_blocked.value.error_code,
+    'INT-409-INTEGRATION-FREEZE-BLOCKED'
+  );
+  assert.equal(
+    payload.paths[
+      '/platform/integrations/{integration_id}/contracts/{contract_version}/activate'
+    ].post.responses['409'].content['application/problem+json'].examples.freeze_blocked.value
+      .frozen_at,
+    '2026-02-22T09:00:00.000Z'
   );
   assert.equal(
     Object.prototype.hasOwnProperty.call(

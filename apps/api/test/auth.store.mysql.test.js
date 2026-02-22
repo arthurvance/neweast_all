@@ -6,6 +6,7 @@ const createStore = (queryImpl, options = {}) => {
   const {
     userExists = true,
     onUserLookupSql = null,
+    onFreezeGateQuery = null,
     ...storeOptions
   } = options;
   const wrappedQuery = async (sql, params) => {
@@ -23,6 +24,16 @@ const createStore = (queryImpl, options = {}) => {
       return userExists
         ? [{ id: String(params?.[0] || 'u-existing') }]
         : [];
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_freeze_control')
+      && normalizedSql.includes("WHERE status = 'active'")
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      if (typeof onFreezeGateQuery === 'function') {
+        return onFreezeGateQuery(normalizedSql, params);
+      }
+      return [];
     }
     return queryImpl(sql, params);
   };
@@ -6622,6 +6633,55 @@ test('createPlatformIntegrationCatalogEntry persists catalog row and audit event
     auditInsertParams.includes('platform.integration.created'),
     true
   );
+});
+
+test('createPlatformIntegrationCatalogEntry rejects writes when freeze window is active', async () => {
+  let catalogInsertCalled = false;
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO platform_integration_catalog')) {
+      catalogInsertCalled = true;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  }, {
+    onFreezeGateQuery: () => [
+      {
+        freeze_id: 'release-window-store-gate-001',
+        status: 'active',
+        freeze_reason: 'release window active',
+        rollback_reason: null,
+        frozen_at: '2026-02-22T00:00:00.000Z',
+        released_at: null,
+        frozen_by_user_id: 'platform-operator',
+        released_by_user_id: null,
+        request_id: 'req-release-window-store-gate',
+        traceparent: null,
+        created_at: '2026-02-22T00:00:00.000Z',
+        updated_at: '2026-02-22T00:00:00.000Z'
+      }
+    ]
+  });
+
+  await assert.rejects(
+    () =>
+      store.createPlatformIntegrationCatalogEntry({
+        integrationId: 'store_gate_blocked_target',
+        code: 'STORE_GATE_BLOCKED_TARGET',
+        name: 'Store gate blocked target',
+        direction: 'outbound',
+        protocol: 'https',
+        authMode: 'hmac'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_INTEGRATION_FREEZE_ACTIVE_CONFLICT');
+      assert.equal(error?.freezeId, 'release-window-store-gate-001');
+      assert.equal(error?.frozenAt, '2026-02-22T00:00:00.000Z');
+      return true;
+    }
+  );
+  assert.equal(catalogInsertCalled, false);
 });
 
 test('createPlatformIntegrationCatalogEntry maps duplicate integration_id to ER_DUP_ENTRY with conflict target', async () => {

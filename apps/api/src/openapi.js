@@ -51,10 +51,16 @@ const PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM = [
   'dlq',
   'replayed'
 ];
+const PLATFORM_INTEGRATION_FREEZE_STATUS_ENUM = [
+  'active',
+  'released'
+];
 const PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN =
   '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN = '^[A-Fa-f0-9]{64}$';
 const PLATFORM_INTEGRATION_RECOVERY_ID_PATTERN =
+  '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
+const PLATFORM_INTEGRATION_FREEZE_ID_PATTERN =
   '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
 const TENANT_MEMBERSHIP_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_USER_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]+$';
@@ -5675,6 +5681,20 @@ const buildOpenApiSpec = () => {
                       traceparent: null,
                       retryable: false
                     }
+                  },
+                  freeze_blocked: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '发布冻结窗口生效，当前集成变更操作已阻断',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-BLOCKED',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      freeze_id: 'release-window-2026-02-22',
+                      frozen_at: '2026-02-22T09:00:00.000Z'
+                    }
                   }
                 }
               }
@@ -5937,6 +5957,20 @@ const buildOpenApiSpec = () => {
                       traceparent: null,
                       retryable: false
                     }
+                  },
+                  freeze_blocked: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '发布冻结窗口生效，当前集成变更操作已阻断',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-BLOCKED',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      freeze_id: 'release-window-2026-02-22',
+                      frozen_at: '2026-02-22T09:00:00.000Z'
+                    }
                   }
                 }
               }
@@ -6074,6 +6108,20 @@ const buildOpenApiSpec = () => {
                       request_id: 'request_id_unset',
                       traceparent: null,
                       retryable: false
+                    }
+                  },
+                  freeze_blocked: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '发布冻结窗口生效，当前集成变更操作已阻断',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-BLOCKED',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      freeze_id: 'release-window-2026-02-22',
+                      frozen_at: '2026-02-22T09:00:00.000Z'
                     }
                   }
                 }
@@ -6302,7 +6350,47 @@ const buildOpenApiSpec = () => {
             description: 'Contract version conflict or idempotency payload mismatch',
             content: {
               'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  version_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '契约版本冲突，请调整 contract_version 后重试',
+                      error_code: 'integration_contract_conflict',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  freeze_blocked: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '发布冻结窗口生效，当前契约变更操作已阻断',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-BLOCKED',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      freeze_id: 'release-window-2026-02-22',
+                      frozen_at: '2026-02-22T09:00:00.000Z'
+                    }
+                  }
+                }
               }
             }
           },
@@ -6785,6 +6873,20 @@ const buildOpenApiSpec = () => {
                       traceparent: null,
                       retryable: false
                     }
+                  },
+                  freeze_blocked: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '发布冻结窗口生效，当前契约变更操作已阻断',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-BLOCKED',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      freeze_id: 'release-window-2026-02-22',
+                      frozen_at: '2026-02-22T09:00:00.000Z'
+                    }
                   }
                 }
               }
@@ -7130,6 +7232,302 @@ const buildOpenApiSpec = () => {
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/freeze': {
+      get: {
+        summary: 'Get platform integration freeze status and latest freeze window',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Freeze status loaded',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformIntegrationFreezeStatusResponse'
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Freeze governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '集成冻结治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'dependency-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        summary: 'Activate platform integration freeze window',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ActivatePlatformIntegrationFreezeRequest'
+              },
+              examples: {
+                activate_freeze: {
+                  value: {
+                    freeze_id: 'release-window-2026-02-22',
+                    freeze_reason: 'production release window opened'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Freeze window activated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationFreezeWindow' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'INT-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Freeze already active or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  freeze_already_active: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '集成清单已处于冻结窗口，请先解冻后再重复冻结',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-ACTIVE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      freeze_id: 'release-window-2026-02-22',
+                      frozen_at: '2026-02-22T00:00:00.000Z'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Freeze governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/freeze/release': {
+      post: {
+        summary: 'Release current platform integration freeze window',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ReleasePlatformIntegrationFreezeRequest'
+              },
+              examples: {
+                release_freeze: {
+                  value: {
+                    rollback_reason: 'release validation completed'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Freeze window released',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformIntegrationFreezeReleaseResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'INT-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'No active freeze window or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  release_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '当前不存在 active 冻结窗口，无法执行解冻',
+                      error_code: 'INT-409-INTEGRATION-FREEZE-RELEASE-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Freeze governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
               }
             }
           }
@@ -10225,6 +10623,173 @@ const buildOpenApiSpec = () => {
           replayed: { type: 'boolean' },
           request_id: { type: 'string' }
         }
+      },
+      ActivatePlatformIntegrationFreezeRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['freeze_reason'],
+        properties: {
+          freeze_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_FREEZE_ID_PATTERN
+          },
+          freeze_reason: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          }
+        }
+      },
+      ReleasePlatformIntegrationFreezeRequest: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          rollback_reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          }
+        }
+      },
+      PlatformIntegrationFreezeWindow: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'freeze_id',
+          'status',
+          'freeze_reason',
+          'frozen_at',
+          'request_id',
+          'created_at',
+          'updated_at'
+        ],
+        properties: {
+          freeze_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_FREEZE_ID_PATTERN
+          },
+          status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_FREEZE_STATUS_ENUM
+          },
+          freeze_reason: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          },
+          rollback_reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          },
+          frozen_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          released_at: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          },
+          frozen_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          released_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          request_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          traceparent: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updated_at: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      PlatformIntegrationFreezeStatusResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'frozen',
+          'active_freeze',
+          'latest_freeze',
+          'request_id'
+        ],
+        properties: {
+          frozen: { type: 'boolean' },
+          active_freeze: {
+            oneOf: [
+              {
+                $ref: '#/components/schemas/PlatformIntegrationFreezeWindow'
+              },
+              {
+                type: 'null'
+              }
+            ]
+          },
+          latest_freeze: {
+            oneOf: [
+              {
+                $ref: '#/components/schemas/PlatformIntegrationFreezeWindow'
+              },
+              {
+                type: 'null'
+              }
+            ]
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformIntegrationFreezeReleaseResponse: {
+        allOf: [
+          { $ref: '#/components/schemas/PlatformIntegrationFreezeWindow' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['previous_status', 'current_status', 'released'],
+            properties: {
+              previous_status: {
+                type: 'string',
+                enum: PLATFORM_INTEGRATION_FREEZE_STATUS_ENUM
+              },
+              current_status: {
+                type: 'string',
+                enum: PLATFORM_INTEGRATION_FREEZE_STATUS_ENUM
+              },
+              released: { type: 'boolean' }
+            }
+          }
+        ]
       },
       ReplacePlatformRoleFactsRequest: {
         type: 'object',

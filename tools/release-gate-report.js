@@ -44,6 +44,8 @@ const MAX_EVIDENCE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const COMMAND_MAX_BUFFER_BYTES = 200 * 1024 * 1024;
 const ISO_TIMESTAMP_WITH_TIMEZONE_PATTERN = /^(?:\d{4}-\d{2}-\d{2})T(?:\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?(?:[Zz]|[+-]\d{2}:\d{2})$/;
 const CONSISTENCY_BLOCKING_REASON_PATTERN = /missing_latest_compatibility_check|latest_compatibility_incompatible|baseline_version_mismatch|candidate_status_invalid/;
+const RELEASE_WINDOW_BLOCKING_REASON_PATTERN =
+  /int-409-integration-freeze-blocked|int-409-integration-freeze-active|int-409-integration-freeze-release-conflict/;
 const SMOKE_REPORT_FILE_PATTERN = /^smoke-.*\.json$/;
 const CHROME_REPORT_FILE_PATTERN = /^chrome-regression-.*\.json$/;
 const CHROME_SCREENSHOT_FILE_PATTERN = /^chrome-regression-.*\.png$/;
@@ -98,6 +100,19 @@ const DEFAULT_GROUP_DEFINITIONS = Object.freeze([
         id: 'integration-contract-consistency.api',
         name: 'Integration contract consistency check',
         command: 'pnpm --dir apps/api check:integration-contract-consistency'
+      })
+    ])
+  }),
+  Object.freeze({
+    id: 'integration-release-window',
+    name: 'Integration Release Window Freeze Gate',
+    blocking: true,
+    fr_mapping: Object.freeze(['FR56', 'FR58']),
+    checks: Object.freeze([
+      Object.freeze({
+        id: 'integration-release-window.api',
+        name: 'Integration release window freeze gate check',
+        command: 'pnpm --dir apps/api check:integration-release-window'
       })
     ])
   }),
@@ -289,6 +304,49 @@ const isConsistencyBlockedCheck = (check = {}) => {
   return status === 409 || CONSISTENCY_BLOCKING_REASON_PATTERN.test(detail);
 };
 
+const parseReleaseWindowGateReportFromOutput = (output) => {
+  const text = String(output || '').trim();
+  if (!text) {
+    return null;
+  }
+  const isReleaseWindowGateReport = (candidate) =>
+    candidate
+    && typeof candidate === 'object'
+    && Array.isArray(candidate.checks)
+    && (
+      candidate.gate === 'integration-release-window'
+      || Object.prototype.hasOwnProperty.call(candidate, 'blocking')
+    );
+  const direct = parseJsonSafelyFromString(text);
+  if (isReleaseWindowGateReport(direct)) {
+    return direct;
+  }
+  const lines = text.split('\n');
+  for (let start = lines.length - 1; start >= 0; start -= 1) {
+    if (!String(lines[start] || '').trim().startsWith('{')) {
+      continue;
+    }
+    const candidate = parseJsonSafelyFromString(lines.slice(start).join('\n'));
+    if (isReleaseWindowGateReport(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const isReleaseWindowRuntimeCheck = (check = {}) =>
+  String(check.id || check.check_id || '').trim().toLowerCase() === 'release-window.runtime';
+
+const isReleaseWindowBlockedCheck = (check = {}) => {
+  const checkId = String(check.id || check.check_id || '').trim().toLowerCase();
+  if (checkId === 'release-window.runtime') {
+    return false;
+  }
+  const status = Number(check.status);
+  const detail = String(check.detail || '').toLowerCase();
+  return status === 409 || RELEASE_WINDOW_BLOCKING_REASON_PATTERN.test(detail);
+};
+
 const classifyFailureReason = (groupId, output) => {
   const normalized = String(output || '').toLowerCase();
   if (groupId === 'lint') {
@@ -342,6 +400,37 @@ const classifyFailureReason = (groupId, output) => {
       return 'integration-contract-consistency-blocked';
     }
     return 'integration-contract-consistency-check-failed';
+  }
+  if (groupId === 'integration-release-window') {
+    const parsedReport = parseReleaseWindowGateReportFromOutput(output);
+    if (parsedReport) {
+      const failedChecks = parsedReport.checks.filter((check) => {
+        if (!check || typeof check !== 'object') {
+          return true;
+        }
+        const passedFlag = check.passed;
+        const status = String(check.status || '').toLowerCase();
+        const explicitlyPassed = passedFlag === true || status === 'passed';
+        return !explicitlyPassed;
+      });
+      if (failedChecks.some((check) => isReleaseWindowRuntimeCheck(check))) {
+        return 'integration-release-window-check-failed';
+      }
+      if (
+        failedChecks.length > 0
+        && failedChecks.every((check) => isReleaseWindowBlockedCheck(check))
+      ) {
+        return 'integration-release-window-blocked';
+      }
+      return 'integration-release-window-check-failed';
+    }
+    if (normalized.includes('release-window.runtime')) {
+      return 'integration-release-window-check-failed';
+    }
+    if (RELEASE_WINDOW_BLOCKING_REASON_PATTERN.test(normalized)) {
+      return 'integration-release-window-blocked';
+    }
+    return 'integration-release-window-check-failed';
   }
   if (groupId === 'smoke') {
     if (normalized.includes('docker environment unavailable')) {
@@ -492,13 +581,34 @@ const resolvePossiblyRelativePath = (rawPath, referenceFilePath) => {
   if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {
     return null;
   }
-  if (isAbsolute(rawPath)) {
-    return rawPath;
+  const normalizedRawPath = rawPath.trim();
+  if (isAbsolute(normalizedRawPath)) {
+    return normalizedRawPath;
   }
+
+  const workspaceRelativeCandidate = resolve(WORKSPACE_ROOT, normalizedRawPath);
+  if (existsSync(workspaceRelativeCandidate)) {
+    return workspaceRelativeCandidate;
+  }
+
   if (referenceFilePath) {
-    return resolve(dirname(referenceFilePath), rawPath);
+    const referenceRelativeCandidate = resolve(dirname(referenceFilePath), normalizedRawPath);
+    if (existsSync(referenceRelativeCandidate)) {
+      return referenceRelativeCandidate;
+    }
+
+    // Explicitly relative segments should preserve file-relative resolution.
+    if (
+      normalizedRawPath === '.'
+      || normalizedRawPath === '..'
+      || normalizedRawPath.startsWith('./')
+      || normalizedRawPath.startsWith('../')
+    ) {
+      return referenceRelativeCandidate;
+    }
   }
-  return resolve(WORKSPACE_ROOT, rawPath);
+
+  return workspaceRelativeCandidate;
 };
 
 const resolveRealPathSafe = (inputPath) => {
