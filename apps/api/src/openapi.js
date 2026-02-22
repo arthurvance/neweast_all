@@ -32,6 +32,20 @@ const PLATFORM_INTEGRATION_ID_PATTERN = '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1
 const PLATFORM_INTEGRATION_CODE_PATTERN = '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_INTEGRATION_LIFECYCLE_ENUM = ['draft', 'active', 'paused', 'retired'];
 const PLATFORM_INTEGRATION_DIRECTION_ENUM = ['inbound', 'outbound', 'bidirectional'];
+const PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM = ['openapi', 'event'];
+const PLATFORM_INTEGRATION_CONTRACT_STATUS_ENUM = [
+  'candidate',
+  'active',
+  'deprecated',
+  'retired'
+];
+const PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT_ENUM = [
+  'compatible',
+  'incompatible'
+];
+const PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN =
+  '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
+const PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN = '^[A-Fa-f0-9]{64}$';
 const TENANT_MEMBERSHIP_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_USER_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]+$';
 const PLATFORM_USER_ID_MAX_LENGTH = 64;
@@ -6103,6 +6117,495 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/integrations/{integration_id}/contracts': {
+      get: {
+        summary: 'List platform integration contract versions',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'query',
+            name: 'contract_type',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+            }
+          },
+          {
+            in: 'query',
+            name: 'status',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: PLATFORM_INTEGRATION_CONTRACT_STATUS_ENUM
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Contract versions listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationContractListResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid integration_id or query filters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration catalog entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Contract governance dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        summary: 'Create platform integration contract version',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CreatePlatformIntegrationContractRequest' },
+              examples: {
+                create_contract: {
+                  value: {
+                    contract_type: 'openapi',
+                    contract_version: 'v2026.02.22',
+                    schema_ref: 's3://contracts/erp/v2026.02.22/openapi.json',
+                    schema_checksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    status: 'candidate',
+                    is_backward_compatible: true,
+                    compatibility_notes: '新增可选字段，不影响旧调用方'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Contract version created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationContractItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration catalog entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Contract version conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Contract governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/{integration_id}/contracts/compatibility-check': {
+      post: {
+        summary: 'Evaluate compatibility between baseline and candidate contract versions',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/EvaluatePlatformIntegrationContractCompatibilityRequest'
+              },
+              examples: {
+                evaluate: {
+                  value: {
+                    contract_type: 'openapi',
+                    baseline_version: 'v2026.01.15',
+                    candidate_version: 'v2026.02.22',
+                    diff_summary: {
+                      breaking_changes: []
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Compatibility evaluated',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformIntegrationContractCompatibilityCheckResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration or contract version not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  contract_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标契约版本不存在',
+                      error_code: 'integration_contract_not_found',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Contract governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/{integration_id}/contracts/{contract_version}/activate': {
+      post: {
+        summary: 'Activate contract version after compatibility validation',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'path',
+            name: 'contract_version',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ActivatePlatformIntegrationContractRequest'
+              },
+              examples: {
+                activate: {
+                  value: {
+                    contract_type: 'openapi',
+                    baseline_version: 'v2026.01.15'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Contract activated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ActivatePlatformIntegrationContractResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration or contract version not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  contract_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标契约版本不存在',
+                      error_code: 'integration_contract_not_found',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Activation blocked or incompatible contract version or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  incompatible: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '候选版本与基线版本不兼容，禁止激活',
+                      error_code: 'integration_contract_incompatible',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  activation_blocked: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '契约版本激活被阻断',
+                      error_code: 'integration_contract_activation_blocked',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Contract governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/users': {
       post: {
         summary: 'Create or reuse platform user by phone',
@@ -8588,6 +9091,301 @@ const buildOpenApiSpec = () => {
                 enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
               },
               effective_invocation_enabled: { type: 'boolean' }
+            }
+          }
+        ]
+      },
+      PlatformIntegrationContractItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'integration_id',
+          'contract_type',
+          'contract_version',
+          'schema_ref',
+          'schema_checksum',
+          'status',
+          'is_backward_compatible',
+          'created_at',
+          'updated_at',
+          'request_id'
+        ],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          contract_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          schema_ref: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          schema_checksum: {
+            type: 'string',
+            minLength: 64,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN
+          },
+          status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_STATUS_ENUM
+          },
+          is_backward_compatible: { type: 'boolean' },
+          compatibility_notes: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 4096,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,4096}$'
+          },
+          created_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          updated_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updated_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformIntegrationContractListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'integration_id',
+          'lifecycle_status',
+          'contracts',
+          'active_contracts',
+          'request_id'
+        ],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          lifecycle_status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+          },
+          contracts: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/PlatformIntegrationContractItem' }
+          },
+          active_contracts: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/PlatformIntegrationContractItem' }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      CreatePlatformIntegrationContractRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'contract_type',
+          'contract_version',
+          'schema_ref',
+          'schema_checksum'
+        ],
+        properties: {
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          contract_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          schema_ref: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          schema_checksum: {
+            type: 'string',
+            minLength: 64,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN
+          },
+          status: {
+            type: 'string',
+            enum: ['candidate', 'deprecated', 'retired'],
+            default: 'candidate'
+          },
+          is_backward_compatible: {
+            type: 'boolean',
+            default: false
+          },
+          compatibility_notes: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 4096,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,4096}$'
+          }
+        }
+      },
+      EvaluatePlatformIntegrationContractCompatibilityRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'contract_type',
+          'baseline_version',
+          'candidate_version'
+        ],
+        properties: {
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          baseline_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          candidate_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          breaking_change_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          diff_summary: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          }
+        }
+      },
+      PlatformIntegrationContractCompatibilityCheckResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'integration_id',
+          'contract_type',
+          'baseline_version',
+          'candidate_version',
+          'evaluation_result',
+          'breaking_change_count',
+          'request_id',
+          'checked_at'
+        ],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          baseline_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          candidate_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          evaluation_result: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT_ENUM
+          },
+          breaking_change_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          diff_summary: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          request_id: { type: 'string' },
+          checked_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          checked_at: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      ActivatePlatformIntegrationContractRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['contract_type'],
+        properties: {
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          baseline_version: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          }
+        }
+      },
+      ActivatePlatformIntegrationContractResponse: {
+        allOf: [
+          { $ref: '#/components/schemas/PlatformIntegrationContractItem' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['previous_status', 'current_status'],
+            properties: {
+              previous_status: {
+                type: 'string',
+                enum: PLATFORM_INTEGRATION_CONTRACT_STATUS_ENUM
+              },
+              current_status: {
+                type: 'string',
+                enum: PLATFORM_INTEGRATION_CONTRACT_STATUS_ENUM
+              }
             }
           }
         ]

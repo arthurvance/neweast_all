@@ -30,6 +30,20 @@ const VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS = new Set([
   'paused',
   'retired'
 ]);
+const VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE = new Set([
+  'openapi',
+  'event'
+]);
+const VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS = new Set([
+  'candidate',
+  'active',
+  'deprecated',
+  'retired'
+]);
+const VALID_PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT = new Set([
+  'compatible',
+  'incompatible'
+]);
 const MAX_PLATFORM_INTEGRATION_ID_LENGTH = 64;
 const MAX_PLATFORM_INTEGRATION_CODE_LENGTH = 64;
 const MAX_PLATFORM_INTEGRATION_NAME_LENGTH = 128;
@@ -40,6 +54,12 @@ const MAX_PLATFORM_INTEGRATION_BASE_URL_LENGTH = 512;
 const MAX_PLATFORM_INTEGRATION_VERSION_STRATEGY_LENGTH = 128;
 const MAX_PLATFORM_INTEGRATION_RUNBOOK_URL_LENGTH = 512;
 const MAX_PLATFORM_INTEGRATION_LIFECYCLE_REASON_LENGTH = 256;
+const MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH = 64;
+const MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_REF_LENGTH = 512;
+const MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_CHECKSUM_LENGTH = 64;
+const MAX_PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_NOTES_LENGTH = 4096;
+const MAX_PLATFORM_INTEGRATION_CONTRACT_DIFF_SUMMARY_LENGTH = 65535;
+const MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH = 128;
 const PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS = 3000;
 const MAX_PLATFORM_INTEGRATION_TIMEOUT_MS = 300000;
 const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
@@ -189,6 +209,17 @@ const normalizePlatformIntegrationDirection = (direction) =>
   String(direction || '').trim().toLowerCase();
 const normalizePlatformIntegrationLifecycleStatus = (status) =>
   String(status || '').trim().toLowerCase();
+const normalizePlatformIntegrationContractType = (contractType) =>
+  String(contractType || '').trim().toLowerCase();
+const normalizePlatformIntegrationContractVersion = (contractVersion) =>
+  String(contractVersion || '').trim();
+const normalizePlatformIntegrationContractStatus = (status) =>
+  String(status || '').trim().toLowerCase();
+const normalizePlatformIntegrationContractEvaluationResult = (evaluationResult) =>
+  String(evaluationResult || '').trim().toLowerCase();
+const normalizePlatformIntegrationContractSchemaChecksum = (schemaChecksum) =>
+  String(schemaChecksum || '').trim().toLowerCase();
+const PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
 const normalizePlatformIntegrationOptionalText = (value) => {
   if (value === null || value === undefined) {
     return null;
@@ -235,6 +266,22 @@ const normalizePlatformIntegrationJsonForStorage = ({
     }
   }
   return undefined;
+};
+const createPlatformIntegrationContractActivationBlockedError = ({
+  integrationId = null,
+  contractType = null,
+  contractVersion = null,
+  reason = 'activation-blocked'
+} = {}) => {
+  const error = new Error('platform integration contract activation blocked');
+  error.code = 'ERR_PLATFORM_INTEGRATION_CONTRACT_ACTIVATION_BLOCKED';
+  error.integrationId = normalizePlatformIntegrationId(integrationId) || null;
+  error.contractType =
+    normalizePlatformIntegrationContractType(contractType) || null;
+  error.contractVersion =
+    normalizePlatformIntegrationContractVersion(contractVersion) || null;
+  error.reason = String(reason || 'activation-blocked').trim().toLowerCase();
+  return error;
 };
 const isPlatformIntegrationLifecycleTransitionAllowed = ({
   previousStatus,
@@ -501,6 +548,142 @@ const toPlatformIntegrationCatalogRecord = (row) => {
     updatedAt: row.updated_at instanceof Date
       ? row.updated_at.toISOString()
       : String(row.updated_at || '')
+  };
+};
+
+const toPlatformIntegrationContractVersionRecord = (row) => {
+  if (!row) {
+    return null;
+  }
+  const integrationId = normalizePlatformIntegrationId(row.integration_id);
+  const contractType = normalizePlatformIntegrationContractType(row.contract_type);
+  const contractVersion = normalizePlatformIntegrationContractVersion(
+    row.contract_version
+  );
+  const schemaRef = normalizePlatformIntegrationOptionalText(row.schema_ref);
+  const schemaChecksum = normalizePlatformIntegrationContractSchemaChecksum(
+    row.schema_checksum
+  );
+  const status = normalizePlatformIntegrationContractStatus(row.status);
+  const compatibilityNotes = normalizePlatformIntegrationOptionalText(
+    row.compatibility_notes
+  );
+  const createdByUserId = normalizePlatformIntegrationOptionalText(
+    row.created_by_user_id
+  );
+  const updatedByUserId = normalizePlatformIntegrationOptionalText(
+    row.updated_by_user_id
+  );
+  const createdAt = row.created_at instanceof Date
+    ? row.created_at.toISOString()
+    : String(row.created_at || '');
+  const updatedAt = row.updated_at instanceof Date
+    ? row.updated_at.toISOString()
+    : String(row.updated_at || '');
+  if (
+    !isValidPlatformIntegrationId(integrationId)
+    || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(contractType)
+    || !contractVersion
+    || contractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+    || !schemaRef
+    || schemaRef.length > MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_REF_LENGTH
+    || !schemaChecksum
+    || schemaChecksum.length > MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_CHECKSUM_LENGTH
+    || !PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN.test(schemaChecksum)
+    || !VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS.has(status)
+    || (
+      compatibilityNotes !== null
+      && compatibilityNotes.length > MAX_PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_NOTES_LENGTH
+    )
+    || !createdAt
+    || !updatedAt
+  ) {
+    return null;
+  }
+  return {
+    contractId: Number(row.contract_id),
+    integrationId,
+    contractType,
+    contractVersion,
+    schemaRef,
+    schemaChecksum,
+    status,
+    isBackwardCompatible: toBoolean(row.is_backward_compatible),
+    compatibilityNotes,
+    createdByUserId,
+    updatedByUserId,
+    createdAt,
+    updatedAt
+  };
+};
+
+const toPlatformIntegrationContractCompatibilityCheckRecord = (row) => {
+  if (!row) {
+    return null;
+  }
+  const integrationId = normalizePlatformIntegrationId(row.integration_id);
+  const contractType = normalizePlatformIntegrationContractType(row.contract_type);
+  const baselineVersion = normalizePlatformIntegrationContractVersion(
+    row.baseline_version
+  );
+  const candidateVersion = normalizePlatformIntegrationContractVersion(
+    row.candidate_version
+  );
+  const evaluationResult = normalizePlatformIntegrationContractEvaluationResult(
+    row.evaluation_result
+  );
+  const requestId = String(row.request_id || '').trim();
+  const checkedByUserId = normalizePlatformIntegrationOptionalText(
+    row.checked_by_user_id
+  );
+  const checkedAt = row.checked_at instanceof Date
+    ? row.checked_at.toISOString()
+    : String(row.checked_at || '');
+  const breakingChangeCount = Number(row.breaking_change_count);
+  const diffSummary = safeParseJsonValue(row.diff_summary);
+  if (
+    !isValidPlatformIntegrationId(integrationId)
+    || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(contractType)
+    || !baselineVersion
+    || baselineVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+    || !candidateVersion
+    || candidateVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+    || !VALID_PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT.has(evaluationResult)
+    || !Number.isInteger(breakingChangeCount)
+    || breakingChangeCount < 0
+    || !requestId
+    || requestId.length > MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH
+    || !checkedAt
+    || (
+      row.diff_summary !== null
+      && row.diff_summary !== undefined
+      && diffSummary === null
+      && String(row.diff_summary || '').trim() !== ''
+    )
+  ) {
+    return null;
+  }
+  const normalizedDiffSummary = diffSummary === null
+    ? null
+    : JSON.stringify(diffSummary);
+  if (
+    normalizedDiffSummary !== null
+    && normalizedDiffSummary.length > MAX_PLATFORM_INTEGRATION_CONTRACT_DIFF_SUMMARY_LENGTH
+  ) {
+    return null;
+  }
+  return {
+    checkId: Number(row.check_id),
+    integrationId,
+    contractType,
+    baselineVersion,
+    candidateVersion,
+    evaluationResult,
+    breakingChangeCount,
+    diffSummary,
+    requestId,
+    checkedByUserId,
+    checkedAt
   };
 };
 
@@ -3949,6 +4132,791 @@ const createMySqlAuthStore = ({
               previousStatus: existing.lifecycleStatus,
               currentStatus: updated.lifecycleStatus,
               effectiveInvocationEnabled: updated.lifecycleStatus === 'active',
+              auditRecorded
+            };
+          })
+      }),
+
+    listPlatformIntegrationContractVersions: async ({
+      integrationId,
+      contractType = null,
+      status = null
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      if (!isValidPlatformIntegrationId(normalizedIntegrationId)) {
+        return [];
+      }
+      const normalizedContractType = contractType === null || contractType === undefined
+        ? null
+        : normalizePlatformIntegrationContractType(contractType);
+      if (
+        normalizedContractType !== null
+        && !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      ) {
+        throw new Error('listPlatformIntegrationContractVersions received invalid contractType');
+      }
+      const normalizedStatus = status === null || status === undefined
+        ? null
+        : normalizePlatformIntegrationContractStatus(status);
+      if (
+        normalizedStatus !== null
+        && !VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS.has(normalizedStatus)
+      ) {
+        throw new Error('listPlatformIntegrationContractVersions received invalid status');
+      }
+      const whereClauses = ['integration_id = ?'];
+      const queryArgs = [normalizedIntegrationId];
+      if (normalizedContractType !== null) {
+        whereClauses.push('contract_type = ?');
+        queryArgs.push(normalizedContractType);
+      }
+      if (normalizedStatus !== null) {
+        whereClauses.push('status = ?');
+        queryArgs.push(normalizedStatus);
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT contract_id,
+                 integration_id,
+                 contract_type,
+                 contract_version,
+                 schema_ref,
+                 schema_checksum,
+                 status,
+                 is_backward_compatible,
+                 compatibility_notes,
+                 created_by_user_id,
+                 updated_by_user_id,
+                 created_at,
+                 updated_at
+          FROM platform_integration_contract_versions
+          WHERE ${whereClauses.join(' AND ')}
+          ORDER BY created_at ASC, contract_id ASC
+        `,
+        queryArgs
+      );
+      if (!Array.isArray(rows)) {
+        throw new Error('listPlatformIntegrationContractVersions result malformed');
+      }
+      const normalizedRows = rows.map((row) =>
+        toPlatformIntegrationContractVersionRecord(row)
+      );
+      if (normalizedRows.some((row) => !row)) {
+        throw new Error('listPlatformIntegrationContractVersions result malformed');
+      }
+      return normalizedRows;
+    },
+
+    findPlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType,
+      contractVersion
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+      const normalizedContractVersion =
+        normalizePlatformIntegrationContractVersion(contractVersion);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+        || !normalizedContractVersion
+        || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      ) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT contract_id,
+                 integration_id,
+                 contract_type,
+                 contract_version,
+                 schema_ref,
+                 schema_checksum,
+                 status,
+                 is_backward_compatible,
+                 compatibility_notes,
+                 created_by_user_id,
+                 updated_by_user_id,
+                 created_at,
+                 updated_at
+          FROM platform_integration_contract_versions
+          WHERE integration_id = ?
+            AND contract_type = ?
+            AND contract_version = ?
+          LIMIT 1
+        `,
+        [
+          normalizedIntegrationId,
+          normalizedContractType,
+          normalizedContractVersion
+        ]
+      );
+      if (!Array.isArray(rows)) {
+        throw new Error('findPlatformIntegrationContractVersion result malformed');
+      }
+      if (rows.length === 0) {
+        return null;
+      }
+      const normalizedRow = toPlatformIntegrationContractVersionRecord(rows[0]);
+      if (!normalizedRow) {
+        throw new Error('findPlatformIntegrationContractVersion result malformed');
+      }
+      return normalizedRow;
+    },
+
+    findLatestActivePlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      ) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT contract_id,
+                 integration_id,
+                 contract_type,
+                 contract_version,
+                 schema_ref,
+                 schema_checksum,
+                 status,
+                 is_backward_compatible,
+                 compatibility_notes,
+                 created_by_user_id,
+                 updated_by_user_id,
+                 created_at,
+                 updated_at
+          FROM platform_integration_contract_versions
+          WHERE integration_id = ?
+            AND contract_type = ?
+            AND status = 'active'
+          ORDER BY updated_at DESC, contract_id DESC
+          LIMIT 1
+        `,
+        [
+          normalizedIntegrationId,
+          normalizedContractType
+        ]
+      );
+      if (!Array.isArray(rows)) {
+        throw new Error('findLatestActivePlatformIntegrationContractVersion result malformed');
+      }
+      if (rows.length === 0) {
+        return null;
+      }
+      const normalizedRow = toPlatformIntegrationContractVersionRecord(rows[0]);
+      if (!normalizedRow) {
+        throw new Error('findLatestActivePlatformIntegrationContractVersion result malformed');
+      }
+      return normalizedRow;
+    },
+
+    createPlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType,
+      contractVersion,
+      schemaRef,
+      schemaChecksum,
+      status = 'candidate',
+      isBackwardCompatible = false,
+      compatibilityNotes = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) =>
+      executeWithDeadlockRetry({
+        operation: 'createPlatformIntegrationContractVersion',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+            const normalizedContractType =
+              normalizePlatformIntegrationContractType(contractType);
+            const normalizedContractVersion =
+              normalizePlatformIntegrationContractVersion(contractVersion);
+            const normalizedSchemaRef = normalizePlatformIntegrationOptionalText(schemaRef);
+            const normalizedSchemaChecksum =
+              normalizePlatformIntegrationContractSchemaChecksum(schemaChecksum);
+            const normalizedStatus = normalizePlatformIntegrationContractStatus(status);
+            const normalizedCompatibilityNotes =
+              normalizePlatformIntegrationOptionalText(compatibilityNotes);
+            if (
+              !isValidPlatformIntegrationId(normalizedIntegrationId)
+              || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+              || !normalizedContractVersion
+              || normalizedContractVersion.length
+                > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+              || !normalizedSchemaRef
+              || normalizedSchemaRef.length
+                > MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_REF_LENGTH
+              || !normalizedSchemaChecksum
+              || normalizedSchemaChecksum.length
+                > MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_CHECKSUM_LENGTH
+              || !PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN.test(normalizedSchemaChecksum)
+              || !VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS.has(normalizedStatus)
+              || typeof isBackwardCompatible !== 'boolean'
+              || (
+                normalizedCompatibilityNotes !== null
+                && normalizedCompatibilityNotes.length
+                  > MAX_PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_NOTES_LENGTH
+              )
+            ) {
+              throw new Error('createPlatformIntegrationContractVersion received invalid input');
+            }
+            try {
+              await tx.query(
+                `
+                  INSERT INTO platform_integration_contract_versions (
+                    integration_id,
+                    contract_type,
+                    contract_version,
+                    schema_ref,
+                    schema_checksum,
+                    status,
+                    is_backward_compatible,
+                    compatibility_notes,
+                    created_by_user_id,
+                    updated_by_user_id
+                  )
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `,
+                [
+                  normalizedIntegrationId,
+                  normalizedContractType,
+                  normalizedContractVersion,
+                  normalizedSchemaRef,
+                  normalizedSchemaChecksum,
+                  normalizedStatus,
+                  isBackwardCompatible ? 1 : 0,
+                  normalizedCompatibilityNotes,
+                  normalizePlatformIntegrationOptionalText(operatorUserId),
+                  normalizePlatformIntegrationOptionalText(operatorUserId)
+                ]
+              );
+            } catch (error) {
+              if (isDuplicateEntryError(error)) {
+                const duplicateError = new Error(
+                  'duplicate platform integration contract version'
+                );
+                duplicateError.code = 'ER_DUP_ENTRY';
+                duplicateError.errno = MYSQL_DUP_ENTRY_ERRNO;
+                duplicateError.platformIntegrationContractConflictTarget = 'contract_version';
+                throw duplicateError;
+              }
+              throw error;
+            }
+            const rows = await tx.query(
+              `
+                SELECT contract_id,
+                       integration_id,
+                       contract_type,
+                       contract_version,
+                       schema_ref,
+                       schema_checksum,
+                       status,
+                       is_backward_compatible,
+                       compatibility_notes,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_integration_contract_versions
+                WHERE integration_id = ?
+                  AND contract_type = ?
+                  AND contract_version = ?
+                LIMIT 1
+              `,
+              [
+                normalizedIntegrationId,
+                normalizedContractType,
+                normalizedContractVersion
+              ]
+            );
+            const createdRecord = toPlatformIntegrationContractVersionRecord(
+              rows?.[0] || null
+            );
+            if (!createdRecord) {
+              throw new Error('createPlatformIntegrationContractVersion result unavailable');
+            }
+            let auditRecorded = false;
+            if (auditContext && typeof auditContext === 'object') {
+              try {
+                await recordAuditEventWithQueryClient({
+                  queryClient: tx,
+                  domain: 'platform',
+                  requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+                  traceparent: auditContext.traceparent,
+                  eventType: 'platform.integration.contract.created',
+                  actorUserId: auditContext.actorUserId || operatorUserId,
+                  actorSessionId: auditContext.actorSessionId || operatorSessionId,
+                  targetType: 'integration_contract',
+                  targetId: `${normalizedIntegrationId}:${normalizedContractType}:${normalizedContractVersion}`,
+                  result: 'success',
+                  beforeState: null,
+                  afterState: {
+                    integration_id: normalizedIntegrationId,
+                    contract_type: normalizedContractType,
+                    contract_version: normalizedContractVersion,
+                    status: normalizedStatus,
+                    is_backward_compatible: isBackwardCompatible
+                  }
+                });
+                auditRecorded = true;
+              } catch (error) {
+                const auditWriteError = new Error(
+                  'platform integration contract create audit write failed'
+                );
+                auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+                auditWriteError.cause = error;
+                throw auditWriteError;
+              }
+            }
+            return {
+              ...createdRecord,
+              auditRecorded
+            };
+          })
+      }),
+
+    createPlatformIntegrationContractCompatibilityCheck: async ({
+      integrationId,
+      contractType,
+      baselineVersion,
+      candidateVersion,
+      evaluationResult,
+      breakingChangeCount = 0,
+      diffSummary = null,
+      requestId,
+      checkedByUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) =>
+      executeWithDeadlockRetry({
+        operation: 'createPlatformIntegrationContractCompatibilityCheck',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+            const normalizedContractType =
+              normalizePlatformIntegrationContractType(contractType);
+            const normalizedBaselineVersion =
+              normalizePlatformIntegrationContractVersion(baselineVersion);
+            const normalizedCandidateVersion =
+              normalizePlatformIntegrationContractVersion(candidateVersion);
+            const normalizedEvaluationResult =
+              normalizePlatformIntegrationContractEvaluationResult(evaluationResult);
+            const normalizedRequestId = String(requestId || '').trim();
+            const normalizedBreakingChangeCount = Number(breakingChangeCount);
+            const normalizedDiffSummary = normalizePlatformIntegrationJsonForStorage({
+              value: diffSummary
+            });
+            if (
+              !isValidPlatformIntegrationId(normalizedIntegrationId)
+              || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+              || !normalizedBaselineVersion
+              || normalizedBaselineVersion.length
+                > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+              || !normalizedCandidateVersion
+              || normalizedCandidateVersion.length
+                > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+              || !VALID_PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT.has(
+                normalizedEvaluationResult
+              )
+              || !Number.isInteger(normalizedBreakingChangeCount)
+              || normalizedBreakingChangeCount < 0
+              || !normalizedRequestId
+              || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH
+              || normalizedDiffSummary === undefined
+              || (
+                normalizedDiffSummary !== null
+                && normalizedDiffSummary.length > MAX_PLATFORM_INTEGRATION_CONTRACT_DIFF_SUMMARY_LENGTH
+              )
+            ) {
+              throw new Error(
+                'createPlatformIntegrationContractCompatibilityCheck received invalid input'
+              );
+            }
+            const insertResult = await tx.query(
+              `
+                INSERT INTO platform_integration_contract_compatibility_checks (
+                  integration_id,
+                  contract_type,
+                  baseline_version,
+                  candidate_version,
+                  evaluation_result,
+                  breaking_change_count,
+                  diff_summary,
+                  request_id,
+                  checked_by_user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?)
+              `,
+              [
+                normalizedIntegrationId,
+                normalizedContractType,
+                normalizedBaselineVersion,
+                normalizedCandidateVersion,
+                normalizedEvaluationResult,
+                normalizedBreakingChangeCount,
+                normalizedDiffSummary,
+                normalizedRequestId,
+                normalizePlatformIntegrationOptionalText(checkedByUserId)
+              ]
+            );
+            const insertedCheckId = Number(insertResult?.insertId || 0);
+            if (!Number.isInteger(insertedCheckId) || insertedCheckId < 1) {
+              throw new Error(
+                'createPlatformIntegrationContractCompatibilityCheck insert result malformed'
+              );
+            }
+            const rows = await tx.query(
+              `
+                SELECT check_id,
+                       integration_id,
+                       contract_type,
+                       baseline_version,
+                       candidate_version,
+                       evaluation_result,
+                       breaking_change_count,
+                       diff_summary,
+                       request_id,
+                       checked_by_user_id,
+                       checked_at
+                FROM platform_integration_contract_compatibility_checks
+                WHERE check_id = ?
+                LIMIT 1
+              `,
+              [insertedCheckId]
+            );
+            const createdRecord = toPlatformIntegrationContractCompatibilityCheckRecord(
+              rows?.[0] || null
+            );
+            if (!createdRecord) {
+              throw new Error(
+                'createPlatformIntegrationContractCompatibilityCheck result unavailable'
+              );
+            }
+            let auditRecorded = false;
+            if (auditContext && typeof auditContext === 'object') {
+              try {
+                await recordAuditEventWithQueryClient({
+                  queryClient: tx,
+                  domain: 'platform',
+                  requestId: String(auditContext.requestId || normalizedRequestId).trim()
+                    || 'request_id_unset',
+                  traceparent: auditContext.traceparent,
+                  eventType: 'platform.integration.contract.compatibility_evaluated',
+                  actorUserId: auditContext.actorUserId || checkedByUserId,
+                  actorSessionId: auditContext.actorSessionId || operatorSessionId,
+                  targetType: 'integration_contract',
+                  targetId: `${normalizedIntegrationId}:${normalizedContractType}:${normalizedCandidateVersion}`,
+                  result: 'success',
+                  beforeState: null,
+                  afterState: {
+                    integration_id: normalizedIntegrationId,
+                    contract_type: normalizedContractType,
+                    baseline_version: normalizedBaselineVersion,
+                    candidate_version: normalizedCandidateVersion,
+                    evaluation_result: normalizedEvaluationResult,
+                    breaking_change_count: normalizedBreakingChangeCount
+                  }
+                });
+                auditRecorded = true;
+              } catch (error) {
+                const auditWriteError = new Error(
+                  'platform integration contract compatibility audit write failed'
+                );
+                auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+                auditWriteError.cause = error;
+                throw auditWriteError;
+              }
+            }
+            return {
+              ...createdRecord,
+              auditRecorded
+            };
+          })
+      }),
+
+    findLatestPlatformIntegrationContractCompatibilityCheck: async ({
+      integrationId,
+      contractType,
+      baselineVersion,
+      candidateVersion
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+      const normalizedBaselineVersion =
+        normalizePlatformIntegrationContractVersion(baselineVersion);
+      const normalizedCandidateVersion =
+        normalizePlatformIntegrationContractVersion(candidateVersion);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+        || !normalizedBaselineVersion
+        || normalizedBaselineVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+        || !normalizedCandidateVersion
+        || normalizedCandidateVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      ) {
+        return null;
+      }
+      const rows = await dbClient.query(
+        `
+          SELECT check_id,
+                 integration_id,
+                 contract_type,
+                 baseline_version,
+                 candidate_version,
+                 evaluation_result,
+                 breaking_change_count,
+                 diff_summary,
+                 request_id,
+                 checked_by_user_id,
+                 checked_at
+          FROM platform_integration_contract_compatibility_checks
+          WHERE integration_id = ?
+            AND contract_type = ?
+            AND baseline_version = ?
+            AND candidate_version = ?
+          ORDER BY checked_at DESC, check_id DESC
+          LIMIT 1
+        `,
+        [
+          normalizedIntegrationId,
+          normalizedContractType,
+          normalizedBaselineVersion,
+          normalizedCandidateVersion
+        ]
+      );
+      if (!Array.isArray(rows)) {
+        throw new Error(
+          'findLatestPlatformIntegrationContractCompatibilityCheck result malformed'
+        );
+      }
+      if (rows.length === 0) {
+        return null;
+      }
+      const normalizedRow = toPlatformIntegrationContractCompatibilityCheckRecord(
+        rows[0]
+      );
+      if (!normalizedRow) {
+        throw new Error(
+          'findLatestPlatformIntegrationContractCompatibilityCheck result malformed'
+        );
+      }
+      return normalizedRow;
+    },
+
+    activatePlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType,
+      contractVersion,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) =>
+      executeWithDeadlockRetry({
+        operation: 'activatePlatformIntegrationContractVersion',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+            const normalizedContractType =
+              normalizePlatformIntegrationContractType(contractType);
+            const normalizedContractVersion =
+              normalizePlatformIntegrationContractVersion(contractVersion);
+            if (
+              !isValidPlatformIntegrationId(normalizedIntegrationId)
+              || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+              || !normalizedContractVersion
+              || normalizedContractVersion.length
+                > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+            ) {
+              throw new Error('activatePlatformIntegrationContractVersion received invalid input');
+            }
+            const scopeLockRows = await tx.query(
+              `
+                SELECT contract_id
+                FROM platform_integration_contract_versions
+                WHERE integration_id = ?
+                  AND contract_type = ?
+                ORDER BY contract_id ASC
+                FOR UPDATE
+              `,
+              [
+                normalizedIntegrationId,
+                normalizedContractType
+              ]
+            );
+            if (!Array.isArray(scopeLockRows)) {
+              throw new Error(
+                'activatePlatformIntegrationContractVersion scope lock malformed'
+              );
+            }
+            const targetRows = await tx.query(
+              `
+                SELECT contract_id,
+                       integration_id,
+                       contract_type,
+                       contract_version,
+                       schema_ref,
+                       schema_checksum,
+                       status,
+                       is_backward_compatible,
+                       compatibility_notes,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_integration_contract_versions
+                WHERE integration_id = ?
+                  AND contract_type = ?
+                  AND contract_version = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [
+                normalizedIntegrationId,
+                normalizedContractType,
+                normalizedContractVersion
+              ]
+            );
+            if (!Array.isArray(targetRows)) {
+              throw new Error(
+                'activatePlatformIntegrationContractVersion target query malformed'
+              );
+            }
+            if (targetRows.length === 0) {
+              return null;
+            }
+            const targetRecord = toPlatformIntegrationContractVersionRecord(
+              targetRows[0]
+            );
+            if (!targetRecord) {
+              throw new Error(
+                'activatePlatformIntegrationContractVersion target row malformed'
+              );
+            }
+            if (targetRecord.status === 'retired') {
+              throw createPlatformIntegrationContractActivationBlockedError({
+                integrationId: normalizedIntegrationId,
+                contractType: normalizedContractType,
+                contractVersion: normalizedContractVersion,
+                reason: 'retired-version'
+              });
+            }
+            if (targetRecord.status !== 'active') {
+              await tx.query(
+                `
+                  UPDATE platform_integration_contract_versions
+                  SET status = 'deprecated',
+                      updated_by_user_id = ?,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE integration_id = ?
+                    AND contract_type = ?
+                    AND status = 'active'
+                    AND contract_version <> ?
+                `,
+                [
+                  normalizePlatformIntegrationOptionalText(operatorUserId),
+                  normalizedIntegrationId,
+                  normalizedContractType,
+                  normalizedContractVersion
+                ]
+              );
+              await tx.query(
+                `
+                  UPDATE platform_integration_contract_versions
+                  SET status = 'active',
+                      updated_by_user_id = ?,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE integration_id = ?
+                    AND contract_type = ?
+                    AND contract_version = ?
+                `,
+                [
+                  normalizePlatformIntegrationOptionalText(operatorUserId)
+                    || targetRecord.updatedByUserId,
+                  normalizedIntegrationId,
+                  normalizedContractType,
+                  normalizedContractVersion
+                ]
+              );
+            }
+            const updatedRows = await tx.query(
+              `
+                SELECT contract_id,
+                       integration_id,
+                       contract_type,
+                       contract_version,
+                       schema_ref,
+                       schema_checksum,
+                       status,
+                       is_backward_compatible,
+                       compatibility_notes,
+                       created_by_user_id,
+                       updated_by_user_id,
+                       created_at,
+                       updated_at
+                FROM platform_integration_contract_versions
+                WHERE integration_id = ?
+                  AND contract_type = ?
+                  AND contract_version = ?
+                LIMIT 1
+              `,
+              [
+                normalizedIntegrationId,
+                normalizedContractType,
+                normalizedContractVersion
+              ]
+            );
+            const updatedRecord = toPlatformIntegrationContractVersionRecord(
+              updatedRows?.[0] || null
+            );
+            if (!updatedRecord) {
+              throw new Error('activatePlatformIntegrationContractVersion result unavailable');
+            }
+            let auditRecorded = false;
+            if (auditContext && typeof auditContext === 'object') {
+              try {
+                await recordAuditEventWithQueryClient({
+                  queryClient: tx,
+                  domain: 'platform',
+                  requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+                  traceparent: auditContext.traceparent,
+                  eventType: 'platform.integration.contract.activated',
+                  actorUserId: auditContext.actorUserId || operatorUserId,
+                  actorSessionId: auditContext.actorSessionId || operatorSessionId,
+                  targetType: 'integration_contract',
+                  targetId: `${normalizedIntegrationId}:${normalizedContractType}:${normalizedContractVersion}`,
+                  result: 'success',
+                  beforeState: {
+                    status: targetRecord.status
+                  },
+                  afterState: {
+                    status: updatedRecord.status
+                  }
+                });
+                auditRecorded = true;
+              } catch (error) {
+                const auditWriteError = new Error(
+                  'platform integration contract activation audit write failed'
+                );
+                auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+                auditWriteError.cause = error;
+                throw auditWriteError;
+              }
+            }
+            return {
+              ...updatedRecord,
+              previousStatus: targetRecord.status,
+              currentStatus: updatedRecord.status,
+              switched: targetRecord.status !== updatedRecord.status,
               auditRecorded
             };
           })

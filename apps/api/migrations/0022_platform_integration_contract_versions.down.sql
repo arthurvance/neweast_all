@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS platform_integration_contract_compatibility_checks;
+DROP TABLE IF EXISTS platform_integration_contract_versions;

@@ -589,6 +589,65 @@ test('0021 down migration drops platform integration catalog table', () => {
   assert.match(sql, /DROP TABLE IF EXISTS platform_integration_catalog/i);
 });
 
+test('0022 migration defines integration contract version and compatibility check tables', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0022_platform_integration_contract_versions.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_integration_contract_versions/i);
+  assert.match(sql, /contract_type ENUM\('openapi', 'event'\)/i);
+  assert.match(sql, /contract_version VARCHAR\(64\) NOT NULL/i);
+  assert.match(sql, /status ENUM\('candidate', 'active', 'deprecated', 'retired'\)/i);
+  assert.match(
+    sql,
+    /UNIQUE KEY uk_platform_integration_contract_version\s*\(\s*integration_id,\s*contract_type,\s*contract_version\s*\)/i
+  );
+  assert.match(
+    sql,
+    /KEY idx_platform_integration_contract_active_lookup\s*\(\s*integration_id,\s*contract_type,\s*status,\s*updated_at,\s*contract_id\s*\)/i
+  );
+
+  assert.match(
+    sql,
+    /CREATE TABLE IF NOT EXISTS platform_integration_contract_compatibility_checks/i
+  );
+  assert.match(sql, /evaluation_result ENUM\('compatible', 'incompatible'\)/i);
+  assert.match(sql, /breaking_change_count INT UNSIGNED NOT NULL DEFAULT 0/i);
+  assert.match(sql, /request_id VARCHAR\(128\) NOT NULL/i);
+  assert.match(
+    sql,
+    /KEY idx_platform_integration_contract_checks_lookup\s*\(\s*integration_id,\s*contract_type,\s*baseline_version,\s*candidate_version,\s*checked_at,\s*check_id\s*\)/i
+  );
+});
+
+test('0022 down migration drops compatibility checks before contract versions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0022_platform_integration_contract_versions.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  const dropChecksIndex = sql.search(
+    /DROP TABLE IF EXISTS platform_integration_contract_compatibility_checks/i
+  );
+  const dropVersionsIndex = sql.search(
+    /DROP TABLE IF EXISTS platform_integration_contract_versions/i
+  );
+
+  assert.ok(dropChecksIndex >= 0);
+  assert.ok(dropVersionsIndex >= 0);
+  assert.ok(
+    dropChecksIndex < dropVersionsIndex,
+    'expected compatibility checks table to be dropped before contract versions table'
+  );
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

@@ -199,3 +199,144 @@ test('createRouteHandlers enforces shared auth service identity for platformInte
     /authService and platformIntegrationService to share the same authService instance/
   );
 });
+
+test('createRouteHandlers wires platform integration contract handlers with provided service', async () => {
+  const contractCalls = [];
+  const platformIntegrationContractService = {
+    listContracts: async (payload) => {
+      contractCalls.push({ method: 'list', payload });
+      return {
+        integration_id: payload.integrationId,
+        contracts: [],
+        active_contracts: [],
+        request_id: payload.requestId
+      };
+    },
+    createContract: async (payload) => {
+      contractCalls.push({ method: 'create', payload });
+      return {
+        integration_id: payload.integrationId,
+        contract_type: payload.payload.contract_type,
+        contract_version: payload.payload.contract_version,
+        request_id: payload.requestId
+      };
+    },
+    evaluateCompatibility: async (payload) => {
+      contractCalls.push({ method: 'compatibility', payload });
+      return {
+        integration_id: payload.integrationId,
+        contract_type: payload.payload.contract_type,
+        baseline_version: payload.payload.baseline_version,
+        candidate_version: payload.payload.candidate_version,
+        evaluation_result: 'compatible',
+        breaking_change_count: 0,
+        request_id: payload.requestId,
+        checked_at: '2026-02-22T00:00:00.000Z'
+      };
+    },
+    activateContract: async (payload) => {
+      contractCalls.push({ method: 'activate', payload });
+      return {
+        integration_id: payload.integrationId,
+        contract_type: payload.payload.contract_type,
+        contract_version: payload.contractVersion,
+        status: 'active',
+        previous_status: 'candidate',
+        current_status: 'active',
+        request_id: payload.requestId
+      };
+    }
+  };
+
+  const handlers = createRouteHandlers(
+    readConfig({ ALLOW_MOCK_BACKENDS: 'true' }),
+    {
+      dependencyProbe,
+      authService: {},
+      platformIntegrationContractService
+    }
+  );
+
+  const listed = await handlers.platformListIntegrationContracts(
+    'req-http-routes-platform-integration-contract-list',
+    'Bearer fake-token',
+    { integration_id: 'erp-outbound-main' },
+    {},
+    null
+  );
+  assert.equal(listed.integration_id, 'erp-outbound-main');
+  assert.equal(contractCalls[0].method, 'list');
+
+  const created = await handlers.platformCreateIntegrationContract(
+    'req-http-routes-platform-integration-contract-create',
+    'Bearer fake-token',
+    { integration_id: 'erp-outbound-main' },
+    {
+      contract_type: 'openapi',
+      contract_version: 'v2026.02.22',
+      schema_ref: 's3://contracts/erp/v2026.02.22/openapi.json',
+      schema_checksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(created.contract_version, 'v2026.02.22');
+  assert.equal(contractCalls[1].method, 'create');
+
+  const checked = await handlers.platformEvaluateIntegrationContractCompatibility(
+    'req-http-routes-platform-integration-contract-compatibility',
+    'Bearer fake-token',
+    { integration_id: 'erp-outbound-main' },
+    {
+      contract_type: 'openapi',
+      baseline_version: 'v2026.01.15',
+      candidate_version: 'v2026.02.22'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(checked.evaluation_result, 'compatible');
+  assert.equal(contractCalls[2].method, 'compatibility');
+
+  const activated = await handlers.platformActivateIntegrationContract(
+    'req-http-routes-platform-integration-contract-activate',
+    'Bearer fake-token',
+    {
+      integration_id: 'erp-outbound-main',
+      contract_version: 'v2026.02.22'
+    },
+    {
+      contract_type: 'openapi'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(activated.current_status, 'active');
+  assert.equal(contractCalls[3].method, 'activate');
+  assert.equal(
+    handlers._internals.platformIntegrationContractService,
+    platformIntegrationContractService
+  );
+});
+
+test('createRouteHandlers enforces shared auth service identity for platformIntegrationContractService', () => {
+  assert.throws(
+    () =>
+      createRouteHandlers(
+        readConfig({ ALLOW_MOCK_BACKENDS: 'true' }),
+        {
+          authService: { serviceName: 'primary-auth' },
+          platformIntegrationContractService: {
+            listContracts: async () => ({}),
+            createContract: async () => ({}),
+            evaluateCompatibility: async () => ({}),
+            activateContract: async () => ({}),
+            _internals: {
+              authService: { serviceName: 'other-auth' }
+            }
+          }
+        }
+      ),
+    /authService and platformIntegrationContractService to share the same authService instance/
+  );
+});

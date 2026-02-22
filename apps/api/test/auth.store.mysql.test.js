@@ -6934,3 +6934,202 @@ test('listPlatformIntegrationCatalogEntries escapes LIKE wildcard keyword and us
   );
   assert.deepEqual(capturedParams, ['%\\%\\_mixed\\\\%', '%\\%\\_mixed\\\\%']);
 });
+
+const createContractVersionRow = ({
+  integrationId = 'integration-contract-test',
+  contractType = 'openapi',
+  contractVersion = 'v1',
+  status = 'candidate',
+  isBackwardCompatible = 1
+} = {}) => ({
+  contract_id: 1,
+  integration_id: integrationId,
+  contract_type: contractType,
+  contract_version: contractVersion,
+  schema_ref: 's3://contracts/integration-contract-test/v1/openapi.json',
+  schema_checksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  status,
+  is_backward_compatible: isBackwardCompatible,
+  compatibility_notes: null,
+  created_by_user_id: 'platform-operator',
+  updated_by_user_id: 'platform-operator',
+  created_at: '2026-02-22T00:00:00.000Z',
+  updated_at: '2026-02-22T00:00:00.000Z'
+});
+
+test('createPlatformIntegrationContractVersion maps mysql duplicate conflict as contract_version conflict', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO platform_integration_contract_versions')) {
+      const error = new Error('duplicate entry');
+      error.code = 'ER_DUP_ENTRY';
+      error.errno = 1062;
+      throw error;
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.createPlatformIntegrationContractVersion({
+        integrationId: 'integration-contract-test',
+        contractType: 'openapi',
+        contractVersion: 'v1',
+        schemaRef: 's3://contracts/integration-contract-test/v1/openapi.json',
+        schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        status: 'candidate',
+        isBackwardCompatible: true
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_DUP_ENTRY');
+      assert.equal(
+        error?.platformIntegrationContractConflictTarget,
+        'contract_version'
+      );
+      return true;
+    }
+  );
+});
+
+test('listPlatformIntegrationContractVersions fails closed when mysql returns malformed row', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('FROM platform_integration_contract_versions')) {
+      return [
+        {
+          integration_id: 'integration-contract-test'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.listPlatformIntegrationContractVersions({
+        integrationId: 'integration-contract-test'
+      }),
+    /listPlatformIntegrationContractVersions result malformed/
+  );
+});
+
+test('findLatestPlatformIntegrationContractCompatibilityCheck fails closed when mysql row enum is invalid', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('FROM platform_integration_contract_compatibility_checks')
+      && normalizedSql.includes('ORDER BY checked_at DESC, check_id DESC')
+    ) {
+      return [
+        {
+          check_id: 10,
+          integration_id: 'integration-contract-test',
+          contract_type: 'openapi',
+          baseline_version: 'v1',
+          candidate_version: 'v2',
+          evaluation_result: 'unknown',
+          breaking_change_count: 0,
+          diff_summary: null,
+          request_id: 'req-contract-check-malformed',
+          checked_by_user_id: 'platform-operator',
+          checked_at: '2026-02-22T00:00:00.000Z'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.findLatestPlatformIntegrationContractCompatibilityCheck({
+        integrationId: 'integration-contract-test',
+        contractType: 'openapi',
+        baselineVersion: 'v1',
+        candidateVersion: 'v2'
+      }),
+    /findLatestPlatformIntegrationContractCompatibilityCheck result malformed/
+  );
+});
+
+test('activatePlatformIntegrationContractVersion can activate candidate when compatibility flag is false', async () => {
+  const queryTrace = [];
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT contract_id')
+      && normalizedSql.includes('ORDER BY contract_id ASC')
+      && normalizedSql.includes('FOR UPDATE')
+      && !normalizedSql.includes('contract_version = ?')
+    ) {
+      queryTrace.push('scope-lock');
+      return [
+        {
+          contract_id: 1
+        }
+      ];
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_contract_versions')
+      && normalizedSql.includes('FOR UPDATE')
+      && normalizedSql.includes('contract_version = ?')
+    ) {
+      queryTrace.push('target-lock');
+      return [
+        createContractVersionRow({
+          integrationId: params?.[0],
+          contractType: params?.[1],
+          contractVersion: params?.[2],
+          status: 'candidate',
+          isBackwardCompatible: 0
+        })
+      ];
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_contract_versions')
+      && normalizedSql.includes("SET status = 'deprecated'")
+    ) {
+      return { affectedRows: 0 };
+    }
+    if (
+      normalizedSql.includes('UPDATE platform_integration_contract_versions')
+      && normalizedSql.includes("SET status = 'active'")
+    ) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('FROM platform_integration_contract_versions')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('contract_version = ?')
+      && normalizedSql.includes('LIMIT 1')
+      && !normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        createContractVersionRow({
+          integrationId: params?.[0],
+          contractType: params?.[1],
+          contractVersion: params?.[2],
+          status: 'active',
+          isBackwardCompatible: 0
+        })
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const activated = await store.activatePlatformIntegrationContractVersion({
+    integrationId: 'integration-contract-activation',
+    contractType: 'openapi',
+    contractVersion: 'v2'
+  });
+
+  assert.equal(activated?.status, 'active');
+  assert.equal(activated?.previousStatus, 'candidate');
+  assert.equal(activated?.currentStatus, 'active');
+  assert.ok(queryTrace.includes('scope-lock'));
+  assert.ok(queryTrace.includes('target-lock'));
+  assert.ok(queryTrace.indexOf('scope-lock') < queryTrace.indexOf('target-lock'));
+});

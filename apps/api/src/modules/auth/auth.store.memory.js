@@ -19,6 +19,10 @@ const createInMemoryAuthStore = ({
   const platformRoleCatalogCodeIndex = new Map();
   const platformIntegrationCatalogById = new Map();
   const platformIntegrationCatalogCodeIndex = new Map();
+  const platformIntegrationContractVersionsByKey = new Map();
+  const platformIntegrationContractChecksById = new Map();
+  let nextPlatformIntegrationContractVersionId = 1;
+  let nextPlatformIntegrationContractCheckId = 1;
   const platformRolePermissionGrantsByRoleId = new Map();
   const tenantRolePermissionGrantsByRoleId = new Map();
   const tenantMembershipRolesByMembershipId = new Map();
@@ -49,6 +53,20 @@ const createInMemoryAuthStore = ({
     'paused',
     'retired'
   ]);
+  const VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE = new Set([
+    'openapi',
+    'event'
+  ]);
+  const VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS = new Set([
+    'candidate',
+    'active',
+    'deprecated',
+    'retired'
+  ]);
+  const VALID_PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT = new Set([
+    'compatible',
+    'incompatible'
+  ]);
   const MAX_PLATFORM_INTEGRATION_ID_LENGTH = 64;
   const MAX_PLATFORM_INTEGRATION_CODE_LENGTH = 64;
   const MAX_PLATFORM_INTEGRATION_NAME_LENGTH = 128;
@@ -59,6 +77,12 @@ const createInMemoryAuthStore = ({
   const MAX_PLATFORM_INTEGRATION_VERSION_STRATEGY_LENGTH = 128;
   const MAX_PLATFORM_INTEGRATION_RUNBOOK_URL_LENGTH = 512;
   const MAX_PLATFORM_INTEGRATION_LIFECYCLE_REASON_LENGTH = 256;
+  const MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_REF_LENGTH = 512;
+  const MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_CHECKSUM_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_NOTES_LENGTH = 4096;
+  const MAX_PLATFORM_INTEGRATION_CONTRACT_DIFF_SUMMARY_LENGTH = 65535;
+  const MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH = 128;
   const PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS = 3000;
   const MAX_PLATFORM_INTEGRATION_TIMEOUT_MS = 300000;
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
@@ -331,6 +355,35 @@ const createInMemoryAuthStore = ({
     String(direction || '').trim().toLowerCase();
   const normalizePlatformIntegrationLifecycleStatus = (status) =>
     String(status || '').trim().toLowerCase();
+  const normalizePlatformIntegrationContractType = (contractType) =>
+    String(contractType || '').trim().toLowerCase();
+  const normalizePlatformIntegrationContractVersion = (contractVersion) =>
+    String(contractVersion || '').trim();
+  const normalizePlatformIntegrationContractStatus = (status) =>
+    String(status || '').trim().toLowerCase();
+  const normalizePlatformIntegrationContractEvaluationResult = (evaluationResult) =>
+    String(evaluationResult || '').trim().toLowerCase();
+  const normalizePlatformIntegrationContractSchemaChecksum = (schemaChecksum) =>
+    String(schemaChecksum || '').trim().toLowerCase();
+  const PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
+  const toPlatformIntegrationContractVersionKey = ({
+    integrationId,
+    contractType,
+    contractVersion
+  } = {}) =>
+    [
+      normalizePlatformIntegrationId(integrationId),
+      normalizePlatformIntegrationContractType(contractType),
+      normalizePlatformIntegrationContractVersion(contractVersion)
+    ].join('::');
+  const toPlatformIntegrationContractScopeKey = ({
+    integrationId,
+    contractType
+  } = {}) =>
+    [
+      normalizePlatformIntegrationId(integrationId),
+      normalizePlatformIntegrationContractType(contractType)
+    ].join('::');
   const normalizePlatformIntegrationOptionalText = (value) => {
     if (value === null || value === undefined) {
       return null;
@@ -387,6 +440,30 @@ const createInMemoryAuthStore = ({
     error.errno = 1062;
     error.conflictTarget = resolvedTarget;
     error.platformIntegrationCatalogConflictTarget = resolvedTarget;
+    return error;
+  };
+  const createDuplicatePlatformIntegrationContractVersionError = () => {
+    const error = new Error('duplicate platform integration contract version');
+    error.code = 'ER_DUP_ENTRY';
+    error.errno = 1062;
+    error.conflictTarget = 'contract_version';
+    error.platformIntegrationContractConflictTarget = 'contract_version';
+    return error;
+  };
+  const createPlatformIntegrationContractActivationBlockedError = ({
+    integrationId = null,
+    contractType = null,
+    contractVersion = null,
+    reason = 'activation-blocked'
+  } = {}) => {
+    const error = new Error('platform integration contract activation blocked');
+    error.code = 'ERR_PLATFORM_INTEGRATION_CONTRACT_ACTIVATION_BLOCKED';
+    error.integrationId = normalizePlatformIntegrationId(integrationId) || null;
+    error.contractType =
+      normalizePlatformIntegrationContractType(contractType) || null;
+    error.contractVersion =
+      normalizePlatformIntegrationContractVersion(contractVersion) || null;
+    error.reason = String(reason || 'activation-blocked').trim().toLowerCase();
     return error;
   };
   const isPlatformIntegrationLifecycleTransitionAllowed = ({
@@ -620,6 +697,166 @@ const createInMemoryAuthStore = ({
         updatedAt: entry.updatedAt
       }
       : null;
+  const toPlatformIntegrationContractVersionRecord = (entry = {}) => {
+    const normalizedIntegrationId = normalizePlatformIntegrationId(
+      entry.integrationId || entry.integration_id
+    );
+    const normalizedContractType = normalizePlatformIntegrationContractType(
+      entry.contractType || entry.contract_type
+    );
+    const normalizedContractVersion = normalizePlatformIntegrationContractVersion(
+      entry.contractVersion || entry.contract_version
+    );
+    const normalizedSchemaRef = normalizePlatformIntegrationOptionalText(
+      entry.schemaRef || entry.schema_ref
+    );
+    const normalizedSchemaChecksum = normalizePlatformIntegrationContractSchemaChecksum(
+      entry.schemaChecksum || entry.schema_checksum
+    );
+    const normalizedStatus = normalizePlatformIntegrationContractStatus(
+      entry.status || 'candidate'
+    );
+    const normalizedCompatibilityNotes = normalizePlatformIntegrationOptionalText(
+      entry.compatibilityNotes || entry.compatibility_notes
+    );
+    if (
+      !isValidPlatformIntegrationId(normalizedIntegrationId)
+      || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      || !normalizedContractVersion
+      || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      || !normalizedSchemaRef
+      || normalizedSchemaRef.length > MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_REF_LENGTH
+      || !normalizedSchemaChecksum
+      || normalizedSchemaChecksum.length
+        > MAX_PLATFORM_INTEGRATION_CONTRACT_SCHEMA_CHECKSUM_LENGTH
+      || !PLATFORM_INTEGRATION_CONTRACT_CHECKSUM_PATTERN.test(normalizedSchemaChecksum)
+      || !VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS.has(normalizedStatus)
+      || (
+        normalizedCompatibilityNotes !== null
+        && normalizedCompatibilityNotes.length
+          > MAX_PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_NOTES_LENGTH
+      )
+    ) {
+      throw new Error('invalid platform integration contract version entry');
+    }
+    return {
+      contractId: Number(entry.contractId || entry.contract_id || 0) || 0,
+      integrationId: normalizedIntegrationId,
+      contractType: normalizedContractType,
+      contractVersion: normalizedContractVersion,
+      schemaRef: normalizedSchemaRef,
+      schemaChecksum: normalizedSchemaChecksum,
+      status: normalizedStatus,
+      isBackwardCompatible: Boolean(
+        entry.isBackwardCompatible ?? entry.is_backward_compatible
+      ),
+      compatibilityNotes: normalizedCompatibilityNotes,
+      createdByUserId: normalizePlatformIntegrationOptionalText(
+        entry.createdByUserId || entry.created_by_user_id
+      ),
+      updatedByUserId: normalizePlatformIntegrationOptionalText(
+        entry.updatedByUserId || entry.updated_by_user_id
+      ),
+      createdAt: entry.createdAt || entry.created_at || new Date().toISOString(),
+      updatedAt: entry.updatedAt || entry.updated_at || new Date().toISOString()
+    };
+  };
+  const clonePlatformIntegrationContractVersionRecord = (entry = null) =>
+    entry
+      ? {
+        contractId: Number(entry.contractId),
+        integrationId: entry.integrationId,
+        contractType: entry.contractType,
+        contractVersion: entry.contractVersion,
+        schemaRef: entry.schemaRef,
+        schemaChecksum: entry.schemaChecksum,
+        status: entry.status,
+        isBackwardCompatible: Boolean(entry.isBackwardCompatible),
+        compatibilityNotes: entry.compatibilityNotes,
+        createdByUserId: entry.createdByUserId,
+        updatedByUserId: entry.updatedByUserId,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt
+      }
+      : null;
+  const toPlatformIntegrationContractCompatibilityCheckRecord = (entry = {}) => {
+    const normalizedIntegrationId = normalizePlatformIntegrationId(
+      entry.integrationId || entry.integration_id
+    );
+    const normalizedContractType = normalizePlatformIntegrationContractType(
+      entry.contractType || entry.contract_type
+    );
+    const normalizedBaselineVersion = normalizePlatformIntegrationContractVersion(
+      entry.baselineVersion || entry.baseline_version
+    );
+    const normalizedCandidateVersion = normalizePlatformIntegrationContractVersion(
+      entry.candidateVersion || entry.candidate_version
+    );
+    const normalizedEvaluationResult = normalizePlatformIntegrationContractEvaluationResult(
+      entry.evaluationResult || entry.evaluation_result
+    );
+    const normalizedBreakingChangeCount = Number(
+      entry.breakingChangeCount ?? entry.breaking_change_count
+    );
+    const normalizedRequestId = String(entry.requestId || entry.request_id || '').trim();
+    const normalizedCheckedAt = String(entry.checkedAt || entry.checked_at || '').trim()
+      || new Date().toISOString();
+    const normalizedDiffSummary = normalizePlatformIntegrationJsonForStorage({
+      value: entry.diffSummary ?? entry.diff_summary
+    });
+    if (
+      !isValidPlatformIntegrationId(normalizedIntegrationId)
+      || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      || !normalizedBaselineVersion
+      || normalizedBaselineVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      || !normalizedCandidateVersion
+      || normalizedCandidateVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      || !VALID_PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT.has(normalizedEvaluationResult)
+      || !Number.isInteger(normalizedBreakingChangeCount)
+      || normalizedBreakingChangeCount < 0
+      || !normalizedRequestId
+      || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH
+      || normalizedDiffSummary === undefined
+      || (
+        normalizedDiffSummary !== null
+        && JSON.stringify(normalizedDiffSummary).length
+          > MAX_PLATFORM_INTEGRATION_CONTRACT_DIFF_SUMMARY_LENGTH
+      )
+    ) {
+      throw new Error('invalid platform integration contract compatibility check entry');
+    }
+    return {
+      checkId: Number(entry.checkId || entry.check_id || 0) || 0,
+      integrationId: normalizedIntegrationId,
+      contractType: normalizedContractType,
+      baselineVersion: normalizedBaselineVersion,
+      candidateVersion: normalizedCandidateVersion,
+      evaluationResult: normalizedEvaluationResult,
+      breakingChangeCount: normalizedBreakingChangeCount,
+      diffSummary: normalizedDiffSummary,
+      requestId: normalizedRequestId,
+      checkedByUserId: normalizePlatformIntegrationOptionalText(
+        entry.checkedByUserId || entry.checked_by_user_id
+      ),
+      checkedAt: normalizedCheckedAt
+    };
+  };
+  const clonePlatformIntegrationContractCompatibilityCheckRecord = (entry = null) =>
+    entry
+      ? {
+        checkId: Number(entry.checkId),
+        integrationId: entry.integrationId,
+        contractType: entry.contractType,
+        baselineVersion: entry.baselineVersion,
+        candidateVersion: entry.candidateVersion,
+        evaluationResult: entry.evaluationResult,
+        breakingChangeCount: Number(entry.breakingChangeCount),
+        diffSummary: entry.diffSummary ? structuredClone(entry.diffSummary) : null,
+        requestId: entry.requestId,
+        checkedByUserId: entry.checkedByUserId,
+        checkedAt: entry.checkedAt
+      }
+      : null;
 
   const findPlatformRoleCatalogRecordStateByRoleId = (roleId) => {
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
@@ -658,6 +895,24 @@ const createInMemoryAuthStore = ({
       };
     }
     return null;
+  };
+  const findPlatformIntegrationContractVersionRecordState = ({
+    integrationId,
+    contractType,
+    contractVersion
+  } = {}) => {
+    const contractKey = toPlatformIntegrationContractVersionKey({
+      integrationId,
+      contractType,
+      contractVersion
+    });
+    if (!platformIntegrationContractVersionsByKey.has(contractKey)) {
+      return null;
+    }
+    return {
+      key: contractKey,
+      record: platformIntegrationContractVersionsByKey.get(contractKey)
+    };
   };
 
   const normalizePlatformPermission = (
@@ -1225,6 +1480,49 @@ const createInMemoryAuthStore = ({
     platformIntegrationCatalogById.set(normalizedIntegrationId, merged);
     platformIntegrationCatalogCodeIndex.set(codeKey, normalizedIntegrationId);
     return clonePlatformIntegrationCatalogRecord(merged);
+  };
+  const upsertPlatformIntegrationContractVersionRecord = (entry = {}) => {
+    const normalizedIntegrationId = normalizePlatformIntegrationId(
+      entry.integrationId || entry.integration_id
+    );
+    const normalizedContractType = normalizePlatformIntegrationContractType(
+      entry.contractType || entry.contract_type
+    );
+    const normalizedContractVersion = normalizePlatformIntegrationContractVersion(
+      entry.contractVersion || entry.contract_version
+    );
+    if (
+      !isValidPlatformIntegrationId(normalizedIntegrationId)
+      || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      || !normalizedContractVersion
+      || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+    ) {
+      throw new Error('platform integration contract version entry requires identity fields');
+    }
+    const contractKey = toPlatformIntegrationContractVersionKey({
+      integrationId: normalizedIntegrationId,
+      contractType: normalizedContractType,
+      contractVersion: normalizedContractVersion
+    });
+    const existing = platformIntegrationContractVersionsByKey.get(contractKey) || null;
+    const nowIso = new Date().toISOString();
+    const merged = toPlatformIntegrationContractVersionRecord({
+      ...existing,
+      ...entry,
+      contractId:
+        Number(existing?.contractId || entry.contractId || entry.contract_id || 0)
+        || nextPlatformIntegrationContractVersionId,
+      integrationId: normalizedIntegrationId,
+      contractType: normalizedContractType,
+      contractVersion: normalizedContractVersion,
+      createdAt: existing?.createdAt || entry.createdAt || entry.created_at || nowIso,
+      updatedAt: entry.updatedAt || entry.updated_at || nowIso
+    });
+    if (!existing) {
+      nextPlatformIntegrationContractVersionId += 1;
+    }
+    platformIntegrationContractVersionsByKey.set(contractKey, merged);
+    return clonePlatformIntegrationContractVersionRecord(merged);
   };
 
   upsertPlatformRoleCatalogRecord({
@@ -4847,6 +5145,537 @@ const createInMemoryAuthStore = ({
           restoreMapFromSnapshot(
             platformIntegrationCatalogCodeIndex,
             snapshot.platformIntegrationCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    listPlatformIntegrationContractVersions: async ({
+      integrationId,
+      contractType = null,
+      status = null
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      if (!isValidPlatformIntegrationId(normalizedIntegrationId)) {
+        return [];
+      }
+      const normalizedContractType = contractType === null || contractType === undefined
+        ? null
+        : normalizePlatformIntegrationContractType(contractType);
+      if (
+        normalizedContractType !== null
+        && !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      ) {
+        throw new Error('listPlatformIntegrationContractVersions received invalid contractType');
+      }
+      const normalizedStatus = status === null || status === undefined
+        ? null
+        : normalizePlatformIntegrationContractStatus(status);
+      if (
+        normalizedStatus !== null
+        && !VALID_PLATFORM_INTEGRATION_CONTRACT_STATUS.has(normalizedStatus)
+      ) {
+        throw new Error('listPlatformIntegrationContractVersions received invalid status');
+      }
+      return [...platformIntegrationContractVersionsByKey.values()]
+        .filter((entry) => {
+          if (entry.integrationId !== normalizedIntegrationId) {
+            return false;
+          }
+          if (
+            normalizedContractType !== null
+            && entry.contractType !== normalizedContractType
+          ) {
+            return false;
+          }
+          if (normalizedStatus !== null && entry.status !== normalizedStatus) {
+            return false;
+          }
+          return true;
+        })
+        .sort((left, right) => {
+          const leftCreatedAt = new Date(left.createdAt).getTime();
+          const rightCreatedAt = new Date(right.createdAt).getTime();
+          if (leftCreatedAt !== rightCreatedAt) {
+            return leftCreatedAt - rightCreatedAt;
+          }
+          return Number(left.contractId || 0) - Number(right.contractId || 0);
+        })
+        .map((entry) => clonePlatformIntegrationContractVersionRecord(entry));
+    },
+
+    findPlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType,
+      contractVersion
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+      const normalizedContractVersion =
+        normalizePlatformIntegrationContractVersion(contractVersion);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+        || !normalizedContractVersion
+        || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      ) {
+        return null;
+      }
+      const existingState = findPlatformIntegrationContractVersionRecordState({
+        integrationId: normalizedIntegrationId,
+        contractType: normalizedContractType,
+        contractVersion: normalizedContractVersion
+      });
+      return clonePlatformIntegrationContractVersionRecord(existingState?.record || null);
+    },
+
+    findLatestActivePlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+      ) {
+        return null;
+      }
+      const activeEntries = [...platformIntegrationContractVersionsByKey.values()]
+        .filter((entry) =>
+          entry.integrationId === normalizedIntegrationId
+          && entry.contractType === normalizedContractType
+          && entry.status === 'active'
+        )
+        .sort((left, right) => {
+          const leftUpdatedAt = new Date(left.updatedAt).getTime();
+          const rightUpdatedAt = new Date(right.updatedAt).getTime();
+          if (leftUpdatedAt !== rightUpdatedAt) {
+            return rightUpdatedAt - leftUpdatedAt;
+          }
+          return Number(right.contractId || 0) - Number(left.contractId || 0);
+        });
+      return clonePlatformIntegrationContractVersionRecord(activeEntries[0] || null);
+    },
+
+    createPlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType,
+      contractVersion,
+      schemaRef,
+      schemaChecksum,
+      status = 'candidate',
+      isBackwardCompatible = false,
+      compatibilityNotes = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationContractVersionsByKey:
+            structuredClone(platformIntegrationContractVersionsByKey),
+          nextPlatformIntegrationContractVersionId,
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+        const normalizedContractVersion =
+          normalizePlatformIntegrationContractVersion(contractVersion);
+        if (
+          !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+          || !normalizedContractVersion
+          || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+          || typeof isBackwardCompatible !== 'boolean'
+        ) {
+          throw new Error('createPlatformIntegrationContractVersion received invalid input');
+        }
+        if (
+          !findPlatformIntegrationCatalogRecordStateByIntegrationId(normalizedIntegrationId)
+        ) {
+          throw new Error('createPlatformIntegrationContractVersion integration not found');
+        }
+        if (
+          findPlatformIntegrationContractVersionRecordState({
+            integrationId: normalizedIntegrationId,
+            contractType: normalizedContractType,
+            contractVersion: normalizedContractVersion
+          })
+        ) {
+          throw createDuplicatePlatformIntegrationContractVersionError();
+        }
+        const createdRecord = upsertPlatformIntegrationContractVersionRecord({
+          integrationId: normalizedIntegrationId,
+          contractType: normalizedContractType,
+          contractVersion: normalizedContractVersion,
+          schemaRef,
+          schemaChecksum,
+          status,
+          isBackwardCompatible,
+          compatibilityNotes,
+          createdByUserId: normalizePlatformIntegrationOptionalText(operatorUserId),
+          updatedByUserId: normalizePlatformIntegrationOptionalText(operatorUserId)
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.contract.created',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration_contract',
+              targetId:
+                `${normalizedIntegrationId}:${normalizedContractType}:${normalizedContractVersion}`,
+              result: 'success',
+              beforeState: null,
+              afterState: {
+                integration_id: normalizedIntegrationId,
+                contract_type: normalizedContractType,
+                contract_version: normalizedContractVersion,
+                status: createdRecord.status,
+                is_backward_compatible: createdRecord.isBackwardCompatible
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration contract create audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...createdRecord,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationContractVersionsByKey,
+            snapshot.platformIntegrationContractVersionsByKey
+          );
+          nextPlatformIntegrationContractVersionId = Number(
+            snapshot.nextPlatformIntegrationContractVersionId || 1
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    createPlatformIntegrationContractCompatibilityCheck: async ({
+      integrationId,
+      contractType,
+      baselineVersion,
+      candidateVersion,
+      evaluationResult,
+      breakingChangeCount = 0,
+      diffSummary = null,
+      requestId,
+      checkedByUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationContractChecksById:
+            structuredClone(platformIntegrationContractChecksById),
+          nextPlatformIntegrationContractCheckId,
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+        const normalizedBaselineVersion =
+          normalizePlatformIntegrationContractVersion(baselineVersion);
+        const normalizedCandidateVersion =
+          normalizePlatformIntegrationContractVersion(candidateVersion);
+        const normalizedEvaluationResult =
+          normalizePlatformIntegrationContractEvaluationResult(evaluationResult);
+        const normalizedBreakingChangeCount = Number(breakingChangeCount);
+        const normalizedRequestId = String(requestId || '').trim();
+        if (
+          !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+          || !normalizedBaselineVersion
+          || normalizedBaselineVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+          || !normalizedCandidateVersion
+          || normalizedCandidateVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+          || !VALID_PLATFORM_INTEGRATION_CONTRACT_EVALUATION_RESULT.has(
+            normalizedEvaluationResult
+          )
+          || !Number.isInteger(normalizedBreakingChangeCount)
+          || normalizedBreakingChangeCount < 0
+          || !normalizedRequestId
+          || normalizedRequestId.length > MAX_PLATFORM_INTEGRATION_CONTRACT_REQUEST_ID_LENGTH
+        ) {
+          throw new Error(
+            'createPlatformIntegrationContractCompatibilityCheck received invalid input'
+          );
+        }
+        if (
+          !findPlatformIntegrationContractVersionRecordState({
+            integrationId: normalizedIntegrationId,
+            contractType: normalizedContractType,
+            contractVersion: normalizedBaselineVersion
+          })
+          || !findPlatformIntegrationContractVersionRecordState({
+            integrationId: normalizedIntegrationId,
+            contractType: normalizedContractType,
+            contractVersion: normalizedCandidateVersion
+          })
+        ) {
+          throw new Error(
+            'createPlatformIntegrationContractCompatibilityCheck contract version not found'
+          );
+        }
+        const checkRecord = toPlatformIntegrationContractCompatibilityCheckRecord({
+          checkId: nextPlatformIntegrationContractCheckId,
+          integrationId: normalizedIntegrationId,
+          contractType: normalizedContractType,
+          baselineVersion: normalizedBaselineVersion,
+          candidateVersion: normalizedCandidateVersion,
+          evaluationResult: normalizedEvaluationResult,
+          breakingChangeCount: normalizedBreakingChangeCount,
+          diffSummary,
+          requestId: normalizedRequestId,
+          checkedByUserId: normalizePlatformIntegrationOptionalText(checkedByUserId),
+          checkedAt: new Date().toISOString()
+        });
+        platformIntegrationContractChecksById.set(
+          Number(nextPlatformIntegrationContractCheckId),
+          checkRecord
+        );
+        nextPlatformIntegrationContractCheckId += 1;
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || normalizedRequestId).trim()
+                || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.contract.compatibility_evaluated',
+              actorUserId: auditContext.actorUserId || checkedByUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration_contract',
+              targetId:
+                `${normalizedIntegrationId}:${normalizedContractType}:${normalizedCandidateVersion}`,
+              result: 'success',
+              beforeState: null,
+              afterState: {
+                integration_id: normalizedIntegrationId,
+                contract_type: normalizedContractType,
+                baseline_version: normalizedBaselineVersion,
+                candidate_version: normalizedCandidateVersion,
+                evaluation_result: normalizedEvaluationResult,
+                breaking_change_count: normalizedBreakingChangeCount
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration contract compatibility audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...clonePlatformIntegrationContractCompatibilityCheckRecord(checkRecord),
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationContractChecksById,
+            snapshot.platformIntegrationContractChecksById
+          );
+          nextPlatformIntegrationContractCheckId = Number(
+            snapshot.nextPlatformIntegrationContractCheckId || 1
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    findLatestPlatformIntegrationContractCompatibilityCheck: async ({
+      integrationId,
+      contractType,
+      baselineVersion,
+      candidateVersion
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+      const normalizedBaselineVersion =
+        normalizePlatformIntegrationContractVersion(baselineVersion);
+      const normalizedCandidateVersion =
+        normalizePlatformIntegrationContractVersion(candidateVersion);
+      if (
+        !isValidPlatformIntegrationId(normalizedIntegrationId)
+        || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+        || !normalizedBaselineVersion
+        || normalizedBaselineVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+        || !normalizedCandidateVersion
+        || normalizedCandidateVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+      ) {
+        return null;
+      }
+      const matches = [...platformIntegrationContractChecksById.values()]
+        .filter((entry) =>
+          entry.integrationId === normalizedIntegrationId
+          && entry.contractType === normalizedContractType
+          && entry.baselineVersion === normalizedBaselineVersion
+          && entry.candidateVersion === normalizedCandidateVersion
+        )
+        .sort((left, right) => {
+          const leftCheckedAt = new Date(left.checkedAt).getTime();
+          const rightCheckedAt = new Date(right.checkedAt).getTime();
+          if (leftCheckedAt !== rightCheckedAt) {
+            return rightCheckedAt - leftCheckedAt;
+          }
+          return Number(right.checkId || 0) - Number(left.checkId || 0);
+        });
+      return clonePlatformIntegrationContractCompatibilityCheckRecord(matches[0] || null);
+    },
+
+    activatePlatformIntegrationContractVersion: async ({
+      integrationId,
+      contractType,
+      contractVersion,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationContractVersionsByKey:
+            structuredClone(platformIntegrationContractVersionsByKey),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedContractType = normalizePlatformIntegrationContractType(contractType);
+        const normalizedContractVersion =
+          normalizePlatformIntegrationContractVersion(contractVersion);
+        if (
+          !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !VALID_PLATFORM_INTEGRATION_CONTRACT_TYPE.has(normalizedContractType)
+          || !normalizedContractVersion
+          || normalizedContractVersion.length > MAX_PLATFORM_INTEGRATION_CONTRACT_VERSION_LENGTH
+        ) {
+          throw new Error('activatePlatformIntegrationContractVersion received invalid input');
+        }
+        const targetState = findPlatformIntegrationContractVersionRecordState({
+          integrationId: normalizedIntegrationId,
+          contractType: normalizedContractType,
+          contractVersion: normalizedContractVersion
+        });
+        if (!targetState?.record) {
+          return null;
+        }
+        const targetRecord = targetState.record;
+        if (targetRecord.status === 'retired') {
+          throw createPlatformIntegrationContractActivationBlockedError({
+            integrationId: normalizedIntegrationId,
+            contractType: normalizedContractType,
+            contractVersion: normalizedContractVersion,
+            reason: 'retired-version'
+          });
+        }
+        const scopeKey = toPlatformIntegrationContractScopeKey({
+          integrationId: normalizedIntegrationId,
+          contractType: normalizedContractType
+        });
+        const previousStatus = targetRecord.status;
+        for (const [contractKey, entry] of platformIntegrationContractVersionsByKey.entries()) {
+          if (!contractKey.startsWith(`${scopeKey}::`)) {
+            continue;
+          }
+          if (
+            entry.status === 'active'
+            && entry.contractVersion !== normalizedContractVersion
+          ) {
+            const updatedEntry = toPlatformIntegrationContractVersionRecord({
+              ...entry,
+              status: 'deprecated',
+              updatedByUserId:
+                normalizePlatformIntegrationOptionalText(operatorUserId)
+                || entry.updatedByUserId,
+              updatedAt: new Date().toISOString()
+            });
+            platformIntegrationContractVersionsByKey.set(contractKey, updatedEntry);
+          }
+        }
+        const activeRecord = toPlatformIntegrationContractVersionRecord({
+          ...targetRecord,
+          status: 'active',
+          updatedByUserId:
+            normalizePlatformIntegrationOptionalText(operatorUserId)
+            || targetRecord.updatedByUserId,
+          updatedAt: new Date().toISOString()
+        });
+        platformIntegrationContractVersionsByKey.set(targetState.key, activeRecord);
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.contract.activated',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration_contract',
+              targetId:
+                `${normalizedIntegrationId}:${normalizedContractType}:${normalizedContractVersion}`,
+              result: 'success',
+              beforeState: {
+                status: previousStatus
+              },
+              afterState: {
+                status: activeRecord.status
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration contract activation audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...clonePlatformIntegrationContractVersionRecord(activeRecord),
+          previousStatus,
+          currentStatus: activeRecord.status,
+          switched: previousStatus !== activeRecord.status,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationContractVersionsByKey,
+            snapshot.platformIntegrationContractVersionsByKey
           );
           restoreAuditEventsFromSnapshot(snapshot.auditEvents);
         }

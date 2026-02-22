@@ -287,6 +287,37 @@ test('platform integration routes expose explicit permission declarations', () =
   }
 });
 
+test('platform integration contract routes expose explicit permission declarations', () => {
+  const listContracts = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/integrations/demo-integration/contracts'
+  });
+  const createContract = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/demo-integration/contracts'
+  });
+  const evaluateCompatibility = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/demo-integration/contracts/compatibility-check'
+  });
+  const activateContract = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/demo-integration/contracts/v2026.02.22/activate'
+  });
+
+  assert.ok(listContracts);
+  assert.equal(listContracts.access, 'protected');
+  assert.equal(listContracts.scope, 'platform');
+  assert.equal(listContracts.permission_code, 'platform.member_admin.view');
+
+  for (const route of [createContract, evaluateCompatibility, activateContract]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'platform');
+    assert.equal(route.permission_code, 'platform.member_admin.operate');
+  }
+});
+
 test('platform role-facts replace route exposes explicit permission declaration', () => {
   const replaceRoleFacts = findRouteDefinition({
     method: 'POST',
