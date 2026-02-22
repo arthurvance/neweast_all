@@ -60,6 +60,7 @@ development_status:
   2-4-平台角色管理与受保护角色约束: done
   2-5-平台权限树配置与角色分配生效: done
   2-6-平台侧负责人变更入口: done
+  2-7-平台治理前端工作台-平台用户管理-平台角色管理: backlog
   epic-2-retrospective: optional
 
   epic-3: in-progress
@@ -70,6 +71,7 @@ development_status:
   3-5-负责人变更后的接管保障: done
   3-6-负责人变更并发冲突与安全重试: done
   3-7-组织软删除级联一致性: done
+  3-8-组织治理前端工作台-组织成员管理-组织角色管理: backlog
   epic-3-retrospective: optional
 
   epic-4: in-progress
