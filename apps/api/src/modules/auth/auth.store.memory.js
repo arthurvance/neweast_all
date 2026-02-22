@@ -31,6 +31,7 @@ const createInMemoryAuthStore = ({
   const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
   const AUDIT_EVENT_REDACTION_KEY_PATTERN =
     /(password|token|secret|credential|private[_-]?key|access[_-]?key|api[_-]?key|signing[_-]?key)/i;
+  const AUDIT_EVENT_REDACTION_COUNT_KEY_PATTERN = /_count$/i;
   const MAX_AUDIT_QUERY_PAGE_SIZE = 200;
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
   const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
@@ -1057,7 +1058,11 @@ const createInMemoryAuthStore = ({
     if (typeof value === 'object') {
       const sanitized = {};
       for (const [key, itemValue] of Object.entries(value)) {
-        if (AUDIT_EVENT_REDACTION_KEY_PATTERN.test(String(key))) {
+        const keyString = String(key);
+        if (
+          AUDIT_EVENT_REDACTION_KEY_PATTERN.test(keyString)
+          && !AUDIT_EVENT_REDACTION_COUNT_KEY_PATTERN.test(keyString)
+        ) {
           sanitized[key] = '[REDACTED]';
           continue;
         }
@@ -1469,6 +1474,13 @@ const createInMemoryAuthStore = ({
     targetMap.clear();
     for (const [key, value] of snapshotMap.entries()) {
       targetMap.set(key, value);
+    }
+  };
+
+  const restoreSetFromSnapshot = (targetSet, snapshotSet) => {
+    targetSet.clear();
+    for (const value of snapshotSet.values()) {
+      targetSet.add(value);
     }
   };
 
@@ -2687,6 +2699,207 @@ const createInMemoryAuthStore = ({
       } catch (error) {
         if (snapshot) {
           restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
+          restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
+          restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    softDeleteUser: async ({
+      userId,
+      operatorUserId,
+      auditContext = null
+    }) => {
+      const normalizedUserId = String(userId || '').trim();
+      const normalizedOperatorUserId = String(operatorUserId || '').trim();
+      if (!normalizedUserId || !normalizedOperatorUserId) {
+        throw new Error('softDeleteUser requires userId and operatorUserId');
+      }
+      const existingUser = usersById.get(normalizedUserId);
+      if (!existingUser) {
+        return null;
+      }
+      const previousStatus = normalizeOrgStatus(existingUser.status);
+      if (!VALID_PLATFORM_USER_STATUS.has(previousStatus)) {
+        throw new Error('platform-user-soft-delete-status-read-invalid');
+      }
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          usersById: structuredClone(usersById),
+          usersByPhone: structuredClone(usersByPhone),
+          domainsByUserId: structuredClone(domainsByUserId),
+          platformDomainKnownByUserId: structuredClone(platformDomainKnownByUserId),
+          tenantsByUserId: structuredClone(tenantsByUserId),
+          membershipsByOrgId: structuredClone(membershipsByOrgId),
+          tenantMembershipRolesByMembershipId: structuredClone(
+            tenantMembershipRolesByMembershipId
+          ),
+          platformRolesByUserId: structuredClone(platformRolesByUserId),
+          platformPermissionsByUserId: structuredClone(platformPermissionsByUserId),
+          sessionsById: structuredClone(sessionsById),
+          refreshTokensByHash: structuredClone(refreshTokensByHash),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        let revokedSessionCount = 0;
+        let revokedRefreshTokenCount = 0;
+        if (previousStatus !== 'disabled') {
+          const disabledUser = {
+            ...existingUser,
+            status: 'disabled'
+          };
+          usersById.set(normalizedUserId, disabledUser);
+          usersByPhone.set(disabledUser.phone, disabledUser);
+        }
+
+        domainsByUserId.set(normalizedUserId, new Set());
+        platformDomainKnownByUserId.delete(normalizedUserId);
+
+        const memberships = tenantsByUserId.get(normalizedUserId) || [];
+        const updatedMemberships = [];
+        for (const membership of memberships) {
+          const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+            membership?.status
+          );
+          const normalizedMembership = {
+            ...membership,
+            status: isActiveLikeStatus(normalizedMembershipStatus)
+              ? 'disabled'
+              : normalizedMembershipStatus || 'disabled'
+          };
+          const membershipId = String(
+            membership?.membershipId || membership?.membership_id || ''
+          ).trim();
+          if (membershipId) {
+            tenantMembershipRolesByMembershipId.delete(membershipId);
+          }
+          updatedMemberships.push(normalizedMembership);
+        }
+        tenantsByUserId.set(normalizedUserId, updatedMemberships);
+
+        for (const [orgId, orgMemberships] of membershipsByOrgId.entries()) {
+          const nextOrgMemberships = [];
+          for (const orgMembership of Array.isArray(orgMemberships)
+            ? orgMemberships
+            : []) {
+            if (String(orgMembership?.userId || '').trim() !== normalizedUserId) {
+              nextOrgMemberships.push(orgMembership);
+              continue;
+            }
+            const normalizedOrgMembershipStatus = normalizeTenantMembershipStatusForRead(
+              orgMembership?.status
+            );
+            nextOrgMemberships.push({
+              ...orgMembership,
+              status: isActiveLikeStatus(normalizedOrgMembershipStatus)
+                ? 'disabled'
+                : normalizedOrgMembershipStatus || 'disabled'
+            });
+          }
+          membershipsByOrgId.set(orgId, nextOrgMemberships);
+        }
+
+        const platformRoles = platformRolesByUserId.get(normalizedUserId) || [];
+        platformRolesByUserId.set(
+          normalizedUserId,
+          platformRoles.map((role) => ({
+            ...role,
+            status: isActiveLikeStatus(role?.status) ? 'disabled' : normalizeOrgStatus(role?.status)
+          }))
+        );
+        platformPermissionsByUserId.set(
+          normalizedUserId,
+          buildEmptyPlatformPermission()
+        );
+
+        for (const session of sessionsById.values()) {
+          if (
+            session.userId === normalizedUserId
+            && session.status === 'active'
+          ) {
+            session.status = 'revoked';
+            session.revokedReason = 'user-soft-deleted';
+            session.updatedAt = Date.now();
+            revokedSessionCount += 1;
+          }
+        }
+        for (const refreshRecord of refreshTokensByHash.values()) {
+          if (
+            refreshRecord.userId === normalizedUserId
+            && refreshRecord.status === 'active'
+          ) {
+            refreshRecord.status = 'revoked';
+            refreshRecord.updatedAt = Date.now();
+            revokedRefreshTokenCount += 1;
+          }
+        }
+
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              tenantId: null,
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'auth.platform.user.soft_deleted',
+              actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
+              actorSessionId: auditContext.actorSessionId || null,
+              targetType: 'user',
+              targetId: normalizedUserId,
+              result: 'success',
+              beforeState: {
+                status: previousStatus
+              },
+              afterState: {
+                status: 'disabled'
+              },
+              metadata: {
+                revoked_session_count: revokedSessionCount,
+                revoked_refresh_token_count: revokedRefreshTokenCount
+              }
+            });
+          } catch (error) {
+            const auditWriteError = new Error('platform user soft-delete audit write failed');
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+          auditRecorded = true;
+        }
+
+        return {
+          user_id: normalizedUserId,
+          previous_status: previousStatus,
+          current_status: 'disabled',
+          revoked_session_count: revokedSessionCount,
+          revoked_refresh_token_count: revokedRefreshTokenCount,
+          audit_recorded: auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(usersById, snapshot.usersById);
+          restoreMapFromSnapshot(usersByPhone, snapshot.usersByPhone);
+          restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
+          restoreSetFromSnapshot(
+            platformDomainKnownByUserId,
+            snapshot.platformDomainKnownByUserId
+          );
+          restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
+          restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
+          restoreMapFromSnapshot(
+            tenantMembershipRolesByMembershipId,
+            snapshot.tenantMembershipRolesByMembershipId
+          );
+          restoreMapFromSnapshot(platformRolesByUserId, snapshot.platformRolesByUserId);
+          restoreMapFromSnapshot(
+            platformPermissionsByUserId,
+            snapshot.platformPermissionsByUserId
+          );
           restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
           restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
           restoreAuditEventsFromSnapshot(snapshot.auditEvents);

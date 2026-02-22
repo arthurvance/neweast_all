@@ -10,8 +10,10 @@ const {
 
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const MAX_STATUS_REASON_LENGTH = 256;
+const MAX_USER_ID_LENGTH = 64;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const UPDATE_USER_STATUS_ALLOWED_FIELDS = new Set(['user_id', 'status', 'reason']);
+const SOFT_DELETE_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const VALID_USER_STATUSES = new Set(['active', 'disabled']);
 
 const isPlainObject = (candidate) =>
@@ -193,6 +195,37 @@ const parseUpdateUserStatusPayload = (payload) => {
     userId,
     nextStatus,
     reason
+  };
+};
+
+const parseSoftDeleteUserParams = (params) => {
+  if (!isPlainObject(params)) {
+    throw userErrors.invalidPayload();
+  }
+  const unknownParamKeys = Object.keys(params).filter(
+    (key) => !SOFT_DELETE_USER_ALLOWED_PARAM_FIELDS.has(key)
+  );
+  if (unknownParamKeys.length > 0) {
+    throw userErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (!Object.prototype.hasOwnProperty.call(params, 'user_id')) {
+    throw userErrors.invalidPayload('user_id 不能为空');
+  }
+  if (typeof params.user_id !== 'string') {
+    throw userErrors.invalidPayload('user_id 必须为字符串');
+  }
+  const userId = normalizeRequiredString(params.user_id);
+  if (!userId) {
+    throw userErrors.invalidPayload('user_id 不能为空');
+  }
+  if (CONTROL_CHAR_PATTERN.test(userId)) {
+    throw userErrors.invalidPayload('user_id 不能包含控制字符');
+  }
+  if (userId.length > MAX_USER_ID_LENGTH) {
+    throw userErrors.invalidPayload(`user_id 长度不能超过 ${MAX_USER_ID_LENGTH}`);
+  }
+  return {
+    userId
   };
 };
 
@@ -567,9 +600,210 @@ const createPlatformUserService = ({ authService } = {}) => {
     };
   };
 
+  const softDeleteUser = async ({
+    requestId,
+    accessToken,
+    params = {},
+    traceparent = null,
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const requestedUserId = String(params?.user_id || '').trim() || null;
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'platform.user.soft_delete.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetUserId: requestedUserId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          previous_status: null,
+          current_status: null,
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+    const { operatorUserId, operatorSessionId } = operatorContext;
+
+    let parsedParams;
+    try {
+      parsedParams = parseSoftDeleteUserParams(params);
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'platform.user.soft_delete.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          targetUserId: requestedUserId,
+          detail: 'path parameter validation failed',
+          metadata: {
+            previous_status: null,
+            current_status: null,
+            error_code: error.errorCode
+          }
+        });
+      }
+      throw error;
+    }
+
+    assertAuthServiceMethod('softDeleteUser');
+    let softDeleteResult;
+    try {
+      softDeleteResult = await authService.softDeleteUser({
+        requestId: resolvedRequestId,
+        traceparent,
+        userId: parsedParams.userId,
+        operatorUserId,
+        operatorSessionId
+      });
+    } catch (error) {
+      const mappedError = (() => {
+        if (error instanceof AuthProblemError) {
+          if (Number(error.status) === 404) {
+            return userErrors.userNotFound();
+          }
+          return error;
+        }
+        return userErrors.dependencyUnavailable();
+      })();
+      const mappedErrorCode = String(mappedError?.errorCode || '').trim();
+      addAuditEvent({
+        type: 'platform.user.soft_delete.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail:
+          mappedErrorCode === 'USR-404-USER-NOT-FOUND'
+            ? 'target user not found'
+            : mappedError === error
+              ? 'platform user soft-delete rejected by auth domain'
+              : 'platform user soft-delete dependency unavailable',
+        metadata: {
+          previous_status: null,
+          current_status: null,
+          error_code: mappedErrorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: String(error?.errorCode || error?.code || '').trim() || 'unknown'
+        }
+      });
+      throw mappedError;
+    }
+
+    if (!softDeleteResult) {
+      addAuditEvent({
+        type: 'platform.user.soft_delete.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'target user not found',
+        metadata: {
+          previous_status: null,
+          current_status: null,
+          error_code: 'USR-404-USER-NOT-FOUND'
+        }
+      });
+      throw userErrors.userNotFound();
+    }
+
+    const resolvedResultUserId = String(softDeleteResult.user_id || '').trim();
+    if (
+      !resolvedResultUserId
+      || resolvedResultUserId !== parsedParams.userId
+    ) {
+      addAuditEvent({
+        type: 'platform.user.soft_delete.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'platform user soft-delete dependency returned mismatched target user',
+        metadata: {
+          previous_status: null,
+          current_status: null,
+          error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+          upstream_error_code: 'PLATFORM-USER-SOFT-DELETE-RESULT-TARGET-MISMATCH',
+          upstream_target_user_id: resolvedResultUserId || null
+        }
+      });
+      throw userErrors.platformSnapshotDegraded({
+        reason: 'platform-user-soft-delete-target-mismatch'
+      });
+    }
+
+    const previousStatus = normalizeUserStatus(softDeleteResult.previous_status);
+    const currentStatus = normalizeUserStatus(softDeleteResult.current_status);
+    const revokedSessionCount = softDeleteResult.revoked_session_count;
+    const revokedRefreshTokenCount = softDeleteResult.revoked_refresh_token_count;
+    const hasInvalidResult = (
+      !VALID_USER_STATUSES.has(previousStatus)
+      || !VALID_USER_STATUSES.has(currentStatus)
+      || currentStatus !== 'disabled'
+      || !Number.isInteger(revokedSessionCount)
+      || revokedSessionCount < 0
+      || !Number.isInteger(revokedRefreshTokenCount)
+      || revokedRefreshTokenCount < 0
+    );
+    if (hasInvalidResult) {
+      addAuditEvent({
+        type: 'platform.user.soft_delete.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'platform user soft-delete dependency returned invalid state',
+        metadata: {
+          previous_status: previousStatus || null,
+          current_status: currentStatus || null,
+          error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+          upstream_error_code: 'PLATFORM-USER-SOFT-DELETE-RESULT-INVALID'
+        }
+      });
+      throw userErrors.platformSnapshotDegraded({
+        reason: 'platform-user-soft-delete-result-invalid'
+      });
+    }
+
+    const isNoOp = (
+      previousStatus === currentStatus
+      && revokedSessionCount === 0
+      && revokedRefreshTokenCount === 0
+    );
+    addAuditEvent({
+      type: 'platform.user.soft_deleted',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      targetUserId: resolvedResultUserId,
+      detail: isNoOp
+        ? 'platform user soft-delete treated as no-op'
+        : 'platform user soft-deleted and global sessions revoked',
+      metadata: {
+        previous_status: previousStatus,
+        current_status: currentStatus,
+        revoked_session_count: revokedSessionCount,
+        revoked_refresh_token_count: revokedRefreshTokenCount
+      }
+    });
+
+    return {
+      user_id: resolvedResultUserId,
+      previous_status: previousStatus,
+      current_status: currentStatus,
+      revoked_session_count: revokedSessionCount,
+      revoked_refresh_token_count: revokedRefreshTokenCount,
+      request_id: resolvedRequestId
+    };
+  };
+
   return {
     createUser,
     updateUserStatus,
+    softDeleteUser,
     _internals: {
       auditTrail,
       authService

@@ -124,6 +124,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/audit/events']);
   assert.ok(payload.paths['/platform/system-configs/{config_key}']);
   assert.ok(payload.paths['/platform/users']);
+  assert.ok(payload.paths['/platform/users/{user_id}']);
   assert.ok(payload.paths['/platform/users/status']);
   assert.ok(payload.paths['/smoke']);
   assert.equal(
@@ -277,6 +278,11 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   );
   assert.ok(
     payload.paths['/platform/users/status'].post.parameters.some(
+      (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
+    )
+  );
+  assert.ok(
+    payload.paths['/platform/users/{user_id}'].delete.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -1077,6 +1083,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/users/status'].post.responses['404']);
   assert.ok(payload.paths['/platform/users/status'].post.responses['409']);
   assert.ok(payload.paths['/platform/users/status'].post.responses['503']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].delete.responses['400']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].delete.responses['401']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].delete.responses['403']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].delete.responses['404']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].delete.responses['409']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].delete.responses['503']);
   assert.equal(
     payload.paths['/platform/orgs/status'].post.summary,
     'Update organization status (active|disabled, tenant-domain scoped)'
@@ -1121,6 +1133,24 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     payload.paths['/platform/users/status'].post.responses['404'].content['application/problem+json']
       .examples.user_not_found.value.detail,
     '目标平台用户不存在或无 platform 域访问'
+  );
+  assert.equal(
+    payload.paths['/platform/users/{user_id}'].delete.summary,
+    'Soft-delete platform user and revoke all sessions'
+  );
+  assert.equal(
+    payload.paths['/platform/users/{user_id}'].delete.responses['200'].description,
+    'Platform user soft-deleted (or no-op) with global session/token revocation result.'
+  );
+  assert.equal(
+    payload.paths['/platform/users/{user_id}'].delete.parameters.find(
+      (parameter) => parameter.in === 'path' && parameter.name === 'user_id'
+    ).schema.maxLength,
+    64
+  );
+  assert.equal(
+    payload.components.schemas.SoftDeletePlatformUserResponse.properties.user_id.maxLength,
+    64
   );
   assert.equal(
     payload.components.schemas.ProvisionPlatformUserRequest.properties.phone.minLength,

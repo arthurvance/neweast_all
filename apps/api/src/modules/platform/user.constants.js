@@ -1,5 +1,7 @@
 const PLATFORM_USER_CREATE_PATH = '/platform/users';
 const PLATFORM_USER_CREATE_ROUTE_KEY = 'POST /platform/users';
+const PLATFORM_USER_SOFT_DELETE_PATH = '/platform/users/:user_id';
+const PLATFORM_USER_SOFT_DELETE_ROUTE_KEY = 'DELETE /platform/users/:user_id';
 const PLATFORM_USER_STATUS_PATH = '/platform/users/status';
 const PLATFORM_USER_STATUS_ROUTE_KEY = 'POST /platform/users/status';
 const PLATFORM_USER_PERMISSION_CODE = 'platform.member_admin.operate';
@@ -8,6 +10,8 @@ const PLATFORM_USER_SCOPE = 'platform';
 module.exports = {
   PLATFORM_USER_CREATE_PATH,
   PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_SOFT_DELETE_PATH,
+  PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_PATH,
   PLATFORM_USER_STATUS_ROUTE_KEY,
   PLATFORM_USER_PERMISSION_CODE,

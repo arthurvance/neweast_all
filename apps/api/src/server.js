@@ -24,6 +24,7 @@ const {
 } = require('./modules/platform/role.constants');
 const {
   PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY
 } = require('./modules/platform/user.constants');
 const {
@@ -172,6 +173,7 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY,
   PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 ]);
@@ -192,6 +194,7 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY,
   PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 ]);
@@ -204,6 +207,7 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
+  PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY,
   PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 ]);
@@ -227,6 +231,7 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [PLATFORM_USER_SOFT_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [
     PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
@@ -236,6 +241,9 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
 const IDEMPOTENCY_REQUEST_HASH_IGNORES_BODY_ROUTE_KEYS = new Set([
   TENANT_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY
+]);
+const IDEMPOTENCY_ROUTE_VARIANT_IGNORED_IN_SCOPE_ROUTE_KEYS = new Set([
+  PLATFORM_USER_SOFT_DELETE_ROUTE_KEY
 ]);
 
 const resolveJsonBodyLimitBytes = (value) => {
@@ -745,6 +753,11 @@ const normalizeRouteParamsForIdempotency = ({
     normalizedRouteParams.membership_id = String(
       normalizedRouteParams.membership_id || ''
     ).trim().toLowerCase();
+  }
+  if (routeKey === PLATFORM_USER_SOFT_DELETE_ROUTE_KEY) {
+    normalizedRouteParams.user_id = String(
+      normalizedRouteParams.user_id || ''
+    ).trim();
   }
   return normalizedRouteParams;
 };
@@ -1651,6 +1664,10 @@ const createRouteTable = ({
       routeParams
     });
     const routeVariant = toIdempotencyRouteVariant(idempotencyRouteParams);
+    const scopedRouteVariant =
+      IDEMPOTENCY_ROUTE_VARIANT_IGNORED_IN_SCOPE_ROUTE_KEYS.has(routeKey)
+        ? ''
+        : routeVariant;
     const shouldIgnoreRequestBodyInHash =
       IDEMPOTENCY_REQUEST_HASH_IGNORES_BODY_ROUTE_KEYS.has(routeKey);
     const requestHash = normalizeIdempotencyRequestHash(
@@ -1669,12 +1686,12 @@ const createRouteTable = ({
       routeKey,
       idempotencyKey,
       actorScope,
-      routeVariant
+      routeVariant: scopedRouteVariant
     });
     const scopeWindowKey = toIdempotencyScopeWindowKey({
       routeKey,
       actorScope,
-      routeVariant
+      routeVariant: scopedRouteVariant
     });
     const respondWithAuditedIdempotencyProblem = async ({
       problem,
@@ -2518,6 +2535,22 @@ const createRouteTable = ({
                 headers.authorization,
                 body || {},
                 getAuthorizationContext()
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_USER_SOFT_DELETE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformSoftDeleteUser(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                getAuthorizationContext(),
+                traceparent
               ),
             requestId
           )

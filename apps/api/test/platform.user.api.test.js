@@ -31,12 +31,20 @@ const createHarness = ({
     previous_status: nextStatus === 'disabled' ? 'active' : 'disabled',
     current_status: nextStatus
   }),
+  softDeleteUser = async ({ userId }) => ({
+    user_id: userId,
+    previous_status: 'active',
+    current_status: 'disabled',
+    revoked_session_count: 2,
+    revoked_refresh_token_count: 2
+  }),
   recordIdempotencyEvent = async () => {},
   authIdempotencyStore = null
 } = {}) => {
   const authorizeCalls = [];
   const provisionCalls = [];
   const statusCalls = [];
+  const softDeleteCalls = [];
   const idempotencyEvents = [];
   const authService = {
     authorizeRoute: async (payload) => {
@@ -50,6 +58,10 @@ const createHarness = ({
     updatePlatformUserStatus: async (payload) => {
       statusCalls.push(payload);
       return updatePlatformUserStatus(payload);
+    },
+    softDeleteUser: async (payload) => {
+      softDeleteCalls.push(payload);
+      return softDeleteUser(payload);
     },
     recordIdempotencyEvent: async (payload) => {
       idempotencyEvents.push(payload);
@@ -75,6 +87,7 @@ const createHarness = ({
     authorizeCalls,
     provisionCalls,
     statusCalls,
+    softDeleteCalls,
     idempotencyEvents
   };
 };
@@ -82,11 +95,11 @@ const createHarness = ({
 test('createPlatformUserHandlers fails fast when platform user service capability is missing', () => {
   assert.throws(
     () => createPlatformUserHandlers(),
-    /requires a platformUserService with createUser and updateUserStatus/
+    /requires a platformUserService with createUser, updateUserStatus, and softDeleteUser/
   );
   assert.throws(
     () => createPlatformUserHandlers({}),
-    /requires a platformUserService with createUser and updateUserStatus/
+    /requires a platformUserService with createUser, updateUserStatus, and softDeleteUser/
   );
 });
 
@@ -776,4 +789,254 @@ test('POST /platform/users/status rejects same Idempotency-Key with different pa
   assert.equal(payload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
   assert.equal(payload.request_id, 'req-platform-user-status-idem-conflict-2');
   assert.equal(harness.statusCalls.length, 1);
+});
+
+test('DELETE /platform/users/:user_id soft-deletes user and revokes all active sessions', async () => {
+  const harness = createHarness({
+    softDeleteUser: async ({ userId }) => ({
+      user_id: userId,
+      previous_status: 'active',
+      current_status: 'disabled',
+      revoked_session_count: 3,
+      revoked_refresh_token_count: 3
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-1',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-1',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.deepEqual(payload, {
+    user_id: 'platform-user-soft-delete-1',
+    previous_status: 'active',
+    current_status: 'disabled',
+    revoked_session_count: 3,
+    revoked_refresh_token_count: 3,
+    request_id: 'req-platform-user-soft-delete-1'
+  });
+  assert.equal(harness.softDeleteCalls.length, 1);
+  assert.equal(harness.softDeleteCalls[0].userId, 'platform-user-soft-delete-1');
+  assert.equal(harness.softDeleteCalls[0].operatorUserId, 'platform-operator');
+  assert.equal(harness.softDeleteCalls[0].operatorSessionId, 'platform-session');
+  const lastAuditEvent = harness.platformUserService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'platform.user.soft_deleted');
+  assert.equal(lastAuditEvent.target_user_id, 'platform-user-soft-delete-1');
+  assert.equal(lastAuditEvent.previous_status, 'active');
+  assert.equal(lastAuditEvent.current_status, 'disabled');
+  assert.equal(lastAuditEvent.revoked_session_count, 3);
+  assert.equal(lastAuditEvent.revoked_refresh_token_count, 3);
+});
+
+test('DELETE /platform/users/:user_id forwards traceparent to auth domain soft-delete call', async () => {
+  const harness = createHarness();
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-trace',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-trace',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      traceparent
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  assert.equal(harness.softDeleteCalls.length, 1);
+  assert.equal(harness.softDeleteCalls[0].traceparent, traceparent);
+});
+
+test('DELETE /platform/users/:user_id rejects user_id longer than 64 characters', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: `/platform/users/${'u'.repeat(65)}`,
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-invalid-user-id-length',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-400-INVALID-PAYLOAD');
+  assert.equal(payload.detail, 'user_id 长度不能超过 64');
+  assert.equal(payload.request_id, 'req-platform-user-soft-delete-invalid-user-id-length');
+  assert.equal(harness.softDeleteCalls.length, 0);
+});
+
+test('DELETE /platform/users/:user_id returns USER-404 when target user is missing', async () => {
+  const harness = createHarness({
+    softDeleteUser: async () => {
+      throw new AuthProblemError({
+        status: 404,
+        title: 'Not Found',
+        detail: 'target user missing',
+        errorCode: 'AUTH-404-USER-NOT-FOUND'
+      });
+    }
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-missing',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-not-found',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-404-USER-NOT-FOUND');
+  assert.equal(payload.detail, '目标平台用户不存在或无 platform 域访问');
+  assert.equal(payload.request_id, 'req-platform-user-soft-delete-not-found');
+});
+
+test('DELETE /platform/users/:user_id maps upstream target mismatch to AUTH-503-PLATFORM-SNAPSHOT-DEGRADED', async () => {
+  const harness = createHarness({
+    softDeleteUser: async () => ({
+      user_id: 'platform-user-soft-delete-upstream-mismatch',
+      previous_status: 'active',
+      current_status: 'disabled',
+      revoked_session_count: 1,
+      revoked_refresh_token_count: 1
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-requested',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-target-mismatch',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 503);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+  assert.equal(payload.degradation_reason, 'platform-user-soft-delete-target-mismatch');
+  assert.equal(payload.request_id, 'req-platform-user-soft-delete-target-mismatch');
+  const lastAuditEvent = harness.platformUserService._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'platform.user.soft_delete.rejected');
+  assert.equal(lastAuditEvent.error_code, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+  assert.equal(
+    lastAuditEvent.upstream_error_code,
+    'PLATFORM-USER-SOFT-DELETE-RESULT-TARGET-MISMATCH'
+  );
+});
+
+test('DELETE /platform/users/:user_id replays first success response for same Idempotency-Key and route params', async () => {
+  const harness = createHarness();
+
+  const first = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-idem-replay',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-idem-replay-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-soft-delete-replay-001'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-idem-replay',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-idem-replay-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-soft-delete-replay-001'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(harness.softDeleteCalls.length, 1);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(secondPayload.user_id, firstPayload.user_id);
+  assert.equal(
+    secondPayload.revoked_refresh_token_count,
+    firstPayload.revoked_refresh_token_count
+  );
+  assert.equal(secondPayload.request_id, 'req-platform-user-soft-delete-idem-replay-2');
+});
+
+test('DELETE /platform/users/:user_id keeps idempotency replay stable for percent-encoded path variants', async () => {
+  const harness = createHarness();
+
+  const first = await dispatchApiRoute({
+    pathname: '/platform/users/%70latform-user-soft-delete-idem-trim',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-idem-trim-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-soft-delete-trim-001'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-idem-trim',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-idem-trim-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-soft-delete-trim-001'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(harness.softDeleteCalls.length, 1);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(firstPayload.user_id, 'platform-user-soft-delete-idem-trim');
+  assert.equal(secondPayload.user_id, firstPayload.user_id);
+  assert.equal(secondPayload.request_id, 'req-platform-user-soft-delete-idem-trim-2');
+});
+
+test('DELETE /platform/users/:user_id rejects same Idempotency-Key with different route params', async () => {
+  const harness = createHarness();
+  const first = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-idem-conflict-a',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-idem-conflict-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-soft-delete-conflict-001'
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-soft-delete-idem-conflict-b',
+    method: 'DELETE',
+    requestId: 'req-platform-user-soft-delete-idem-conflict-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-soft-delete-conflict-001'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  const payload = JSON.parse(second.body);
+  assert.equal(payload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-user-soft-delete-idem-conflict-2');
+  assert.equal(harness.softDeleteCalls.length, 1);
 });

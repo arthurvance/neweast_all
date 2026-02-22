@@ -36,9 +36,10 @@ const createPlatformUserHandlers = (platformUserService) => {
     !platformUserService
     || typeof platformUserService.createUser !== 'function'
     || typeof platformUserService.updateUserStatus !== 'function'
+    || typeof platformUserService.softDeleteUser !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformUserHandlers requires a platformUserService with createUser and updateUserStatus'
+      'createPlatformUserHandlers requires a platformUserService with createUser, updateUserStatus, and softDeleteUser'
     );
   }
 
@@ -72,6 +73,23 @@ const createPlatformUserHandlers = (platformUserService) => {
           authorizationContext
         }),
         payload: body || {},
+        traceparent,
+        authorizationContext
+      }),
+    softDeleteUser: async ({
+      requestId,
+      authorization,
+      params,
+      traceparent = null,
+      authorizationContext = null
+    }) =>
+      platformUserService.softDeleteUser({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext
+        }),
+        params: params || {},
         traceparent,
         authorizationContext
       })

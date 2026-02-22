@@ -51,6 +51,7 @@ const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
 const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
 const AUDIT_EVENT_REDACTION_KEY_PATTERN =
   /(password|token|secret|credential|private[_-]?key|access[_-]?key|api[_-]?key|signing[_-]?key)/i;
+const AUDIT_EVENT_REDACTION_COUNT_KEY_PATTERN = /_count$/i;
 const MAX_AUDIT_QUERY_PAGE_SIZE = 200;
 const MYSQL_AUDIT_DATETIME_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$/;
@@ -391,7 +392,11 @@ const sanitizeAuditState = (value, depth = 0) => {
   if (typeof value === 'object') {
     const sanitized = {};
     for (const [key, itemValue] of Object.entries(value)) {
-      if (AUDIT_EVENT_REDACTION_KEY_PATTERN.test(String(key))) {
+      const keyString = String(key);
+      if (
+        AUDIT_EVENT_REDACTION_KEY_PATTERN.test(keyString)
+        && !AUDIT_EVENT_REDACTION_COUNT_KEY_PATTERN.test(keyString)
+      ) {
         sanitized[key] = '[REDACTED]';
         continue;
       }
@@ -5304,6 +5309,189 @@ const createMySqlAuthStore = ({
               user_id: normalizedUserId,
               previous_status: previousStatus,
               current_status: normalizedNextStatus,
+              audit_recorded: auditRecorded
+            };
+          })
+      }),
+
+    softDeleteUser: async ({
+      userId,
+      operatorUserId,
+      auditContext = null
+    }) =>
+      executeWithDeadlockRetry({
+        operation: 'softDeleteUser',
+        onExhausted: 'throw',
+        execute: () =>
+          dbClient.inTransaction(async (tx) => {
+            const normalizedUserId = String(userId || '').trim();
+            const normalizedOperatorUserId = String(operatorUserId || '').trim();
+            if (!normalizedUserId || !normalizedOperatorUserId) {
+              throw new Error('softDeleteUser requires userId and operatorUserId');
+            }
+
+            const userRows = await tx.query(
+              `
+                SELECT id AS user_id, status
+                FROM users
+                WHERE BINARY id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedUserId]
+            );
+            const user = userRows?.[0] || null;
+            if (!user) {
+              return null;
+            }
+
+            const previousStatus = normalizeUserStatus(user.status);
+            if (!VALID_PLATFORM_USER_STATUS.has(previousStatus)) {
+              throw new Error('platform-user-soft-delete-status-read-invalid');
+            }
+
+            let revokedSessionCount = 0;
+            let revokedRefreshTokenCount = 0;
+            if (previousStatus !== 'disabled') {
+              const updateUserResult = await tx.query(
+                `
+                  UPDATE users
+                  SET status = 'disabled',
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE BINARY id = ?
+                    AND status <> 'disabled'
+                `,
+                [normalizedUserId]
+              );
+              if (Number(updateUserResult?.affectedRows || 0) !== 1) {
+                throw new Error('platform-user-soft-delete-write-not-applied');
+              }
+            }
+
+            await tx.query(
+              `
+                UPDATE memberships
+                SET status = 'disabled',
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ?
+                  AND status IN ('active', 'enabled')
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                UPDATE auth_user_tenants
+                SET status = 'disabled',
+                    can_view_member_admin = 0,
+                    can_operate_member_admin = 0,
+                    can_view_billing = 0,
+                    can_operate_billing = 0,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ?
+                  AND status IN ('active', 'enabled')
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                UPDATE auth_user_platform_roles
+                SET status = 'disabled',
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ?
+                  AND status IN ('active', 'enabled')
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                DELETE amr
+                FROM auth_tenant_membership_roles amr
+                INNER JOIN auth_user_tenants ut
+                  ON ut.membership_id = amr.membership_id
+                WHERE ut.user_id = ?
+              `,
+              [normalizedUserId]
+            );
+
+            const revokeSessionsResult = await tx.query(
+              `
+                UPDATE auth_sessions
+                SET status = 'revoked',
+                    revoked_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ?
+                  AND status = 'active'
+              `,
+              ['user-soft-deleted', normalizedUserId]
+            );
+            revokedSessionCount = Number(revokeSessionsResult?.affectedRows || 0);
+
+            const revokeRefreshTokensResult = await tx.query(
+              `
+                UPDATE refresh_tokens
+                SET status = 'revoked',
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ?
+                  AND status = 'active'
+              `,
+              [normalizedUserId]
+            );
+            revokedRefreshTokenCount = Number(
+              revokeRefreshTokensResult?.affectedRows || 0
+            );
+
+            await tx.query(
+              `
+                DELETE FROM auth_user_domain_access
+                WHERE user_id = ?
+                  AND domain IN ('platform', 'tenant')
+              `,
+              [normalizedUserId]
+            );
+
+            let auditRecorded = false;
+            if (auditContext && typeof auditContext === 'object') {
+              try {
+                await recordAuditEventWithQueryClient({
+                  queryClient: tx,
+                  domain: 'platform',
+                  tenantId: null,
+                  requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+                  traceparent: auditContext.traceparent,
+                  eventType: 'auth.platform.user.soft_deleted',
+                  actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
+                  actorSessionId: auditContext.actorSessionId,
+                  targetType: 'user',
+                  targetId: normalizedUserId,
+                  result: 'success',
+                  beforeState: {
+                    status: previousStatus
+                  },
+                  afterState: {
+                    status: 'disabled'
+                  },
+                  metadata: {
+                    revoked_session_count: revokedSessionCount,
+                    revoked_refresh_token_count: revokedRefreshTokenCount
+                  }
+                });
+                auditRecorded = true;
+              } catch (error) {
+                const auditWriteError = new Error(
+                  'platform user soft-delete audit write failed'
+                );
+                auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+                auditWriteError.cause = error;
+                throw auditWriteError;
+              }
+            }
+
+            return {
+              user_id: normalizedUserId,
+              previous_status: previousStatus,
+              current_status: 'disabled',
+              revoked_session_count: revokedSessionCount,
+              revoked_refresh_token_count: revokedRefreshTokenCount,
               audit_recorded: auditRecorded
             };
           })

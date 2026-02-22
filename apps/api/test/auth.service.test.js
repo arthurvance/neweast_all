@@ -10064,6 +10064,522 @@ test('updatePlatformUserStatus skips out-of-transaction audit fallback when stor
   assert.equal(userStatusById.get('platform-user-atomic-audit'), 'disabled');
 });
 
+test('softDeleteUser revokes platform/tenant sessions and refresh tokens and remains idempotent on repeated calls', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-soft-delete-target-user',
+        phone: '13835550152',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        platformRoles: [
+          {
+            roleId: 'platform-soft-delete-target-view',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ],
+        tenants: [
+          {
+            tenantId: 'platform-soft-delete-target-tenant',
+            tenantName: '平台用户软删除目标组织',
+            status: 'active',
+            permission: tenantPermissionA
+          }
+        ]
+      }
+    ]
+  });
+
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-soft-delete-operator-login'
+  );
+  const platformLogin = await service.login({
+    requestId: 'req-platform-soft-delete-platform-login',
+    phone: '13835550152',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  const tenantLogin = await service.login({
+    requestId: 'req-platform-soft-delete-tenant-login',
+    phone: '13835550152',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  const first = await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-first',
+    userId: 'platform-soft-delete-target-user',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+  assert.equal(first.user_id, 'platform-soft-delete-target-user');
+  assert.equal(first.previous_status, 'active');
+  assert.equal(first.current_status, 'disabled');
+  assert.ok(first.revoked_session_count >= 2);
+  assert.ok(first.revoked_refresh_token_count >= 2);
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-platform-soft-delete-platform-authorize-after-delete',
+        accessToken: platformLogin.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-platform-soft-delete-tenant-authorize-after-delete',
+        accessToken: tenantLogin.access_token,
+        permissionCode: 'tenant.member_admin.view',
+        scope: 'tenant'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-platform-soft-delete-refresh-after-delete-platform',
+        refreshToken: platformLogin.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-platform-soft-delete-refresh-after-delete-tenant',
+        refreshToken: tenantLogin.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+
+  const second = await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-second',
+    userId: 'platform-soft-delete-target-user',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+  assert.deepEqual(second, {
+    user_id: 'platform-soft-delete-target-user',
+    previous_status: 'disabled',
+    current_status: 'disabled',
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0
+  });
+});
+
+test('softDeleteUser clears cached access sessions even when store result is a no-op', async () => {
+  const targetUserId = 'platform-soft-delete-cache-noop-user';
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: targetUserId,
+        phone: '13835550157',
+        password: 'Passw0rd!',
+        status: 'disabled',
+        domains: ['platform']
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-soft-delete-cache-noop-operator-login'
+  );
+
+  const cacheKey = `cache-soft-delete-noop-session:${targetUserId}:1`;
+  service._internals.accessSessionCache.set(cacheKey, {
+    session: {
+      sessionId: 'cache-soft-delete-noop-session',
+      userId: targetUserId,
+      sessionVersion: 1,
+      status: 'active'
+    },
+    user: {
+      id: targetUserId,
+      sessionVersion: 1,
+      status: 'active'
+    },
+    expiresAt: Date.now() + 60_000
+  });
+
+  const result = await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-cache-noop',
+    userId: targetUserId,
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+
+  assert.deepEqual(result, {
+    user_id: targetUserId,
+    previous_status: 'disabled',
+    current_status: 'disabled',
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0
+  });
+  assert.equal(service._internals.accessSessionCache.has(cacheKey), false);
+});
+
+test('softDeleteUser still revokes stale active sessions and refresh tokens when target status is already disabled', async () => {
+  const targetUserId = 'platform-soft-delete-disabled-stale-user';
+  const targetTenantId = 'platform-soft-delete-disabled-stale-tenant';
+  const platformSessionId = 'platform-soft-delete-disabled-stale-session-platform';
+  const tenantSessionId = 'platform-soft-delete-disabled-stale-session-tenant';
+  const platformRefreshHash = 'platform-soft-delete-disabled-stale-refresh-platform';
+  const tenantRefreshHash = 'platform-soft-delete-disabled-stale-refresh-tenant';
+  const authStore = createInMemoryAuthStore({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: targetUserId,
+        phone: '13835550154',
+        password: 'Passw0rd!',
+        status: 'disabled',
+        domains: ['platform', 'tenant'],
+        platformRoles: [
+          {
+            roleId: 'platform-soft-delete-disabled-stale-role',
+            status: 'active',
+            permission: {
+              canViewMemberAdmin: true,
+              canOperateMemberAdmin: false,
+              canViewBilling: false,
+              canOperateBilling: false
+            }
+          }
+        ],
+        tenants: [
+          {
+            membershipId: 'platform-soft-delete-disabled-stale-membership',
+            tenantId: targetTenantId,
+            tenantName: '平台用户软删除已禁用脏数据组织',
+            status: 'active',
+            permission: tenantPermissionA
+          }
+        ]
+      }
+    ],
+    hashPassword: (password) =>
+      createHash('sha256').update(String(password || '')).digest('hex')
+  });
+  await authStore.createSession({
+    sessionId: platformSessionId,
+    userId: targetUserId,
+    sessionVersion: 1,
+    entryDomain: 'platform',
+    activeTenantId: null
+  });
+  await authStore.createSession({
+    sessionId: tenantSessionId,
+    userId: targetUserId,
+    sessionVersion: 1,
+    entryDomain: 'tenant',
+    activeTenantId: targetTenantId
+  });
+  await authStore.createRefreshToken({
+    tokenHash: platformRefreshHash,
+    sessionId: platformSessionId,
+    userId: targetUserId,
+    expiresAt: new Date(Date.now() + REFRESH_TTL_SECONDS * 1000).toISOString()
+  });
+  await authStore.createRefreshToken({
+    tokenHash: tenantRefreshHash,
+    sessionId: tenantSessionId,
+    userId: targetUserId,
+    expiresAt: new Date(Date.now() + REFRESH_TTL_SECONDS * 1000).toISOString()
+  });
+  const service = createAuthService({
+    authStore,
+    allowInMemoryOtpStores: true
+  });
+
+  const result = await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-disabled-stale',
+    userId: targetUserId,
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-operator-session'
+  });
+
+  assert.deepEqual(result, {
+    user_id: targetUserId,
+    previous_status: 'disabled',
+    current_status: 'disabled',
+    revoked_session_count: 2,
+    revoked_refresh_token_count: 2
+  });
+  const platformSession = await authStore.findSessionById(platformSessionId);
+  const tenantSession = await authStore.findSessionById(tenantSessionId);
+  const platformRefresh = await authStore.findRefreshTokenByHash(platformRefreshHash);
+  const tenantRefresh = await authStore.findRefreshTokenByHash(tenantRefreshHash);
+  const domainAccess = await authStore.findDomainAccessByUserId(targetUserId);
+  const tenantOptions = await authStore.listTenantOptionsByUserId(targetUserId);
+
+  assert.equal(platformSession?.status, 'revoked');
+  assert.equal(tenantSession?.status, 'revoked');
+  assert.equal(platformRefresh?.status, 'revoked');
+  assert.equal(tenantRefresh?.status, 'revoked');
+  assert.deepEqual(domainAccess, {
+    platform: false,
+    tenant: false
+  });
+  assert.equal(tenantOptions.length, 0);
+});
+
+test('refresh fails closed for disabled user even when stale session and refresh token are re-activated', async () => {
+  const targetUserId = 'platform-soft-delete-refresh-fail-closed-user';
+  const targetPhone = '13835550155';
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: targetUserId,
+        phone: targetPhone,
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-soft-delete-refresh-fail-closed-operator-login'
+  );
+  const targetLogin = await service.login({
+    requestId: 'req-platform-soft-delete-refresh-fail-closed-target-login',
+    phone: targetPhone,
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-refresh-fail-closed-delete',
+    userId: targetUserId,
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+
+  const authStore = service._internals.authStore;
+  const refreshPayload = decodeJwtPayload(targetLogin.refresh_token);
+  await authStore.createSession({
+    sessionId: targetLogin.session_id,
+    userId: targetUserId,
+    sessionVersion: Number(refreshPayload.sv),
+    entryDomain: 'platform',
+    activeTenantId: null
+  });
+  await authStore.markRefreshTokenStatus({
+    tokenHash: refreshTokenHash(targetLogin.refresh_token),
+    status: 'active'
+  });
+
+  await assert.rejects(
+    () =>
+      service.refresh({
+        requestId: 'req-platform-soft-delete-refresh-fail-closed-refresh',
+        refreshToken: targetLogin.refresh_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-REFRESH');
+      return true;
+    }
+  );
+});
+
+test('authorizeRoute fails closed for disabled user even when stale access session is re-created', async () => {
+  const targetUserId = 'platform-soft-delete-access-fail-closed-user';
+  const targetPhone = '13835550156';
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: targetUserId,
+        phone: targetPhone,
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-soft-delete-access-fail-closed-operator-login'
+  );
+  const targetLogin = await service.login({
+    requestId: 'req-platform-soft-delete-access-fail-closed-target-login',
+    phone: targetPhone,
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-access-fail-closed-delete',
+    userId: targetUserId,
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+
+  const authStore = service._internals.authStore;
+  const accessPayload = decodeJwtPayload(targetLogin.access_token);
+  await authStore.createSession({
+    sessionId: targetLogin.session_id,
+    userId: targetUserId,
+    sessionVersion: Number(accessPayload.sv),
+    entryDomain: 'platform',
+    activeTenantId: null
+  });
+
+  await assert.rejects(
+    () =>
+      service.authorizeRoute({
+        requestId: 'req-platform-soft-delete-access-fail-closed-authorize',
+        accessToken: targetLogin.access_token,
+        permissionCode: 'platform.member_admin.view',
+        scope: 'platform'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 401);
+      assert.equal(error.errorCode, 'AUTH-401-INVALID-ACCESS');
+      return true;
+    }
+  );
+  const lastAuditEvent = service._internals.auditTrail.at(-1);
+  assert.equal(lastAuditEvent.type, 'auth.access.invalid');
+  assert.equal(lastAuditEvent.disposition_reason, 'user-status-disabled');
+});
+
+test('softDeleteUser persists audit event with request_id and traceparent', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      buildPlatformRoleFactsOperatorSeed(),
+      {
+        id: 'platform-soft-delete-audit-user',
+        phone: '13835550153',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform']
+      }
+    ]
+  });
+  const operatorLogin = await loginPlatformRoleFactsOperator(
+    service,
+    'req-platform-soft-delete-audit-operator-login'
+  );
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+
+  const result = await service.softDeleteUser({
+    requestId: 'req-platform-soft-delete-audit',
+    traceparent,
+    userId: 'platform-soft-delete-audit-user',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: operatorLogin.session_id
+  });
+  assert.equal(result.current_status, 'disabled');
+
+  const auditEvents = await service.listAuditEvents({
+    domain: 'platform',
+    requestId: 'req-platform-soft-delete-audit',
+    eventType: 'auth.platform.user.soft_deleted'
+  });
+  assert.equal(auditEvents.total, 1);
+  assert.equal(auditEvents.events[0].request_id, 'req-platform-soft-delete-audit');
+  assert.equal(auditEvents.events[0].traceparent, traceparent);
+  assert.equal(auditEvents.events[0].target_type, 'user');
+  assert.equal(auditEvents.events[0].target_id, 'platform-soft-delete-audit-user');
+  assert.equal(auditEvents.events[0].metadata.revoked_session_count >= 0, true);
+  assert.equal(auditEvents.events[0].metadata.revoked_refresh_token_count >= 0, true);
+});
+
+test('softDeleteUser fail-closes malformed dependency result payload', async () => {
+  const service = createAuthService({
+    authStore: {
+      softDeleteUser: async () => ({
+        user_id: 'platform-soft-delete-invalid-result-user',
+        previous_status: 'active',
+        current_status: 'disabled',
+        revoked_session_count: '3',
+        revoked_refresh_token_count: 2
+      })
+    },
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.softDeleteUser({
+        requestId: 'req-platform-soft-delete-invalid-result',
+        userId: 'platform-soft-delete-invalid-result-user',
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 503);
+      assert.equal(error.errorCode, 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED');
+      assert.equal(
+        error.extensions?.degradation_reason,
+        'platform-user-soft-delete-revoked-session-count-invalid'
+      );
+      return true;
+    }
+  );
+});
+
+test('softDeleteUser rejects user_id longer than 64 characters with invalid payload', async () => {
+  const service = createAuthService({
+    allowInMemoryOtpStores: true
+  });
+
+  await assert.rejects(
+    () =>
+      service.softDeleteUser({
+        requestId: 'req-platform-soft-delete-user-id-too-long',
+        userId: 'u'.repeat(65),
+        operatorUserId: 'operator-user',
+        operatorSessionId: 'operator-session'
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 400);
+      assert.equal(error.errorCode, 'AUTH-400-INVALID-PAYLOAD');
+      return true;
+    }
+  );
+});
+
 test('listAuditEvents maps dependency failures to AUTH-503-AUDIT-DEPENDENCY-UNAVAILABLE', async () => {
   const service = createAuthService({
     authStore: {

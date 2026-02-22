@@ -15,6 +15,7 @@ const {
 } = require('./modules/platform/role.constants');
 const {
   PLATFORM_USER_CREATE_PATH,
+  PLATFORM_USER_SOFT_DELETE_PATH,
   PLATFORM_USER_STATUS_PATH,
   PLATFORM_USER_PERMISSION_CODE,
   PLATFORM_USER_SCOPE
@@ -508,6 +509,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   {
     method: 'POST',
     path: PLATFORM_USER_CREATE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_USER_PERMISSION_CODE,
+    scope: PLATFORM_USER_SCOPE
+  },
+  {
+    method: 'DELETE',
+    path: PLATFORM_USER_SOFT_DELETE_PATH,
     access: 'protected',
     permission_code: PLATFORM_USER_PERMISSION_CODE,
     scope: PLATFORM_USER_SCOPE

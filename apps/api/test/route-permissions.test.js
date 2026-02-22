@@ -322,6 +322,18 @@ test('platform user status route exposes explicit permission declaration', () =>
   assert.equal(updatePlatformUserStatus.permission_code, 'platform.member_admin.operate');
 });
 
+test('platform user soft-delete route exposes explicit permission declaration', () => {
+  const softDeletePlatformUser = findRouteDefinition({
+    method: 'DELETE',
+    path: '/platform/users/platform-user-route-1'
+  });
+
+  assert.ok(softDeletePlatformUser);
+  assert.equal(softDeletePlatformUser.access, 'protected');
+  assert.equal(softDeletePlatformUser.scope, 'platform');
+  assert.equal(softDeletePlatformUser.permission_code, 'platform.member_admin.operate');
+});
+
 test('platform role list route exposes explicit permission declaration', () => {
   const listPlatformRoles = findRouteDefinition({
     method: 'GET',

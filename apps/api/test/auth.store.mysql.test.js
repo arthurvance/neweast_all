@@ -4670,6 +4670,390 @@ test('updatePlatformUserStatus returns null when target user does not exist', as
   assert.equal(updateCalled, false);
 });
 
+test('softDeleteUser cascades disabled status and revokes global sessions/refresh tokens in one transaction', async () => {
+  let inTransactionCalls = 0;
+  let updateUserCalled = false;
+  let updateMembershipsCalled = false;
+  let updateTenantMembershipCalled = false;
+  let updatePlatformRolesCalled = false;
+  let deleteTenantRoleBindingsCalled = false;
+  const revokedSessionParams = [];
+  const revokedRefreshParams = [];
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) => {
+        inTransactionCalls += 1;
+        return runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id AS user_id, status')
+              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [{ user_id: 'platform-soft-delete-user-1', status: 'active' }];
+            }
+            if (
+              normalizedSql.includes('UPDATE users')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              updateUserCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE memberships')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updateMembershipsCalled = true;
+              return { affectedRows: 2 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updateTenantMembershipCalled = true;
+              return { affectedRows: 2 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_platform_roles')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updatePlatformRolesCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('DELETE amr')
+              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('INNER JOIN auth_user_tenants')
+              && normalizedSql.includes('ut.user_id = ?')
+            ) {
+              deleteTenantRoleBindingsCalled = true;
+              return { affectedRows: 3 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              revokedSessionParams.push(params);
+              return { affectedRows: 4 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              revokedRefreshParams.push(params);
+              return { affectedRows: 5 };
+            }
+            if (
+              normalizedSql.includes('DELETE FROM auth_user_domain_access')
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              return { affectedRows: 2 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        });
+      }
+    }
+  });
+
+  const result = await store.softDeleteUser({
+    userId: 'platform-soft-delete-user-1',
+    operatorUserId: 'platform-operator-user'
+  });
+
+  assert.equal(inTransactionCalls, 1);
+  assert.equal(updateUserCalled, true);
+  assert.equal(updateMembershipsCalled, true);
+  assert.equal(updateTenantMembershipCalled, true);
+  assert.equal(updatePlatformRolesCalled, true);
+  assert.equal(deleteTenantRoleBindingsCalled, true);
+  assert.equal(revokedSessionParams.length, 1);
+  assert.equal(revokedSessionParams[0]?.[0], 'user-soft-deleted');
+  assert.equal(revokedSessionParams[0]?.[1], 'platform-soft-delete-user-1');
+  assert.equal(revokedRefreshParams.length, 1);
+  assert.equal(revokedRefreshParams[0]?.[0], 'platform-soft-delete-user-1');
+  assert.deepEqual(result, {
+    user_id: 'platform-soft-delete-user-1',
+    previous_status: 'active',
+    current_status: 'disabled',
+    revoked_session_count: 4,
+    revoked_refresh_token_count: 5,
+    audit_recorded: false
+  });
+});
+
+test('softDeleteUser treats disabled user as idempotent no-op while still enforcing cleanup checks', async () => {
+  let updateUsersCalled = false;
+  let updateMembershipsCalled = false;
+  let updateTenantMembershipCalled = false;
+  let updatePlatformRolesCalled = false;
+  let deleteTenantRoleBindingsCalled = false;
+  let revokeSessionsCalled = false;
+  let revokeRefreshTokensCalled = false;
+  let deleteDomainAccessCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id AS user_id, status')
+              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [{ user_id: 'platform-soft-delete-noop-user', status: 'disabled' }];
+            }
+            if (
+              normalizedSql.includes('UPDATE users')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              updateUsersCalled = true;
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE memberships')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updateMembershipsCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updateTenantMembershipCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_platform_roles')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updatePlatformRolesCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('DELETE amr')
+              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('INNER JOIN auth_user_tenants')
+              && normalizedSql.includes('ut.user_id = ?')
+            ) {
+              deleteTenantRoleBindingsCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              revokeSessionsCalled = true;
+              assert.equal(params[0], 'user-soft-deleted');
+              assert.equal(params[1], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              revokeRefreshTokensCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('DELETE FROM auth_user_domain_access')
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              deleteDomainAccessCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.softDeleteUser({
+    userId: 'platform-soft-delete-noop-user',
+    operatorUserId: 'platform-operator-user'
+  });
+
+  assert.equal(updateUsersCalled, false);
+  assert.equal(updateMembershipsCalled, true);
+  assert.equal(updateTenantMembershipCalled, true);
+  assert.equal(updatePlatformRolesCalled, true);
+  assert.equal(deleteTenantRoleBindingsCalled, true);
+  assert.equal(revokeSessionsCalled, true);
+  assert.equal(revokeRefreshTokensCalled, true);
+  assert.equal(deleteDomainAccessCalled, true);
+  assert.deepEqual(result, {
+    user_id: 'platform-soft-delete-noop-user',
+    previous_status: 'disabled',
+    current_status: 'disabled',
+    revoked_session_count: 0,
+    revoked_refresh_token_count: 0,
+    audit_recorded: false
+  });
+});
+
+test('softDeleteUser revokes stale active sessions and refresh tokens even when user status is already disabled', async () => {
+  let updateUsersCalled = false;
+  let revokeSessionsCalled = false;
+  let revokeRefreshTokensCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id AS user_id, status')
+              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [{ user_id: 'platform-soft-delete-disabled-stale', status: 'disabled' }];
+            }
+            if (
+              normalizedSql.includes('UPDATE users')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              updateUsersCalled = true;
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE memberships')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_platform_roles')
+              && normalizedSql.includes("SET status = 'disabled'")
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('DELETE amr')
+              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              revokeSessionsCalled = true;
+              assert.equal(params[0], 'user-soft-deleted');
+              assert.equal(params[1], 'platform-soft-delete-disabled-stale');
+              return { affectedRows: 2 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes("SET status = 'revoked'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              revokeRefreshTokensCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-disabled-stale');
+              return { affectedRows: 3 };
+            }
+            if (
+              normalizedSql.includes('DELETE FROM auth_user_domain_access')
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              return { affectedRows: 2 };
+            }
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.softDeleteUser({
+    userId: 'platform-soft-delete-disabled-stale',
+    operatorUserId: 'platform-operator-user'
+  });
+
+  assert.equal(updateUsersCalled, false);
+  assert.equal(revokeSessionsCalled, true);
+  assert.equal(revokeRefreshTokensCalled, true);
+  assert.deepEqual(result, {
+    user_id: 'platform-soft-delete-disabled-stale',
+    previous_status: 'disabled',
+    current_status: 'disabled',
+    revoked_session_count: 2,
+    revoked_refresh_token_count: 3,
+    audit_recorded: false
+  });
+});
+
+test('softDeleteUser returns null when target user does not exist', async () => {
+  let writeCalled = false;
+  const store = createMySqlAuthStore({
+    dbClient: {
+      query: async (sql) => {
+        assert.fail(`unexpected non-transaction query: ${String(sql)}`);
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql) => {
+            const normalizedSql = String(sql);
+            if (
+              normalizedSql.includes('SELECT id AS user_id, status')
+              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FOR UPDATE')
+            ) {
+              return [];
+            }
+            writeCalled = true;
+            assert.fail(`unexpected tx query: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const result = await store.softDeleteUser({
+    userId: 'platform-soft-delete-missing',
+    operatorUserId: 'platform-operator-user'
+  });
+
+  assert.equal(result, null);
+  assert.equal(writeCalled, false);
+});
+
 test('updateTenantMembershipStatus fails closed when lifecycle columns are missing', async () => {
   let lifecycleSelectAttempts = 0;
   let legacySelectAttempts = 0;

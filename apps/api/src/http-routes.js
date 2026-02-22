@@ -697,6 +697,21 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformSoftDeleteUser: async (
+      requestId,
+      authorization,
+      params,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformUser.softDeleteUser({
+        requestId,
+        authorization,
+        params: params || {},
+        traceparent,
+        authorizationContext
+      }),
+
     platformUpdateUserStatus: async (
       requestId,
       authorization,

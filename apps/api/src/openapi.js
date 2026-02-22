@@ -29,6 +29,8 @@ const IDEMPOTENCY_KEY_SCHEMA = {
 };
 const PLATFORM_ROLE_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
 const TENANT_MEMBERSHIP_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]{1,64}$';
+const PLATFORM_USER_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]+$';
+const PLATFORM_USER_ID_MAX_LENGTH = 64;
 
 const DEPENDENCY_PROBE_STATUS_SCHEMA = {
   type: 'object',
@@ -5559,6 +5561,216 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/users/{user_id}': {
+      delete: {
+        summary: 'Soft-delete platform user and revoke all sessions',
+        description: '平台用户软删除后，撤销该用户在 platform/tenant 域的全部活跃会话与 refresh token；重复执行保持幂等语义。',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'user_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: PLATFORM_USER_ID_MAX_LENGTH,
+              pattern: PLATFORM_USER_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同路由参数返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Platform user soft-deleted (or no-op) with global session/token revocation result.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SoftDeletePlatformUserResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid user_id path parameter',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'USR-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_access_token: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Unauthorized',
+                      status: 401,
+                      detail: '当前会话无效，请重新登录',
+                      error_code: 'AUTH-401-INVALID-ACCESS',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks platform permission context',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          404: {
+            description: 'Target platform user not found or has no platform-domain access',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  user_not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标平台用户不存在或无 platform 域访问',
+                      error_code: 'USR-404-USER-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          409: {
+            description: 'Idempotency payload mismatch conflict',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Platform user governance dependency or idempotency storage is unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台用户治理依赖暂不可用，请稍后重试',
+                      error_code: 'USR-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true
+                    }
+                  },
+                  platform_snapshot_degraded: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台权限同步暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'db-deadlock'
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  },
+                  idempotency_pending_timeout: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等请求处理中，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT',
+                      request_id: 'request_id_unset',
+                      retryable: true,
+                      degradation_reason: 'idempotency-pending-timeout'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/users/status': {
       post: {
         summary: 'Update platform user status (active|disabled, platform-domain scoped)',
@@ -7087,6 +7299,45 @@ const buildOpenApiSpec = () => {
             type: 'string',
             enum: ['active', 'disabled'],
             description: '平台用户状态更新后值（platform 域治理状态）'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      SoftDeletePlatformUserResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'user_id',
+          'previous_status',
+          'current_status',
+          'revoked_session_count',
+          'revoked_refresh_token_count',
+          'request_id'
+        ],
+        properties: {
+          user_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: PLATFORM_USER_ID_MAX_LENGTH,
+            pattern: PLATFORM_USER_ID_PATTERN
+          },
+          previous_status: {
+            type: 'string',
+            enum: ['active', 'disabled'],
+            description: '软删除执行前的用户状态'
+          },
+          current_status: {
+            type: 'string',
+            enum: ['disabled'],
+            description: '软删除执行后的用户状态'
+          },
+          revoked_session_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          revoked_refresh_token_count: {
+            type: 'integer',
+            minimum: 0
           },
           request_id: { type: 'string' }
         }

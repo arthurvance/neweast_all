@@ -23,6 +23,7 @@ const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const MAX_PLATFORM_ROLE_FACTS_PER_USER = 5;
 const MAX_PLATFORM_ROLE_ID_LENGTH = 64;
+const MAX_PLATFORM_USER_ID_LENGTH = 64;
 const MAX_ROLE_PERMISSION_CODES_PER_REQUEST = 64;
 const MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS = 100;
 const MAX_TENANT_NAME_LENGTH = 128;
@@ -2530,6 +2531,8 @@ const createAuthService = (options = {}) => {
     const [session, user] = await Promise.all([authStore.findSessionById(payload.sid), authStore.findUserById(payload.sub)]);
 
     const normalizedSessionStatus = String(session?.status || '').toLowerCase();
+    const normalizedUserStatus = user ? normalizeOrgStatus(user.status) : '';
+    const hasInvalidUserStatus = Boolean(user) && normalizedUserStatus !== 'active';
     const normalizedRevokedReason = String(
       session?.revokedReason || session?.revoked_reason || ''
     ).trim().toLowerCase();
@@ -2539,11 +2542,13 @@ const createAuthService = (options = {}) => {
         || normalizedRevokedReason === 'platform-role-facts-changed'
         || normalizedRevokedReason === 'critical-state-changed'
       );
-    if (!session || !user || normalizedSessionStatus !== 'active') {
+    if (!session || !user || normalizedSessionStatus !== 'active' || hasInvalidUserStatus) {
       const dispositionReason = !session
         ? 'access-session-missing'
         : !user
           ? 'access-user-missing'
+          : hasInvalidUserStatus
+            ? `user-status-${normalizedUserStatus || 'invalid'}`
           : revokedByCriticalStateChange
             ? 'session-version-mismatch'
           : `access-session-${normalizedSessionStatus || 'invalid'}`;
@@ -3137,6 +3142,8 @@ const createAuthService = (options = {}) => {
       && String(refreshRecord.sessionId || '') === String(payload.sid || '')
       && String(refreshRecord.userId || '') === String(payload.sub || '')
     );
+    const normalizedUserStatus = user ? normalizeOrgStatus(user.status) : '';
+    const hasInvalidUserStatus = Boolean(user) && normalizedUserStatus !== 'active';
 
     const sessionVersionMismatch = Boolean(session && user)
       && (
@@ -3151,6 +3158,7 @@ const createAuthService = (options = {}) => {
       !session ||
       String(session.status).toLowerCase() !== 'active' ||
       !user ||
+      hasInvalidUserStatus ||
       String(session.userId) !== String(user.id) ||
       sessionVersionMismatch
     );
@@ -3164,6 +3172,8 @@ const createAuthService = (options = {}) => {
             ? 'refresh-token-binding-mismatch'
           : refreshExpired
             ? 'refresh-token-expired'
+            : hasInvalidUserStatus
+              ? `user-status-${normalizedUserStatus || 'invalid'}`
             : sessionVersionMismatch
               ? 'session-version-mismatch'
             : replayDetected
@@ -7938,6 +7948,7 @@ const createAuthService = (options = {}) => {
 
     if (
       !normalizedUserId
+      || normalizedUserId.length > MAX_PLATFORM_USER_ID_LENGTH
       || !normalizedOperatorUserId
       || !normalizedOperatorSessionId
       || !VALID_PLATFORM_USER_STATUS.has(normalizedNextStatus)
@@ -8034,6 +8045,170 @@ const createAuthService = (options = {}) => {
       user_id: normalizedUserId,
       previous_status: previousStatus,
       current_status: currentStatus
+    };
+  };
+
+  const softDeleteUser = async ({
+    requestId,
+    traceparent = null,
+    userId,
+    operatorUserId,
+    operatorSessionId
+  }) => {
+    const normalizedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedOperatorUserId = String(operatorUserId || '').trim();
+    const normalizedOperatorSessionId = String(operatorSessionId || '').trim();
+    const normalizedTraceparent = normalizeAuditStringOrNull(traceparent, 128);
+
+    if (
+      !normalizedUserId
+      || normalizedUserId.length > MAX_PLATFORM_USER_ID_LENGTH
+      || !normalizedOperatorUserId
+      || !normalizedOperatorSessionId
+    ) {
+      throw errors.invalidPayload();
+    }
+
+    assertStoreMethod(authStore, 'softDeleteUser', 'authStore');
+    let result;
+    try {
+      result = await authStore.softDeleteUser({
+        requestId: normalizedRequestId,
+        userId: normalizedUserId,
+        operatorUserId: normalizedOperatorUserId,
+        auditContext: {
+          requestId: normalizedRequestId,
+          traceparent: normalizedTraceparent,
+          actorUserId: normalizedOperatorUserId,
+          actorSessionId: normalizedOperatorSessionId
+        }
+      });
+    } catch (error) {
+      if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
+        throw errors.auditDependencyUnavailable({
+          reason: 'audit-write-failed'
+        });
+      }
+      throw error;
+    }
+    if (!result) {
+      throw errors.userNotFound();
+    }
+
+    const resolvedResultUserId = normalizeStrictRequiredStringField(
+      resolveRawCamelSnakeField(result, 'userId', 'user_id')
+    );
+    if (!resolvedResultUserId || resolvedResultUserId !== normalizedUserId) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-user-soft-delete-target-mismatch'
+      });
+    }
+
+    const previousStatus = normalizeOrgStatus(
+      resolveRawCamelSnakeField(result, 'previousStatus', 'previous_status')
+    );
+    const currentStatus = normalizeOrgStatus(
+      resolveRawCamelSnakeField(result, 'currentStatus', 'current_status')
+    );
+    if (
+      !VALID_PLATFORM_USER_STATUS.has(previousStatus)
+      || !VALID_PLATFORM_USER_STATUS.has(currentStatus)
+      || currentStatus !== 'disabled'
+    ) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-user-soft-delete-result-invalid'
+      });
+    }
+    if (
+      !hasOwnProperty(result, 'revokedSessionCount')
+      && !hasOwnProperty(result, 'revoked_session_count')
+    ) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-user-soft-delete-revoked-session-count-invalid'
+      });
+    }
+    if (
+      !hasOwnProperty(result, 'revokedRefreshTokenCount')
+      && !hasOwnProperty(result, 'revoked_refresh_token_count')
+    ) {
+      throw errors.platformSnapshotDegraded({
+        reason: 'platform-user-soft-delete-revoked-refresh-token-count-invalid'
+      });
+    }
+    const revokedSessionCount = normalizeStrictNonNegativeIntegerFromPlatformDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'revokedSessionCount',
+        'revoked_session_count'
+      ),
+      dependencyReason: 'platform-user-soft-delete-revoked-session-count-invalid'
+    });
+    const revokedRefreshTokenCount = normalizeStrictNonNegativeIntegerFromPlatformDependency({
+      value: resolveRawCamelSnakeField(
+        result,
+        'revokedRefreshTokenCount',
+        'revoked_refresh_token_count'
+      ),
+      dependencyReason: 'platform-user-soft-delete-revoked-refresh-token-count-invalid'
+    });
+
+    // Always clear cached access sessions for the target user to avoid stale cache allow-list
+    // windows when soft-delete is replayed as a no-op.
+    invalidateSessionCacheByUserId(normalizedUserId);
+    addAuditEvent({
+      type: 'auth.platform.user.soft_deleted',
+      requestId: normalizedRequestId,
+      userId: normalizedOperatorUserId,
+      sessionId: normalizedOperatorSessionId,
+      detail: previousStatus === currentStatus
+        && revokedSessionCount === 0
+        && revokedRefreshTokenCount === 0
+        ? 'platform user soft-delete treated as no-op'
+        : 'platform user soft-deleted and global sessions revoked',
+      metadata: {
+        target_user_id: normalizedUserId,
+        previous_status: previousStatus,
+        current_status: currentStatus,
+        revoked_session_count: revokedSessionCount,
+        revoked_refresh_token_count: revokedRefreshTokenCount
+      }
+    });
+    const storeAuditRecorded = (
+      result?.auditRecorded === true
+      || result?.audit_recorded === true
+    );
+    if (!storeAuditRecorded) {
+      await recordPersistentAuditEvent({
+        domain: 'platform',
+        tenantId: null,
+        requestId: normalizedRequestId,
+        traceparent: normalizedTraceparent,
+        eventType: 'auth.platform.user.soft_deleted',
+        actorUserId: normalizedOperatorUserId,
+        actorSessionId: normalizedOperatorSessionId,
+        targetType: 'user',
+        targetId: normalizedUserId,
+        result: 'success',
+        beforeState: {
+          status: previousStatus
+        },
+        afterState: {
+          status: currentStatus
+        },
+        metadata: {
+          revoked_session_count: revokedSessionCount,
+          revoked_refresh_token_count: revokedRefreshTokenCount
+        }
+      });
+    }
+
+    return {
+      user_id: normalizedUserId,
+      previous_status: previousStatus,
+      current_status: currentStatus,
+      revoked_session_count: revokedSessionCount,
+      revoked_refresh_token_count: revokedRefreshTokenCount
     };
   };
 
@@ -9293,6 +9468,7 @@ const createAuthService = (options = {}) => {
     replaceTenantMemberRoleBindings,
     updateOrganizationStatus,
     updatePlatformUserStatus,
+    softDeleteUser,
     rollbackProvisionedUserIdentity,
     replacePlatformRolesAndSyncSnapshot,
     listAuditEvents,
