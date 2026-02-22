@@ -6530,3 +6530,407 @@ test('listAuditEvents normalizes MySQL datetime string occurred_at payloads to I
     '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
   );
 });
+
+test('createPlatformIntegrationCatalogEntry persists catalog row and audit event with normalized payload', async () => {
+  let insertedCatalogParams = null;
+  let auditInsertParams = null;
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO platform_integration_catalog')) {
+      insertedCatalogParams = params;
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT integration_id')
+      && normalizedSql.includes('FROM platform_integration_catalog')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+    ) {
+      return [
+        {
+          integration_id: params?.[0],
+          code: 'ERP_OUTBOUND_MAIN',
+          code_normalized: 'erp_outbound_main',
+          name: 'ERP 出站主通道',
+          direction: 'outbound',
+          protocol: 'https',
+          auth_mode: 'hmac',
+          endpoint: '/orders/sync',
+          base_url: 'https://erp.example.com/api',
+          timeout_ms: 8000,
+          retry_policy: '{"max_attempts":3}',
+          idempotency_policy: '{"key_from":"order_id"}',
+          version_strategy: 'header:x-api-version',
+          runbook_url: 'https://runbook.example.com/integration/erp',
+          lifecycle_status: 'draft',
+          lifecycle_reason: '首次接入',
+          created_by_user_id: 'platform-operator',
+          updated_by_user_id: 'platform-operator',
+          created_at: '2026-02-22T00:00:00.000Z',
+          updated_at: '2026-02-22T00:00:00.000Z'
+        }
+      ];
+    }
+    if (normalizedSql.includes('INSERT INTO audit_events')) {
+      auditInsertParams = params;
+      return { affectedRows: 1 };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  const result = await store.createPlatformIntegrationCatalogEntry({
+    integrationId: 'erp_outbound_main',
+    code: 'ERP_OUTBOUND_MAIN',
+    name: 'ERP 出站主通道',
+    direction: 'outbound',
+    protocol: 'https',
+    authMode: 'hmac',
+    endpoint: '/orders/sync',
+    baseUrl: 'https://erp.example.com/api',
+    timeoutMs: 8000,
+    retryPolicy: { max_attempts: 3 },
+    idempotencyPolicy: { key_from: 'order_id' },
+    versionStrategy: 'header:x-api-version',
+    runbookUrl: 'https://runbook.example.com/integration/erp',
+    lifecycleStatus: 'draft',
+    lifecycleReason: '首次接入',
+    operatorUserId: 'platform-operator',
+    operatorSessionId: 'platform-session',
+    auditContext: {
+      requestId: 'req-integration-create-store',
+      traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      actorUserId: 'platform-operator',
+      actorSessionId: 'platform-session'
+    }
+  });
+
+  assert.ok(Array.isArray(insertedCatalogParams));
+  assert.equal(insertedCatalogParams[0], 'erp_outbound_main');
+  assert.equal(insertedCatalogParams[1], 'ERP_OUTBOUND_MAIN');
+  assert.equal(insertedCatalogParams[2], 'erp_outbound_main');
+  assert.equal(insertedCatalogParams[3], 'ERP 出站主通道');
+  assert.equal(insertedCatalogParams[4], 'outbound');
+  assert.equal(insertedCatalogParams[5], 'https');
+  assert.equal(insertedCatalogParams[6], 'hmac');
+  assert.equal(result.integrationId, 'erp_outbound_main');
+  assert.equal(result.code, 'ERP_OUTBOUND_MAIN');
+  assert.equal(result.lifecycleStatus, 'draft');
+  assert.equal(result.auditRecorded, true);
+  assert.ok(Array.isArray(auditInsertParams));
+  assert.equal(
+    auditInsertParams.includes('platform.integration.created'),
+    true
+  );
+});
+
+test('createPlatformIntegrationCatalogEntry maps duplicate integration_id to ER_DUP_ENTRY with conflict target', async () => {
+  const duplicateError = new Error(
+    "Duplicate entry 'integration-dup' for key 'PRIMARY'"
+  );
+  duplicateError.code = 'ER_DUP_ENTRY';
+  duplicateError.errno = 1062;
+
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO platform_integration_catalog')) {
+      throw duplicateError;
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.createPlatformIntegrationCatalogEntry({
+        integrationId: 'integration-dup',
+        code: 'INTEGRATION_DUP',
+        name: '重复主键测试',
+        direction: 'outbound',
+        protocol: 'https',
+        authMode: 'hmac'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ER_DUP_ENTRY');
+      assert.equal(
+        error?.platformIntegrationCatalogConflictTarget,
+        'integration_id'
+      );
+      return true;
+    }
+  );
+});
+
+test('createPlatformIntegrationCatalogEntry rejects integrationId longer than 64 chars before SQL execution', async () => {
+  let queryCalled = false;
+  const store = createStore(async (sql) => {
+    queryCalled = true;
+    assert.fail(`unexpected query: ${String(sql)}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.createPlatformIntegrationCatalogEntry({
+        integrationId: 'x'.repeat(65),
+        code: 'INTEGRATION_ID_TOO_LONG',
+        name: '超长标识测试',
+        direction: 'outbound',
+        protocol: 'https',
+        authMode: 'hmac'
+      }),
+    (error) => {
+      assert.match(String(error?.message || ''), /invalid integrationId/i);
+      return true;
+    }
+  );
+  assert.equal(queryCalled, false);
+});
+
+test('createPlatformIntegrationCatalogEntry rejects protocol longer than 64 chars before SQL execution', async () => {
+  let queryCalled = false;
+  const store = createStore(async (sql) => {
+    queryCalled = true;
+    assert.fail(`unexpected query: ${String(sql)}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.createPlatformIntegrationCatalogEntry({
+        integrationId: 'integration-protocol-too-long',
+        code: 'INTEGRATION_PROTOCOL_TOO_LONG',
+        name: '超长协议测试',
+        direction: 'outbound',
+        protocol: 'x'.repeat(65),
+        authMode: 'hmac'
+      }),
+    /invalid input/i
+  );
+  assert.equal(queryCalled, false);
+});
+
+test('findPlatformIntegrationCatalogEntryByIntegrationId fail-closes malformed timeout_ms=0 row', async () => {
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT integration_id')
+      && normalizedSql.includes('FROM platform_integration_catalog')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+    ) {
+      return [
+        {
+          integration_id: params?.[0],
+          code: 'INTEGRATION_TIMEOUT_ZERO',
+          code_normalized: 'integration_timeout_zero',
+          name: '超时字段异常',
+          direction: 'outbound',
+          protocol: 'https',
+          auth_mode: 'hmac',
+          endpoint: null,
+          base_url: null,
+          timeout_ms: 0,
+          retry_policy: null,
+          idempotency_policy: null,
+          version_strategy: null,
+          runbook_url: null,
+          lifecycle_status: 'draft',
+          lifecycle_reason: null,
+          created_by_user_id: 'platform-operator',
+          updated_by_user_id: 'platform-operator',
+          created_at: '2026-02-22T00:00:00.000Z',
+          updated_at: '2026-02-22T00:00:00.000Z'
+        }
+      ];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.findPlatformIntegrationCatalogEntryByIntegrationId({
+        integrationId: 'integration-timeout-zero'
+      }),
+    /result malformed/i
+  );
+});
+
+test('findPlatformIntegrationCatalogEntryByIntegrationId fail-closes when query result is non-array', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT integration_id')
+      && normalizedSql.includes('FROM platform_integration_catalog')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+    ) {
+      return { malformed: true };
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.findPlatformIntegrationCatalogEntryByIntegrationId({
+        integrationId: 'integration-malformed-result'
+      }),
+    /result malformed/i
+  );
+});
+
+test('transitionPlatformIntegrationLifecycle rejects unsupported state transition with lifecycle conflict error', async () => {
+  const store = createStore(async (sql) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT integration_id')
+      && normalizedSql.includes('FROM platform_integration_catalog')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('FOR UPDATE')
+    ) {
+      return [
+        {
+          integration_id: 'integration-retired-terminal',
+          code: 'INTEGRATION_RETIRED_TERMINAL',
+          code_normalized: 'integration_retired_terminal',
+          name: '终态冲突测试',
+          direction: 'outbound',
+          protocol: 'https',
+          auth_mode: 'hmac',
+          endpoint: '/orders/sync',
+          base_url: 'https://erp.example.com/api',
+          timeout_ms: 5000,
+          retry_policy: null,
+          idempotency_policy: null,
+          version_strategy: null,
+          runbook_url: null,
+          lifecycle_status: 'retired',
+          lifecycle_reason: '已下线',
+          created_by_user_id: 'platform-operator',
+          updated_by_user_id: 'platform-operator',
+          created_at: '2026-02-22T00:00:00.000Z',
+          updated_at: '2026-02-22T00:00:00.000Z'
+        }
+      ];
+    }
+    if (normalizedSql.includes('UPDATE platform_integration_catalog')) {
+      assert.fail('unexpected lifecycle update query on illegal transition');
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.transitionPlatformIntegrationLifecycle({
+        integrationId: 'integration-retired-terminal',
+        nextStatus: 'active',
+        reason: '尝试恢复'
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_PLATFORM_INTEGRATION_LIFECYCLE_CONFLICT');
+      assert.equal(error?.previousStatus, 'retired');
+      assert.equal(error?.requestedStatus, 'active');
+      return true;
+    }
+  );
+});
+
+test('createPlatformIntegrationCatalogEntry fails closed when integration audit write fails', async () => {
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (normalizedSql.includes('INSERT INTO platform_integration_catalog')) {
+      return { affectedRows: 1 };
+    }
+    if (
+      normalizedSql.includes('SELECT integration_id')
+      && normalizedSql.includes('FROM platform_integration_catalog')
+      && normalizedSql.includes('WHERE integration_id = ?')
+      && normalizedSql.includes('LIMIT 1')
+    ) {
+      return [
+        {
+          integration_id: params?.[0],
+          code: 'INTEGRATION_AUDIT_FAIL',
+          code_normalized: 'integration_audit_fail',
+          name: '审计失败测试',
+          direction: 'inbound',
+          protocol: 'https',
+          auth_mode: 'signature',
+          endpoint: null,
+          base_url: null,
+          timeout_ms: 3000,
+          retry_policy: null,
+          idempotency_policy: null,
+          version_strategy: null,
+          runbook_url: null,
+          lifecycle_status: 'draft',
+          lifecycle_reason: null,
+          created_by_user_id: 'platform-operator',
+          updated_by_user_id: 'platform-operator',
+          created_at: '2026-02-22T00:00:00.000Z',
+          updated_at: '2026-02-22T00:00:00.000Z'
+        }
+      ];
+    }
+    if (normalizedSql.includes('INSERT INTO audit_events')) {
+      throw new Error('audit store unavailable');
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await assert.rejects(
+    () =>
+      store.createPlatformIntegrationCatalogEntry({
+        integrationId: 'integration_audit_fail',
+        code: 'INTEGRATION_AUDIT_FAIL',
+        name: '审计失败测试',
+        direction: 'inbound',
+        protocol: 'https',
+        authMode: 'signature',
+        operatorUserId: 'platform-operator',
+        operatorSessionId: 'platform-session',
+        auditContext: {
+          requestId: 'req-integration-audit-fail',
+          traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+          actorUserId: 'platform-operator',
+          actorSessionId: 'platform-session'
+        }
+      }),
+    (error) => {
+      assert.equal(error?.code, 'ERR_AUDIT_WRITE_FAILED');
+      return true;
+    }
+  );
+});
+
+test('listPlatformIntegrationCatalogEntries escapes LIKE wildcard keyword and uses LOWER(name) match path', async () => {
+  let capturedSql = '';
+  let capturedParams = null;
+  const store = createStore(async (sql, params) => {
+    const normalizedSql = String(sql);
+    if (
+      normalizedSql.includes('SELECT integration_id')
+      && normalizedSql.includes('FROM platform_integration_catalog')
+    ) {
+      capturedSql = normalizedSql;
+      capturedParams = params;
+      return [];
+    }
+    assert.fail(`unexpected query: ${normalizedSql}`);
+    return [];
+  });
+
+  await store.listPlatformIntegrationCatalogEntries({
+    keyword: '%_MiXeD\\'
+  });
+
+  assert.match(
+    capturedSql,
+    /code_normalized LIKE \? ESCAPE '\\\\' OR LOWER\(name\) LIKE \? ESCAPE '\\\\'/i
+  );
+  assert.deepEqual(capturedParams, ['%\\%\\_mixed\\\\%', '%\\%\\_mixed\\\\%']);
+});

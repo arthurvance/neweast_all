@@ -250,6 +250,43 @@ test('platform system config routes expose explicit permission declarations', ()
   assert.equal(updateSystemConfig.permission_code, 'platform.system_config.operate');
 });
 
+test('platform integration routes expose explicit permission declarations', () => {
+  const listIntegrations = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/integrations'
+  });
+  const getIntegration = findRouteDefinition({
+    method: 'GET',
+    path: '/platform/integrations/demo-integration'
+  });
+  const createIntegration = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations'
+  });
+  const updateIntegration = findRouteDefinition({
+    method: 'PATCH',
+    path: '/platform/integrations/demo-integration'
+  });
+  const changeLifecycle = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/demo-integration/lifecycle'
+  });
+
+  for (const route of [listIntegrations, getIntegration]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'platform');
+    assert.equal(route.permission_code, 'platform.member_admin.view');
+  }
+
+  for (const route of [createIntegration, updateIntegration, changeLifecycle]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'platform');
+    assert.equal(route.permission_code, 'platform.member_admin.operate');
+  }
+});
+
 test('platform role-facts replace route exposes explicit permission declaration', () => {
   const replaceRoleFacts = findRouteDefinition({
     method: 'POST',

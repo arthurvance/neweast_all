@@ -27,6 +27,14 @@ const {
   PLATFORM_SYSTEM_CONFIG_SCOPE
 } = require('./modules/platform/system-config.constants');
 const {
+  PLATFORM_INTEGRATION_BASE_PATH,
+  PLATFORM_INTEGRATION_ITEM_PATH,
+  PLATFORM_INTEGRATION_LIFECYCLE_PATH,
+  PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE,
+  PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE,
+  PLATFORM_INTEGRATION_SCOPE
+} = require('./modules/platform/integration.constants');
+const {
   PLATFORM_AUDIT_EVENTS_PATH,
   TENANT_AUDIT_EVENTS_PATH,
   PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
@@ -463,6 +471,41 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     access: 'protected',
     permission_code: PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
     scope: PLATFORM_SYSTEM_CONFIG_SCOPE
+  },
+  {
+    method: 'GET',
+    path: PLATFORM_INTEGRATION_BASE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_INTEGRATION_SCOPE
+  },
+  {
+    method: 'GET',
+    path: PLATFORM_INTEGRATION_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE,
+    scope: PLATFORM_INTEGRATION_SCOPE
+  },
+  {
+    method: 'POST',
+    path: PLATFORM_INTEGRATION_BASE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_INTEGRATION_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: PLATFORM_INTEGRATION_ITEM_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_INTEGRATION_SCOPE
+  },
+  {
+    method: 'POST',
+    path: PLATFORM_INTEGRATION_LIFECYCLE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_INTEGRATION_SCOPE
   },
   {
     method: 'GET',

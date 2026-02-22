@@ -555,6 +555,40 @@ test('0020 down migration is an explicit no-op rollback marker', () => {
   assert.match(sql, /SELECT/i);
 });
 
+test('0021 migration defines platform integration catalog table and lifecycle governance indexes', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0021_platform_integration_catalog.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_integration_catalog/i);
+  assert.match(sql, /integration_id VARCHAR\(64\) NOT NULL/i);
+  assert.match(sql, /code_normalized VARCHAR\(64\) NOT NULL/i);
+  assert.match(sql, /direction ENUM\('inbound', 'outbound', 'bidirectional'\)/i);
+  assert.match(sql, /auth_mode VARCHAR\(64\) NOT NULL/i);
+  assert.match(sql, /retry_policy JSON NULL/i);
+  assert.match(sql, /idempotency_policy JSON NULL/i);
+  assert.match(sql, /lifecycle_status ENUM\('draft', 'active', 'paused', 'retired'\)/i);
+  assert.match(sql, /UNIQUE KEY uk_platform_integration_catalog_code_normalized/i);
+  assert.match(sql, /idx_platform_integration_catalog_lifecycle_status/i);
+  assert.match(sql, /idx_platform_integration_catalog_direction_protocol/i);
+});
+
+test('0021 down migration drops platform integration catalog table', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0021_platform_integration_catalog.down.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /DROP TABLE IF EXISTS platform_integration_catalog/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

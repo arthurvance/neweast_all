@@ -1,0 +1,30 @@
+CREATE TABLE IF NOT EXISTS platform_integration_catalog (
+  integration_id VARCHAR(64) NOT NULL,
+  code VARCHAR(64) NOT NULL,
+  code_normalized VARCHAR(64) NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  direction ENUM('inbound', 'outbound', 'bidirectional') NOT NULL,
+  protocol VARCHAR(64) NOT NULL,
+  auth_mode VARCHAR(64) NOT NULL,
+  endpoint VARCHAR(512) NULL,
+  base_url VARCHAR(512) NULL,
+  timeout_ms INT UNSIGNED NOT NULL DEFAULT 3000,
+  retry_policy JSON NULL,
+  idempotency_policy JSON NULL,
+  version_strategy VARCHAR(128) NULL,
+  runbook_url VARCHAR(512) NULL,
+  lifecycle_status ENUM('draft', 'active', 'paused', 'retired') NOT NULL DEFAULT 'draft',
+  lifecycle_reason VARCHAR(256) NULL,
+  created_by_user_id VARCHAR(64) NULL,
+  updated_by_user_id VARCHAR(64) NULL,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (integration_id),
+  UNIQUE KEY uk_platform_integration_catalog_code_normalized (code_normalized),
+  KEY idx_platform_integration_catalog_lifecycle_status (lifecycle_status),
+  KEY idx_platform_integration_catalog_direction_protocol (direction, protocol),
+  CONSTRAINT fk_platform_integration_catalog_created_by_user
+    FOREIGN KEY (created_by_user_id) REFERENCES users (id),
+  CONSTRAINT fk_platform_integration_catalog_updated_by_user
+    FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

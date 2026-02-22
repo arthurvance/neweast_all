@@ -17,6 +17,8 @@ const createInMemoryAuthStore = ({
   const platformPermissionsByUserId = new Map();
   const platformRoleCatalogById = new Map();
   const platformRoleCatalogCodeIndex = new Map();
+  const platformIntegrationCatalogById = new Map();
+  const platformIntegrationCatalogCodeIndex = new Map();
   const platformRolePermissionGrantsByRoleId = new Map();
   const tenantRolePermissionGrantsByRoleId = new Map();
   const tenantMembershipRolesByMembershipId = new Map();
@@ -36,6 +38,29 @@ const createInMemoryAuthStore = ({
   const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
   const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
+  const VALID_PLATFORM_INTEGRATION_DIRECTION = new Set([
+    'inbound',
+    'outbound',
+    'bidirectional'
+  ]);
+  const VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS = new Set([
+    'draft',
+    'active',
+    'paused',
+    'retired'
+  ]);
+  const MAX_PLATFORM_INTEGRATION_ID_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_CODE_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_NAME_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_PROTOCOL_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_AUTH_MODE_LENGTH = 64;
+  const MAX_PLATFORM_INTEGRATION_ENDPOINT_LENGTH = 512;
+  const MAX_PLATFORM_INTEGRATION_BASE_URL_LENGTH = 512;
+  const MAX_PLATFORM_INTEGRATION_VERSION_STRATEGY_LENGTH = 128;
+  const MAX_PLATFORM_INTEGRATION_RUNBOOK_URL_LENGTH = 512;
+  const MAX_PLATFORM_INTEGRATION_LIFECYCLE_REASON_LENGTH = 256;
+  const PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS = 3000;
+  const MAX_PLATFORM_INTEGRATION_TIMEOUT_MS = 300000;
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
@@ -294,6 +319,120 @@ const createInMemoryAuthStore = ({
       normalizePlatformRoleCatalogTenantIdForScope({ scope, tenantId }),
       toPlatformRoleCatalogCodeKey(code)
     ].join('::');
+  const normalizePlatformIntegrationId = (integrationId) =>
+    String(integrationId || '').trim().toLowerCase();
+  const isValidPlatformIntegrationId = (integrationId) =>
+    Boolean(integrationId) && integrationId.length <= MAX_PLATFORM_INTEGRATION_ID_LENGTH;
+  const normalizePlatformIntegrationCode = (code) =>
+    String(code || '').trim();
+  const toPlatformIntegrationCodeKey = (code) =>
+    normalizePlatformIntegrationCode(code).toLowerCase();
+  const normalizePlatformIntegrationDirection = (direction) =>
+    String(direction || '').trim().toLowerCase();
+  const normalizePlatformIntegrationLifecycleStatus = (status) =>
+    String(status || '').trim().toLowerCase();
+  const normalizePlatformIntegrationOptionalText = (value) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+  };
+  const normalizePlatformIntegrationTimeoutMs = (timeoutMs) => {
+    if (timeoutMs === null || timeoutMs === undefined) {
+      return PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS;
+    }
+    const parsed = Number(timeoutMs);
+    return Number.isInteger(parsed) ? parsed : NaN;
+  };
+  const normalizePlatformIntegrationJsonForStorage = ({
+    value,
+    allowUndefined = false
+  } = {}) => {
+    if (value === undefined) {
+      return allowUndefined ? undefined : null;
+    }
+    if (value === null) {
+      return null;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (!normalized) {
+        return null;
+      }
+      try {
+        return JSON.parse(normalized);
+      } catch (_error) {
+        return undefined;
+      }
+    }
+    if (typeof value === 'object') {
+      return structuredClone(value);
+    }
+    return undefined;
+  };
+  const createDuplicatePlatformIntegrationCatalogEntryError = ({
+    target = 'code'
+  } = {}) => {
+    const normalizedTarget = String(target || '').trim().toLowerCase();
+    const resolvedTarget = normalizedTarget === 'integration_id'
+      ? 'integration_id'
+      : 'code';
+    const error = new Error(
+      resolvedTarget === 'integration_id'
+        ? 'duplicate platform integration catalog integration_id'
+        : 'duplicate platform integration catalog code'
+    );
+    error.code = 'ER_DUP_ENTRY';
+    error.errno = 1062;
+    error.conflictTarget = resolvedTarget;
+    error.platformIntegrationCatalogConflictTarget = resolvedTarget;
+    return error;
+  };
+  const isPlatformIntegrationLifecycleTransitionAllowed = ({
+    previousStatus,
+    nextStatus
+  } = {}) => {
+    const normalizedPreviousStatus = normalizePlatformIntegrationLifecycleStatus(
+      previousStatus
+    );
+    const normalizedNextStatus = normalizePlatformIntegrationLifecycleStatus(
+      nextStatus
+    );
+    if (
+      !VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS.has(normalizedPreviousStatus)
+      || !VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS.has(normalizedNextStatus)
+    ) {
+      return false;
+    }
+    if (normalizedPreviousStatus === normalizedNextStatus) {
+      return false;
+    }
+    if (normalizedPreviousStatus === 'draft') {
+      return normalizedNextStatus === 'active' || normalizedNextStatus === 'retired';
+    }
+    if (normalizedPreviousStatus === 'active') {
+      return normalizedNextStatus === 'paused' || normalizedNextStatus === 'retired';
+    }
+    if (normalizedPreviousStatus === 'paused') {
+      return normalizedNextStatus === 'active' || normalizedNextStatus === 'retired';
+    }
+    return false;
+  };
+  const createPlatformIntegrationLifecycleConflictError = ({
+    integrationId = null,
+    previousStatus = null,
+    requestedStatus = null
+  } = {}) => {
+    const error = new Error('platform integration lifecycle transition conflict');
+    error.code = 'ERR_PLATFORM_INTEGRATION_LIFECYCLE_CONFLICT';
+    error.integrationId = normalizePlatformIntegrationId(integrationId) || null;
+    error.previousStatus =
+      normalizePlatformIntegrationLifecycleStatus(previousStatus) || null;
+    error.requestedStatus =
+      normalizePlatformIntegrationLifecycleStatus(requestedStatus) || null;
+    return error;
+  };
   const normalizePlatformPermissionCode = (permissionCode) =>
     String(permissionCode || '').trim();
   const toPlatformPermissionCodeKey = (permissionCode) =>
@@ -344,6 +483,143 @@ const createInMemoryAuthStore = ({
         updatedAt: entry.updatedAt
       }
       : null;
+  const toPlatformIntegrationCatalogRecord = (entry = {}) => {
+    const normalizedIntegrationId = normalizePlatformIntegrationId(
+      entry.integrationId || entry.integration_id
+    );
+    const normalizedCode = normalizePlatformIntegrationCode(entry.code);
+    const normalizedDirection = normalizePlatformIntegrationDirection(
+      entry.direction
+    );
+    const normalizedLifecycleStatus = normalizePlatformIntegrationLifecycleStatus(
+      entry.lifecycleStatus || entry.lifecycle_status || 'draft'
+    );
+    const normalizedProtocol = String(entry.protocol || '').trim();
+    const normalizedAuthMode = String(entry.authMode || entry.auth_mode || '').trim();
+    const normalizedName = String(entry.name || '').trim();
+    const normalizedTimeoutMs = normalizePlatformIntegrationTimeoutMs(
+      entry.timeoutMs ?? entry.timeout_ms
+    );
+    const normalizedEndpoint = normalizePlatformIntegrationOptionalText(entry.endpoint);
+    const normalizedBaseUrl = normalizePlatformIntegrationOptionalText(
+      entry.baseUrl || entry.base_url
+    );
+    const normalizedVersionStrategy = normalizePlatformIntegrationOptionalText(
+      entry.versionStrategy || entry.version_strategy
+    );
+    const normalizedRunbookUrl = normalizePlatformIntegrationOptionalText(
+      entry.runbookUrl || entry.runbook_url
+    );
+    const normalizedLifecycleReason = normalizePlatformIntegrationOptionalText(
+      entry.lifecycleReason || entry.lifecycle_reason
+    );
+    if (
+      !isValidPlatformIntegrationId(normalizedIntegrationId)
+      || !normalizedCode
+      || normalizedCode.length > MAX_PLATFORM_INTEGRATION_CODE_LENGTH
+      || !normalizedName
+      || normalizedName.length > MAX_PLATFORM_INTEGRATION_NAME_LENGTH
+      || !VALID_PLATFORM_INTEGRATION_DIRECTION.has(normalizedDirection)
+      || !normalizedProtocol
+      || normalizedProtocol.length > MAX_PLATFORM_INTEGRATION_PROTOCOL_LENGTH
+      || !normalizedAuthMode
+      || normalizedAuthMode.length > MAX_PLATFORM_INTEGRATION_AUTH_MODE_LENGTH
+      || (
+        normalizedEndpoint !== null
+        && normalizedEndpoint.length > MAX_PLATFORM_INTEGRATION_ENDPOINT_LENGTH
+      )
+      || (
+        normalizedBaseUrl !== null
+        && normalizedBaseUrl.length > MAX_PLATFORM_INTEGRATION_BASE_URL_LENGTH
+      )
+      || (
+        normalizedVersionStrategy !== null
+        && normalizedVersionStrategy.length
+          > MAX_PLATFORM_INTEGRATION_VERSION_STRATEGY_LENGTH
+      )
+      || (
+        normalizedRunbookUrl !== null
+        && normalizedRunbookUrl.length > MAX_PLATFORM_INTEGRATION_RUNBOOK_URL_LENGTH
+      )
+      || (
+        normalizedLifecycleReason !== null
+        && normalizedLifecycleReason.length > MAX_PLATFORM_INTEGRATION_LIFECYCLE_REASON_LENGTH
+      )
+      || !VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS.has(normalizedLifecycleStatus)
+      || !Number.isInteger(normalizedTimeoutMs)
+      || normalizedTimeoutMs < 1
+      || normalizedTimeoutMs > MAX_PLATFORM_INTEGRATION_TIMEOUT_MS
+    ) {
+      throw new Error('invalid platform integration catalog entry');
+    }
+    const normalizedRetryPolicy = normalizePlatformIntegrationJsonForStorage({
+      value: entry.retryPolicy ?? entry.retry_policy
+    });
+    const normalizedIdempotencyPolicy = normalizePlatformIntegrationJsonForStorage({
+      value: entry.idempotencyPolicy ?? entry.idempotency_policy
+    });
+    if (
+      normalizedRetryPolicy === undefined
+      || normalizedIdempotencyPolicy === undefined
+    ) {
+      throw new Error('invalid platform integration policy payload');
+    }
+    return {
+      integrationId: normalizedIntegrationId,
+      code: normalizedCode,
+      codeNormalized: toPlatformIntegrationCodeKey(normalizedCode),
+      name: normalizedName,
+      direction: normalizedDirection,
+      protocol: normalizedProtocol,
+      authMode: normalizedAuthMode,
+      endpoint: normalizedEndpoint,
+      baseUrl: normalizedBaseUrl,
+      timeoutMs: normalizedTimeoutMs,
+      retryPolicy: normalizedRetryPolicy,
+      idempotencyPolicy: normalizedIdempotencyPolicy,
+      versionStrategy: normalizedVersionStrategy,
+      runbookUrl: normalizedRunbookUrl,
+      lifecycleStatus: normalizedLifecycleStatus,
+      lifecycleReason: normalizedLifecycleReason,
+      createdByUserId: normalizePlatformIntegrationOptionalText(
+        entry.createdByUserId || entry.created_by_user_id
+      ),
+      updatedByUserId: normalizePlatformIntegrationOptionalText(
+        entry.updatedByUserId || entry.updated_by_user_id
+      ),
+      createdAt:
+        entry.createdAt || entry.created_at || new Date().toISOString(),
+      updatedAt:
+        entry.updatedAt || entry.updated_at || new Date().toISOString()
+    };
+  };
+  const clonePlatformIntegrationCatalogRecord = (entry = null) =>
+    entry
+      ? {
+        integrationId: entry.integrationId,
+        code: entry.code,
+        codeNormalized: entry.codeNormalized,
+        name: entry.name,
+        direction: entry.direction,
+        protocol: entry.protocol,
+        authMode: entry.authMode,
+        endpoint: entry.endpoint,
+        baseUrl: entry.baseUrl,
+        timeoutMs: entry.timeoutMs,
+        retryPolicy: entry.retryPolicy ? structuredClone(entry.retryPolicy) : null,
+        idempotencyPolicy: entry.idempotencyPolicy
+          ? structuredClone(entry.idempotencyPolicy)
+          : null,
+        versionStrategy: entry.versionStrategy,
+        runbookUrl: entry.runbookUrl,
+        lifecycleStatus: entry.lifecycleStatus,
+        lifecycleReason: entry.lifecycleReason,
+        createdByUserId: entry.createdByUserId,
+        updatedByUserId: entry.updatedByUserId,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt
+      }
+      : null;
 
   const findPlatformRoleCatalogRecordStateByRoleId = (roleId) => {
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
@@ -364,6 +640,21 @@ const createInMemoryAuthStore = ({
       return {
         roleId: existingRoleId,
         record: entry
+      };
+    }
+    return null;
+  };
+  const findPlatformIntegrationCatalogRecordStateByIntegrationId = (
+    integrationId
+  ) => {
+    const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+    if (!isValidPlatformIntegrationId(normalizedIntegrationId)) {
+      return null;
+    }
+    if (platformIntegrationCatalogById.has(normalizedIntegrationId)) {
+      return {
+        integrationId: normalizedIntegrationId,
+        record: platformIntegrationCatalogById.get(normalizedIntegrationId)
       };
     }
     return null;
@@ -891,6 +1182,49 @@ const createInMemoryAuthStore = ({
     platformRoleCatalogById.set(persistedRoleId, merged);
     platformRoleCatalogCodeIndex.set(codeIndexKey, persistedRoleId);
     return clonePlatformRoleCatalogRecord(merged);
+  };
+  const upsertPlatformIntegrationCatalogRecord = (entry = {}) => {
+    const normalizedIntegrationId = normalizePlatformIntegrationId(
+      entry.integrationId || entry.integration_id
+    );
+    if (!isValidPlatformIntegrationId(normalizedIntegrationId)) {
+      throw new Error('platform integration catalog entry requires integrationId');
+    }
+    const normalizedCode = normalizePlatformIntegrationCode(entry.code);
+    if (!normalizedCode) {
+      throw new Error('platform integration catalog entry requires code');
+    }
+    const codeKey = toPlatformIntegrationCodeKey(normalizedCode);
+    const existingState = findPlatformIntegrationCatalogRecordStateByIntegrationId(
+      normalizedIntegrationId
+    );
+    const existing = existingState?.record || null;
+    const existingIntegrationIdForCode =
+      platformIntegrationCatalogCodeIndex.get(codeKey);
+    if (
+      existingIntegrationIdForCode
+      && normalizePlatformIntegrationId(existingIntegrationIdForCode)
+        !== normalizedIntegrationId
+    ) {
+      throw createDuplicatePlatformIntegrationCatalogEntryError({
+        target: 'code'
+      });
+    }
+    if (existing && existing.codeNormalized !== codeKey) {
+      platformIntegrationCatalogCodeIndex.delete(existing.codeNormalized);
+    }
+    const nowIso = new Date().toISOString();
+    const merged = toPlatformIntegrationCatalogRecord({
+      ...existing,
+      ...entry,
+      integrationId: normalizedIntegrationId,
+      code: normalizedCode,
+      createdAt: existing?.createdAt || entry.createdAt || nowIso,
+      updatedAt: entry.updatedAt || nowIso
+    });
+    platformIntegrationCatalogById.set(normalizedIntegrationId, merged);
+    platformIntegrationCatalogCodeIndex.set(codeKey, normalizedIntegrationId);
+    return clonePlatformIntegrationCatalogRecord(merged);
   };
 
   upsertPlatformRoleCatalogRecord({
@@ -4041,6 +4375,483 @@ const createInMemoryAuthStore = ({
         matches.push(clonePlatformRoleCatalogRecord(entry));
       }
       return matches;
+    },
+
+    listPlatformIntegrationCatalogEntries: async ({
+      direction = null,
+      protocol = null,
+      authMode = null,
+      lifecycleStatus = null,
+      keyword = null
+    } = {}) =>
+      [...platformIntegrationCatalogById.values()]
+        .filter((entry) => {
+          if (direction !== null && direction !== undefined) {
+            const normalizedDirection = normalizePlatformIntegrationDirection(direction);
+            if (!VALID_PLATFORM_INTEGRATION_DIRECTION.has(normalizedDirection)) {
+              throw new Error(
+                'listPlatformIntegrationCatalogEntries received unsupported direction'
+              );
+            }
+            if (entry.direction !== normalizedDirection) {
+              return false;
+            }
+          }
+          if (lifecycleStatus !== null && lifecycleStatus !== undefined) {
+            const normalizedLifecycleStatus = normalizePlatformIntegrationLifecycleStatus(
+              lifecycleStatus
+            );
+            if (
+              !VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS.has(normalizedLifecycleStatus)
+            ) {
+              throw new Error(
+                'listPlatformIntegrationCatalogEntries received unsupported lifecycleStatus'
+              );
+            }
+            if (entry.lifecycleStatus !== normalizedLifecycleStatus) {
+              return false;
+            }
+          }
+          if (protocol !== null && protocol !== undefined) {
+            const normalizedProtocol = String(protocol || '').trim();
+            if (!normalizedProtocol) {
+              throw new Error(
+                'listPlatformIntegrationCatalogEntries received unsupported protocol'
+              );
+            }
+            if (entry.protocol !== normalizedProtocol) {
+              return false;
+            }
+          }
+          if (authMode !== null && authMode !== undefined) {
+            const normalizedAuthMode = String(authMode || '').trim();
+            if (!normalizedAuthMode) {
+              throw new Error(
+                'listPlatformIntegrationCatalogEntries received unsupported authMode'
+              );
+            }
+            if (entry.authMode !== normalizedAuthMode) {
+              return false;
+            }
+          }
+          if (keyword !== null && keyword !== undefined) {
+            const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+            if (normalizedKeyword) {
+              const searchable = [
+                entry.codeNormalized,
+                String(entry.name || '').toLowerCase()
+              ];
+              if (!searchable.some((value) => String(value || '').includes(normalizedKeyword))) {
+                return false;
+              }
+            }
+          }
+          return true;
+        })
+        .sort((left, right) => {
+          const leftCreatedAt = new Date(left.createdAt).getTime();
+          const rightCreatedAt = new Date(right.createdAt).getTime();
+          if (leftCreatedAt !== rightCreatedAt) {
+            return leftCreatedAt - rightCreatedAt;
+          }
+          return String(left.integrationId || '').localeCompare(
+            String(right.integrationId || '')
+          );
+        })
+        .map((entry) => clonePlatformIntegrationCatalogRecord(entry)),
+
+    findPlatformIntegrationCatalogEntryByIntegrationId: async ({
+      integrationId
+    } = {}) => {
+      const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+      if (!isValidPlatformIntegrationId(normalizedIntegrationId)) {
+        return null;
+      }
+      const existingState = findPlatformIntegrationCatalogRecordStateByIntegrationId(
+        normalizedIntegrationId
+      );
+      return clonePlatformIntegrationCatalogRecord(existingState?.record || null);
+    },
+
+    createPlatformIntegrationCatalogEntry: async ({
+      integrationId = randomUUID(),
+      code,
+      name,
+      direction,
+      protocol,
+      authMode,
+      endpoint = null,
+      baseUrl = null,
+      timeoutMs = PLATFORM_INTEGRATION_DEFAULT_TIMEOUT_MS,
+      retryPolicy = null,
+      idempotencyPolicy = null,
+      versionStrategy = null,
+      runbookUrl = null,
+      lifecycleStatus = 'draft',
+      lifecycleReason = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationCatalogById: structuredClone(platformIntegrationCatalogById),
+          platformIntegrationCatalogCodeIndex: structuredClone(
+            platformIntegrationCatalogCodeIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const integrationIdProvided =
+          integrationId !== undefined && integrationId !== null;
+        const normalizedRequestedIntegrationId =
+          normalizePlatformIntegrationId(integrationId);
+        if (
+          integrationIdProvided
+          && !isValidPlatformIntegrationId(normalizedRequestedIntegrationId)
+        ) {
+          throw new Error('createPlatformIntegrationCatalogEntry received invalid integrationId');
+        }
+        const normalizedIntegrationId = isValidPlatformIntegrationId(
+          normalizedRequestedIntegrationId
+        )
+          ? normalizedRequestedIntegrationId
+          : randomUUID();
+        if (
+          findPlatformIntegrationCatalogRecordStateByIntegrationId(
+            normalizedIntegrationId
+          )
+        ) {
+          throw createDuplicatePlatformIntegrationCatalogEntryError({
+            target: 'integration_id'
+          });
+        }
+        const createdRecord = upsertPlatformIntegrationCatalogRecord({
+          integrationId: normalizedIntegrationId,
+          code,
+          name,
+          direction,
+          protocol,
+          authMode,
+          endpoint,
+          baseUrl,
+          timeoutMs,
+          retryPolicy,
+          idempotencyPolicy,
+          versionStrategy,
+          runbookUrl,
+          lifecycleStatus,
+          lifecycleReason,
+          createdByUserId: normalizePlatformIntegrationOptionalText(operatorUserId),
+          updatedByUserId: normalizePlatformIntegrationOptionalText(operatorUserId)
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.created',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration',
+              targetId: createdRecord.integrationId,
+              result: 'success',
+              beforeState: null,
+              afterState: {
+                integration_id: createdRecord.integrationId,
+                code: createdRecord.code,
+                direction: createdRecord.direction,
+                protocol: createdRecord.protocol,
+                auth_mode: createdRecord.authMode,
+                lifecycle_status: createdRecord.lifecycleStatus
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration create audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...createdRecord,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationCatalogById,
+            snapshot.platformIntegrationCatalogById
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationCatalogCodeIndex,
+            snapshot.platformIntegrationCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    updatePlatformIntegrationCatalogEntry: async ({
+      integrationId,
+      code = undefined,
+      name = undefined,
+      direction = undefined,
+      protocol = undefined,
+      authMode = undefined,
+      endpoint = undefined,
+      baseUrl = undefined,
+      timeoutMs = undefined,
+      retryPolicy = undefined,
+      idempotencyPolicy = undefined,
+      versionStrategy = undefined,
+      runbookUrl = undefined,
+      lifecycleReason = undefined,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationCatalogById: structuredClone(platformIntegrationCatalogById),
+          platformIntegrationCatalogCodeIndex: structuredClone(
+            platformIntegrationCatalogCodeIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        if (!isValidPlatformIntegrationId(normalizedIntegrationId)) {
+          throw new Error('updatePlatformIntegrationCatalogEntry requires integrationId');
+        }
+        const existingState = findPlatformIntegrationCatalogRecordStateByIntegrationId(
+          normalizedIntegrationId
+        );
+        const existingRecord = existingState?.record || null;
+        if (!existingRecord) {
+          return null;
+        }
+        const hasUpdates = [
+          code,
+          name,
+          direction,
+          protocol,
+          authMode,
+          endpoint,
+          baseUrl,
+          timeoutMs,
+          retryPolicy,
+          idempotencyPolicy,
+          versionStrategy,
+          runbookUrl,
+          lifecycleReason
+        ].some((value) => value !== undefined);
+        if (!hasUpdates) {
+          throw new Error('updatePlatformIntegrationCatalogEntry requires update fields');
+        }
+        const updatedRecord = upsertPlatformIntegrationCatalogRecord({
+          ...existingRecord,
+          integrationId: existingRecord.integrationId,
+          code: code === undefined ? existingRecord.code : code,
+          name: name === undefined ? existingRecord.name : name,
+          direction: direction === undefined ? existingRecord.direction : direction,
+          protocol: protocol === undefined ? existingRecord.protocol : protocol,
+          authMode: authMode === undefined ? existingRecord.authMode : authMode,
+          endpoint: endpoint === undefined ? existingRecord.endpoint : endpoint,
+          baseUrl: baseUrl === undefined ? existingRecord.baseUrl : baseUrl,
+          timeoutMs: timeoutMs === undefined ? existingRecord.timeoutMs : timeoutMs,
+          retryPolicy: retryPolicy === undefined
+            ? existingRecord.retryPolicy
+            : retryPolicy,
+          idempotencyPolicy: idempotencyPolicy === undefined
+            ? existingRecord.idempotencyPolicy
+            : idempotencyPolicy,
+          versionStrategy: versionStrategy === undefined
+            ? existingRecord.versionStrategy
+            : versionStrategy,
+          runbookUrl: runbookUrl === undefined
+            ? existingRecord.runbookUrl
+            : runbookUrl,
+          lifecycleReason: lifecycleReason === undefined
+            ? existingRecord.lifecycleReason
+            : lifecycleReason,
+          updatedByUserId:
+            normalizePlatformIntegrationOptionalText(operatorUserId)
+            || existingRecord.updatedByUserId,
+          updatedAt: new Date().toISOString()
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.updated',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration',
+              targetId: updatedRecord.integrationId,
+              result: 'success',
+              beforeState: {
+                code: existingRecord.code,
+                direction: existingRecord.direction,
+                protocol: existingRecord.protocol,
+                auth_mode: existingRecord.authMode
+              },
+              afterState: {
+                code: updatedRecord.code,
+                direction: updatedRecord.direction,
+                protocol: updatedRecord.protocol,
+                auth_mode: updatedRecord.authMode
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration update audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...updatedRecord,
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationCatalogById,
+            snapshot.platformIntegrationCatalogById
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationCatalogCodeIndex,
+            snapshot.platformIntegrationCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
+    },
+
+    transitionPlatformIntegrationLifecycle: async ({
+      integrationId,
+      nextStatus,
+      reason = null,
+      operatorUserId = null,
+      operatorSessionId = null,
+      auditContext = null
+    } = {}) => {
+      const shouldRecordAudit = auditContext && typeof auditContext === 'object';
+      const snapshot = shouldRecordAudit
+        ? {
+          platformIntegrationCatalogById: structuredClone(platformIntegrationCatalogById),
+          platformIntegrationCatalogCodeIndex: structuredClone(
+            platformIntegrationCatalogCodeIndex
+          ),
+          auditEvents: structuredClone(auditEvents)
+        }
+        : null;
+      try {
+        const normalizedIntegrationId = normalizePlatformIntegrationId(integrationId);
+        const normalizedNextStatus = normalizePlatformIntegrationLifecycleStatus(nextStatus);
+        if (
+          !isValidPlatformIntegrationId(normalizedIntegrationId)
+          || !VALID_PLATFORM_INTEGRATION_LIFECYCLE_STATUS.has(normalizedNextStatus)
+        ) {
+          throw new Error('transitionPlatformIntegrationLifecycle received invalid input');
+        }
+        const existingState = findPlatformIntegrationCatalogRecordStateByIntegrationId(
+          normalizedIntegrationId
+        );
+        const existingRecord = existingState?.record || null;
+        if (!existingRecord) {
+          return null;
+        }
+        if (
+          !isPlatformIntegrationLifecycleTransitionAllowed({
+            previousStatus: existingRecord.lifecycleStatus,
+            nextStatus: normalizedNextStatus
+          })
+        ) {
+          throw createPlatformIntegrationLifecycleConflictError({
+            integrationId: normalizedIntegrationId,
+            previousStatus: existingRecord.lifecycleStatus,
+            requestedStatus: normalizedNextStatus
+          });
+        }
+        const updatedRecord = upsertPlatformIntegrationCatalogRecord({
+          ...existingRecord,
+          lifecycleStatus: normalizedNextStatus,
+          lifecycleReason: reason,
+          updatedByUserId:
+            normalizePlatformIntegrationOptionalText(operatorUserId)
+            || existingRecord.updatedByUserId,
+          updatedAt: new Date().toISOString()
+        });
+        let auditRecorded = false;
+        if (shouldRecordAudit) {
+          try {
+            persistAuditEvent({
+              domain: 'platform',
+              requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
+              traceparent: auditContext.traceparent,
+              eventType: 'platform.integration.lifecycle_changed',
+              actorUserId: auditContext.actorUserId || operatorUserId || null,
+              actorSessionId: auditContext.actorSessionId || operatorSessionId || null,
+              targetType: 'integration',
+              targetId: updatedRecord.integrationId,
+              result: 'success',
+              beforeState: {
+                lifecycle_status: existingRecord.lifecycleStatus
+              },
+              afterState: {
+                lifecycle_status: updatedRecord.lifecycleStatus
+              }
+            });
+            auditRecorded = true;
+          } catch (error) {
+            const auditWriteError = new Error(
+              'platform integration lifecycle audit write failed'
+            );
+            auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
+            auditWriteError.cause = error;
+            throw auditWriteError;
+          }
+        }
+        return {
+          ...updatedRecord,
+          previousStatus: existingRecord.lifecycleStatus,
+          currentStatus: updatedRecord.lifecycleStatus,
+          effectiveInvocationEnabled: updatedRecord.lifecycleStatus === 'active',
+          auditRecorded
+        };
+      } catch (error) {
+        if (snapshot) {
+          restoreMapFromSnapshot(
+            platformIntegrationCatalogById,
+            snapshot.platformIntegrationCatalogById
+          );
+          restoreMapFromSnapshot(
+            platformIntegrationCatalogCodeIndex,
+            snapshot.platformIntegrationCatalogCodeIndex
+          );
+          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
+        }
+        throw error;
+      }
     },
 
     listPlatformRolePermissionGrants: async ({ roleId }) =>

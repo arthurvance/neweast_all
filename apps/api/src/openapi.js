@@ -28,6 +28,10 @@ const IDEMPOTENCY_KEY_SCHEMA = {
   pattern: '^(?=.*\\S)[^,]{1,128}$'
 };
 const PLATFORM_ROLE_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
+const PLATFORM_INTEGRATION_ID_PATTERN = '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
+const PLATFORM_INTEGRATION_CODE_PATTERN = '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$';
+const PLATFORM_INTEGRATION_LIFECYCLE_ENUM = ['draft', 'active', 'paused', 'retired'];
+const PLATFORM_INTEGRATION_DIRECTION_ENUM = ['inbound', 'outbound', 'bidirectional'];
 const TENANT_MEMBERSHIP_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]{1,64}$';
 const PLATFORM_USER_ID_PATTERN = '^[^\\s\\x00-\\x1F\\x7F]+$';
 const PLATFORM_USER_ID_MAX_LENGTH = 64;
@@ -5337,6 +5341,768 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/integrations': {
+      get: {
+        summary: 'List platform integration catalog with filters',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'query',
+            name: 'page',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              default: 1
+            }
+          },
+          {
+            in: 'query',
+            name: 'page_size',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 100,
+              default: 20
+            }
+          },
+          {
+            in: 'query',
+            name: 'direction',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: PLATFORM_INTEGRATION_DIRECTION_ENUM
+            }
+          },
+          {
+            in: 'query',
+            name: 'protocol',
+            required: false,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+            }
+          },
+          {
+            in: 'query',
+            name: 'auth_mode',
+            required: false,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+            }
+          },
+          {
+            in: 'query',
+            name: 'lifecycle_status',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+            }
+          },
+          {
+            in: 'query',
+            name: 'keyword',
+            required: false,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 128,
+              pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Integration catalog listed',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationCatalogListResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid query filters',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'INT-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  forbidden: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前操作无权限',
+                      error_code: 'AUTH-403-FORBIDDEN',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Integration catalog dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '集成目录治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'dependency-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      post: {
+        summary: 'Create platform integration catalog entry',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CreatePlatformIntegrationRequest' },
+              examples: {
+                create_integration: {
+                  value: {
+                    integration_id: 'erp-outbound-main',
+                    code: 'ERP_OUTBOUND_MAIN',
+                    name: 'ERP 出站主通道',
+                    direction: 'outbound',
+                    protocol: 'https',
+                    auth_mode: 'hmac',
+                    endpoint: '/orders/sync',
+                    base_url: 'https://erp.example.com/api',
+                    timeout_ms: 8000,
+                    retry_policy: {
+                      max_attempts: 3,
+                      backoff_ms: 500
+                    },
+                    idempotency_policy: {
+                      key_from: 'order_id'
+                    },
+                    version_strategy: 'header:x-api-version',
+                    runbook_url: 'https://runbook.example.com/integration/erp',
+                    lifecycle_status: 'draft',
+                    lifecycle_reason: '首次接入'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Integration catalog entry created',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  invalid_payload: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '请求参数不完整或格式错误',
+                      error_code: 'INT-400-INVALID-PAYLOAD',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  invalid_idempotency_key: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: 'Idempotency-Key 必须为 1 到 128 个非空字符',
+                      error_code: 'AUTH-400-IDEMPOTENCY-KEY-INVALID',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Duplicate integration code/id or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  code_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '集成编码冲突，请使用其他 code',
+                      error_code: 'INT-409-CODE-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  integration_id_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '集成标识冲突，请重试创建流程',
+                      error_code: 'INT-409-INTEGRATION-ID-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  payload_too_large: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Payload Too Large',
+                      status: 413,
+                      detail: 'JSON payload exceeds allowed size',
+                      error_code: 'AUTH-413-PAYLOAD-TOO-LARGE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Integration catalog dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '集成目录治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'dependency-unavailable'
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  },
+                  idempotency_pending_timeout: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等请求处理中，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'idempotency-pending-timeout'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/{integration_id}': {
+      get: {
+        summary: 'Get platform integration catalog entry detail',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Integration catalog entry loaded',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid integration_id',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration catalog entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  not_found: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Not Found',
+                      status: 404,
+                      detail: '目标集成目录不存在',
+                      error_code: 'INT-404-NOT-FOUND',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Integration catalog dependency unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      },
+      patch: {
+        summary: 'Update platform integration catalog entry',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/UpdatePlatformIntegrationRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Integration catalog entry updated',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformIntegrationCatalogItem' }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration catalog entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Conflict on integration code or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  code_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '集成编码冲突，请使用其他 code',
+                      error_code: 'INT-409-CODE-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Integration catalog dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/platform/integrations/{integration_id}/lifecycle': {
+      post: {
+        summary: 'Change platform integration lifecycle status',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ChangePlatformIntegrationLifecycleRequest' },
+              examples: {
+                activate: {
+                  value: {
+                    status: 'active',
+                    reason: '完成联调，开启流量'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Integration lifecycle changed',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ChangePlatformIntegrationLifecycleResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration catalog entry not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Lifecycle transition conflict or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  lifecycle_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '生命周期状态流转冲突',
+                      error_code: 'INT-409-LIFECYCLE-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      previous_status: 'retired',
+                      requested_status: 'active'
+                    }
+                  },
+                  idempotency_conflict: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '幂等键与请求载荷不一致，请更换 Idempotency-Key 后重试',
+                      error_code: 'AUTH-409-IDEMPOTENCY-CONFLICT',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Integration catalog dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '集成目录治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'dependency-unavailable'
+                    }
+                  },
+                  idempotency_store_unavailable: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '幂等服务暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason: 'idempotency-store-unavailable'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/users': {
       post: {
         summary: 'Create or reuse platform user by phone',
@@ -7463,6 +8229,368 @@ const buildOpenApiSpec = () => {
             }
           }
         }
+      },
+      PlatformIntegrationCatalogItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'integration_id',
+          'code',
+          'name',
+          'direction',
+          'protocol',
+          'auth_mode',
+          'timeout_ms',
+          'retry_policy',
+          'idempotency_policy',
+          'lifecycle_status',
+          'effective_invocation_enabled',
+          'created_at',
+          'updated_at',
+          'request_id'
+        ],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CODE_PATTERN
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          direction: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_DIRECTION_ENUM
+          },
+          protocol: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+          },
+          auth_mode: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+          },
+          endpoint: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          base_url: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          timeout_ms: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 300000
+          },
+          retry_policy: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          idempotency_policy: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          version_strategy: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          runbook_url: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          lifecycle_status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+          },
+          lifecycle_reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          },
+          created_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          updated_by_user_id: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 64
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updated_at: {
+            type: 'string',
+            format: 'date-time'
+          },
+          effective_invocation_enabled: { type: 'boolean' },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformIntegrationCatalogListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['page', 'page_size', 'total', 'integrations', 'request_id'],
+        properties: {
+          page: { type: 'integer', minimum: 1 },
+          page_size: { type: 'integer', minimum: 1, maximum: 100 },
+          total: { type: 'integer', minimum: 0 },
+          integrations: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/PlatformIntegrationCatalogItem' }
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      CreatePlatformIntegrationRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['code', 'name', 'direction', 'protocol', 'auth_mode'],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CODE_PATTERN
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          direction: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_DIRECTION_ENUM
+          },
+          protocol: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+          },
+          auth_mode: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+          },
+          endpoint: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          base_url: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          timeout_ms: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 300000,
+            default: 3000
+          },
+          retry_policy: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          idempotency_policy: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          version_strategy: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          runbook_url: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          lifecycle_status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM,
+            default: 'draft'
+          },
+          lifecycle_reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          }
+        }
+      },
+      UpdatePlatformIntegrationRequest: {
+        type: 'object',
+        additionalProperties: false,
+        minProperties: 1,
+        properties: {
+          code: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CODE_PATTERN
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          direction: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_DIRECTION_ENUM
+          },
+          protocol: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+          },
+          auth_mode: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,64}$'
+          },
+          endpoint: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          base_url: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          timeout_ms: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 300000
+          },
+          retry_policy: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          idempotency_policy: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          version_strategy: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,128}$'
+          },
+          runbook_url: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 512,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,512}$'
+          },
+          lifecycle_reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          }
+        }
+      },
+      ChangePlatformIntegrationLifecycleRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['status'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+          },
+          reason: {
+            type: 'string',
+            nullable: true,
+            minLength: 1,
+            maxLength: 256,
+            pattern: '^(?!\\s)(?!.*\\s$)[^\\x00-\\x1F\\x7F]{1,256}$'
+          }
+        }
+      },
+      ChangePlatformIntegrationLifecycleResponse: {
+        allOf: [
+          { $ref: '#/components/schemas/PlatformIntegrationCatalogItem' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['previous_status', 'current_status', 'effective_invocation_enabled'],
+            properties: {
+              previous_status: {
+                type: 'string',
+                enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+              },
+              current_status: {
+                type: 'string',
+                enum: PLATFORM_INTEGRATION_LIFECYCLE_ENUM
+              },
+              effective_invocation_enabled: { type: 'boolean' }
+            }
+          }
+        ]
       },
       ReplacePlatformRoleFactsRequest: {
         type: 'object',

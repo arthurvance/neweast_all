@@ -32,6 +32,13 @@ const {
   PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
 } = require('./modules/platform/system-config.constants');
 const {
+  PLATFORM_INTEGRATION_LIST_ROUTE_KEY,
+  PLATFORM_INTEGRATION_GET_ROUTE_KEY,
+  PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY
+} = require('./modules/platform/integration.constants');
+const {
   PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
   TENANT_AUDIT_EVENTS_ROUTE_KEY
 } = require('./modules/audit/audit.constants');
@@ -175,7 +182,10 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY,
-  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
+  PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_MEMBER_CREATE_ROUTE_KEY,
@@ -196,7 +206,10 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY,
-  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
+  PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_ORG_CREATE_ROUTE_KEY,
@@ -209,7 +222,10 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
   PLATFORM_USER_STATUS_ROUTE_KEY,
-  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
+  PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
@@ -235,6 +251,18 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [PLATFORM_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [
     PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [
+    PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [
+    PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [
+    PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY,
     IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
   ]
 ]);
@@ -732,6 +760,15 @@ const normalizeRouteParamsForRoute = ({
   if (routeKey === PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY) {
     normalizedRouteParams.config_key = String(
       normalizedRouteParams.config_key || ''
+    ).trim().toLowerCase();
+  }
+  if (
+    routeKey === PLATFORM_INTEGRATION_GET_ROUTE_KEY
+    || routeKey === PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY
+    || routeKey === PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY
+  ) {
+    normalizedRouteParams.integration_id = String(
+      normalizedRouteParams.integration_id || ''
     ).trim().toLowerCase();
   }
   return normalizedRouteParams;
@@ -2427,6 +2464,78 @@ const createRouteTable = ({
           runAuthRouteWithTrace(
             () =>
               handlers.platformUpdateSystemConfig(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_INTEGRATION_LIST_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformListIntegrations(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_INTEGRATION_GET_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformGetIntegration(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [PLATFORM_INTEGRATION_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformCreateIntegration(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformUpdateIntegration(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.platformChangeIntegrationLifecycle(
                 requestId,
                 headers.authorization,
                 getRouteParams(),

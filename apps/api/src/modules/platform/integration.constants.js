@@ -1,0 +1,42 @@
+const PLATFORM_INTEGRATION_BASE_PATH = '/platform/integrations';
+const PLATFORM_INTEGRATION_ITEM_PATH = '/platform/integrations/:integration_id';
+const PLATFORM_INTEGRATION_LIFECYCLE_PATH = '/platform/integrations/:integration_id/lifecycle';
+
+const PLATFORM_INTEGRATION_LIST_ROUTE_KEY = 'GET /platform/integrations';
+const PLATFORM_INTEGRATION_GET_ROUTE_KEY = 'GET /platform/integrations/:integration_id';
+const PLATFORM_INTEGRATION_CREATE_ROUTE_KEY = 'POST /platform/integrations';
+const PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY = 'PATCH /platform/integrations/:integration_id';
+const PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY =
+  'POST /platform/integrations/:integration_id/lifecycle';
+
+const PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
+const PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_INTEGRATION_SCOPE = 'platform';
+
+const PLATFORM_INTEGRATION_DIRECTIONS = Object.freeze([
+  'inbound',
+  'outbound',
+  'bidirectional'
+]);
+const PLATFORM_INTEGRATION_LIFECYCLE_STATUSES = Object.freeze([
+  'draft',
+  'active',
+  'paused',
+  'retired'
+]);
+
+module.exports = {
+  PLATFORM_INTEGRATION_BASE_PATH,
+  PLATFORM_INTEGRATION_ITEM_PATH,
+  PLATFORM_INTEGRATION_LIFECYCLE_PATH,
+  PLATFORM_INTEGRATION_LIST_ROUTE_KEY,
+  PLATFORM_INTEGRATION_GET_ROUTE_KEY,
+  PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY,
+  PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE,
+  PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE,
+  PLATFORM_INTEGRATION_SCOPE,
+  PLATFORM_INTEGRATION_DIRECTIONS,
+  PLATFORM_INTEGRATION_LIFECYCLE_STATUSES
+};

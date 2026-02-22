@@ -82,8 +82,8 @@ development_status:
   4-7-用户软删除会话撤销: done
   epic-4-retrospective: optional
 
-  epic-5: backlog
-  5-1-集成目录与生命周期管理: backlog
+  epic-5: in-progress
+  5-1-集成目录与生命周期管理: done
   5-2-版本化契约交互与兼容管理: backlog
   5-3-集成变更前契约一致性校验: backlog
   5-4-失败重试-恢复与再处理闭环: backlog
