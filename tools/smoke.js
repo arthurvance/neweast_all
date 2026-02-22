@@ -1,6 +1,14 @@
 #!/usr/bin/env node
-const { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } = require('node:fs');
-const { dirname, isAbsolute, join, resolve } = require('node:path');
+const {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync
+} = require('node:fs');
+const { basename, dirname, isAbsolute, join, relative, resolve } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createCipheriv, pbkdf2Sync, randomBytes, randomUUID } = require('node:crypto');
 const mysql = require('mysql2/promise');
@@ -9,6 +17,8 @@ const now = new Date();
 const timestamp = now.toISOString().replace(/[:.]/g, '-');
 const reportDir = 'artifacts/smoke';
 const chromeRegressionDir = 'artifacts/chrome-regression';
+const chromeReportPattern = /^chrome-regression-.*\.json$/;
+const chromeScreenshotPattern = /^chrome-regression-.*\.png$/;
 const allowSkipWhenDockerUnavailable =
   String(process.env.SMOKE_ALLOW_DOCKER_UNAVAILABLE || 'false').toLowerCase() === 'true';
 const composeUpMaxAttempts = Math.max(1, Number(process.env.SMOKE_DOCKER_COMPOSE_UP_ATTEMPTS || 3));
@@ -43,6 +53,7 @@ const onlineDrillDbConfig = Object.freeze({
 const onlineDrillApiBaseUrl = String(
   process.env.SMOKE_ONLINE_DRILL_API_BASE_URL || 'http://127.0.0.1:3000'
 ).trim().replace(/\/+$/, '') || 'http://127.0.0.1:3000';
+const releaseGateRunId = String(process.env.RELEASE_GATE_RUN_ID || '').trim() || null;
 
 const PBKDF2_ITERATIONS = 150000;
 const PBKDF2_KEYLEN = 64;
@@ -58,12 +69,29 @@ const getLatestChromeRegressionArtifact = (targetDir = chromeRegressionDir) => {
   }
 
   const candidates = readdirSync(targetDir)
-    .filter((name) => /^chrome-regression-.*\.json$/.test(name))
-    .map((name) => ({
-      path: join(targetDir, name),
-      mtimeMs: statSync(join(targetDir, name)).mtimeMs
-    }))
-    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    .filter((name) => chromeReportPattern.test(name))
+    .map((name) => {
+      const reportPath = join(targetDir, name);
+      try {
+        const stats = statSync(reportPath);
+        if (!stats.isFile()) {
+          return null;
+        }
+        return {
+          path: reportPath,
+          mtimeMs: stats.mtimeMs
+        };
+      } catch (_error) {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.mtimeMs !== a.mtimeMs) {
+        return b.mtimeMs - a.mtimeMs;
+      }
+      return String(b.path).localeCompare(String(a.path));
+    });
 
   if (candidates.length === 0) {
     return null;
@@ -83,6 +111,26 @@ const getLatestChromeRegressionArtifact = (targetDir = chromeRegressionDir) => {
     generated_at: parsed.generated_at || null,
     screenshots: Array.isArray(parsed.screenshots) ? parsed.screenshots : []
   };
+};
+
+const resolveRealPathSafe = (inputPath) => {
+  try {
+    return realpathSync(inputPath);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const isPathInsideDirectory = (targetPath, baseDir) => {
+  const normalizedTarget = resolve(targetPath);
+  const normalizedBase = resolve(baseDir);
+  const realTarget = resolveRealPathSafe(normalizedTarget) || normalizedTarget;
+  const realBase = resolveRealPathSafe(normalizedBase) || normalizedBase;
+  if (realTarget === realBase) {
+    return true;
+  }
+  const rel = relative(realBase, realTarget);
+  return !rel.startsWith('..') && !isAbsolute(rel);
 };
 
 const normalizeExitStatus = (status, signal) => {
@@ -641,6 +689,14 @@ const resolveChromeEvidence = (
     );
   }
 
+  const reportPath = resolve(chromeEvidence.report);
+  if (!chromeReportPattern.test(basename(reportPath))) {
+    throw new Error(
+      `Chrome regression report filename is invalid: ${chromeEvidence.report}`
+    );
+  }
+  const reportDirPath = dirname(reportPath);
+
   const screenshots = Array.isArray(chromeEvidence.screenshots)
     ? chromeEvidence.screenshots
     : [];
@@ -653,9 +709,15 @@ const resolveChromeEvidence = (
   for (const screenshot of screenshots) {
     const screenshotPath = isAbsolute(screenshot)
       ? screenshot
-      : resolve(dirname(chromeEvidence.report), screenshot);
+      : resolve(reportDirPath, screenshot);
     if (!existsSync(screenshotPath)) {
       throw new Error(`Chrome regression screenshot is missing: ${screenshotPath}`);
+    }
+    if (!isPathInsideDirectory(screenshotPath, reportDirPath)) {
+      throw new Error(`Chrome regression screenshot is outside report directory: ${screenshotPath}`);
+    }
+    if (!chromeScreenshotPattern.test(basename(screenshotPath))) {
+      throw new Error(`Chrome regression screenshot filename is invalid: ${screenshotPath}`);
     }
 
     const screenshotStats = statSync(screenshotPath);
@@ -825,6 +887,7 @@ const run = async () => {
 
   const artifacts = {
     generated_at: now.toISOString(),
+    release_gate_run_id: releaseGateRunId,
     chain: 'web -> api -> db/redis',
     chrome_regression: chromeEvidence,
     steps: []
@@ -877,6 +940,7 @@ if (require.main === module) {
   run().catch((error) => {
     const failure = {
       generated_at: now.toISOString(),
+      release_gate_run_id: releaseGateRunId,
       passed: false,
       error: error.message
     };

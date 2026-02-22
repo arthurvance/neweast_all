@@ -78,7 +78,7 @@ development_status:
   4-3-受控系统配置治理: done
   4-4-受保护角色约束与角色状态失效: done
   4-5-权限树最终授权落库: done
-  4-6-发布前回归门禁分组报告: backlog
+  4-6-发布前回归门禁分组报告: done
   4-7-用户软删除会话撤销: backlog
   epic-4-retrospective: optional
 

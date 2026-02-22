@@ -1,12 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createDecipheriv } = require('node:crypto');
-const { mkdtempSync, writeFileSync } = require('node:fs');
+const { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const {
   buildEncryptedSensitiveConfigValue,
   deriveSensitiveConfigKey,
+  getLatestChromeRegressionArtifact,
   normalizeExitStatus,
   resolveSmokeComposeEnvironment,
   resolveChromeEvidence
@@ -34,19 +35,63 @@ test('resolveChromeEvidence rejects stale evidence before required timestamp', (
 
 test('resolveChromeEvidence accepts fresh evidence and returns payload', () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'chrome-evidence-'));
-  const screenshotPath = join(tempDir, 'evidence.png');
+  const reportPath = join(tempDir, 'chrome-regression-fresh.json');
+  const screenshotPath = join(tempDir, 'chrome-regression-evidence.png');
+  writeFileSync(reportPath, '{}');
   writeFileSync(screenshotPath, Buffer.from('png-binary'));
 
   const evidence = resolveChromeEvidence(200, () => ({
-    report: 'artifacts/chrome-regression/chrome-regression-fresh.json',
+    report: reportPath,
     mtimeMs: 300,
     generated_at: '2026-02-12T00:00:01.000Z',
     screenshots: [screenshotPath]
   }));
 
-  assert.equal(evidence.report, 'artifacts/chrome-regression/chrome-regression-fresh.json');
+  assert.equal(evidence.report, reportPath);
   assert.equal(evidence.mtimeMs, 300);
   assert.deepEqual(evidence.screenshots, [screenshotPath]);
+});
+
+test('resolveChromeEvidence rejects screenshots outside report directory', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'chrome-evidence-outside-dir-'));
+  const reportDir = join(tempDir, 'reports');
+  const externalDir = join(tempDir, 'external');
+  const reportPath = join(reportDir, 'chrome-regression-2026-02-22T00-00-00-000Z.json');
+  const externalScreenshotPath = join(externalDir, 'chrome-regression-outside.png');
+  mkdirSync(reportDir, { recursive: true });
+  mkdirSync(externalDir, { recursive: true });
+  writeFileSync(reportPath, '{}');
+  writeFileSync(externalScreenshotPath, Buffer.from('png-binary'));
+
+  assert.throws(
+    () =>
+      resolveChromeEvidence(0, () => ({
+        report: reportPath,
+        mtimeMs: Date.now(),
+        generated_at: '2026-02-22T00:00:01.000Z',
+        screenshots: [externalScreenshotPath]
+      })),
+    /outside report directory/
+  );
+});
+
+test('resolveChromeEvidence rejects screenshots with unexpected filename pattern', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'chrome-evidence-invalid-name-'));
+  const reportPath = join(tempDir, 'chrome-regression-2026-02-22T00-00-00-000Z.json');
+  const screenshotPath = join(tempDir, 'custom-name.png');
+  writeFileSync(reportPath, '{}');
+  writeFileSync(screenshotPath, Buffer.from('png-binary'));
+
+  assert.throws(
+    () =>
+      resolveChromeEvidence(0, () => ({
+        report: reportPath,
+        mtimeMs: Date.now(),
+        generated_at: '2026-02-22T00:00:01.000Z',
+        screenshots: [screenshotPath]
+      })),
+    /filename is invalid/
+  );
 });
 
 test('resolveChromeEvidence rejects missing or empty screenshots evidence', () => {
@@ -60,6 +105,35 @@ test('resolveChromeEvidence rejects missing or empty screenshots evidence', () =
       })),
     /at least one screenshot/
   );
+});
+
+test('getLatestChromeRegressionArtifact chooses latest deterministically when mtimes are identical', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'chrome-evidence-deterministic-'));
+  const reportA = join(tempDir, 'chrome-regression-2026-02-22T00-00-00-000Z.json');
+  const reportB = join(tempDir, 'chrome-regression-2026-02-22T00-00-01-000Z.json');
+  writeFileSync(reportA, JSON.stringify({ generated_at: '2026-02-22T00:00:00.000Z', screenshots: [] }));
+  writeFileSync(reportB, JSON.stringify({ generated_at: '2026-02-22T00:00:01.000Z', screenshots: [] }));
+
+  const sameTimestamp = new Date('2026-02-22T00:05:00.000Z');
+  utimesSync(reportA, sameTimestamp, sameTimestamp);
+  utimesSync(reportB, sameTimestamp, sameTimestamp);
+
+  const latest = getLatestChromeRegressionArtifact(tempDir);
+  assert.equal(latest?.report, reportB);
+});
+
+test('getLatestChromeRegressionArtifact ignores broken symlink candidates', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'chrome-evidence-broken-symlink-'));
+  const validReport = join(tempDir, 'chrome-regression-2026-02-22T00-00-00-000Z.json');
+  const brokenReport = join(tempDir, 'chrome-regression-2026-02-22T00-00-01-000Z.json');
+  writeFileSync(validReport, JSON.stringify({
+    generated_at: '2026-02-22T00:00:00.000Z',
+    screenshots: []
+  }));
+  symlinkSync(join(tempDir, 'non-existent-target.json'), brokenReport);
+
+  const latest = getLatestChromeRegressionArtifact(tempDir);
+  assert.equal(latest?.report, validReport);
 });
 
 test('buildEncryptedSensitiveConfigValue produces decryptable envelope', () => {

@@ -54,13 +54,19 @@ GROUP BY grants.role_id, LOWER(TRIM(grants.permission_code));
 
 DELETE grants
 FROM platform_role_permission_grants grants
-LEFT JOIN tmp_platform_role_permission_grants_final_authorization normalized
-  ON normalized.role_id = grants.role_id
-  AND normalized.permission_code = grants.permission_code
-WHERE normalized.role_id IS NULL
-  AND EXISTS (
-    SELECT 1
-    FROM tmp_platform_role_permission_grants_final_authorization
+JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
+WHERE catalog.scope = 'platform'
+  AND COALESCE(catalog.tenant_id, '') = ''
+  AND (
+    LOWER(TRIM(grants.permission_code)) NOT IN (
+      'platform.member_admin.view',
+      'platform.member_admin.operate',
+      'platform.billing.view',
+      'platform.billing.operate',
+      'platform.system_config.view',
+      'platform.system_config.operate'
+    )
+    OR BINARY grants.permission_code <> BINARY LOWER(TRIM(grants.permission_code))
   );
 
 INSERT INTO platform_role_permission_grants (
@@ -140,13 +146,17 @@ GROUP BY grants.role_id, LOWER(TRIM(grants.permission_code));
 
 DELETE grants
 FROM tenant_role_permission_grants grants
-LEFT JOIN tmp_tenant_role_permission_grants_final_authorization normalized
-  ON normalized.role_id = grants.role_id
-  AND normalized.permission_code = grants.permission_code
-WHERE normalized.role_id IS NULL
-  AND EXISTS (
-    SELECT 1
-    FROM tmp_tenant_role_permission_grants_final_authorization
+JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
+WHERE catalog.scope = 'tenant'
+  AND COALESCE(catalog.tenant_id, '') <> ''
+  AND (
+    LOWER(TRIM(grants.permission_code)) NOT IN (
+      'tenant.member_admin.view',
+      'tenant.member_admin.operate',
+      'tenant.billing.view',
+      'tenant.billing.operate'
+    )
+    OR BINARY grants.permission_code <> BINARY LOWER(TRIM(grants.permission_code))
   );
 
 INSERT INTO tenant_role_permission_grants (

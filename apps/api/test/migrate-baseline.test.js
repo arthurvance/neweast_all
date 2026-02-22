@@ -518,9 +518,16 @@ test('0020 migration normalizes and prunes role permission grants to final autho
   assert.match(sql, /platform\.system_config\.view/i);
   assert.match(sql, /platform\.system_config\.operate/i);
   assert.match(sql, /DELETE\s+grants\s+FROM\s+platform_role_permission_grants/i);
+  assert.match(
+    sql,
+    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'platform\.member_admin\.view'[\s\S]*'platform\.system_config\.operate'\s*\)/i
+  );
+  const binaryNormalizedComparisonMatches = sql.match(
+    /BINARY\s+grants\.permission_code\s*<>\s*BINARY\s+LOWER\(TRIM\(grants\.permission_code\)\)/ig
+  ) || [];
+  assert.equal(binaryNormalizedComparisonMatches.length, 2);
   assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
   assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
-  assert.match(sql, /EXISTS\s*\(\s*SELECT 1\s*FROM tmp_platform_role_permission_grants_final_authorization/i);
   assert.match(sql, /CREATE TEMPORARY TABLE tmp_tenant_role_permission_grants_final_authorization/i);
   assert.match(sql, /catalog\.scope = 'tenant'/i);
   assert.match(sql, /tenant\.member_admin\.view/i);
@@ -528,8 +535,11 @@ test('0020 migration normalizes and prunes role permission grants to final autho
   assert.match(sql, /tenant\.billing\.view/i);
   assert.match(sql, /tenant\.billing\.operate/i);
   assert.match(sql, /DELETE\s+grants\s+FROM\s+tenant_role_permission_grants/i);
+  assert.match(
+    sql,
+    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'tenant\.member_admin\.view'[\s\S]*'tenant\.billing\.operate'\s*\)/i
+  );
   assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
-  assert.match(sql, /EXISTS\s*\(\s*SELECT 1\s*FROM tmp_tenant_role_permission_grants_final_authorization/i);
 });
 
 test('0020 down migration is an explicit no-op rollback marker', () => {

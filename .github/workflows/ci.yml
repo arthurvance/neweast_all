@@ -9,7 +9,7 @@ jobs:
   quality-gates:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         gate: [lint, build, test, smoke]
 
@@ -30,3 +30,34 @@ jobs:
 
       - name: Run gate
         run: pnpm nx ${{ matrix.gate }}
+
+  release-gate-report:
+    if: ${{ always() }}
+    needs: quality-gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Run grouped release gate report
+        run: node tools/release-gate-report.js
+
+      - name: Upload release gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-report
+          path: artifacts/release-gates/*
+          if-no-files-found: error
