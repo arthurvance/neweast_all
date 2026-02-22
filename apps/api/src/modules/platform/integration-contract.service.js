@@ -56,6 +56,12 @@ const COMPATIBILITY_ALLOWED_FIELDS = new Set([
   'breaking_change_count'
 ]);
 const ACTIVATE_ALLOWED_FIELDS = new Set(['contract_type', 'baseline_version']);
+const CONSISTENCY_ALLOWED_FIELDS = new Set([
+  'contract_type',
+  'baseline_version',
+  'candidate_version'
+]);
+const VALID_CONSISTENCY_CANDIDATE_STATUSES = new Set(['candidate']);
 
 const isPlainObject = (candidate) =>
   candidate !== null
@@ -279,6 +285,38 @@ const integrationContractErrors = {
       }
     }),
 
+  consistencyBlocked: ({
+    reason = 'consistency_check_blocked',
+    integrationId = null,
+    contractType = null,
+    baselineVersion = null,
+    candidateVersion = null,
+    candidateStatus = null,
+    breakingChangeCount = 0,
+    diffSummary = null,
+    checkedAt = null
+  } = {}) =>
+    integrationContractProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: '契约一致性校验未通过，发布已阻断',
+      errorCode: 'integration_contract_consistency_blocked',
+      extensions: {
+        retryable: false,
+        check_result: 'blocked',
+        blocking: true,
+        failure_reason: reason,
+        integration_id: integrationId,
+        contract_type: contractType,
+        baseline_version: baselineVersion,
+        candidate_version: candidateVersion,
+        candidate_status: candidateStatus,
+        breaking_change_count: breakingChangeCount,
+        diff_summary: diffSummary,
+        checked_at: checkedAt
+      }
+    }),
+
   dependencyUnavailable: ({ reason = 'dependency-unavailable' } = {}) =>
     integrationContractProblem({
       status: 503,
@@ -301,6 +339,17 @@ const normalizeActivationBlockedReason = (reason) => {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return canonical || 'activation_blocked';
+};
+
+const normalizeConsistencyFailureReason = (reason) => {
+  const normalized = String(reason || '').trim().toLowerCase();
+  if (!normalized) {
+    return 'consistency_check_blocked';
+  }
+  const canonical = normalized
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return canonical || 'consistency_check_blocked';
 };
 
 const mapStoreError = (error) => {
@@ -960,6 +1009,45 @@ const parseActivatePayload = (payload = {}) => {
   };
 };
 
+const parseConsistencyPayload = (payload = {}) => {
+  if (!isPlainObject(payload)) {
+    throw integrationContractErrors.invalidPayload();
+  }
+  const unknownKeys = Object.keys(payload).filter(
+    (key) => !CONSISTENCY_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownKeys.length > 0) {
+    throw integrationContractErrors.invalidPayload();
+  }
+  const requiredFields = [
+    'contract_type',
+    'baseline_version',
+    'candidate_version'
+  ];
+  for (const field of requiredFields) {
+    if (!Object.prototype.hasOwnProperty.call(payload, field)) {
+      throw integrationContractErrors.invalidPayload(`${field} 必填`);
+    }
+  }
+  const contractType = normalizeContractType(payload.contract_type);
+  const baselineVersion = normalizeContractVersion(payload.baseline_version);
+  const candidateVersion = normalizeContractVersion(payload.candidate_version);
+  if (
+    !VALID_CONTRACT_TYPES.has(contractType)
+    || !baselineVersion
+    || baselineVersion.length > MAX_CONTRACT_VERSION_LENGTH
+    || !candidateVersion
+    || candidateVersion.length > MAX_CONTRACT_VERSION_LENGTH
+  ) {
+    throw integrationContractErrors.invalidPayload();
+  }
+  return {
+    contractType,
+    baselineVersion,
+    candidateVersion
+  };
+};
+
 const createPlatformIntegrationContractService = ({ authService } = {}) => {
   const auditTrail = [];
 
@@ -1101,6 +1189,61 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
       integration_id: recordIntegrationId,
       lifecycle_status: lifecycleStatus
     };
+  };
+
+  const recordConsistencyAuditEvent = async ({
+    requestId,
+    traceparent = null,
+    operatorUserId = null,
+    operatorSessionId = null,
+    integrationId = null,
+    contractType = null,
+    baselineVersion = null,
+    candidateVersion = null,
+    checkResult = 'blocked',
+    blocking = true,
+    failureReason = null,
+    breakingChangeCount = 0,
+    diffSummary = null,
+    checkedAt = null
+  } = {}) => {
+    const authStore = assertAuthStoreMethod('recordAuditEvent');
+    try {
+      await authStore.recordAuditEvent({
+        domain: 'platform',
+        requestId,
+        traceparent,
+        eventType: 'platform.integration.contract.consistency_checked',
+        actorUserId: operatorUserId,
+        actorSessionId: operatorSessionId,
+        targetType: 'integration_contract',
+        targetId: [
+          String(integrationId || '').trim(),
+          String(contractType || '').trim(),
+          String(candidateVersion || '').trim()
+        ]
+          .filter((item) => item.length > 0)
+          .join(':'),
+        result: blocking ? 'rejected' : 'success',
+        beforeState: null,
+        afterState: {
+          integration_id: integrationId,
+          contract_type: contractType,
+          baseline_version: baselineVersion,
+          candidate_version: candidateVersion,
+          check_result: checkResult,
+          blocking,
+          failure_reason: failureReason,
+          breaking_change_count: breakingChangeCount,
+          checked_at: checkedAt
+        },
+        metadata: {
+          diff_summary: diffSummary
+        }
+      });
+    } catch (error) {
+      throw mapStoreError(error);
+    }
   };
 
   const listContracts = async ({
@@ -1431,6 +1574,291 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
     return mapped;
   };
 
+  const checkConsistency = async ({
+    requestId,
+    accessToken,
+    integrationId,
+    payload = {},
+    traceparent = null,
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedIntegrationId = normalizeIntegrationId(integrationId);
+    if (!normalizedIntegrationId || normalizedIntegrationId.length > MAX_INTEGRATION_ID_LENGTH) {
+      throw integrationContractErrors.invalidPayload('integration_id 非法');
+    }
+    const parsedPayload = parseConsistencyPayload(payload);
+    const operatorContext = await resolveOperatorContext({
+      requestId: resolvedRequestId,
+      accessToken,
+      authorizationContext,
+      permissionCode: PLATFORM_INTEGRATION_CONTRACT_OPERATE_PERMISSION_CODE
+    });
+    const integrationEntry = await getIntegrationEntry({
+      integrationId: normalizedIntegrationId
+    });
+    if (!integrationEntry) {
+      throw integrationContractErrors.integrationNotFound({
+        integrationId: normalizedIntegrationId
+      });
+    }
+
+    const throwConsistencyBlocked = async ({
+      reason,
+      breakingChangeCount = 0,
+      diffSummary = null,
+      candidateStatus = null
+    } = {}) => {
+      const normalizedReason = normalizeConsistencyFailureReason(reason);
+      const checkedAt = new Date().toISOString();
+      await recordConsistencyAuditEvent({
+        requestId: resolvedRequestId,
+        traceparent,
+        operatorUserId: operatorContext.operatorUserId,
+        operatorSessionId: operatorContext.operatorSessionId,
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        baselineVersion: parsedPayload.baselineVersion,
+        candidateVersion: parsedPayload.candidateVersion,
+        checkResult: 'blocked',
+        blocking: true,
+        failureReason: normalizedReason,
+        breakingChangeCount,
+        diffSummary,
+        checkedAt
+      });
+      throw integrationContractErrors.consistencyBlocked({
+        reason: normalizedReason,
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        baselineVersion: parsedPayload.baselineVersion,
+        candidateVersion: parsedPayload.candidateVersion,
+        candidateStatus,
+        breakingChangeCount,
+        diffSummary,
+        checkedAt
+      });
+    };
+
+    const findContractStore = assertAuthStoreMethod('findPlatformIntegrationContractVersion');
+    let baselineRecord;
+    let candidateRecord;
+    try {
+      baselineRecord = await findContractStore.findPlatformIntegrationContractVersion({
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        contractVersion: parsedPayload.baselineVersion
+      });
+      candidateRecord = await findContractStore.findPlatformIntegrationContractVersion({
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        contractVersion: parsedPayload.candidateVersion
+      });
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+
+    const mappedBaselineRecord = baselineRecord
+      ? mapContractRecord({
+        record: baselineRecord,
+        requestId: resolvedRequestId
+      })
+      : null;
+    const mappedCandidateRecord = candidateRecord
+      ? mapContractRecord({
+        record: candidateRecord,
+        requestId: resolvedRequestId
+      })
+      : null;
+    if (
+      baselineRecord
+      && (
+        !mappedBaselineRecord
+        || !matchesExpectedContractLookup({
+          record: mappedBaselineRecord,
+          integrationId: normalizedIntegrationId,
+          contractType: parsedPayload.contractType,
+          contractVersion: parsedPayload.baselineVersion
+        })
+      )
+    ) {
+      throw integrationContractErrors.dependencyUnavailable({
+        reason: 'integration-contract-baseline-read-result-malformed'
+      });
+    }
+    if (
+      candidateRecord
+      && (
+        !mappedCandidateRecord
+        || !matchesExpectedContractLookup({
+          record: mappedCandidateRecord,
+          integrationId: normalizedIntegrationId,
+          contractType: parsedPayload.contractType,
+          contractVersion: parsedPayload.candidateVersion
+        })
+      )
+    ) {
+      throw integrationContractErrors.dependencyUnavailable({
+        reason: 'integration-contract-candidate-read-result-malformed'
+      });
+    }
+    if (!baselineRecord) {
+      throw integrationContractErrors.contractNotFound({
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        contractVersion: parsedPayload.baselineVersion
+      });
+    }
+    if (!candidateRecord) {
+      throw integrationContractErrors.contractNotFound({
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        contractVersion: parsedPayload.candidateVersion
+      });
+    }
+
+    if (!VALID_CONSISTENCY_CANDIDATE_STATUSES.has(mappedCandidateRecord.status)) {
+      await throwConsistencyBlocked({
+        reason: 'candidate_status_invalid',
+        breakingChangeCount: 0,
+        diffSummary: null,
+        candidateStatus: mappedCandidateRecord.status
+      });
+    }
+
+    const activeContractLookupStore = assertAuthStoreMethod(
+      'findLatestActivePlatformIntegrationContractVersion'
+    );
+    let currentActiveRecord;
+    try {
+      currentActiveRecord =
+        await activeContractLookupStore.findLatestActivePlatformIntegrationContractVersion({
+          integrationId: normalizedIntegrationId,
+          contractType: parsedPayload.contractType
+        });
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+    const mappedCurrentActive = currentActiveRecord
+      ? mapContractRecord({
+        record: currentActiveRecord,
+        requestId: resolvedRequestId
+      })
+      : null;
+    if (
+      currentActiveRecord
+      && (
+        !mappedCurrentActive
+        || !matchesExpectedContractLookup({
+          record: mappedCurrentActive,
+          integrationId: normalizedIntegrationId,
+          contractType: parsedPayload.contractType,
+          status: 'active'
+        })
+      )
+    ) {
+      throw integrationContractErrors.dependencyUnavailable({
+        reason: 'integration-contract-active-read-result-malformed'
+      });
+    }
+    const currentActiveVersion = mappedCurrentActive?.contract_version || null;
+    if (
+      currentActiveVersion
+      && parsedPayload.baselineVersion !== currentActiveVersion
+    ) {
+      await throwConsistencyBlocked({
+        reason: 'baseline_version_mismatch',
+        breakingChangeCount: 0,
+        diffSummary: {
+          expected_active_baseline_version: currentActiveVersion,
+          requested_baseline_version: parsedPayload.baselineVersion
+        }
+      });
+    }
+
+    const findCheckStore = assertAuthStoreMethod(
+      'findLatestPlatformIntegrationContractCompatibilityCheck'
+    );
+    let latestCheck;
+    try {
+      latestCheck =
+        await findCheckStore.findLatestPlatformIntegrationContractCompatibilityCheck({
+          integrationId: normalizedIntegrationId,
+          contractType: parsedPayload.contractType,
+          baselineVersion: parsedPayload.baselineVersion,
+          candidateVersion: parsedPayload.candidateVersion
+        });
+    } catch (error) {
+      throw mapStoreError(error);
+    }
+    if (!latestCheck) {
+      await throwConsistencyBlocked({
+        reason: 'missing_latest_compatibility_check',
+        breakingChangeCount: 0,
+        diffSummary: null
+      });
+    }
+    const mappedLatestCheck = mapCompatibilityCheckRecord({
+      record: latestCheck
+    });
+    if (
+      !mappedLatestCheck
+      || !matchesExpectedCompatibilityCheckLookup({
+        record: mappedLatestCheck,
+        integrationId: normalizedIntegrationId,
+        contractType: parsedPayload.contractType,
+        baselineVersion: parsedPayload.baselineVersion,
+        candidateVersion: parsedPayload.candidateVersion
+      })
+      || !hasConsistentCompatibilityCheckEvaluation({
+        record: mappedLatestCheck
+      })
+    ) {
+      throw integrationContractErrors.dependencyUnavailable({
+        reason: 'integration-contract-consistency-check-read-result-malformed'
+      });
+    }
+    if (mappedLatestCheck.evaluation_result !== 'compatible') {
+      await throwConsistencyBlocked({
+        reason: 'latest_compatibility_incompatible',
+        breakingChangeCount: mappedLatestCheck.breaking_change_count,
+        diffSummary: mappedLatestCheck.diff_summary
+      });
+    }
+
+    const checkedAt = new Date().toISOString();
+    const response = {
+      integration_id: normalizedIntegrationId,
+      contract_type: parsedPayload.contractType,
+      baseline_version: parsedPayload.baselineVersion,
+      candidate_version: parsedPayload.candidateVersion,
+      check_result: 'passed',
+      blocking: false,
+      failure_reason: null,
+      breaking_change_count: mappedLatestCheck.breaking_change_count,
+      diff_summary: mappedLatestCheck.diff_summary,
+      request_id: resolvedRequestId,
+      checked_at: checkedAt
+    };
+    await recordConsistencyAuditEvent({
+      requestId: resolvedRequestId,
+      traceparent,
+      operatorUserId: operatorContext.operatorUserId,
+      operatorSessionId: operatorContext.operatorSessionId,
+      integrationId: normalizedIntegrationId,
+      contractType: parsedPayload.contractType,
+      baselineVersion: parsedPayload.baselineVersion,
+      candidateVersion: parsedPayload.candidateVersion,
+      checkResult: response.check_result,
+      blocking: response.blocking,
+      failureReason: response.failure_reason,
+      breakingChangeCount: response.breaking_change_count,
+      diffSummary: response.diff_summary,
+      checkedAt: response.checked_at
+    });
+    return response;
+  };
+
   const activateContract = async ({
     requestId,
     accessToken,
@@ -1706,6 +2134,7 @@ const createPlatformIntegrationContractService = ({ authService } = {}) => {
     listContracts,
     createContract,
     evaluateCompatibility,
+    checkConsistency,
     activateContract,
     _internals: {
       authService,

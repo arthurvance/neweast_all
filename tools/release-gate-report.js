@@ -43,6 +43,7 @@ const DEFAULT_EVIDENCE_STALE_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_EVIDENCE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const COMMAND_MAX_BUFFER_BYTES = 200 * 1024 * 1024;
 const ISO_TIMESTAMP_WITH_TIMEZONE_PATTERN = /^(?:\d{4}-\d{2}-\d{2})T(?:\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+const CONSISTENCY_BLOCKING_REASON_PATTERN = /missing_latest_compatibility_check|latest_compatibility_incompatible|baseline_version_mismatch|candidate_status_invalid/;
 const SMOKE_REPORT_FILE_PATTERN = /^smoke-.*\.json$/;
 const CHROME_REPORT_FILE_PATTERN = /^chrome-regression-.*\.json$/;
 const CHROME_SCREENSHOT_FILE_PATTERN = /^chrome-regression-.*\.png$/;
@@ -84,6 +85,19 @@ const DEFAULT_GROUP_DEFINITIONS = Object.freeze([
         id: 'test.workspace',
         name: 'Workspace test',
         command: 'pnpm nx test'
+      })
+    ])
+  }),
+  Object.freeze({
+    id: 'integration-contract-consistency',
+    name: 'Integration Contract Consistency',
+    blocking: true,
+    fr_mapping: Object.freeze(['FR41', 'FR58']),
+    checks: Object.freeze([
+      Object.freeze({
+        id: 'integration-contract-consistency.api',
+        name: 'Integration contract consistency check',
+        command: 'pnpm --dir apps/api check:integration-contract-consistency'
       })
     ])
   }),
@@ -220,6 +234,61 @@ const buildOutputExcerpt = (stdout, stderr) => {
   return `...${excerpt.slice(excerpt.length - 4000)}`;
 };
 
+const parseJsonSafelyFromString = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const parseConsistencyGateReportFromOutput = (output) => {
+  const text = String(output || '').trim();
+  if (!text) {
+    return null;
+  }
+  const isConsistencyGateReport = (candidate) =>
+    candidate
+    && typeof candidate === 'object'
+    && Array.isArray(candidate.checks)
+    && (
+      candidate.gate === 'integration-contract-consistency'
+      || Object.prototype.hasOwnProperty.call(candidate, 'blocking')
+    );
+  const direct = parseJsonSafelyFromString(text);
+  if (isConsistencyGateReport(direct)) {
+    return direct;
+  }
+
+  const lines = text.split('\n');
+  for (let start = lines.length - 1; start >= 0; start -= 1) {
+    if (!String(lines[start] || '').trim().startsWith('{')) {
+      continue;
+    }
+    const candidate = parseJsonSafelyFromString(lines.slice(start).join('\n'));
+    if (isConsistencyGateReport(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const isConsistencyRuntimeCheck = (check = {}) =>
+  String(check.id || check.check_id || '').trim().toLowerCase() === 'consistency.runtime';
+
+const isConsistencyBlockedCheck = (check = {}) => {
+  const checkId = String(check.id || check.check_id || '').trim().toLowerCase();
+  if (checkId === 'consistency.runtime') {
+    return false;
+  }
+  if (checkId && !checkId.startsWith('consistency.')) {
+    return false;
+  }
+  const status = Number(check.status);
+  const detail = String(check.detail || '').toLowerCase();
+  return status === 409 || CONSISTENCY_BLOCKING_REASON_PATTERN.test(detail);
+};
+
 const classifyFailureReason = (groupId, output) => {
   const normalized = String(output || '').toLowerCase();
   if (groupId === 'lint') {
@@ -242,6 +311,37 @@ const classifyFailureReason = (groupId, output) => {
       return 'test-failures-detected';
     }
     return 'test-check-failed';
+  }
+  if (groupId === 'integration-contract-consistency') {
+    const parsedReport = parseConsistencyGateReportFromOutput(output);
+    if (parsedReport) {
+      const failedChecks = parsedReport.checks.filter((check) => {
+        if (!check || typeof check !== 'object') {
+          return true;
+        }
+        const passedFlag = check.passed;
+        const status = String(check.status || '').toLowerCase();
+        const explicitlyPassed = passedFlag === true || status === 'passed';
+        return !explicitlyPassed;
+      });
+      if (failedChecks.some((check) => isConsistencyRuntimeCheck(check))) {
+        return 'integration-contract-consistency-check-failed';
+      }
+      if (
+        failedChecks.length > 0
+        && failedChecks.every((check) => isConsistencyBlockedCheck(check))
+      ) {
+        return 'integration-contract-consistency-blocked';
+      }
+      return 'integration-contract-consistency-check-failed';
+    }
+    if (normalized.includes('consistency.runtime')) {
+      return 'integration-contract-consistency-check-failed';
+    }
+    if (CONSISTENCY_BLOCKING_REASON_PATTERN.test(normalized)) {
+      return 'integration-contract-consistency-blocked';
+    }
+    return 'integration-contract-consistency-check-failed';
   }
   if (groupId === 'smoke') {
     if (normalized.includes('docker environment unavailable')) {

@@ -85,7 +85,7 @@ development_status:
   epic-5: in-progress
   5-1-集成目录与生命周期管理: done
   5-2-版本化契约交互与兼容管理: done
-  5-3-集成变更前契约一致性校验: backlog
+  5-3-集成变更前契约一致性校验: done
   5-4-失败重试-恢复与再处理闭环: backlog
   5-5-集成清单冻结-解冻与门禁分组报告: backlog
   epic-5-retrospective: optional

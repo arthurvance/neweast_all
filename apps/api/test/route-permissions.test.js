@@ -300,6 +300,10 @@ test('platform integration contract routes expose explicit permission declaratio
     method: 'POST',
     path: '/platform/integrations/demo-integration/contracts/compatibility-check'
   });
+  const checkConsistency = findRouteDefinition({
+    method: 'POST',
+    path: '/platform/integrations/demo-integration/contracts/consistency-check'
+  });
   const activateContract = findRouteDefinition({
     method: 'POST',
     path: '/platform/integrations/demo-integration/contracts/v2026.02.22/activate'
@@ -310,7 +314,12 @@ test('platform integration contract routes expose explicit permission declaratio
   assert.equal(listContracts.scope, 'platform');
   assert.equal(listContracts.permission_code, 'platform.member_admin.view');
 
-  for (const route of [createContract, evaluateCompatibility, activateContract]) {
+  for (const route of [
+    createContract,
+    evaluateCompatibility,
+    checkConsistency,
+    activateContract
+  ]) {
     assert.ok(route);
     assert.equal(route.access, 'protected');
     assert.equal(route.scope, 'platform');

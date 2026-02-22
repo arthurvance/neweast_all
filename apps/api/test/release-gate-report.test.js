@@ -6,6 +6,7 @@ const { tmpdir } = require('node:os');
 const {
   DEFAULT_GROUP_DEFINITIONS,
   buildReleaseGateReport,
+  classifyFailureReason,
   collectEvidenceInputs,
   parseGeneratedAtMs,
   renderMarkdownSummary,
@@ -17,7 +18,101 @@ const {
 
 test('default group definitions include required capability groups in stable order', () => {
   const groupIds = DEFAULT_GROUP_DEFINITIONS.map((group) => group.id);
-  assert.deepEqual(groupIds, ['lint', 'build', 'test', 'smoke']);
+  assert.deepEqual(groupIds, [
+    'lint',
+    'build',
+    'test',
+    'integration-contract-consistency',
+    'smoke'
+  ]);
+});
+
+test('integration contract consistency group is blocking and bound to FR41/FR58 command contract', () => {
+  const group = DEFAULT_GROUP_DEFINITIONS.find(
+    (candidate) => candidate.id === 'integration-contract-consistency'
+  );
+  assert.ok(group);
+  assert.equal(group.blocking, true);
+  assert.deepEqual(group.fr_mapping, ['FR41', 'FR58']);
+  assert.equal(group.checks.length, 1);
+  assert.equal(
+    group.checks[0].command,
+    'pnpm --dir apps/api check:integration-contract-consistency'
+  );
+});
+
+test('classifyFailureReason maps integration contract consistency gate output to deterministic reason', () => {
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      '{"blocking": true, "checks":[{"detail":"missing_latest_compatibility_check"}]}'
+    ),
+    'integration-contract-consistency-blocked'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      '{"blocking":true,"checks":[]}'
+    ),
+    'integration-contract-consistency-check-failed'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      '{"blocking":true,"checks":[{"id":"consistency.after_compatibility","passed":false,"status":409}]}'
+    ),
+    'integration-contract-consistency-blocked'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      '{"blocking":true,"checks":[{"id":"consistency.runtime","passed":false,"detail":"socket hang up"}]}'
+    ),
+    'integration-contract-consistency-check-failed'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      JSON.stringify({
+        gate: 'integration-contract-consistency',
+        blocking: true,
+        checks: [
+          {
+            id: 'setup.integration.create',
+            passed: false,
+            status: 500,
+            detail: 'dependency unavailable'
+          }
+        ]
+      })
+    ),
+    'integration-contract-consistency-check-failed'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      JSON.stringify({
+        gate: 'integration-contract-consistency',
+        blocking: true,
+        checks: [
+          {
+            id: 'consistency.after_compatibility',
+            passed: false,
+            status: 409,
+            detail: 'baseline_version_mismatch'
+          }
+        ]
+      })
+    ),
+    'integration-contract-consistency-blocked'
+  );
+  assert.equal(
+    classifyFailureReason(
+      'integration-contract-consistency',
+      'unexpected runtime error'
+    ),
+    'integration-contract-consistency-check-failed'
+  );
 });
 
 test('resolveWorkspaceRoot resolves repository root from nested directories', () => {

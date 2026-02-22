@@ -103,6 +103,122 @@ const createIntegration = async ({
     handlers
   });
 
+const createContractVersion = async ({
+  handlers,
+  accessToken,
+  integrationId,
+  contractVersion,
+  requestId,
+  schemaChecksum,
+  status = 'candidate',
+  isBackwardCompatible = true
+}) =>
+  dispatchApiRoute({
+    pathname: `/platform/integrations/${integrationId}/contracts`,
+    method: 'POST',
+    requestId,
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    },
+    body: {
+      contract_type: 'openapi',
+      contract_version: contractVersion,
+      schema_ref: `s3://contracts/${integrationId}/${contractVersion}/openapi.json`,
+      schema_checksum: schemaChecksum,
+      status,
+      is_backward_compatible: isBackwardCompatible
+    },
+    handlers
+  });
+
+const activateContractVersion = async ({
+  handlers,
+  accessToken,
+  integrationId,
+  contractVersion,
+  requestId,
+  baselineVersion = null
+}) =>
+  dispatchApiRoute({
+    pathname: `/platform/integrations/${integrationId}/contracts/${contractVersion}/activate`,
+    method: 'POST',
+    requestId,
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    },
+    body: baselineVersion
+      ? {
+        contract_type: 'openapi',
+        baseline_version: baselineVersion
+      }
+      : {
+        contract_type: 'openapi'
+      },
+    handlers
+  });
+
+const evaluateContractCompatibility = async ({
+  handlers,
+  accessToken,
+  integrationId,
+  requestId,
+  baselineVersion,
+  candidateVersion,
+  diffSummary,
+  breakingChangeCount
+}) => {
+  const body = {
+    contract_type: 'openapi',
+    baseline_version: baselineVersion,
+    candidate_version: candidateVersion
+  };
+  if (diffSummary !== undefined) {
+    body.diff_summary = diffSummary;
+  }
+  if (breakingChangeCount !== undefined) {
+    body.breaking_change_count = breakingChangeCount;
+  }
+  return dispatchApiRoute({
+    pathname: `/platform/integrations/${integrationId}/contracts/compatibility-check`,
+    method: 'POST',
+    requestId,
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    },
+    body,
+    handlers
+  });
+};
+
+const checkContractConsistency = async ({
+  handlers,
+  accessToken,
+  integrationId,
+  requestId,
+  baselineVersion,
+  candidateVersion,
+  idempotencyKey = null
+}) => {
+  const headers = {
+    authorization: `Bearer ${accessToken}`
+  };
+  if (idempotencyKey) {
+    headers['idempotency-key'] = idempotencyKey;
+  }
+  return dispatchApiRoute({
+    pathname: `/platform/integrations/${integrationId}/contracts/consistency-check`,
+    method: 'POST',
+    requestId,
+    headers,
+    body: {
+      contract_type: 'openapi',
+      baseline_version: baselineVersion,
+      candidate_version: candidateVersion
+    },
+    handlers
+  });
+};
+
 test('platform integration contract APIs support create/list/compatibility/activate with audit traceability', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
@@ -3103,6 +3219,667 @@ test('contract compatibility returns integration_contract_not_found when integra
     payload.request_id,
     'req-platform-integration-contract-integration-missing-compatibility'
   );
+});
+
+test('contract consistency check blocks release when latest compatibility check is missing', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-missing-check'
+  });
+  const integrationId = 'integration-contract-consistency-missing-check';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-create-integration-consistency-missing-check'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-missing-check-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-missing-check-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-missing-check-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const consistencyRoute = await checkContractConsistency({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-missing-check-run',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2'
+  });
+  assert.equal(consistencyRoute.status, 409);
+  const payload = JSON.parse(consistencyRoute.body);
+  assert.equal(payload.error_code, 'integration_contract_consistency_blocked');
+  assert.equal(payload.blocking, true);
+  assert.equal(payload.check_result, 'blocked');
+  assert.equal(payload.failure_reason, 'missing_latest_compatibility_check');
+  assert.equal(payload.baseline_version, 'v1');
+  assert.equal(payload.candidate_version, 'v2');
+  assert.equal(
+    payload.request_id,
+    'req-platform-integration-contract-consistency-missing-check-run'
+  );
+});
+
+test('contract consistency check blocks release and returns breaking summary when latest evaluation is incompatible', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-incompatible'
+  });
+  const integrationId = 'integration-contract-consistency-incompatible';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-create-integration-consistency-incompatible'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-incompatible-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-incompatible-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-incompatible-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const evaluateRoute = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-incompatible-evaluate',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    breakingChangeCount: 2,
+    diffSummary: {
+      breaking_changes: [
+        'remove field customer_id',
+        'rename field total_amount'
+      ]
+    }
+  });
+  assert.equal(evaluateRoute.status, 200);
+
+  const consistencyRoute = await checkContractConsistency({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-incompatible-run',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2'
+  });
+  assert.equal(consistencyRoute.status, 409);
+  const payload = JSON.parse(consistencyRoute.body);
+  assert.equal(payload.error_code, 'integration_contract_consistency_blocked');
+  assert.equal(payload.blocking, true);
+  assert.equal(payload.check_result, 'blocked');
+  assert.equal(payload.failure_reason, 'latest_compatibility_incompatible');
+  assert.equal(payload.breaking_change_count, 2);
+  assert.deepEqual(payload.diff_summary, {
+    breaking_changes: [
+      'remove field customer_id',
+      'rename field total_amount'
+    ]
+  });
+});
+
+test('contract consistency check blocks release when requested baseline_version mismatches latest active version', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-baseline-mismatch'
+  });
+  const integrationId = 'integration-contract-consistency-baseline-mismatch';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-create-integration-consistency-baseline-mismatch'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-baseline-mismatch-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId:
+      'req-platform-integration-contract-consistency-baseline-mismatch-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-baseline-mismatch-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const evaluateV1ToV2Route = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-consistency-baseline-mismatch-evaluate-v1-v2',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    diffSummary: {
+      breaking_changes: []
+    }
+  });
+  assert.equal(evaluateV1ToV2Route.status, 200);
+
+  const activateV2Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId:
+      'req-platform-integration-contract-consistency-baseline-mismatch-activate-v2',
+    baselineVersion: 'v1'
+  });
+  assert.equal(activateV2Route.status, 200);
+
+  const createV3Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v3',
+    requestId: 'req-platform-integration-contract-consistency-baseline-mismatch-create-v3',
+    schemaChecksum: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+  });
+  assert.equal(createV3Route.status, 200);
+
+  const evaluateV1ToV3Route = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-consistency-baseline-mismatch-evaluate-v1-v3',
+    baselineVersion: 'v1',
+    candidateVersion: 'v3',
+    diffSummary: {
+      breaking_changes: []
+    }
+  });
+  assert.equal(evaluateV1ToV3Route.status, 200);
+
+  const consistencyRoute = await checkContractConsistency({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-baseline-mismatch-run',
+    baselineVersion: 'v1',
+    candidateVersion: 'v3'
+  });
+  assert.equal(consistencyRoute.status, 409);
+  const payload = JSON.parse(consistencyRoute.body);
+  assert.equal(payload.error_code, 'integration_contract_consistency_blocked');
+  assert.equal(payload.blocking, true);
+  assert.equal(payload.check_result, 'blocked');
+  assert.equal(payload.failure_reason, 'baseline_version_mismatch');
+  assert.equal(payload.baseline_version, 'v1');
+  assert.equal(payload.candidate_version, 'v3');
+  assert.deepEqual(payload.diff_summary, {
+    expected_active_baseline_version: 'v2',
+    requested_baseline_version: 'v1'
+  });
+});
+
+test('contract consistency check returns passed result and writes queryable audit event', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-pass'
+  });
+  const integrationId = 'integration-contract-consistency-pass';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-create-integration-consistency-pass'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-pass-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-pass-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-pass-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const evaluateRoute = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-pass-evaluate',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    diffSummary: {
+      breaking_changes: []
+    }
+  });
+  assert.equal(evaluateRoute.status, 200);
+
+  const consistencyRoute = await checkContractConsistency({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-pass-run',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2'
+  });
+  assert.equal(consistencyRoute.status, 200);
+  const payload = JSON.parse(consistencyRoute.body);
+  assert.equal(payload.check_result, 'passed');
+  assert.equal(payload.blocking, false);
+  assert.equal(payload.failure_reason, null);
+  assert.equal(payload.breaking_change_count, 0);
+  assert.deepEqual(payload.diff_summary, {
+    breaking_changes: []
+  });
+  assert.equal(payload.request_id, 'req-platform-integration-contract-consistency-pass-run');
+
+  const auditRoute = await dispatchApiRoute({
+    pathname: '/platform/audit/events?request_id=req-platform-integration-contract-consistency-pass-run&event_type=platform.integration.contract.consistency_checked',
+    method: 'GET',
+    requestId: 'req-platform-integration-contract-consistency-pass-audit-query',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(auditRoute.status, 200);
+  const auditPayload = JSON.parse(auditRoute.body);
+  assert.equal(auditPayload.total, 1);
+  assert.equal(
+    auditPayload.events[0].event_type,
+    'platform.integration.contract.consistency_checked'
+  );
+});
+
+test('contract consistency check fails closed when latest compatibility check read result is malformed', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-malformed-check'
+  });
+  const integrationId = 'integration-contract-consistency-malformed-check';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-create-integration-consistency-malformed-check'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-malformed-check-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-malformed-check-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-malformed-check-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const authStore = harness.authService._internals.authStore;
+  const originalFindLatestCheck =
+    authStore.findLatestPlatformIntegrationContractCompatibilityCheck;
+  authStore.findLatestPlatformIntegrationContractCompatibilityCheck = async () => ({
+    integration_id: integrationId,
+    contract_type: 'openapi',
+    baseline_version: 'v1',
+    candidate_version: 'v2',
+    evaluation_result: 'compatible',
+    breaking_change_count: 0,
+    diff_summary: {
+      breaking_changes: []
+    },
+    request_id: 'req-platform-integration-contract-consistency-malformed-check-forged'
+  });
+  try {
+    const consistencyRoute = await checkContractConsistency({
+      handlers: harness.handlers,
+      accessToken: login.access_token,
+      integrationId,
+      requestId: 'req-platform-integration-contract-consistency-malformed-check-run',
+      baselineVersion: 'v1',
+      candidateVersion: 'v2'
+    });
+    assert.equal(consistencyRoute.status, 503);
+    const payload = JSON.parse(consistencyRoute.body);
+    assert.equal(payload.error_code, 'INT-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(
+      payload.degradation_reason,
+      'integration-contract-consistency-check-read-result-malformed'
+    );
+    assert.equal(
+      payload.request_id,
+      'req-platform-integration-contract-consistency-malformed-check-run'
+    );
+  } finally {
+    authStore.findLatestPlatformIntegrationContractCompatibilityCheck =
+      originalFindLatestCheck;
+  }
+});
+
+test('contract consistency check fails closed when latest active baseline read result is malformed', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-malformed-active'
+  });
+  const integrationId = 'integration-contract-consistency-malformed-active';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId:
+      'req-platform-integration-contract-create-integration-consistency-malformed-active'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-malformed-active-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId:
+      'req-platform-integration-contract-consistency-malformed-active-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-malformed-active-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const evaluateRoute = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-malformed-active-evaluate',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    diffSummary: {
+      breaking_changes: []
+    }
+  });
+  assert.equal(evaluateRoute.status, 200);
+
+  const authStore = harness.authService._internals.authStore;
+  const originalFindLatestActive =
+    authStore.findLatestActivePlatformIntegrationContractVersion;
+  authStore.findLatestActivePlatformIntegrationContractVersion = async () => ({
+    integration_id: integrationId,
+    contract_type: 'openapi',
+    contract_version: 'v1',
+    schema_ref: `s3://contracts/${integrationId}/v1/openapi.json`,
+    schema_checksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    status: 'candidate',
+    is_backward_compatible: true,
+    created_by_user_id: 'platform-integration-contract-operator',
+    updated_by_user_id: 'platform-integration-contract-operator',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+  try {
+    const consistencyRoute = await checkContractConsistency({
+      handlers: harness.handlers,
+      accessToken: login.access_token,
+      integrationId,
+      requestId: 'req-platform-integration-contract-consistency-malformed-active-run',
+      baselineVersion: 'v1',
+      candidateVersion: 'v2'
+    });
+    assert.equal(consistencyRoute.status, 503);
+    const payload = JSON.parse(consistencyRoute.body);
+    assert.equal(payload.error_code, 'INT-503-DEPENDENCY-UNAVAILABLE');
+    assert.equal(
+      payload.degradation_reason,
+      'integration-contract-active-read-result-malformed'
+    );
+  } finally {
+    authStore.findLatestActivePlatformIntegrationContractVersion =
+      originalFindLatestActive;
+  }
+});
+
+test('contract consistency check keeps idempotency replay semantics stable', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone({
+    authService: harness.authService,
+    phone: OPERATOR_PHONE,
+    requestId: 'req-platform-integration-contract-login-consistency-idem'
+  });
+  const integrationId = 'integration-contract-consistency-idem';
+
+  const integrationRoute = await createIntegration({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-create-integration-consistency-idem'
+  });
+  assert.equal(integrationRoute.status, 200);
+
+  const createV1Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-idem-create-v1',
+    schemaChecksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  });
+  assert.equal(createV1Route.status, 200);
+
+  const activateV1Route = await activateContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v1',
+    requestId: 'req-platform-integration-contract-consistency-idem-activate-v1'
+  });
+  assert.equal(activateV1Route.status, 200);
+
+  const createV2Route = await createContractVersion({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    contractVersion: 'v2',
+    requestId: 'req-platform-integration-contract-consistency-idem-create-v2',
+    schemaChecksum: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  assert.equal(createV2Route.status, 200);
+
+  const evaluateRoute = await evaluateContractCompatibility({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-idem-evaluate',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    diffSummary: {
+      breaking_changes: []
+    }
+  });
+  assert.equal(evaluateRoute.status, 200);
+
+  const first = await checkContractConsistency({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-idem-1',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    idempotencyKey: 'idem-platform-integration-contract-consistency-001'
+  });
+  const second = await checkContractConsistency({
+    handlers: harness.handlers,
+    accessToken: login.access_token,
+    integrationId,
+    requestId: 'req-platform-integration-contract-consistency-idem-2',
+    baselineVersion: 'v1',
+    candidateVersion: 'v2',
+    idempotencyKey: 'idem-platform-integration-contract-consistency-001'
+  });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(firstPayload.check_result, 'passed');
+  assert.equal(secondPayload.check_result, 'passed');
+  assert.equal(secondPayload.blocking, false);
+  assert.equal(
+    secondPayload.request_id,
+    'req-platform-integration-contract-consistency-idem-2'
+  );
+
+  const replayAuditRoute = await dispatchApiRoute({
+    pathname: '/platform/audit/events?request_id=req-platform-integration-contract-consistency-idem-2&event_type=platform.integration.contract.consistency_checked',
+    method: 'GET',
+    requestId: 'req-platform-integration-contract-consistency-idem-audit-replay-query',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replayAuditRoute.status, 200);
+  const replayAuditPayload = JSON.parse(replayAuditRoute.body);
+  assert.equal(replayAuditPayload.total, 0);
 });
 
 test('contract governance write routes require platform.member_admin.operate permission', async () => {

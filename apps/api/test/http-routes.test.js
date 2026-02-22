@@ -234,6 +234,24 @@ test('createRouteHandlers wires platform integration contract handlers with prov
         checked_at: '2026-02-22T00:00:00.000Z'
       };
     },
+    checkConsistency: async (payload) => {
+      contractCalls.push({ method: 'consistency', payload });
+      return {
+        integration_id: payload.integrationId,
+        contract_type: payload.payload.contract_type,
+        baseline_version: payload.payload.baseline_version,
+        candidate_version: payload.payload.candidate_version,
+        check_result: 'passed',
+        blocking: false,
+        failure_reason: null,
+        breaking_change_count: 0,
+        diff_summary: {
+          breaking_changes: []
+        },
+        request_id: payload.requestId,
+        checked_at: '2026-02-22T00:00:00.000Z'
+      };
+    },
     activateContract: async (payload) => {
       contractCalls.push({ method: 'activate', payload });
       return {
@@ -298,6 +316,21 @@ test('createRouteHandlers wires platform integration contract handlers with prov
   assert.equal(checked.evaluation_result, 'compatible');
   assert.equal(contractCalls[2].method, 'compatibility');
 
+  const consistency = await handlers.platformCheckIntegrationContractConsistency(
+    'req-http-routes-platform-integration-contract-consistency',
+    'Bearer fake-token',
+    { integration_id: 'erp-outbound-main' },
+    {
+      contract_type: 'openapi',
+      baseline_version: 'v2026.01.15',
+      candidate_version: 'v2026.02.22'
+    },
+    null,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  );
+  assert.equal(consistency.check_result, 'passed');
+  assert.equal(contractCalls[3].method, 'consistency');
+
   const activated = await handlers.platformActivateIntegrationContract(
     'req-http-routes-platform-integration-contract-activate',
     'Bearer fake-token',
@@ -312,7 +345,7 @@ test('createRouteHandlers wires platform integration contract handlers with prov
     '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
   );
   assert.equal(activated.current_status, 'active');
-  assert.equal(contractCalls[3].method, 'activate');
+  assert.equal(contractCalls[4].method, 'activate');
   assert.equal(
     handlers._internals.platformIntegrationContractService,
     platformIntegrationContractService
@@ -330,6 +363,7 @@ test('createRouteHandlers enforces shared auth service identity for platformInte
             listContracts: async () => ({}),
             createContract: async () => ({}),
             evaluateCompatibility: async () => ({}),
+            checkConsistency: async () => ({}),
             activateContract: async () => ({}),
             _internals: {
               authService: { serviceName: 'other-auth' }

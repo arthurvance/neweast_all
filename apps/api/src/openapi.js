@@ -6445,6 +6445,199 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/platform/integrations/{integration_id}/contracts/consistency-check': {
+      post: {
+        summary: 'Check release-gate consistency using latest compatibility evaluation result',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'integration_id',
+            required: true,
+            schema: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: PLATFORM_INTEGRATION_ID_PATTERN
+            }
+          },
+          {
+            in: 'header',
+            name: 'Idempotency-Key',
+            required: false,
+            description: '关键写幂等键；同键同载荷返回首次持久化语义，参数校验失败等非持久响应不会占用该键',
+            schema: IDEMPOTENCY_KEY_SCHEMA
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/CheckPlatformIntegrationContractConsistencyRequest'
+              },
+              examples: {
+                check_consistency: {
+                  value: {
+                    contract_type: 'openapi',
+                    baseline_version: 'v2026.01.15',
+                    candidate_version: 'v2026.02.22'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Consistency check passed',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PlatformIntegrationContractConsistencyCheckResponse'
+                }
+              }
+            }
+          },
+          400: {
+            description: 'Invalid payload or invalid Idempotency-Key',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'Current session lacks required permission',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          404: {
+            description: 'Integration or contract version not found',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          409: {
+            description: 'Consistency blocked or idempotency payload mismatch',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  blocked_missing_latest_check: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '契约一致性校验未通过，发布已阻断',
+                      error_code: 'integration_contract_consistency_blocked',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      check_result: 'blocked',
+                      blocking: true,
+                      failure_reason: 'missing_latest_compatibility_check',
+                      baseline_version: 'v2026.01.15',
+                      candidate_version: 'v2026.02.22'
+                    }
+                  },
+                  blocked_incompatible: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '契约一致性校验未通过，发布已阻断',
+                      error_code: 'integration_contract_consistency_blocked',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      check_result: 'blocked',
+                      blocking: true,
+                      failure_reason: 'latest_compatibility_incompatible',
+                      baseline_version: 'v2026.01.15',
+                      candidate_version: 'v2026.02.22',
+                      breaking_change_count: 2,
+                      diff_summary: {
+                        breaking_changes: [
+                          'remove field customer_id',
+                          'rename field total_amount'
+                        ]
+                      }
+                    }
+                  },
+                  blocked_baseline_mismatch: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Conflict',
+                      status: 409,
+                      detail: '契约一致性校验未通过，发布已阻断',
+                      error_code: 'integration_contract_consistency_blocked',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: false,
+                      check_result: 'blocked',
+                      blocking: true,
+                      failure_reason: 'baseline_version_mismatch',
+                      baseline_version: 'v2026.01.15',
+                      candidate_version: 'v2026.03.01',
+                      diff_summary: {
+                        expected_active_baseline_version: 'v2026.02.22',
+                        requested_baseline_version: 'v2026.01.15'
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          413: {
+            description: 'JSON payload exceeds allowed size',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          503: {
+            description: 'Contract governance dependency or idempotency storage unavailable',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  dependency_malformed: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '契约治理依赖暂不可用，请稍后重试',
+                      error_code: 'INT-503-DEPENDENCY-UNAVAILABLE',
+                      request_id: 'request_id_unset',
+                      traceparent: null,
+                      retryable: true,
+                      degradation_reason:
+                        'integration-contract-consistency-check-read-result-malformed'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/platform/integrations/{integration_id}/contracts/{contract_version}/activate': {
       post: {
         summary: 'Activate contract version after compatibility validation',
@@ -9346,6 +9539,99 @@ const buildOpenApiSpec = () => {
             minLength: 1,
             maxLength: 64
           },
+          checked_at: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      CheckPlatformIntegrationContractConsistencyRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'contract_type',
+          'baseline_version',
+          'candidate_version'
+        ],
+        properties: {
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          baseline_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          candidate_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          }
+        }
+      },
+      PlatformIntegrationContractConsistencyCheckResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'integration_id',
+          'contract_type',
+          'baseline_version',
+          'candidate_version',
+          'check_result',
+          'blocking',
+          'failure_reason',
+          'breaking_change_count',
+          'diff_summary',
+          'request_id',
+          'checked_at'
+        ],
+        properties: {
+          integration_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_ID_PATTERN
+          },
+          contract_type: {
+            type: 'string',
+            enum: PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM
+          },
+          baseline_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          candidate_version: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: PLATFORM_INTEGRATION_CONTRACT_VERSION_PATTERN
+          },
+          check_result: {
+            type: 'string',
+            enum: ['passed']
+          },
+          blocking: {
+            type: 'boolean',
+            enum: [false]
+          },
+          failure_reason: {
+            type: 'string',
+            nullable: true
+          },
+          breaking_change_count: {
+            type: 'integer',
+            minimum: 0
+          },
+          diff_summary: {
+            type: ['object', 'array', 'null'],
+            additionalProperties: true
+          },
+          request_id: { type: 'string' },
           checked_at: {
             type: 'string',
             format: 'date-time'

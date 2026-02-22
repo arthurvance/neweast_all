@@ -49,10 +49,11 @@ const createPlatformIntegrationContractHandlers = (
     || typeof platformIntegrationContractService.listContracts !== 'function'
     || typeof platformIntegrationContractService.createContract !== 'function'
     || typeof platformIntegrationContractService.evaluateCompatibility !== 'function'
+    || typeof platformIntegrationContractService.checkConsistency !== 'function'
     || typeof platformIntegrationContractService.activateContract !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformIntegrationContractHandlers requires a platformIntegrationContractService with listContracts, createContract, evaluateCompatibility, and activateContract'
+      'createPlatformIntegrationContractHandlers requires a platformIntegrationContractService with listContracts, createContract, evaluateCompatibility, checkConsistency, and activateContract'
     );
   }
 
@@ -106,6 +107,27 @@ const createPlatformIntegrationContractHandlers = (
       authorizationContext = null
     }) =>
       platformIntegrationContractService.evaluateCompatibility({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_INTEGRATION_CONTRACT_OPERATE_PERMISSION_CODE
+        }),
+        integrationId: params.integration_id,
+        payload: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
+    checkConsistency: async ({
+      requestId,
+      authorization,
+      params = {},
+      body,
+      traceparent = null,
+      authorizationContext = null
+    }) =>
+      platformIntegrationContractService.checkConsistency({
         requestId,
         accessToken: resolveAccessToken({
           authorization,

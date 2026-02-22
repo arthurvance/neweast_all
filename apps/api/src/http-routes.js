@@ -1032,6 +1032,23 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformCheckIntegrationContractConsistency: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformIntegrationContract.checkConsistency({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
     platformActivateIntegrationContract: async (
       requestId,
       authorization,
