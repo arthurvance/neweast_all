@@ -38,28 +38,78 @@ const createHarness = ({
     revoked_session_count: 2,
     revoked_refresh_token_count: 2
   }),
-  listPlatformUsers = async ({ page, pageSize, status, keyword }) => ({
+  listPlatformUsers = async ({
+    page,
+    pageSize,
+    status,
+    keyword,
+    phone,
+    name,
+    createdAtStart,
+    createdAtEnd
+  }) => ({
     total: 1,
     items: [
       {
         user_id: 'platform-user-default',
         phone: '13800000040',
-        status: 'active'
+        name: null,
+        department: null,
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z'
       }
     ],
     page,
     page_size: pageSize,
     status: status || null,
-    keyword: keyword || null
+    keyword: keyword || null,
+    phone: phone || null,
+    name: name || null,
+    created_at_start: createdAtStart || null,
+    created_at_end: createdAtEnd || null
   }),
   getPlatformUserById = async ({ userId }) =>
     String(userId || '').trim() === 'platform-user-default'
       ? {
         user_id: 'platform-user-default',
         phone: '13800000040',
-        status: 'active'
+        name: '默认用户',
+        department: '默认部门',
+        status: 'active',
+        created_at: '2026-01-01T00:00:00.000Z',
+        roles: []
       }
       : null,
+  upsertPlatformUserProfile = async ({ userId, name, department }) => ({
+    user_id: userId,
+    name,
+    department
+  }),
+  listPlatformRoleCatalogEntries = async () => ([
+    {
+      role_id: 'role_user',
+      status: 'active'
+    },
+    {
+      role_id: 'sys_admin',
+      status: 'active'
+    }
+  ]),
+  listPlatformRolePermissionGrantsByRoleIds = async ({ roleIds = [] } = {}) =>
+    roleIds.map((roleId) => ({
+      role_id: roleId,
+      permission_codes: []
+    })),
+  replacePlatformRolesAndSyncSnapshot = async () => ({
+    synced: true,
+    reason: 'ok',
+    permission: {
+      canViewMemberAdmin: false,
+      canOperateMemberAdmin: false,
+      canViewBilling: false,
+      canOperateBilling: false
+    }
+  }),
   recordIdempotencyEvent = async () => {},
   authIdempotencyStore = null
 } = {}) => {
@@ -69,6 +119,10 @@ const createHarness = ({
   const softDeleteCalls = [];
   const listCalls = [];
   const getCalls = [];
+  const upsertProfileCalls = [];
+  const listRoleCatalogCalls = [];
+  const listRoleGrantCalls = [];
+  const replaceRoleFactCalls = [];
   const idempotencyEvents = [];
   const authService = {
     authorizeRoute: async (payload) => {
@@ -101,6 +155,22 @@ const createHarness = ({
         getPlatformUserById: async (payload) => {
           getCalls.push(payload);
           return getPlatformUserById(payload);
+        },
+        upsertPlatformUserProfile: async (payload) => {
+          upsertProfileCalls.push(payload);
+          return upsertPlatformUserProfile(payload);
+        },
+        listPlatformRoleCatalogEntries: async (payload) => {
+          listRoleCatalogCalls.push(payload);
+          return listPlatformRoleCatalogEntries(payload);
+        },
+        listPlatformRolePermissionGrantsByRoleIds: async (payload) => {
+          listRoleGrantCalls.push(payload);
+          return listPlatformRolePermissionGrantsByRoleIds(payload);
+        },
+        replacePlatformRolesAndSyncSnapshot: async (payload) => {
+          replaceRoleFactCalls.push(payload);
+          return replacePlatformRolesAndSyncSnapshot(payload);
         }
       }
     }
@@ -124,6 +194,10 @@ const createHarness = ({
     softDeleteCalls,
     listCalls,
     getCalls,
+    upsertProfileCalls,
+    listRoleCatalogCalls,
+    listRoleGrantCalls,
+    replaceRoleFactCalls,
     idempotencyEvents
   };
 };
@@ -141,29 +215,48 @@ test('createPlatformUserHandlers fails fast when platform user service capabilit
 
 test('GET /platform/users returns paged platform users and forwards filters', async () => {
   const harness = createHarness({
-    listPlatformUsers: async ({ page, pageSize, status, keyword }) => ({
+    listPlatformUsers: async ({
+      page,
+      pageSize,
+      status,
+      keyword,
+      phone,
+      name,
+      createdAtStart,
+      createdAtEnd
+    }) => ({
       total: 2,
       items: [
         {
           user_id: 'platform-user-list-1',
           phone: '13800000041',
-          status: 'disabled'
+          name: '张三',
+          department: '研发部',
+          status: 'disabled',
+          created_at: '2026-01-05T09:30:00.000Z'
         },
         {
           user_id: 'platform-user-list-2',
           phone: '13800000042',
-          status: 'disabled'
+          name: '李四',
+          department: '产品部',
+          status: 'disabled',
+          created_at: '2026-01-06T10:45:00.000Z'
         }
       ],
       page,
       page_size: pageSize,
       status,
-      keyword
+      keyword,
+      phone,
+      name,
+      created_at_start: createdAtStart,
+      created_at_end: createdAtEnd
     })
   });
 
   const route = await dispatchApiRoute({
-    pathname: '/platform/users?page=2&page_size=5&status=disabled&keyword=1380',
+    pathname: '/platform/users?page=2&page_size=5&status=disabled&phone=13800000041&name=%E5%BC%A0&created_at_start=2026-01-01T00%3A00%3A00.000Z&created_at_end=2026-01-31T23%3A59%3A59.999Z',
     method: 'GET',
     requestId: 'req-platform-user-list',
     headers: {
@@ -185,7 +278,10 @@ test('GET /platform/users returns paged platform users and forwards filters', as
   assert.equal(harness.listCalls[0].page, 2);
   assert.equal(harness.listCalls[0].pageSize, 5);
   assert.equal(harness.listCalls[0].status, 'disabled');
-  assert.equal(harness.listCalls[0].keyword, '1380');
+  assert.equal(harness.listCalls[0].phone, '13800000041');
+  assert.equal(harness.listCalls[0].name, '张');
+  assert.equal(harness.listCalls[0].createdAtStart, '2026-01-01T00:00:00.000Z');
+  assert.equal(harness.listCalls[0].createdAtEnd, '2026-01-31T23:59:59.999Z');
 });
 
 test('GET /platform/users masks keyword in audit metadata', async () => {
@@ -242,7 +338,10 @@ test('GET /platform/users/:user_id returns detail payload with request_id', asyn
     getPlatformUserById: async ({ userId }) => ({
       user_id: userId,
       phone: '13800000049',
-      status: 'active'
+      name: '测试用户',
+      department: '测试部门',
+      status: 'active',
+      created_at: '2026-01-09T08:00:00.000Z'
     })
   });
 
@@ -261,7 +360,11 @@ test('GET /platform/users/:user_id returns detail payload with request_id', asyn
   assert.deepEqual(payload, {
     user_id: 'platform-user-detail-1',
     phone: '13800000049',
+    name: '测试用户',
+    department: '测试部门',
+    roles: [],
     status: 'active',
+    created_at: '2026-01-09T08:00:00.000Z',
     request_id: 'req-platform-user-get'
   });
   assert.equal(harness.getCalls.length, 1);
@@ -356,7 +459,8 @@ test('createPlatformUser maps non-auth operator authorization failures to USR-50
         requestId: 'req-platform-user-operator-auth-upstream-failure',
         accessToken: 'fake-access-token',
         payload: {
-          phone: '13800000040'
+          phone: '13800000040',
+          name: '操作员鉴权失败用户'
         }
       }),
     (error) => {
@@ -390,7 +494,8 @@ test('createPlatformUser emits rejected audit event when upstream payload misses
         requestId: 'req-platform-user-missing-upstream-user-id',
         accessToken: 'fake-access-token',
         payload: {
-          phone: '13800000048'
+          phone: '13800000048',
+          name: '上游缺失用户ID'
         }
       }),
     (error) => {
@@ -428,7 +533,10 @@ test('POST /platform/users creates platform user and returns governance response
       authorization: 'Bearer fake-access-token'
     },
     body: {
-      phone: '13800000041'
+      phone: '13800000041',
+      name: '创建用户',
+      department: '平台运营',
+      role_ids: ['role_user']
     },
     handlers: harness.handlers
   });
@@ -442,6 +550,19 @@ test('POST /platform/users creates platform user and returns governance response
     request_id: 'req-platform-user-create'
   });
   assert.equal(harness.provisionCalls.length, 1);
+  assert.deepEqual(harness.provisionCalls[0].payload, {
+    phone: '13800000041'
+  });
+  assert.equal(harness.upsertProfileCalls.length, 1);
+  assert.deepEqual(harness.upsertProfileCalls[0], {
+    userId: 'platform-user-created',
+    name: '创建用户',
+    department: '平台运营'
+  });
+  assert.equal(harness.replaceRoleFactCalls.length, 1);
+  assert.equal(harness.replaceRoleFactCalls[0].userId, 'platform-user-created');
+  assert.equal(harness.replaceRoleFactCalls[0].roles.length, 1);
+  assert.equal(harness.replaceRoleFactCalls[0].roles[0].role_id, 'role_user');
   const lastAuditEvent = harness.platformUserService._internals.auditTrail.at(-1);
   assert.equal(lastAuditEvent.phone, '138****0041');
 });
@@ -464,7 +585,8 @@ test('POST /platform/users reuses existing user identity when phone already exis
       authorization: 'Bearer fake-access-token'
     },
     body: {
-      phone: '13800000042'
+      phone: '13800000042',
+      name: '复用用户'
     },
     handlers: harness.handlers
   });
@@ -497,7 +619,8 @@ test('POST /platform/users returns AUTH-403-FORBIDDEN when operator lacks permis
       authorization: 'Bearer fake-access-token'
     },
     body: {
-      phone: '13800000047'
+      phone: '13800000047',
+      name: '无权限用户'
     },
     handlers: harness.handlers
   });
@@ -510,17 +633,7 @@ test('POST /platform/users returns AUTH-403-FORBIDDEN when operator lacks permis
 });
 
 test('POST /platform/users keeps problem+json contract on payload validation failure', async () => {
-  const harness = createHarness({
-    provisionPlatformUserByPhone: async () => {
-      throw new AuthProblemError({
-        status: 400,
-        title: 'Bad Request',
-        detail: '请求参数不完整或格式错误',
-        errorCode: 'AUTH-400-INVALID-PAYLOAD'
-      });
-    }
-  });
-
+  const harness = createHarness();
   const route = await dispatchApiRoute({
     pathname: '/platform/users',
     method: 'POST',
@@ -530,6 +643,7 @@ test('POST /platform/users keeps problem+json contract on payload validation fai
     },
     body: {
       phone: '13800000043',
+      name: '校验失败用户',
       unexpected_field: true
     },
     handlers: harness.handlers
@@ -538,10 +652,11 @@ test('POST /platform/users keeps problem+json contract on payload validation fai
   assert.equal(route.status, 400);
   assert.equal(route.headers['content-type'], 'application/problem+json');
   const payload = JSON.parse(route.body);
-  assert.equal(payload.error_code, 'AUTH-400-INVALID-PAYLOAD');
+  assert.equal(payload.error_code, 'USR-400-INVALID-PAYLOAD');
   assert.equal(payload.request_id, 'req-platform-user-invalid-payload');
   const lastAuditEvent = harness.platformUserService._internals.auditTrail.at(-1);
   assert.equal(lastAuditEvent.phone, '138****0043');
+  assert.equal(harness.provisionCalls.length, 0);
 });
 
 test('POST /platform/users replays first success response for same Idempotency-Key and payload', async () => {
@@ -555,7 +670,8 @@ test('POST /platform/users replays first success response for same Idempotency-K
   });
 
   const requestBody = {
-    phone: '13800000044'
+    phone: '13800000044',
+    name: '幂等用户'
   };
   const first = await dispatchApiRoute({
     pathname: '/platform/users',
@@ -609,7 +725,8 @@ test('POST /platform/users rejects same Idempotency-Key with different payloads'
       'idempotency-key': 'idem-platform-user-conflict-001'
     },
     body: {
-      phone: '13800000045'
+      phone: '13800000045',
+      name: '幂等冲突用户'
     },
     handlers: harness.handlers
   });
@@ -622,7 +739,8 @@ test('POST /platform/users rejects same Idempotency-Key with different payloads'
       'idempotency-key': 'idem-platform-user-conflict-001'
     },
     body: {
-      phone: '13800000046'
+      phone: '13800000046',
+      name: '幂等冲突用户'
     },
     handlers: harness.handlers
   });

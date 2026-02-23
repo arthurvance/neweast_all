@@ -115,6 +115,23 @@ const AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS_UPPER = AUTH_USER_TENANTS_REQUIRED_
     COLUMN_NAME: columnName
   })
 );
+const PLATFORM_USER_PROFILES_REQUIRED_COLUMNS = [
+  'user_id',
+  'name',
+  'department',
+  'created_at',
+  'updated_at'
+];
+const PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS = PLATFORM_USER_PROFILES_REQUIRED_COLUMNS.map(
+  (columnName) => ({
+    column_name: columnName
+  })
+);
+const PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS_UPPER = PLATFORM_USER_PROFILES_REQUIRED_COLUMNS.map(
+  (columnName) => ({
+    COLUMN_NAME: columnName
+  })
+);
 const AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMNS = [
   'user_id',
   'role_id',
@@ -502,6 +519,7 @@ const ensureTables = async () => {
   await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
   await runMigrationSql(adminConnection, '0018_audit_events.sql');
   await runMigrationSql(adminConnection, '0019_system_sensitive_configs.sql');
+  await runMigrationSql(adminConnection, '0025_platform_user_profiles.sql');
 };
 
 const resetTestData = async () => {
@@ -2769,6 +2787,7 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0022_platform_integration_contract_versions.sql');
   await runMigrationSql(adminConnection, '0023_platform_integration_retry_recovery.sql');
   await runMigrationSql(adminConnection, '0024_platform_integration_freeze_control.sql');
+  await runMigrationSql(adminConnection, '0025_platform_user_profiles.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();
@@ -2830,6 +2849,7 @@ test('createApiApp closes db client when auth service init fails after mysql con
                 { table_name: 'auth_user_domain_access' },
                 { table_name: 'auth_user_tenants' },
                 { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -2846,6 +2866,9 @@ test('createApiApp closes db client when auth service init fails after mysql con
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
                 return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
@@ -2885,6 +2908,7 @@ test('createApiApp preflight accepts uppercase information_schema field names', 
             { TABLE_NAME: 'auth_user_domain_access' },
             { TABLE_NAME: 'auth_user_tenants' },
             { TABLE_NAME: 'auth_user_platform_roles' },
+            { TABLE_NAME: 'platform_user_profiles' },
             { TABLE_NAME: 'platform_role_permission_grants' }
           ];
         }
@@ -2901,6 +2925,9 @@ test('createApiApp preflight accepts uppercase information_schema field names', 
           }
           if (tableName === 'auth_user_platform_roles') {
             return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS_UPPER;
+          }
+          if (tableName === 'platform_user_profiles') {
+            return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS_UPPER;
           }
           if (tableName === 'platform_role_permission_grants') {
             return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS_UPPER;
@@ -2938,6 +2965,7 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
                 { table_name: 'auth_sessions' },
                 { table_name: 'auth_user_tenants' },
                 { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -2951,6 +2979,9 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
               }
               if (tableName === 'auth_user_tenants') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               return [];
             }
@@ -2985,6 +3016,7 @@ test('createApiApp fails fast when auth_user_platform_roles table is missing', a
                 { table_name: 'auth_sessions' },
                 { table_name: 'auth_user_domain_access' },
                 { table_name: 'auth_user_tenants' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -2998,6 +3030,9 @@ test('createApiApp fails fast when auth_user_platform_roles table is missing', a
               }
               if (tableName === 'auth_user_tenants') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               return [];
             }
@@ -3485,6 +3520,7 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
                 { table_name: 'auth_user_domain_access' },
                 { table_name: 'auth_user_tenants' },
                 { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3508,6 +3544,9 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
                 return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
@@ -3546,6 +3585,7 @@ test('createApiApp fails fast when auth_user_tenants profile columns are missing
                 { table_name: 'auth_user_domain_access' },
                 { table_name: 'auth_user_tenants' },
                 { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3566,6 +3606,9 @@ test('createApiApp fails fast when auth_user_tenants profile columns are missing
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
                 return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
@@ -3604,6 +3647,7 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
                 { table_name: 'auth_user_domain_access' },
                 { table_name: 'auth_user_tenants' },
                 { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3624,6 +3668,9 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
                 return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
@@ -3662,6 +3709,7 @@ test('createApiApp fails fast when auth_sessions context columns are missing', a
                 { table_name: 'auth_user_domain_access' },
                 { table_name: 'auth_user_tenants' },
                 { table_name: 'auth_user_platform_roles' },
+                { table_name: 'platform_user_profiles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3678,6 +3726,9 @@ test('createApiApp fails fast when auth_sessions context columns are missing', a
               }
               if (tableName === 'auth_user_platform_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_user_profiles') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
                 return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;

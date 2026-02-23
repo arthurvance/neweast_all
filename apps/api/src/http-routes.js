@@ -785,6 +785,19 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformListOrgs: async (
+      requestId,
+      authorization,
+      query,
+      authorizationContext
+    ) =>
+      platformOrg.listOrgs({
+        requestId,
+        authorization,
+        query: query || {},
+        authorizationContext
+      }),
+
     platformCreateOrg: async (
       requestId,
       authorization,

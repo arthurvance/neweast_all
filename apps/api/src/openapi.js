@@ -4438,7 +4438,7 @@ const buildOpenApiSpec = () => {
     },
     '/platform/orgs': {
       post: {
-        summary: 'Create organization with required initial owner phone',
+        summary: 'Create organization with required initial owner name and phone',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -4458,6 +4458,7 @@ const buildOpenApiSpec = () => {
                 create_org: {
                   value: {
                     org_name: '华东测试组织',
+                    initial_owner_name: '张三',
                     initial_owner_phone: '13800000011'
                   }
                 }
@@ -4480,6 +4481,17 @@ const buildOpenApiSpec = () => {
               'application/problem+json': {
                 schema: { $ref: '#/components/schemas/ProblemDetails' },
                 examples: {
+                  initial_owner_name_required: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Bad Request',
+                      status: 400,
+                      detail: '创建组织必须提供 initial_owner_name',
+                      error_code: 'ORG-400-INITIAL-OWNER-NAME-REQUIRED',
+                      request_id: 'request_id_unset',
+                      retryable: false
+                    }
+                  },
                   initial_owner_phone_required: {
                     value: {
                       type: 'about:blank',
@@ -4591,7 +4603,7 @@ const buildOpenApiSpec = () => {
                       type: 'about:blank',
                       title: 'Conflict',
                       status: 409,
-                      detail: '组织已存在或负责人关系已建立，请勿重复提交',
+                      detail: '组织名称已存在，请重新输入',
                       error_code: 'ORG-409-ORG-CONFLICT',
                       request_id: 'request_id_unset',
                       retryable: false
@@ -7577,6 +7589,46 @@ const buildOpenApiSpec = () => {
               type: 'string',
               maxLength: 64
             }
+          },
+          {
+            in: 'query',
+            name: 'phone',
+            required: false,
+            description: '手机号精确匹配',
+            schema: {
+              type: 'string',
+              maxLength: 32
+            }
+          },
+          {
+            in: 'query',
+            name: 'name',
+            required: false,
+            description: '姓名模糊匹配',
+            schema: {
+              type: 'string',
+              maxLength: 64
+            }
+          },
+          {
+            in: 'query',
+            name: 'created_at_start',
+            required: false,
+            description: '创建时间区间起点（ISO8601）',
+            schema: {
+              type: 'string',
+              format: 'date-time'
+            }
+          },
+          {
+            in: 'query',
+            name: 'created_at_end',
+            required: false,
+            description: '创建时间区间终点（ISO8601）',
+            schema: {
+              type: 'string',
+              format: 'date-time'
+            }
           }
         ],
         responses: {
@@ -7649,7 +7701,7 @@ const buildOpenApiSpec = () => {
         }
       },
       post: {
-        summary: 'Create or reuse platform user by phone',
+        summary: 'Create or reuse platform user with profile and role bindings',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -7668,7 +7720,10 @@ const buildOpenApiSpec = () => {
               examples: {
                 create_user: {
                   value: {
-                    phone: '13800000051'
+                    phone: '13800000051',
+                    name: '平台用户甲',
+                    department: '平台运营',
+                    role_ids: ['role_user']
                   }
                 }
               }
@@ -9426,13 +9481,14 @@ const buildOpenApiSpec = () => {
       CreatePlatformRoleRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['role_id', 'code', 'name'],
+        required: ['code', 'name'],
         properties: {
           role_id: {
             type: 'string',
             minLength: 1,
             maxLength: 64,
-            pattern: PLATFORM_ROLE_ID_PATTERN
+            pattern: PLATFORM_ROLE_ID_PATTERN,
+            description: '可选；未提供时由系统自动生成 role_id'
           },
           code: {
             type: 'string',
@@ -9501,7 +9557,7 @@ const buildOpenApiSpec = () => {
       CreatePlatformOrgRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['org_name', 'initial_owner_phone'],
+        required: ['org_name', 'initial_owner_name', 'initial_owner_phone'],
         properties: {
           org_name: {
             type: 'string',
@@ -9509,6 +9565,13 @@ const buildOpenApiSpec = () => {
             maxLength: 128,
             pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
             description: '组织名称'
+          },
+          initial_owner_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
+            description: '初始负责人姓名'
           },
           initial_owner_phone: {
             type: 'string',
@@ -9643,7 +9706,7 @@ const buildOpenApiSpec = () => {
       PlatformUserReadModel: {
         type: 'object',
         additionalProperties: false,
-        required: ['user_id', 'phone', 'status'],
+        required: ['user_id', 'phone', 'status', 'created_at'],
         properties: {
           user_id: {
             type: 'string',
@@ -9655,6 +9718,50 @@ const buildOpenApiSpec = () => {
             type: 'string',
             minLength: 1,
             maxLength: 32
+          },
+          name: {
+            type: 'string',
+            maxLength: 64,
+            nullable: true
+          },
+          department: {
+            type: 'string',
+            maxLength: 128,
+            nullable: true
+          },
+          roles: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/PlatformUserRoleReadModel' }
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'disabled']
+          },
+          created_at: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      PlatformUserRoleReadModel: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['role_id', 'status'],
+        properties: {
+          role_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64
+          },
+          code: {
+            type: 'string',
+            maxLength: 64,
+            nullable: true
+          },
+          name: {
+            type: 'string',
+            maxLength: 128,
+            nullable: true
           },
           status: {
             type: 'string',
@@ -9703,7 +9810,7 @@ const buildOpenApiSpec = () => {
       CreatePlatformUserRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['phone'],
+        required: ['phone', 'name'],
         properties: {
           phone: {
             type: 'string',
@@ -9711,6 +9818,31 @@ const buildOpenApiSpec = () => {
             maxLength: 11,
             pattern: '^1\\d{10}$',
             description: '平台用户手机号（11位）'
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
+            description: '平台用户姓名'
+          },
+          department: {
+            type: 'string',
+            maxLength: 128,
+            nullable: true,
+            pattern: '^[^\\x00-\\x1F\\x7F]*\\S[^\\x00-\\x1F\\x7F]*$',
+            description: '平台用户部门（可选）'
+          },
+          role_ids: {
+            type: 'array',
+            maxItems: 5,
+            items: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+              pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+            },
+            description: '平台角色主键列表，仅允许选择启用角色（可选）'
           }
         }
       },

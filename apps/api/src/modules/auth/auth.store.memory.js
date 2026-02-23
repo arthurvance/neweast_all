@@ -4,6 +4,16 @@ const {
   isRetryableDeliveryFailure,
   computeRetrySchedule
 } = require('../integration');
+const {
+  KNOWN_PLATFORM_PERMISSION_CODES,
+  KNOWN_TENANT_PERMISSION_CODES,
+  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+  toPlatformPermissionSnapshotFromCodes,
+  toTenantPermissionSnapshotFromCodes
+} = require('./permission-catalog');
 
 const createInMemoryAuthStore = ({
   seedUsers = [],
@@ -17,6 +27,7 @@ const createInMemoryAuthStore = ({
   const domainsByUserId = new Map();
   const platformDomainKnownByUserId = new Set();
   const tenantsByUserId = new Map();
+  const platformProfilesByUserId = new Map();
   const platformRolesByUserId = new Map();
   const platformPermissionsByUserId = new Map();
   const platformRoleCatalogById = new Map();
@@ -128,20 +139,8 @@ const createInMemoryAuthStore = ({
   const MAX_ORG_NAME_LENGTH = 128;
   const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
   const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
-  const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
-    'platform.member_admin.view',
-    'platform.member_admin.operate',
-    'platform.system_config.view',
-    'platform.system_config.operate',
-    'platform.billing.view',
-    'platform.billing.operate'
-  ]);
-  const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
-    'tenant.member_admin.view',
-    'tenant.member_admin.operate',
-    'tenant.billing.view',
-    'tenant.billing.operate'
-  ]);
+  const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
+  const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
   const invokeFaultInjector = (hookName, payload = {}) => {
     if (!faultInjector || typeof faultInjector !== 'object') {
       return;
@@ -241,6 +240,44 @@ const createInMemoryAuthStore = ({
     value === null || value === undefined
       ? null
       : value;
+  const normalizeRequiredPlatformUserProfileField = ({
+    value,
+    maxLength,
+    fieldName
+  } = {}) => {
+    const normalized = normalizeOptionalTenantMemberProfileField({
+      value,
+      maxLength
+    });
+    if (!normalized) {
+      throw new Error(`${fieldName} must be non-empty string within max length`);
+    }
+    return normalized;
+  };
+  const normalizeOptionalPlatformUserProfileField = ({
+    value,
+    maxLength,
+    fieldName
+  } = {}) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value !== 'string') {
+      throw new Error(`${fieldName} must be string or null`);
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const normalized = normalizeOptionalTenantMemberProfileField({
+      value: trimmed,
+      maxLength
+    });
+    if (!normalized) {
+      throw new Error(`${fieldName} must be valid string`);
+    }
+    return normalized;
+  };
   const isStrictOptionalTenantMemberProfileField = ({
     value,
     maxLength
@@ -1480,35 +1517,12 @@ const createInMemoryAuthStore = ({
   };
 
   const resolvePlatformPermissionFromGrantCodes = (permissionCodes = []) => {
-    const permission = buildEmptyPlatformPermission();
-    for (const permissionCode of normalizePlatformPermissionCodes(permissionCodes)) {
-      switch (toPlatformPermissionCodeKey(permissionCode)) {
-        case 'platform.member_admin.view':
-          permission.canViewMemberAdmin = true;
-          break;
-        case 'platform.member_admin.operate':
-          permission.canViewMemberAdmin = true;
-          permission.canOperateMemberAdmin = true;
-          break;
-        case 'platform.system_config.view':
-          permission.canViewSystemConfig = true;
-          break;
-        case 'platform.system_config.operate':
-          permission.canViewSystemConfig = true;
-          permission.canOperateSystemConfig = true;
-          break;
-        case 'platform.billing.view':
-          permission.canViewBilling = true;
-          break;
-        case 'platform.billing.operate':
-          permission.canViewBilling = true;
-          permission.canOperateBilling = true;
-          break;
-        default:
-          break;
-      }
-    }
-    return permission;
+    return {
+      ...buildEmptyPlatformPermission(),
+      ...toPlatformPermissionSnapshotFromCodes(
+        normalizePlatformPermissionCodes(permissionCodes)
+      )
+    };
   };
   const createPlatformRolePermissionGrantDataError = (
     reason = 'platform-role-permission-grants-invalid'
@@ -1691,28 +1705,12 @@ const createInMemoryAuthStore = ({
     canOperateBilling: false
   });
   const resolveTenantPermissionFromGrantCodes = (permissionCodes = []) => {
-    const permission = buildEmptyTenantPermission();
-    for (const permissionCode of normalizeTenantPermissionCodes(permissionCodes)) {
-      switch (toTenantPermissionCodeKey(permissionCode)) {
-        case 'tenant.member_admin.view':
-          permission.canViewMemberAdmin = true;
-          break;
-        case 'tenant.member_admin.operate':
-          permission.canViewMemberAdmin = true;
-          permission.canOperateMemberAdmin = true;
-          break;
-        case 'tenant.billing.view':
-          permission.canViewBilling = true;
-          break;
-        case 'tenant.billing.operate':
-          permission.canViewBilling = true;
-          permission.canOperateBilling = true;
-          break;
-        default:
-          break;
-      }
-    }
-    return permission;
+    return {
+      ...buildEmptyTenantPermission(),
+      ...toTenantPermissionSnapshotFromCodes(
+        normalizeTenantPermissionCodes(permissionCodes)
+      )
+    };
   };
   const listTenantRolePermissionGrantsForRoleId = (roleId) => {
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
@@ -2107,12 +2105,20 @@ const createInMemoryAuthStore = ({
   });
 
   for (const user of seedUsers) {
+    const seedCreatedAtCandidate = user.createdAt || user.created_at || null;
+    const seedCreatedAtDate = seedCreatedAtCandidate
+      ? new Date(seedCreatedAtCandidate)
+      : new Date();
+    const resolvedCreatedAt = Number.isNaN(seedCreatedAtDate.getTime())
+      ? new Date().toISOString()
+      : seedCreatedAtDate.toISOString();
     const normalizedUser = {
       id: String(user.id),
       phone: user.phone,
       status: (user.status || 'active').toLowerCase(),
       sessionVersion: Number(user.sessionVersion || 1),
-      passwordHash: user.passwordHash || hashPassword(user.password)
+      passwordHash: user.passwordHash || hashPassword(user.password),
+      createdAt: resolvedCreatedAt
     };
 
     usersByPhone.set(normalizedUser.phone, normalizedUser);
@@ -2160,6 +2166,26 @@ const createInMemoryAuthStore = ({
             : null
         }))
     );
+
+    const rawPlatformProfile =
+      (user.platformProfile && typeof user.platformProfile === 'object')
+      || (user.platform_profile && typeof user.platform_profile === 'object')
+        ? (user.platformProfile || user.platform_profile)
+        : null;
+    if (rawPlatformProfile) {
+      const normalizedProfileName = normalizeOptionalTenantMemberProfileField({
+        value: rawPlatformProfile.name,
+        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      });
+      const normalizedProfileDepartment = normalizeOptionalTenantMemberProfileField({
+        value: rawPlatformProfile.department,
+        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+      });
+      platformProfilesByUserId.set(normalizedUser.id, {
+        name: normalizedProfileName,
+        department: normalizedProfileDepartment
+      });
+    }
 
     const rawPlatformRoles = Array.isArray(user.platformRoles) ? user.platformRoles : [];
     const normalizedPlatformRoles = dedupePlatformRolesByRoleId(
@@ -2777,6 +2803,151 @@ const createInMemoryAuthStore = ({
     return toAuditEventRecord(eventRecord);
   };
 
+  const normalizeDateTimeFilterToEpoch = ({
+    value,
+    fieldName
+  } = {}) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+      return null;
+    }
+    const parsedDate = new Date(normalizedValue);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new Error(`listPlatformUsers ${fieldName} must be valid datetime`);
+    }
+    return parsedDate.getTime();
+  };
+
+  const resolveLatestPlatformProfileByUserId = (userId) => {
+    const profile = platformProfilesByUserId.get(String(userId || '').trim()) || null;
+    if (profile && typeof profile === 'object') {
+      return {
+        name: normalizeOptionalTenantMemberProfileField({
+          value: profile.name ?? null,
+          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+        }),
+        department: normalizeOptionalTenantMemberProfileField({
+          value: profile.department ?? null,
+          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+        })
+      };
+    }
+    return {
+      name: null,
+      department: null
+    };
+  };
+  const resolveLatestTenantMemberProfileByUserId = (userId) => {
+    const memberships = Array.isArray(tenantsByUserId.get(userId))
+      ? tenantsByUserId.get(userId)
+      : [];
+    if (memberships.length < 1) {
+      return {
+        name: null,
+        department: null
+      };
+    }
+    const sortedMemberships = [...memberships].sort((left, right) => {
+      const leftJoinedAt = new Date(
+        left?.joinedAt || left?.joined_at || 0
+      ).getTime();
+      const rightJoinedAt = new Date(
+        right?.joinedAt || right?.joined_at || 0
+      ).getTime();
+      return rightJoinedAt - leftJoinedAt;
+    });
+    for (const membership of sortedMemberships) {
+      const resolvedName = normalizeOptionalTenantMemberProfileField({
+        value: membership?.displayName ?? membership?.display_name ?? null,
+        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      });
+      const resolvedDepartment = normalizeOptionalTenantMemberProfileField({
+        value: membership?.departmentName ?? membership?.department_name ?? null,
+        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+      });
+      if (resolvedName !== null || resolvedDepartment !== null) {
+        return {
+          name: resolvedName,
+          department: resolvedDepartment
+        };
+      }
+    }
+    return {
+      name: null,
+      department: null
+    };
+  };
+
+  const resolvePlatformUserReadModel = ({
+    userId,
+    userRecord
+  } = {}) => {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedPhone = String(userRecord?.phone || '').trim();
+    const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
+    const platformStatus = userDomains.has('platform') ? 'active' : 'disabled';
+    const profile = resolveLatestPlatformProfileByUserId(normalizedUserId);
+    const createdAtRaw = userRecord?.createdAt ?? userRecord?.created_at ?? null;
+    const createdAtDate = createdAtRaw ? new Date(createdAtRaw) : new Date();
+    const createdAt = Number.isNaN(createdAtDate.getTime())
+      ? new Date().toISOString()
+      : createdAtDate.toISOString();
+    const rawRoles = Array.isArray(platformRolesByUserId.get(normalizedUserId))
+      ? platformRolesByUserId.get(normalizedUserId)
+      : [];
+    const roles = rawRoles
+      .filter((role) => role && isActiveLikeStatus(role.status))
+      .map((role) => {
+        const normalizedRoleId = normalizePlatformRoleCatalogRoleId(role.roleId);
+        if (!normalizedRoleId) {
+          return null;
+        }
+        const roleCatalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
+          normalizedRoleId
+        )?.record || null;
+        const roleCode = roleCatalogEntry?.code === null || roleCatalogEntry?.code === undefined
+          ? null
+          : normalizeRequiredPlatformUserProfileField({
+            value: roleCatalogEntry.code,
+            maxLength: MAX_PLATFORM_ROLE_CODE_LENGTH,
+            fieldName: 'role_code'
+          });
+        const roleName = roleCatalogEntry?.name === null || roleCatalogEntry?.name === undefined
+          ? null
+          : normalizeRequiredPlatformUserProfileField({
+            value: roleCatalogEntry.name,
+            maxLength: MAX_PLATFORM_ROLE_NAME_LENGTH,
+            fieldName: 'role_name'
+          });
+        const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
+          roleCatalogEntry?.status || 'disabled'
+        );
+        const roleStatus = VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedRoleStatus)
+          ? normalizedRoleStatus
+          : 'disabled';
+        return {
+          role_id: normalizedRoleId,
+          code: roleCode,
+          name: roleName,
+          status: roleStatus
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => String(left.role_id).localeCompare(String(right.role_id)));
+    return {
+      user_id: normalizedUserId,
+      phone: normalizedPhone,
+      name: profile.name,
+      department: profile.department,
+      status: platformStatus,
+      created_at: createdAt,
+      roles
+    };
+  };
+
   return {
     findUserByPhone: async (phone) => clone(usersByPhone.get(phone) || null),
 
@@ -2786,7 +2957,11 @@ const createInMemoryAuthStore = ({
       page = 1,
       pageSize = 20,
       status = null,
-      keyword = null
+      keyword = null,
+      phone = null,
+      name = null,
+      createdAtStart = null,
+      createdAtEnd = null
     } = {}) => {
       const resolvedPage = Number(page);
       const resolvedPageSize = Number(pageSize);
@@ -2815,24 +2990,76 @@ const createInMemoryAuthStore = ({
       if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
         throw new Error('listPlatformUsers keyword cannot contain control chars');
       }
+      const normalizedPhoneFilter = phone === null || phone === undefined
+        ? ''
+        : String(phone).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedPhoneFilter)) {
+        throw new Error('listPlatformUsers phone cannot contain control chars');
+      }
+      const normalizedNameFilter = name === null || name === undefined
+        ? ''
+        : String(name).trim();
+      const normalizedNameFilterForMatch = normalizedNameFilter.toLowerCase();
+      if (CONTROL_CHAR_PATTERN.test(normalizedNameFilter)) {
+        throw new Error('listPlatformUsers name cannot contain control chars');
+      }
+      const createdAtStartEpoch = normalizeDateTimeFilterToEpoch({
+        value: createdAtStart,
+        fieldName: 'createdAtStart'
+      });
+      const createdAtEndEpoch = normalizeDateTimeFilterToEpoch({
+        value: createdAtEnd,
+        fieldName: 'createdAtEnd'
+      });
+      if (
+        createdAtStartEpoch !== null
+        && createdAtEndEpoch !== null
+        && createdAtStartEpoch > createdAtEndEpoch
+      ) {
+        throw new Error('listPlatformUsers createdAtStart cannot be later than createdAtEnd');
+      }
 
       const rows = [];
       for (const [userId, userRecord] of usersById.entries()) {
         if (!platformDomainKnownByUserId.has(userId)) {
           continue;
         }
-        const userDomains = domainsByUserId.get(userId) || new Set();
-        const platformStatus = userDomains.has('platform') ? 'active' : 'disabled';
+        const resolvedUser = resolvePlatformUserReadModel({
+          userId,
+          userRecord
+        });
+        const platformStatus = resolvedUser.status;
         if (
           normalizedStatusFilter !== null
           && platformStatus !== normalizedStatusFilter
         ) {
           continue;
         }
-        const phone = String(userRecord?.phone || '').trim();
+        if (normalizedPhoneFilter && resolvedUser.phone !== normalizedPhoneFilter) {
+          continue;
+        }
+        if (normalizedNameFilterForMatch) {
+          const resolvedName = String(resolvedUser.name || '').toLowerCase();
+          if (!resolvedName.includes(normalizedNameFilterForMatch)) {
+            continue;
+          }
+        }
+        const createdAtEpoch = new Date(resolvedUser.created_at).getTime();
+        if (
+          createdAtStartEpoch !== null
+          && createdAtEpoch < createdAtStartEpoch
+        ) {
+          continue;
+        }
+        if (
+          createdAtEndEpoch !== null
+          && createdAtEpoch > createdAtEndEpoch
+        ) {
+          continue;
+        }
         if (normalizedKeywordForMatch) {
           const userIdForMatch = String(userId).toLowerCase();
-          const phoneForMatch = phone.toLowerCase();
+          const phoneForMatch = resolvedUser.phone.toLowerCase();
           const matched =
             userIdForMatch.includes(normalizedKeywordForMatch)
             || phoneForMatch.includes(normalizedKeywordForMatch);
@@ -2840,15 +3067,157 @@ const createInMemoryAuthStore = ({
             continue;
           }
         }
-        rows.push({
-          user_id: String(userId),
-          phone,
-          status: platformStatus
-        });
+        rows.push(resolvedUser);
       }
 
       rows.sort((left, right) =>
         String(left.user_id).localeCompare(String(right.user_id))
+      );
+
+      const total = rows.length;
+      const offset = (resolvedPage - 1) * resolvedPageSize;
+      return {
+        total,
+        items: rows.slice(offset, offset + resolvedPageSize)
+      };
+    },
+
+    listPlatformOrgs: async ({
+      page = 1,
+      pageSize = 20,
+      orgName = null,
+      owner = null,
+      status = null,
+      createdAtStart = null,
+      createdAtEnd = null
+    } = {}) => {
+      const resolvedPage = Number(page);
+      const resolvedPageSize = Number(pageSize);
+      if (
+        !Number.isInteger(resolvedPage)
+        || resolvedPage <= 0
+        || !Number.isInteger(resolvedPageSize)
+        || resolvedPageSize <= 0
+      ) {
+        throw new Error('listPlatformOrgs requires positive integer page and pageSize');
+      }
+
+      const normalizedOrgNameFilter = orgName === null || orgName === undefined
+        ? ''
+        : String(orgName).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedOrgNameFilter)) {
+        throw new Error('listPlatformOrgs orgName cannot contain control chars');
+      }
+
+      const normalizedOwnerFilter = owner === null || owner === undefined
+        ? ''
+        : String(owner).trim();
+      const normalizedOwnerFilterForMatch = normalizedOwnerFilter.toLowerCase();
+      if (CONTROL_CHAR_PATTERN.test(normalizedOwnerFilter)) {
+        throw new Error('listPlatformOrgs owner cannot contain control chars');
+      }
+
+      const normalizedStatusFilter =
+        status === null || status === undefined || String(status).trim() === ''
+          ? null
+          : normalizeOrgStatus(status);
+      if (
+        normalizedStatusFilter !== null
+        && !VALID_ORG_STATUS.has(normalizedStatusFilter)
+      ) {
+        throw new Error('listPlatformOrgs status filter must be active or disabled');
+      }
+
+      const createdAtStartEpoch = normalizeDateTimeFilterToEpoch({
+        value: createdAtStart,
+        fieldName: 'createdAtStart'
+      });
+      const createdAtEndEpoch = normalizeDateTimeFilterToEpoch({
+        value: createdAtEnd,
+        fieldName: 'createdAtEnd'
+      });
+      if (
+        createdAtStartEpoch !== null
+        && createdAtEndEpoch !== null
+        && createdAtStartEpoch > createdAtEndEpoch
+      ) {
+        throw new Error('listPlatformOrgs createdAtStart cannot be later than createdAtEnd');
+      }
+
+      const rows = [];
+      for (const org of orgsById.values()) {
+        const orgId = String(org?.id || '').trim();
+        const resolvedOrgName = String(org?.name || '').trim();
+        const normalizedStatus = normalizeOrgStatus(org?.status);
+        const ownerUserId = String(org?.ownerUserId || '').trim();
+        const ownerUser = usersById.get(ownerUserId);
+        const ownerPhone = String(ownerUser?.phone || '').trim();
+        const ownerProfile = resolveLatestTenantMemberProfileByUserId(ownerUserId);
+        const ownerName = ownerProfile.name;
+        const createdAtRaw = org?.createdAt ?? org?.created_at ?? null;
+        const createdAtDate = createdAtRaw ? new Date(createdAtRaw) : null;
+        const createdAt = createdAtDate && !Number.isNaN(createdAtDate.getTime())
+          ? createdAtDate.toISOString()
+          : '';
+
+        if (
+          !orgId
+          || !resolvedOrgName
+          || !ownerUserId
+          || !ownerPhone
+          || !VALID_ORG_STATUS.has(normalizedStatus)
+          || !createdAt
+        ) {
+          throw new Error('listPlatformOrgs returned invalid organization shape');
+        }
+
+        if (
+          normalizedStatusFilter !== null
+          && normalizedStatus !== normalizedStatusFilter
+        ) {
+          continue;
+        }
+        if (
+          normalizedOrgNameFilter
+          && !resolvedOrgName.toLowerCase().includes(normalizedOrgNameFilter.toLowerCase())
+        ) {
+          continue;
+        }
+        if (normalizedOwnerFilter) {
+          const ownerNameForMatch = String(ownerName || '').toLowerCase();
+          const ownerNameMatched = ownerNameForMatch.includes(normalizedOwnerFilterForMatch);
+          const ownerPhoneMatched = ownerPhone === normalizedOwnerFilter;
+          if (!ownerNameMatched && !ownerPhoneMatched) {
+            continue;
+          }
+        }
+
+        const createdAtEpoch = new Date(createdAt).getTime();
+        if (
+          createdAtStartEpoch !== null
+          && createdAtEpoch < createdAtStartEpoch
+        ) {
+          continue;
+        }
+        if (
+          createdAtEndEpoch !== null
+          && createdAtEpoch > createdAtEndEpoch
+        ) {
+          continue;
+        }
+
+        rows.push({
+          org_id: orgId,
+          org_name: resolvedOrgName,
+          owner_name: ownerName,
+          owner_phone: ownerPhone,
+          status: normalizedStatus,
+          created_at: createdAt
+        });
+      }
+
+      rows.sort((left, right) =>
+        String(left.org_id).localeCompare(String(right.org_id))
       );
 
       const total = rows.length;
@@ -2871,12 +3240,39 @@ const createInMemoryAuthStore = ({
       if (!userRecord) {
         return null;
       }
-      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
-      const platformStatus = userDomains.has('platform') ? 'active' : 'disabled';
+      return resolvePlatformUserReadModel({
+        userId: normalizedUserId,
+        userRecord
+      });
+    },
+
+    upsertPlatformUserProfile: async ({
+      userId,
+      name,
+      department = null
+    } = {}) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId || !usersById.has(normalizedUserId)) {
+        throw new Error('upsertPlatformUserProfile requires existing userId');
+      }
+      const normalizedName = normalizeRequiredPlatformUserProfileField({
+        value: name,
+        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+        fieldName: 'name'
+      });
+      const normalizedDepartment = normalizeOptionalPlatformUserProfileField({
+        value: department,
+        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+        fieldName: 'department'
+      });
+      const nextProfile = {
+        name: normalizedName,
+        department: normalizedDepartment
+      };
+      platformProfilesByUserId.set(normalizedUserId, nextProfile);
       return {
         user_id: normalizedUserId,
-        phone: String(userRecord.phone || '').trim(),
-        status: platformStatus
+        ...nextProfile
       };
     },
 
@@ -3079,7 +3475,8 @@ const createInMemoryAuthStore = ({
         phone: normalizedPhone,
         passwordHash: normalizedPasswordHash,
         status: normalizedStatus,
-        sessionVersion: 1
+        sessionVersion: 1,
+        createdAt: new Date().toISOString()
       };
       usersByPhone.set(normalizedPhone, user);
       usersById.set(user.id, user);
@@ -3095,6 +3492,7 @@ const createInMemoryAuthStore = ({
     createOrganizationWithOwner: async ({
       orgId = randomUUID(),
       orgName,
+      ownerDisplayName = null,
       ownerUserId,
       operatorUserId,
       operatorSessionId = null,
@@ -3106,12 +3504,20 @@ const createInMemoryAuthStore = ({
           orgsById: structuredClone(orgsById),
           orgIdByName: structuredClone(orgIdByName),
           membershipsByOrgId: structuredClone(membershipsByOrgId),
+          tenantsByUserId: structuredClone(tenantsByUserId),
+          tenantMembershipRolesByMembershipId: structuredClone(
+            tenantMembershipRolesByMembershipId
+          ),
           auditEvents: structuredClone(auditEvents)
         }
         : null;
       try {
         const normalizedOrgId = String(orgId || '').trim() || randomUUID();
         const normalizedOrgName = String(orgName || '').trim();
+        const normalizedOwnerDisplayName = normalizeOptionalTenantMemberProfileField({
+          value: ownerDisplayName,
+          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+        });
         const normalizedOwnerUserId = String(ownerUserId || '').trim();
         const normalizedOperatorUserId = String(operatorUserId || '').trim();
         if (
@@ -3144,12 +3550,15 @@ const createInMemoryAuthStore = ({
           throw duplicateError;
         }
 
+        const nowIso = new Date().toISOString();
         orgsById.set(normalizedOrgId, {
           id: normalizedOrgId,
           name: normalizedOrgName,
           ownerUserId: normalizedOwnerUserId,
           createdByUserId: normalizedOperatorUserId,
-          status: 'active'
+          status: 'active',
+          createdAt: nowIso,
+          updatedAt: nowIso
         });
         orgIdByName.set(orgNameDedupeKey, normalizedOrgId);
         membershipsByOrgId.set(normalizedOrgId, [
@@ -3160,6 +3569,50 @@ const createInMemoryAuthStore = ({
             status: 'active'
           }
         ]);
+        if (normalizedOwnerDisplayName !== null) {
+          const tenantMemberships = Array.isArray(tenantsByUserId.get(normalizedOwnerUserId))
+            ? tenantsByUserId.get(normalizedOwnerUserId)
+            : [];
+          const existingMembership = tenantMemberships.find(
+            (tenant) => String(tenant?.tenantId || '').trim() === normalizedOrgId
+          );
+          if (!existingMembership) {
+            const membershipId = randomUUID();
+            tenantMemberships.push({
+              membershipId,
+              tenantId: normalizedOrgId,
+              tenantName: normalizedOrgName,
+              status: 'active',
+              displayName: normalizedOwnerDisplayName,
+              departmentName: null,
+              joinedAt: nowIso,
+              leftAt: null,
+              permission: {
+                scopeLabel: `组织权限（${normalizedOrgName || normalizedOrgId}）`,
+                canViewMemberAdmin: false,
+                canOperateMemberAdmin: false,
+                canViewBilling: false,
+                canOperateBilling: false
+              }
+            });
+            tenantMembershipRolesByMembershipId.set(membershipId, []);
+          } else {
+            existingMembership.status = 'active';
+            existingMembership.leftAt = null;
+            existingMembership.displayName = normalizedOwnerDisplayName;
+            if (!existingMembership.joinedAt) {
+              existingMembership.joinedAt = nowIso;
+            }
+            if (
+              existingMembership.tenantName === null
+              || existingMembership.tenantName === undefined
+              || !String(existingMembership.tenantName || '').trim()
+            ) {
+              existingMembership.tenantName = normalizedOrgName;
+            }
+          }
+          tenantsByUserId.set(normalizedOwnerUserId, tenantMemberships);
+        }
         let auditRecorded = false;
         if (shouldRecordAudit) {
           try {
@@ -3203,6 +3656,11 @@ const createInMemoryAuthStore = ({
           restoreMapFromSnapshot(orgsById, snapshot.orgsById);
           restoreMapFromSnapshot(orgIdByName, snapshot.orgIdByName);
           restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
+          restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
+          restoreMapFromSnapshot(
+            tenantMembershipRolesByMembershipId,
+            snapshot.tenantMembershipRolesByMembershipId
+          );
           restoreAuditEventsFromSnapshot(snapshot.auditEvents);
         }
         throw error;
@@ -3296,8 +3754,8 @@ const createInMemoryAuthStore = ({
         requiredPermissionCodes
       );
       const missingRequiredPermissionCodes = [
-        'tenant.member_admin.view',
-        'tenant.member_admin.operate'
+        TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+        TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
       ].filter(
         (permissionCode) =>
           !normalizedRequiredPermissionCodes.includes(permissionCode)
@@ -5197,8 +5655,8 @@ const createInMemoryAuthStore = ({
         !normalizedUserId
         || !normalizedPermissionCode
         || (
-          normalizedPermissionCode !== 'platform.system_config.view'
-          && normalizedPermissionCode !== 'platform.system_config.operate'
+          normalizedPermissionCode !== PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE
+          && normalizedPermissionCode !== PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
         )
       ) {
         return {
@@ -5247,10 +5705,10 @@ const createInMemoryAuthStore = ({
         }
 
         const grantCodes = listPlatformRolePermissionGrantsForRoleId(role.roleId);
-        if (grantCodes.includes('platform.system_config.operate')) {
+        if (grantCodes.includes(PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE)) {
           canOperateSystemConfig = true;
           canViewSystemConfig = true;
-        } else if (grantCodes.includes('platform.system_config.view')) {
+        } else if (grantCodes.includes(PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE)) {
           canViewSystemConfig = true;
         }
 
@@ -5259,7 +5717,7 @@ const createInMemoryAuthStore = ({
         }
       }
 
-      const granted = normalizedPermissionCode === 'platform.system_config.operate'
+      const granted = normalizedPermissionCode === PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
         ? canOperateSystemConfig
         : canViewSystemConfig;
       return {

@@ -11,7 +11,9 @@ const connectMySql = async ({ host, port, user, password, database, connectTimeo
   });
 
   const query = async (sql, params = []) => {
-    const [results] = await connection.execute(sql, params);
+    // Use text protocol with parameter escaping to support LIMIT/OFFSET placeholders
+    // across MySQL variants where server-side prepared statements reject them.
+    const [results] = await connection.query(sql, params);
     return results;
   };
 
@@ -47,7 +49,8 @@ const connectMySql = async ({ host, port, user, password, database, connectTimeo
     await connection.beginTransaction();
     const tx = {
       query: async (sql, params = []) => {
-        const [results] = await connection.execute(sql, params);
+        // Keep transaction behavior aligned with top-level query() for LIMIT/OFFSET support.
+        const [results] = await connection.query(sql, params);
         return results;
       }
     };

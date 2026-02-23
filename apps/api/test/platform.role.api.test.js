@@ -129,6 +129,33 @@ test('POST /platform/roles creates role and GET /platform/roles returns traceabl
   assert.ok(typeof role.created_at === 'string' && role.created_at.length > 0);
 });
 
+test('POST /platform/roles auto-generates role_id when omitted from payload', async () => {
+  const harness = createHarness();
+  const login = await loginOperator(harness.authService, 'req-platform-role-login-auto-role-id');
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/platform/roles',
+    method: 'POST',
+    requestId: 'req-platform-role-create-auto-role-id',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      code: 'AUTO_ROLE_ID',
+      name: '自动生成角色ID'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 200);
+  const createPayload = JSON.parse(createRoute.body);
+  assert.ok(typeof createPayload.role_id === 'string' && createPayload.role_id.length > 0);
+  assert.equal(createPayload.code, 'AUTO_ROLE_ID');
+  assert.equal(createPayload.name, '自动生成角色ID');
+  assert.equal(createPayload.status, 'active');
+  assert.equal(createPayload.is_system, false);
+});
+
 test('POST /platform/roles persists audit event with request_id and traceparent', async () => {
   const harness = createHarness();
   const login = await loginOperator(harness.authService, 'req-platform-role-login-audit');

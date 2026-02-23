@@ -152,11 +152,11 @@ const createHarness = ({
 test('createPlatformOrgHandlers fails fast when platform org service capability is missing', () => {
   assert.throws(
     () => createPlatformOrgHandlers(),
-    /requires a platformOrgService with createOrg/
+    /requires a platformOrgService with listOrgs, createOrg/
   );
   assert.throws(
     () => createPlatformOrgHandlers({}),
-    /requires a platformOrgService with createOrg/
+    /requires a platformOrgService with listOrgs, createOrg/
   );
 });
 
@@ -212,7 +212,8 @@ test('POST /platform/orgs rejects missing initial_owner_phone with standard prob
       authorization: 'Bearer fake-access-token'
     },
     body: {
-      org_name: '组织 A'
+      org_name: '组织 A',
+      initial_owner_name: '负责人A'
     },
     handlers: harness.handlers
   });
@@ -236,6 +237,7 @@ test('POST /platform/orgs rejects missing org_name with standard problem details
       authorization: 'Bearer fake-access-token'
     },
     body: {
+      initial_owner_name: '负责人A',
       initial_owner_phone: '13800000011'
     },
     handlers: harness.handlers
@@ -250,6 +252,30 @@ test('POST /platform/orgs rejects missing org_name with standard problem details
   assert.equal(harness.storeCalls.length, 0);
 });
 
+test('POST /platform/orgs rejects missing initial_owner_name with standard problem details', async () => {
+  const harness = createHarness();
+  const route = await dispatchApiRoute({
+    pathname: '/platform/orgs',
+    method: 'POST',
+    requestId: 'req-platform-org-missing-owner-name',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      org_name: '组织 Missing Owner Name',
+      initial_owner_phone: '13800000066'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  assert.equal(route.headers['content-type'], 'application/problem+json');
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'ORG-400-INITIAL-OWNER-NAME-REQUIRED');
+  assert.equal(payload.request_id, 'req-platform-org-missing-owner-name');
+  assert.equal(harness.storeCalls.length, 0);
+});
+
 test('POST /platform/orgs rejects invalid initial_owner_phone format', async () => {
   const harness = createHarness();
   const route = await dispatchApiRoute({
@@ -261,6 +287,7 @@ test('POST /platform/orgs rejects invalid initial_owner_phone format', async () 
     },
     body: {
       org_name: '组织 Invalid Phone',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '2380000000'
     },
     handlers: harness.handlers
@@ -286,6 +313,7 @@ test('POST /platform/orgs rejects initial_owner_phone with surrounding whitespac
     },
     body: {
       org_name: '组织 Invalid Phone Whitespace',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: ' 13800000011 '
     },
     handlers: harness.handlers
@@ -311,6 +339,7 @@ test('POST /platform/orgs rejects non-string initial_owner_phone as invalid payl
     },
     body: {
       org_name: '组织 Invalid Phone Type',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: 13800000011
     },
     handlers: harness.handlers
@@ -336,6 +365,7 @@ test('POST /platform/orgs rejects non-string org_name as invalid payload', async
     },
     body: {
       org_name: 12345,
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000011'
     },
     handlers: harness.handlers
@@ -361,6 +391,7 @@ test('POST /platform/orgs rejects org_name containing control characters', async
     },
     body: {
       org_name: '组织\nInvalid Name',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000011'
     },
     handlers: harness.handlers
@@ -386,6 +417,7 @@ test('POST /platform/orgs rejects unknown payload fields to keep request contrac
     },
     body: {
       org_name: '组织 Unknown',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000009',
       unexpected_field: 'should-not-pass'
     },
@@ -405,6 +437,7 @@ test('POST /platform/orgs bounds unknown-field detail length for oversized paylo
   const harness = createHarness();
   const oversizedPayload = {
     org_name: '组织 Unknown Oversized',
+    initial_owner_name: '负责人测试',
     initial_owner_phone: '13800000009'
   };
   for (let index = 0; index < 20; index += 1) {
@@ -442,6 +475,7 @@ test('POST /platform/orgs sanitizes unknown-field names in validation detail for
     },
     body: {
       org_name: '组织 Unknown Key Oversized',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000029',
       [oversizedUnknownKey]: true
     },
@@ -484,6 +518,7 @@ test('POST /platform/orgs does not reserve Idempotency-Key on payload validation
     },
     body: {
       org_name: '组织 幂等 无效载荷',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000010'
     },
     handlers: harness.handlers
@@ -524,6 +559,7 @@ test('POST /platform/orgs succeeds and reuses existing owner user identity', asy
     },
     body: {
       org_name: '组织 B',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000001'
     },
     handlers: harness.handlers
@@ -537,6 +573,7 @@ test('POST /platform/orgs succeeds and reuses existing owner user identity', asy
   assert.equal(payload.created_owner_user, false);
   assert.equal(payload.request_id, 'req-platform-org-reuse-owner');
   assert.equal(harness.storeCalls[0].ownerUserId, 'owner-user-existing');
+  assert.equal(harness.storeCalls[0].ownerDisplayName, '负责人测试');
   assert.equal(harness.authorizeCalls.length, 1);
 });
 
@@ -565,6 +602,7 @@ test('POST /platform/orgs succeeds and creates owner user identity when phone is
     },
     body: {
       org_name: '组织 C',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000002'
     },
     handlers: harness.handlers
@@ -599,6 +637,7 @@ test('POST /platform/orgs is blocked when current session lacks platform permiss
     },
     body: {
       org_name: '组织 D',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000003'
     },
     handlers: harness.handlers
@@ -628,6 +667,7 @@ test('POST /platform/orgs fails closed when authorizeRoute does not resolve oper
     },
     body: {
       org_name: '组织 Missing Operator Context',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000033'
     },
     handlers: harness.handlers
@@ -662,6 +702,7 @@ test('POST /platform/orgs maps duplicate organization conflict to ORG-409-ORG-CO
     },
     body: {
       org_name: '组织 E',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000005'
     },
     handlers: harness.handlers
@@ -671,6 +712,7 @@ test('POST /platform/orgs maps duplicate organization conflict to ORG-409-ORG-CO
   assert.equal(route.headers['content-type'], 'application/problem+json');
   const payload = JSON.parse(route.body);
   assert.equal(payload.error_code, 'ORG-409-ORG-CONFLICT');
+  assert.equal(payload.detail, '组织名称已存在，请重新输入');
   assert.equal(payload.retryable, false);
   assert.equal(payload.request_id, 'req-platform-org-duplicate');
 });
@@ -679,6 +721,7 @@ test('POST /platform/orgs replays first success response for same Idempotency-Ke
   const harness = createHarness();
   const requestBody = {
     org_name: '组织 幂等 Replay',
+    initial_owner_name: '负责人测试',
     initial_owner_phone: '13800000015'
   };
 
@@ -731,6 +774,7 @@ test('POST /platform/orgs replays first success response across sessions even wh
   });
   const requestBody = {
     org_name: '组织 幂等 跨会话',
+    initial_owner_name: '负责人测试',
     initial_owner_phone: '13800000017'
   };
 
@@ -782,6 +826,7 @@ test('POST /platform/orgs rejects same Idempotency-Key with different payloads',
     },
     body: {
       org_name: '组织 幂等 冲突 A',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000016'
     },
     handlers: harness.handlers
@@ -796,6 +841,7 @@ test('POST /platform/orgs rejects same Idempotency-Key with different payloads',
     },
     body: {
       org_name: '组织 幂等 冲突 B',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000016'
     },
     handlers: harness.handlers
@@ -832,6 +878,7 @@ test('POST /platform/orgs returns AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE when id
     },
     body: {
       org_name: '组织 幂等 存储不可用',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000036'
     },
     handlers: harness.handlers
@@ -870,6 +917,7 @@ test('POST /platform/orgs returns AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE when ex
     },
     body: {
       org_name: '组织 幂等 异常缓存',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000039'
     },
     handlers: harness.handlers
@@ -919,6 +967,7 @@ test('POST /platform/orgs returns AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE when ex
     },
     body: {
       org_name: '组织 幂等 异常 hash',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000078'
     },
     handlers: harness.handlers
@@ -976,6 +1025,7 @@ test('POST /platform/orgs returns AUTH-503-IDEMPOTENCY-STORE-UNAVAILABLE when pe
     },
     body: {
       org_name: '组织 幂等 超时',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000037'
     },
     handlers: harness.handlers
@@ -1052,6 +1102,7 @@ test('POST /platform/orgs returns AUTH-503-IDEMPOTENCY-PENDING-TIMEOUT when repl
       },
       body: {
         org_name: '组织 幂等 超时',
+        initial_owner_name: '负责人测试',
         initial_owner_phone: '13800000037'
       },
       handlers: harness.handlers
@@ -1088,6 +1139,7 @@ test('POST /platform/orgs maps unexpected org-store failure to ORG-503-DEPENDENC
     },
     body: {
       org_name: '组织 F',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000006'
     },
     handlers: harness.handlers
@@ -1129,6 +1181,7 @@ test('POST /platform/orgs rolls back newly created owner identity when org creat
     },
     body: {
       org_name: '组织 G',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000007'
     },
     handlers: harness.handlers
@@ -1171,6 +1224,7 @@ test('POST /platform/orgs rolls back newly created owner identity on storage len
     },
     body: {
       org_name: '组织长度异常',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000019'
     },
     handlers: harness.handlers
@@ -1200,6 +1254,7 @@ test('POST /platform/orgs fails closed when rollback capability is unavailable',
     },
     body: {
       org_name: '组织 缺少回滚能力',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000041'
     },
     handlers: harness.handlers
@@ -1243,6 +1298,7 @@ test('POST /platform/orgs fails closed when owner rollback fails after org stora
     },
     body: {
       org_name: '组织 回滚失败',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000042'
     },
     handlers: harness.handlers
@@ -2768,6 +2824,7 @@ test('platformCreateOrg maps owner bootstrap 503 errors to ORG-503-DEPENDENCY-UN
         'Bearer fake-access-token',
         {
           org_name: '组织 H',
+          initial_owner_name: '负责人测试',
           initial_owner_phone: '13800000008'
         }
       ),
@@ -2801,6 +2858,7 @@ test('platformCreateOrg maps owner bootstrap non-409 auth problems to ORG-503-DE
         'Bearer fake-access-token',
         {
           org_name: '组织 H-400',
+          initial_owner_name: '负责人测试',
           initial_owner_phone: '13800000012'
         }
       ),
@@ -2834,6 +2892,7 @@ test('platformCreateOrg maps owner bootstrap 409 conflicts to ORG-409-ORG-CONFLI
         'Bearer fake-access-token',
         {
           org_name: '组织 I',
+          initial_owner_name: '负责人测试',
           initial_owner_phone: '13800000018'
         }
       ),
@@ -2867,6 +2926,7 @@ test('platformCreateOrg records rejection audit when owner bootstrap auth proble
         'Bearer fake-access-token',
         {
           org_name: '组织 I-1',
+          initial_owner_name: '负责人测试',
           initial_owner_phone: '13800000042'
         }
       ),
@@ -2929,6 +2989,7 @@ test('platformCreateOrg does not trust forged preauthorized context without inte
     'Bearer fake-access-token',
     {
       org_name: '组织 K',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000021'
     },
     {
@@ -2959,6 +3020,7 @@ test('platformCreateOrg falls back to bearer authorization when preauthorized co
     'Bearer fake-access-token',
     {
       org_name: '组织 K-1',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000032'
     },
     {
@@ -2987,6 +3049,7 @@ test('platformCreateOrg accepts marked preauthorized context without Authorizati
     undefined,
     {
       org_name: '组织 Preauth No Header',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000023'
     },
     {
@@ -3014,6 +3077,7 @@ test('platformCreateOrg accepts marked preauthorized context even when Authoriza
     'Basic malformed-header',
     {
       org_name: '组织 Preauth Bad Header',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000024'
     },
     {
@@ -3049,6 +3113,7 @@ test('platformCreateOrg does not trust forged Symbol.for preauthorization marker
     'Bearer fake-access-token',
     {
       org_name: '组织 K-2',
+      initial_owner_name: '负责人测试',
       initial_owner_phone: '13800000031'
     },
     {

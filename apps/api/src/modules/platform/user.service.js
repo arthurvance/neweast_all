@@ -1,6 +1,9 @@
 const { log } = require('../../common/logger');
 const { AuthProblemError } = require('../auth/auth.service');
 const {
+  toPlatformPermissionSnapshotFromCodes
+} = require('../auth/permission-catalog');
+const {
   resolveRoutePreauthorizedContext
 } = require('../auth/route-preauthorization');
 const {
@@ -14,13 +17,38 @@ const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_USER_ID_LENGTH = 64;
 const MAX_USER_PHONE_LENGTH = 32;
 const MAX_QUERY_KEYWORD_LENGTH = 64;
+const MAX_QUERY_NAME_LENGTH = 64;
+const MAX_QUERY_PHONE_LENGTH = 32;
+const MAX_USER_DISPLAY_NAME_LENGTH = 64;
+const MAX_USER_DEPARTMENT_NAME_LENGTH = 128;
+const MAX_ROLE_ID_LENGTH = 64;
+const MAX_ROLE_CODE_LENGTH = 64;
+const MAX_ROLE_NAME_LENGTH = 128;
+const MAX_CREATE_USER_ROLE_IDS = 5;
 const MAX_QUERY_PAGE_SIZE = 100;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
+const CREATE_USER_ALLOWED_FIELDS = new Set([
+  'phone',
+  'name',
+  'department',
+  'role_ids'
+]);
 const UPDATE_USER_STATUS_ALLOWED_FIELDS = new Set(['user_id', 'status', 'reason']);
-const LIST_USER_ALLOWED_QUERY_FIELDS = new Set(['page', 'page_size', 'status', 'keyword']);
+const LIST_USER_ALLOWED_QUERY_FIELDS = new Set([
+  'page',
+  'page_size',
+  'status',
+  'keyword',
+  'phone',
+  'name',
+  'created_at_start',
+  'created_at_end'
+]);
 const GET_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const SOFT_DELETE_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const VALID_USER_STATUSES = new Set(['active', 'disabled']);
+const VALID_ROLE_STATUSES = new Set(['active', 'disabled']);
+const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 const isPlainObject = (candidate) =>
   candidate !== null
@@ -32,6 +60,35 @@ const normalizeRequiredString = (candidate) => {
     return '';
   }
   return candidate.trim();
+};
+
+const normalizeOptionalString = (candidate) => {
+  if (candidate === null || candidate === undefined) {
+    return null;
+  }
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+  const normalized = candidate.trim();
+  return normalized || null;
+};
+
+const toIsoTimestamp = (candidate) => {
+  if (candidate === null || candidate === undefined) {
+    return '';
+  }
+  if (candidate instanceof Date) {
+    return Number.isNaN(candidate.getTime()) ? '' : candidate.toISOString();
+  }
+  const normalized = String(candidate || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  const parsedDate = new Date(normalized);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+  return parsedDate.toISOString();
 };
 
 const maskPhone = (phone) => {
@@ -76,6 +133,15 @@ const normalizeUserStatus = (status) => {
   }
   return normalizedStatus;
 };
+const normalizeRoleStatus = (status) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (normalizedStatus === 'enabled') {
+    return 'active';
+  }
+  return normalizedStatus;
+};
+const normalizeRoleId = (roleId) =>
+  String(roleId || '').trim().toLowerCase();
 
 const isResolvedOperatorIdentifier = (value) => {
   const normalized = String(value || '').trim();
@@ -239,11 +305,87 @@ const parseListUserQuery = (query) => {
     keyword = normalizedKeyword || null;
   }
 
+  let phone = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'phone')) {
+    if (typeof query.phone !== 'string') {
+      throw userErrors.invalidPayload('phone 必须为字符串');
+    }
+    const normalizedPhone = query.phone.trim();
+    if (CONTROL_CHAR_PATTERN.test(normalizedPhone)) {
+      throw userErrors.invalidPayload('phone 不能包含控制字符');
+    }
+    if (normalizedPhone.length > MAX_QUERY_PHONE_LENGTH) {
+      throw userErrors.invalidPayload(
+        `phone 长度不能超过 ${MAX_QUERY_PHONE_LENGTH}`
+      );
+    }
+    phone = normalizedPhone || null;
+  }
+
+  let name = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'name')) {
+    if (typeof query.name !== 'string') {
+      throw userErrors.invalidPayload('name 必须为字符串');
+    }
+    const normalizedName = query.name.trim();
+    if (CONTROL_CHAR_PATTERN.test(normalizedName)) {
+      throw userErrors.invalidPayload('name 不能包含控制字符');
+    }
+    if (normalizedName.length > MAX_QUERY_NAME_LENGTH) {
+      throw userErrors.invalidPayload(
+        `name 长度不能超过 ${MAX_QUERY_NAME_LENGTH}`
+      );
+    }
+    name = normalizedName || null;
+  }
+
+  let createdAtStart = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'created_at_start')) {
+    if (typeof query.created_at_start !== 'string') {
+      throw userErrors.invalidPayload('created_at_start 必须为字符串');
+    }
+    const normalizedCreatedAtStart = query.created_at_start.trim();
+    if (normalizedCreatedAtStart) {
+      const parsedCreatedAtStart = toIsoTimestamp(normalizedCreatedAtStart);
+      if (!parsedCreatedAtStart) {
+        throw userErrors.invalidPayload('created_at_start 必须为合法时间');
+      }
+      createdAtStart = parsedCreatedAtStart;
+    }
+  }
+
+  let createdAtEnd = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'created_at_end')) {
+    if (typeof query.created_at_end !== 'string') {
+      throw userErrors.invalidPayload('created_at_end 必须为字符串');
+    }
+    const normalizedCreatedAtEnd = query.created_at_end.trim();
+    if (normalizedCreatedAtEnd) {
+      const parsedCreatedAtEnd = toIsoTimestamp(normalizedCreatedAtEnd);
+      if (!parsedCreatedAtEnd) {
+        throw userErrors.invalidPayload('created_at_end 必须为合法时间');
+      }
+      createdAtEnd = parsedCreatedAtEnd;
+    }
+  }
+
+  if (
+    createdAtStart
+    && createdAtEnd
+    && new Date(createdAtStart).getTime() > new Date(createdAtEnd).getTime()
+  ) {
+    throw userErrors.invalidPayload('created_at_start 不能晚于 created_at_end');
+  }
+
   return {
     page,
     pageSize,
     status,
-    keyword
+    keyword,
+    phone,
+    name,
+    createdAtStart,
+    createdAtEnd
   };
 };
 
@@ -275,6 +417,114 @@ const parseGetUserParams = (params) => {
   }
   return {
     userId
+  };
+};
+
+const parseCreateUserPayload = (payload) => {
+  if (!isPlainObject(payload)) {
+    throw userErrors.invalidPayload();
+  }
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !CREATE_USER_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw userErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(payload, 'phone')
+    || !Object.prototype.hasOwnProperty.call(payload, 'name')
+  ) {
+    throw userErrors.invalidPayload();
+  }
+  if (typeof payload.phone !== 'string') {
+    throw userErrors.invalidPayload('phone 必须为字符串');
+  }
+  if (typeof payload.name !== 'string') {
+    throw userErrors.invalidPayload('name 必须为字符串');
+  }
+  const phone = payload.phone.trim();
+  if (!/^1\d{10}$/.test(phone)) {
+    throw userErrors.invalidPayload('phone 必须为 11 位手机号');
+  }
+
+  const name = payload.name.trim();
+  if (!name) {
+    throw userErrors.invalidPayload('name 不能为空');
+  }
+  if (
+    name.length > MAX_USER_DISPLAY_NAME_LENGTH
+    || CONTROL_CHAR_PATTERN.test(name)
+  ) {
+    throw userErrors.invalidPayload(
+      `name 长度不能超过 ${MAX_USER_DISPLAY_NAME_LENGTH}`
+    );
+  }
+
+  let department = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'department')) {
+    if (payload.department === null || payload.department === undefined) {
+      department = null;
+    } else if (typeof payload.department !== 'string') {
+      throw userErrors.invalidPayload('department 必须为字符串或 null');
+    } else {
+      const normalizedDepartment = payload.department.trim();
+      if (!normalizedDepartment) {
+        department = null;
+      } else if (
+        normalizedDepartment.length > MAX_USER_DEPARTMENT_NAME_LENGTH
+        || CONTROL_CHAR_PATTERN.test(normalizedDepartment)
+      ) {
+        throw userErrors.invalidPayload(
+          `department 长度不能超过 ${MAX_USER_DEPARTMENT_NAME_LENGTH}`
+        );
+      } else {
+        department = normalizedDepartment;
+      }
+    }
+  }
+
+  let roleIds = [];
+  if (Object.prototype.hasOwnProperty.call(payload, 'role_ids')) {
+    if (!Array.isArray(payload.role_ids)) {
+      throw userErrors.invalidPayload('role_ids 必须为数组');
+    }
+    if (payload.role_ids.length > MAX_CREATE_USER_ROLE_IDS) {
+      throw userErrors.invalidPayload(
+        `role_ids 数量不能超过 ${MAX_CREATE_USER_ROLE_IDS}`
+      );
+    }
+    const dedupedRoleIds = new Map();
+    for (const roleId of payload.role_ids) {
+      if (typeof roleId !== 'string') {
+        throw userErrors.invalidPayload('role_ids 仅允许字符串');
+      }
+      const normalizedRoleId = normalizeRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw userErrors.invalidPayload('role_ids 不能包含空值');
+      }
+      if (
+        normalizedRoleId.length > MAX_ROLE_ID_LENGTH
+        || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
+      ) {
+        throw userErrors.invalidPayload(
+          `role_ids 值长度不能超过 ${MAX_ROLE_ID_LENGTH}`
+        );
+      }
+      if (!ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)) {
+        throw userErrors.invalidPayload(
+          'role_ids 仅允许字母、数字、点、下划线和中划线，且必须以字母或数字开头'
+        );
+      }
+      dedupedRoleIds.set(normalizedRoleId, normalizedRoleId);
+    }
+    roleIds = [...dedupedRoleIds.values()];
+  }
+
+  return {
+    phone,
+    name,
+    department,
+    roleIds
   };
 };
 
@@ -369,6 +619,50 @@ const parseSoftDeleteUserParams = (params) => {
   };
 };
 
+const normalizeUserRoleReadModel = (candidate) => {
+  if (!isPlainObject(candidate)) {
+    throw userErrors.dependencyUnavailable();
+  }
+  const roleId = normalizeRoleId(candidate.role_id ?? candidate.roleId);
+  if (
+    !roleId
+    || roleId.length > MAX_ROLE_ID_LENGTH
+    || CONTROL_CHAR_PATTERN.test(roleId)
+  ) {
+    throw userErrors.dependencyUnavailable();
+  }
+  const code = normalizeOptionalString(candidate.code);
+  if (
+    code !== null
+    && (
+      code.length > MAX_ROLE_CODE_LENGTH
+      || CONTROL_CHAR_PATTERN.test(code)
+    )
+  ) {
+    throw userErrors.dependencyUnavailable();
+  }
+  const name = normalizeOptionalString(candidate.name);
+  if (
+    name !== null
+    && (
+      name.length > MAX_ROLE_NAME_LENGTH
+      || CONTROL_CHAR_PATTERN.test(name)
+    )
+  ) {
+    throw userErrors.dependencyUnavailable();
+  }
+  const status = normalizeRoleStatus(candidate.status ?? candidate.role_status ?? candidate.roleStatus);
+  if (status && !VALID_ROLE_STATUSES.has(status)) {
+    throw userErrors.dependencyUnavailable();
+  }
+  return {
+    role_id: roleId,
+    code,
+    name,
+    status: VALID_ROLE_STATUSES.has(status) ? status : 'disabled'
+  };
+};
+
 const createPlatformUserService = ({ authService } = {}) => {
   const auditTrail = [];
 
@@ -424,6 +718,16 @@ const createPlatformUserService = ({ authService } = {}) => {
     );
     const phoneRaw = candidate.phone ?? candidate.phone_number ?? candidate.phoneNumber;
     const phone = typeof phoneRaw === 'string' ? phoneRaw.trim() : '';
+    const name = normalizeOptionalString(
+      candidate.name ?? candidate.display_name ?? candidate.displayName
+    );
+    const department = normalizeOptionalString(
+      candidate.department ?? candidate.department_name ?? candidate.departmentName
+    );
+    const rolesRaw = Array.isArray(candidate.roles) ? candidate.roles : [];
+    const createdAt = toIsoTimestamp(
+      candidate.created_at ?? candidate.createdAt
+    );
     if (!userId || userId.length > MAX_USER_ID_LENGTH || CONTROL_CHAR_PATTERN.test(userId)) {
       throw userErrors.dependencyUnavailable();
     }
@@ -437,10 +741,38 @@ const createPlatformUserService = ({ authService } = {}) => {
     ) {
       throw userErrors.dependencyUnavailable();
     }
+    if (
+      name !== null
+      && (
+        name.length > MAX_USER_DISPLAY_NAME_LENGTH
+        || CONTROL_CHAR_PATTERN.test(name)
+      )
+    ) {
+      throw userErrors.dependencyUnavailable();
+    }
+    if (
+      department !== null
+      && (
+        department.length > MAX_USER_DEPARTMENT_NAME_LENGTH
+        || CONTROL_CHAR_PATTERN.test(department)
+      )
+    ) {
+      throw userErrors.dependencyUnavailable();
+    }
+    if (!createdAt) {
+      throw userErrors.dependencyUnavailable();
+    }
+    const roles = rolesRaw
+      .map((role) => normalizeUserRoleReadModel(role))
+      .sort((left, right) => String(left.role_id).localeCompare(String(right.role_id)));
     return {
       user_id: userId,
       phone,
-      status
+      name,
+      department,
+      status,
+      created_at: createdAt,
+      roles
     };
   };
 
@@ -534,7 +866,11 @@ const createPlatformUserService = ({ authService } = {}) => {
         page: parsedQuery.page,
         pageSize: parsedQuery.pageSize,
         status: parsedQuery.status,
-        keyword: parsedQuery.keyword
+        keyword: parsedQuery.keyword,
+        phone: parsedQuery.phone,
+        name: parsedQuery.name,
+        createdAtStart: parsedQuery.createdAtStart,
+        createdAtEnd: parsedQuery.createdAtEnd
       });
     } catch (error) {
       if (error instanceof AuthProblemError) {
@@ -604,7 +940,11 @@ const createPlatformUserService = ({ authService } = {}) => {
         page_size: parsedQuery.pageSize,
         result_count: items.length,
         status: parsedQuery.status,
-        keyword: maskKeywordForAudit(parsedQuery.keyword)
+        keyword: maskKeywordForAudit(parsedQuery.keyword),
+        phone: maskPhone(parsedQuery.phone),
+        name: maskKeywordForAudit(parsedQuery.name),
+        created_at_start: parsedQuery.createdAtStart,
+        created_at_end: parsedQuery.createdAtEnd
       }
     });
 
@@ -755,6 +1095,25 @@ const createPlatformUserService = ({ authService } = {}) => {
     const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
     const requestedPhone = String(payload?.phone || '').trim() || null;
     const maskedRequestedPhone = maskPhone(requestedPhone);
+
+    let parsedPayload;
+    try {
+      parsedPayload = parseCreateUserPayload(payload);
+    } catch (error) {
+      addAuditEvent({
+        type: 'platform.user.create.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'payload validation failed',
+        metadata: {
+          target_user_id: null,
+          phone: maskedRequestedPhone,
+          error_code: error?.errorCode || userErrors.invalidPayload().errorCode
+        }
+      });
+      throw error;
+    }
+
     let operatorContext;
     try {
       operatorContext = await resolveOperatorContext({
@@ -783,7 +1142,9 @@ const createPlatformUserService = ({ authService } = {}) => {
       provisionedUser = await authService.provisionPlatformUserByPhone({
         requestId: resolvedRequestId,
         accessToken,
-        payload,
+        payload: {
+          phone: parsedPayload.phone
+        },
         authorizationContext,
         authorizedRoute: {
           user_id: operatorUserId,
@@ -837,6 +1198,141 @@ const createPlatformUserService = ({ authService } = {}) => {
       });
       throw userErrors.dependencyUnavailable();
     }
+
+    const authStoreForProfile = assertAuthStoreMethod('upsertPlatformUserProfile');
+    try {
+      await authStoreForProfile.upsertPlatformUserProfile({
+        userId: resolvedUserId,
+        name: parsedPayload.name,
+        department: parsedPayload.department
+      });
+    } catch (error) {
+      const mappedError = error instanceof AuthProblemError
+        ? error
+        : userErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.user.create.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: resolvedUserId,
+        detail: 'platform user profile upsert rejected',
+        metadata: {
+          phone: maskPhone(parsedPayload.phone),
+          error_code: mappedError.errorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: String(error?.errorCode || error?.code || 'unknown')
+        }
+      });
+      throw mappedError;
+    }
+
+    const normalizedRoleIds = parsedPayload.roleIds;
+    try {
+      const permissionCodesByRoleId = new Map(
+        normalizedRoleIds.map((roleId) => [roleId, []])
+      );
+      if (normalizedRoleIds.length > 0) {
+        const authStoreForRoleCatalog = assertAuthStoreMethod('listPlatformRoleCatalogEntries');
+        const roleCatalogEntries = await authStoreForRoleCatalog.listPlatformRoleCatalogEntries({
+          scope: PLATFORM_USER_SCOPE,
+          tenantId: null
+        });
+        if (!Array.isArray(roleCatalogEntries)) {
+          throw userErrors.dependencyUnavailable();
+        }
+        const enabledRoleIdSet = new Set();
+        for (const roleCatalogEntry of roleCatalogEntries) {
+          const catalogRoleId = normalizeRoleId(
+            roleCatalogEntry?.roleId ?? roleCatalogEntry?.role_id
+          );
+          const catalogRoleStatus = normalizeRoleStatus(roleCatalogEntry?.status);
+          if (
+            catalogRoleId
+            && VALID_ROLE_STATUSES.has(catalogRoleStatus)
+            && catalogRoleStatus === 'active'
+          ) {
+            enabledRoleIdSet.add(catalogRoleId);
+          }
+        }
+        const hasInvalidRoleIds = normalizedRoleIds.some(
+          (roleId) => !enabledRoleIdSet.has(roleId)
+        );
+        if (hasInvalidRoleIds) {
+          throw userErrors.invalidPayload('role_ids 包含不存在或已禁用角色');
+        }
+
+        const authStoreForRoleGrants = assertAuthStoreMethod('listPlatformRolePermissionGrantsByRoleIds');
+        const grants = await authStoreForRoleGrants.listPlatformRolePermissionGrantsByRoleIds({
+          roleIds: normalizedRoleIds
+        })
+        if (!Array.isArray(grants)) {
+          throw userErrors.dependencyUnavailable();
+        }
+        for (const grant of grants) {
+          const grantRoleId = normalizeRoleId(grant?.roleId ?? grant?.role_id);
+          const grantPermissionCodes = Array.isArray(grant?.permissionCodes)
+            ? grant.permissionCodes
+            : Array.isArray(grant?.permission_codes)
+              ? grant.permission_codes
+              : null;
+          if (!grantRoleId || !permissionCodesByRoleId.has(grantRoleId) || !grantPermissionCodes) {
+            throw userErrors.dependencyUnavailable();
+          }
+          permissionCodesByRoleId.set(
+            grantRoleId,
+            [...new Set(
+              grantPermissionCodes
+                .map((permissionCode) => String(permissionCode || '').trim().toLowerCase())
+                .filter((permissionCode) => permissionCode.length > 0)
+            )]
+          );
+        }
+      }
+
+      const rolesForPersistence = normalizedRoleIds.map((roleId) => ({
+        role_id: roleId,
+        status: 'active',
+        permission: toPlatformPermissionSnapshotFromCodes(
+          permissionCodesByRoleId.get(roleId) || []
+        )
+      }));
+      const authStoreForRoleFacts = assertAuthStoreMethod('replacePlatformRolesAndSyncSnapshot');
+      const roleFactSyncResult = await authStoreForRoleFacts.replacePlatformRolesAndSyncSnapshot({
+        userId: resolvedUserId,
+        roles: rolesForPersistence
+      });
+      const roleFactSyncReason = String(roleFactSyncResult?.reason || '').trim().toLowerCase();
+      if (roleFactSyncReason === 'invalid-user-id') {
+        throw userErrors.userNotFound();
+      }
+      if (roleFactSyncReason === 'db-deadlock' || roleFactSyncReason === 'concurrent-role-facts-update') {
+        throw userErrors.platformSnapshotDegraded({
+          reason: roleFactSyncReason
+        });
+      }
+      if (roleFactSyncReason !== 'ok') {
+        throw userErrors.platformSnapshotDegraded({
+          reason: roleFactSyncReason || 'unknown'
+        });
+      }
+    } catch (error) {
+      const mappedError = error instanceof AuthProblemError
+        ? error
+        : userErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.user.create.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: resolvedUserId,
+        detail: 'platform user role facts sync rejected',
+        metadata: {
+          phone: maskPhone(parsedPayload.phone),
+          error_code: mappedError.errorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: String(error?.errorCode || error?.code || 'unknown')
+        }
+      });
+      throw mappedError;
+    }
+
     addAuditEvent({
       type:
         provisionedUser?.created_user === true
@@ -852,7 +1348,8 @@ const createPlatformUserService = ({ authService } = {}) => {
       metadata: {
         phone: maskedRequestedPhone,
         created_user: Boolean(provisionedUser?.created_user),
-        reused_existing_user: Boolean(provisionedUser?.reused_existing_user)
+        reused_existing_user: Boolean(provisionedUser?.reused_existing_user),
+        role_count: normalizedRoleIds.length
       }
     });
 

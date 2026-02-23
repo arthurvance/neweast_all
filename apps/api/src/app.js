@@ -169,6 +169,13 @@ const REQUIRED_AUTH_SCHEMA = {
     'can_operate_billing',
     'updated_at'
   ],
+  platform_user_profiles: [
+    'user_id',
+    'name',
+    'department',
+    'created_at',
+    'updated_at'
+  ],
   platform_role_permission_grants: [
     'role_id',
     'permission_code',

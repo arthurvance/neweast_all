@@ -6,6 +6,17 @@ const {
   isRetryableDeliveryFailure,
   computeRetrySchedule
 } = require('../integration');
+const {
+  KNOWN_PLATFORM_PERMISSION_CODES,
+  KNOWN_TENANT_PERMISSION_CODES,
+  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+  SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET,
+  toPlatformPermissionSnapshotFromCodes,
+  toTenantPermissionSnapshotFromCodes
+} = require('./permission-catalog');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxRetries: 2,
@@ -97,29 +108,12 @@ const DEFAULT_PLATFORM_INTEGRATION_RECOVERY_CLAIM_LEASE_MS = Math.min(
 const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
 const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
 const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
+const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
+const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
 const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
-const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
-  'platform.member_admin.view',
-  'platform.member_admin.operate',
-  'platform.system_config.view',
-  'platform.system_config.operate',
-  'platform.billing.view',
-  'platform.billing.operate'
-]);
 const KNOWN_PLATFORM_PERMISSION_CODE_SET = new Set(KNOWN_PLATFORM_PERMISSION_CODES);
-const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
-  'tenant.member_admin.view',
-  'tenant.member_admin.operate',
-  'tenant.billing.view',
-  'tenant.billing.operate'
-]);
 const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
-const PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE = 'platform.system_config.view';
-const PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE = 'platform.system_config.operate';
-const PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET = new Set([
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
-]);
+const PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET = SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET;
 const OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX = 30;
 const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
@@ -198,6 +192,44 @@ const resolveOptionalTenantMemberProfileField = (value) =>
   value === null || value === undefined
     ? null
     : value;
+const normalizeRequiredPlatformUserProfileField = ({
+  value,
+  maxLength,
+  fieldName
+} = {}) => {
+  const normalized = normalizeOptionalTenantMemberProfileField({
+    value,
+    maxLength
+  });
+  if (!normalized) {
+    throw new Error(`${fieldName} must be non-empty string within max length`);
+  }
+  return normalized;
+};
+const normalizeOptionalPlatformUserProfileField = ({
+  value,
+  maxLength,
+  fieldName
+} = {}) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`${fieldName} must be string or null`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = normalizeOptionalTenantMemberProfileField({
+    value: trimmed,
+    maxLength
+  });
+  if (!normalized) {
+    throw new Error(`${fieldName} must be valid string`);
+  }
+  return normalized;
+};
 const normalizePlatformRoleCatalogStatus = (status) => {
   const value = String(status || '').trim().toLowerCase();
   if (value === 'enabled') {
@@ -1523,16 +1555,14 @@ const normalizeStrictRoleIdFromPlatformGrantRow = (
   return normalizedRoleId;
 };
 const toPlatformPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
-  const normalizedPermissionCodeSet = new Set(
+  const snapshot = toPlatformPermissionSnapshotFromCodes(
     normalizePlatformPermissionCodes(permissionCodes)
   );
   return toPlatformPermissionSnapshot({
-    canViewMemberAdmin: normalizedPermissionCodeSet.has('platform.member_admin.view')
-      || normalizedPermissionCodeSet.has('platform.member_admin.operate'),
-    canOperateMemberAdmin: normalizedPermissionCodeSet.has('platform.member_admin.operate'),
-    canViewBilling: normalizedPermissionCodeSet.has('platform.billing.view')
-      || normalizedPermissionCodeSet.has('platform.billing.operate'),
-    canOperateBilling: normalizedPermissionCodeSet.has('platform.billing.operate')
+    canViewMemberAdmin: snapshot.canViewMemberAdmin,
+    canOperateMemberAdmin: snapshot.canOperateMemberAdmin,
+    canViewBilling: snapshot.canViewBilling,
+    canOperateBilling: snapshot.canOperateBilling
   });
 };
 const normalizeTenantPermissionCode = (permissionCode) =>
@@ -1661,16 +1691,14 @@ const normalizeStrictTenantMembershipRoleBindingIdentity = (
   return normalizedIdentity;
 };
 const toTenantPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
-  const normalizedPermissionCodeSet = new Set(
+  const snapshot = toTenantPermissionSnapshotFromCodes(
     normalizeTenantPermissionCodes(permissionCodes)
   );
   return toPlatformPermissionSnapshot({
-    canViewMemberAdmin: normalizedPermissionCodeSet.has('tenant.member_admin.view')
-      || normalizedPermissionCodeSet.has('tenant.member_admin.operate'),
-    canOperateMemberAdmin: normalizedPermissionCodeSet.has('tenant.member_admin.operate'),
-    canViewBilling: normalizedPermissionCodeSet.has('tenant.billing.view')
-      || normalizedPermissionCodeSet.has('tenant.billing.operate'),
-    canOperateBilling: normalizedPermissionCodeSet.has('tenant.billing.operate')
+    canViewMemberAdmin: snapshot.canViewMemberAdmin,
+    canOperateMemberAdmin: snapshot.canOperateMemberAdmin,
+    canViewBilling: snapshot.canViewBilling,
+    canOperateBilling: snapshot.canOperateBilling
   }, '组织权限（角色并集）');
 };
 const isSameTenantPermissionSnapshot = (left, right) =>
@@ -3323,7 +3351,11 @@ const createMySqlAuthStore = ({
       page = 1,
       pageSize = 20,
       status = null,
-      keyword = null
+      keyword = null,
+      phone = null,
+      name = null,
+      createdAtStart = null,
+      createdAtEnd = null
     } = {}) => {
       const resolvedPage = Number(page);
       const resolvedPageSize = Number(pageSize);
@@ -3353,6 +3385,43 @@ const createMySqlAuthStore = ({
       if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
         throw new Error('listPlatformUsers keyword cannot contain control chars');
       }
+      const normalizedPhone = phone === null || phone === undefined
+        ? ''
+        : String(phone).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedPhone)) {
+        throw new Error('listPlatformUsers phone cannot contain control chars');
+      }
+      const normalizedName = name === null || name === undefined
+        ? ''
+        : String(name).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedName)) {
+        throw new Error('listPlatformUsers name cannot contain control chars');
+      }
+      const normalizedCreatedAtStart = createdAtStart === null || createdAtStart === undefined
+        ? null
+        : new Date(String(createdAtStart).trim());
+      if (
+        normalizedCreatedAtStart !== null
+        && Number.isNaN(normalizedCreatedAtStart.getTime())
+      ) {
+        throw new Error('listPlatformUsers createdAtStart must be valid datetime');
+      }
+      const normalizedCreatedAtEnd = createdAtEnd === null || createdAtEnd === undefined
+        ? null
+        : new Date(String(createdAtEnd).trim());
+      if (
+        normalizedCreatedAtEnd !== null
+        && Number.isNaN(normalizedCreatedAtEnd.getTime())
+      ) {
+        throw new Error('listPlatformUsers createdAtEnd must be valid datetime');
+      }
+      if (
+        normalizedCreatedAtStart !== null
+        && normalizedCreatedAtEnd !== null
+        && normalizedCreatedAtStart.getTime() > normalizedCreatedAtEnd.getTime()
+      ) {
+        throw new Error('listPlatformUsers createdAtStart cannot be later than createdAtEnd');
+      }
 
       const whereClauses = ["da.domain = 'platform'"];
       const whereArgs = [];
@@ -3365,6 +3434,22 @@ const createMySqlAuthStore = ({
         const keywordLike = `%${normalizedKeyword}%`;
         whereArgs.push(keywordLike, keywordLike);
       }
+      if (normalizedPhone.length > 0) {
+        whereClauses.push('u.phone = ?');
+        whereArgs.push(normalizedPhone);
+      }
+      if (normalizedName.length > 0) {
+        whereClauses.push('LOWER(COALESCE(pup.name, \'\')) LIKE ?');
+        whereArgs.push(`%${escapeSqlLikePattern(normalizedName.toLowerCase())}%`);
+      }
+      if (normalizedCreatedAtStart !== null) {
+        whereClauses.push('u.created_at >= ?');
+        whereArgs.push(normalizedCreatedAtStart);
+      }
+      if (normalizedCreatedAtEnd !== null) {
+        whereClauses.push('u.created_at <= ?');
+        whereArgs.push(normalizedCreatedAtEnd);
+      }
       const whereSql = whereClauses.length > 0
         ? `WHERE ${whereClauses.join(' AND ')}`
         : '';
@@ -3375,6 +3460,8 @@ const createMySqlAuthStore = ({
           FROM users u
           INNER JOIN auth_user_domain_access da
             ON da.user_id = u.id
+          LEFT JOIN platform_user_profiles pup
+            ON pup.user_id = u.id
           ${whereSql}
         `,
         whereArgs
@@ -3386,10 +3473,15 @@ const createMySqlAuthStore = ({
         `
           SELECT u.id AS user_id,
                  u.phone AS phone,
-                 da.status AS platform_status
+                 da.status AS platform_status,
+                 pup.name AS profile_name,
+                 pup.department AS profile_department,
+                 u.created_at AS created_at
           FROM users u
           INNER JOIN auth_user_domain_access da
             ON da.user_id = u.id
+          LEFT JOIN platform_user_profiles pup
+            ON pup.user_id = u.id
           ${whereSql}
           ORDER BY u.id ASC
           LIMIT ? OFFSET ?
@@ -3402,10 +3494,291 @@ const createMySqlAuthStore = ({
         if (!VALID_PLATFORM_USER_STATUS.has(normalizedStatus)) {
           throw new Error('listPlatformUsers returned invalid platform status');
         }
+        const resolvedName = row.profile_name === null || row.profile_name === undefined
+          ? null
+          : normalizeRequiredPlatformUserProfileField({
+            value: row.profile_name,
+            maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+            fieldName: 'profile_name'
+          });
+        const resolvedDepartment = row.profile_department === null || row.profile_department === undefined
+          ? null
+          : normalizeOptionalPlatformUserProfileField({
+            value: row.profile_department,
+            maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+            fieldName: 'profile_department'
+          });
+        const resolvedCreatedAt = normalizeStoreIsoTimestamp(row.created_at);
+        if (!resolvedCreatedAt) {
+          throw new Error('listPlatformUsers returned invalid created_at');
+        }
         return {
           user_id: String(row.user_id || '').trim(),
           phone: String(row.phone || '').trim(),
-          status: normalizedStatus
+          name: resolvedName,
+          department: resolvedDepartment,
+          status: normalizedStatus,
+          created_at: resolvedCreatedAt,
+          roles: []
+        };
+      });
+
+      const listedUserIds = [...new Set(items.map((item) => item.user_id))];
+      if (listedUserIds.length > 0) {
+        const placeholders = buildSqlInPlaceholders(listedUserIds.length);
+        const roleRows = await dbClient.query(
+          `
+            SELECT upr.user_id,
+                   upr.role_id,
+                   prc.code AS role_code,
+                   prc.name AS role_name,
+                   prc.status AS role_status
+            FROM auth_user_platform_roles upr
+            LEFT JOIN platform_role_catalog prc
+              ON prc.role_id = upr.role_id
+             AND prc.scope = 'platform'
+             AND prc.tenant_id = ''
+            WHERE upr.user_id IN (${placeholders})
+              AND upr.status IN ('active', 'enabled')
+            ORDER BY upr.user_id ASC, upr.role_id ASC
+          `,
+          listedUserIds
+        );
+        const rolesByUserId = new Map();
+        for (const row of Array.isArray(roleRows) ? roleRows : []) {
+          const normalizedUserId = String(row.user_id || '').trim();
+          const normalizedRoleId = normalizePlatformRoleCatalogRoleId(row.role_id);
+          if (!normalizedUserId || !normalizedRoleId) {
+            throw new Error('listPlatformUsers returned invalid role binding');
+          }
+          const roleCode = row.role_code === null || row.role_code === undefined
+            ? null
+            : normalizeRequiredPlatformUserProfileField({
+              value: row.role_code,
+              maxLength: MAX_PLATFORM_ROLE_CODE_LENGTH,
+              fieldName: 'role_code'
+            });
+          const roleName = row.role_name === null || row.role_name === undefined
+            ? null
+            : normalizeRequiredPlatformUserProfileField({
+              value: row.role_name,
+              maxLength: MAX_PLATFORM_ROLE_NAME_LENGTH,
+              fieldName: 'role_name'
+            });
+          const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
+            row.role_status || 'disabled'
+          );
+          const roleStatus = VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedRoleStatus)
+            ? normalizedRoleStatus
+            : 'disabled';
+          const existingRoles = rolesByUserId.get(normalizedUserId) || [];
+          existingRoles.push({
+            role_id: normalizedRoleId,
+            code: roleCode,
+            name: roleName,
+            status: roleStatus
+          });
+          rolesByUserId.set(normalizedUserId, existingRoles);
+        }
+        for (const item of items) {
+          item.roles = rolesByUserId.get(item.user_id) || [];
+        }
+      }
+
+      return {
+        total,
+        items
+      };
+    },
+
+    listPlatformOrgs: async ({
+      page = 1,
+      pageSize = 20,
+      orgName = null,
+      owner = null,
+      status = null,
+      createdAtStart = null,
+      createdAtEnd = null
+    } = {}) => {
+      const resolvedPage = Number(page);
+      const resolvedPageSize = Number(pageSize);
+      if (
+        !Number.isInteger(resolvedPage)
+        || resolvedPage <= 0
+        || !Number.isInteger(resolvedPageSize)
+        || resolvedPageSize <= 0
+      ) {
+        throw new Error('listPlatformOrgs requires positive integer page and pageSize');
+      }
+
+      const normalizedOrgName = orgName === null || orgName === undefined
+        ? ''
+        : String(orgName).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedOrgName)) {
+        throw new Error('listPlatformOrgs orgName cannot contain control chars');
+      }
+
+      const normalizedOwner = owner === null || owner === undefined
+        ? ''
+        : String(owner).trim();
+      if (CONTROL_CHAR_PATTERN.test(normalizedOwner)) {
+        throw new Error('listPlatformOrgs owner cannot contain control chars');
+      }
+
+      const normalizedStatusFilter =
+        status === null || status === undefined || String(status).trim() === ''
+          ? null
+          : normalizeOrgStatus(status);
+      if (
+        normalizedStatusFilter !== null
+        && !VALID_ORG_STATUS.has(normalizedStatusFilter)
+      ) {
+        throw new Error('listPlatformOrgs status filter must be active or disabled');
+      }
+
+      const normalizedCreatedAtStart = createdAtStart === null || createdAtStart === undefined
+        ? null
+        : new Date(String(createdAtStart).trim());
+      if (
+        normalizedCreatedAtStart !== null
+        && Number.isNaN(normalizedCreatedAtStart.getTime())
+      ) {
+        throw new Error('listPlatformOrgs createdAtStart must be valid datetime');
+      }
+      const normalizedCreatedAtEnd = createdAtEnd === null || createdAtEnd === undefined
+        ? null
+        : new Date(String(createdAtEnd).trim());
+      if (
+        normalizedCreatedAtEnd !== null
+        && Number.isNaN(normalizedCreatedAtEnd.getTime())
+      ) {
+        throw new Error('listPlatformOrgs createdAtEnd must be valid datetime');
+      }
+      if (
+        normalizedCreatedAtStart !== null
+        && normalizedCreatedAtEnd !== null
+        && normalizedCreatedAtStart.getTime() > normalizedCreatedAtEnd.getTime()
+      ) {
+        throw new Error('listPlatformOrgs createdAtStart cannot be later than createdAtEnd');
+      }
+
+      const whereClauses = [];
+      const whereArgs = [];
+      if (normalizedStatusFilter !== null) {
+        whereClauses.push('o.status = ?');
+        whereArgs.push(normalizedStatusFilter);
+      }
+      if (normalizedOrgName.length > 0) {
+        whereClauses.push('LOWER(o.name) LIKE ?');
+        whereArgs.push(`%${escapeSqlLikePattern(normalizedOrgName.toLowerCase())}%`);
+      }
+      if (normalizedOwner.length > 0) {
+        whereClauses.push(
+          `(
+            u.phone = ?
+            OR EXISTS (
+              SELECT 1
+              FROM auth_user_tenants ut_owner_name
+              WHERE ut_owner_name.user_id = o.owner_user_id
+                AND LOWER(COALESCE(ut_owner_name.display_name, '')) LIKE ?
+            )
+          )`
+        );
+        whereArgs.push(
+          normalizedOwner,
+          `%${escapeSqlLikePattern(normalizedOwner.toLowerCase())}%`
+        );
+      }
+      if (normalizedCreatedAtStart !== null) {
+        whereClauses.push('o.created_at >= ?');
+        whereArgs.push(normalizedCreatedAtStart);
+      }
+      if (normalizedCreatedAtEnd !== null) {
+        whereClauses.push('o.created_at <= ?');
+        whereArgs.push(normalizedCreatedAtEnd);
+      }
+      const whereSql = whereClauses.length > 0
+        ? `WHERE ${whereClauses.join(' AND ')}`
+        : '';
+
+      const countRows = await dbClient.query(
+        `
+          SELECT COUNT(*) AS total
+          FROM orgs o
+          INNER JOIN users u
+            ON u.id = o.owner_user_id
+          ${whereSql}
+        `,
+        whereArgs
+      );
+      const total = Number(countRows?.[0]?.total || 0);
+
+      const offset = (resolvedPage - 1) * resolvedPageSize;
+      const rows = await dbClient.query(
+        `
+          SELECT o.id AS org_id,
+                 o.name AS org_name,
+                 o.status AS status,
+                 o.created_at AS created_at,
+                 u.phone AS owner_phone,
+                 (
+                   SELECT ut_owner.display_name
+                   FROM auth_user_tenants ut_owner
+                   WHERE ut_owner.user_id = o.owner_user_id
+                     AND ut_owner.display_name IS NOT NULL
+                     AND TRIM(ut_owner.display_name) <> ''
+                   ORDER BY ut_owner.joined_at DESC, ut_owner.membership_id DESC
+                   LIMIT 1
+                 ) AS owner_name
+          FROM orgs o
+          INNER JOIN users u
+            ON u.id = o.owner_user_id
+          ${whereSql}
+          ORDER BY o.id ASC
+          LIMIT ? OFFSET ?
+        `,
+        [...whereArgs, resolvedPageSize, offset]
+      );
+
+      const items = (Array.isArray(rows) ? rows : []).map((row) => {
+        const normalizedStatus = normalizeOrgStatus(row.status);
+        if (!VALID_ORG_STATUS.has(normalizedStatus)) {
+          throw new Error('listPlatformOrgs returned invalid status');
+        }
+
+        const resolvedOrgId = String(row.org_id || '').trim();
+        const resolvedOrgName = String(row.org_name || '').trim();
+        const resolvedOwnerPhone = String(row.owner_phone || '').trim();
+        const resolvedOwnerName = row.owner_name === null || row.owner_name === undefined
+          ? null
+          : String(row.owner_name).trim();
+        const resolvedCreatedAt = normalizeStoreIsoTimestamp(row.created_at);
+        if (
+          !resolvedOrgId
+          || !resolvedOrgName
+          || !resolvedOwnerPhone
+          || !resolvedCreatedAt
+        ) {
+          throw new Error('listPlatformOrgs returned invalid org record');
+        }
+        if (
+          resolvedOwnerName !== null
+          && (
+            !resolvedOwnerName
+            || resolvedOwnerName.length > MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+            || CONTROL_CHAR_PATTERN.test(resolvedOwnerName)
+          )
+        ) {
+          throw new Error('listPlatformOrgs returned invalid owner_name');
+        }
+
+        return {
+          org_id: resolvedOrgId,
+          org_name: resolvedOrgName,
+          owner_name: resolvedOwnerName,
+          owner_phone: resolvedOwnerPhone,
+          status: normalizedStatus,
+          created_at: resolvedCreatedAt
         };
       });
 
@@ -3424,10 +3797,15 @@ const createMySqlAuthStore = ({
         `
           SELECT u.id AS user_id,
                  u.phone AS phone,
-                 da.status AS platform_status
+                 da.status AS platform_status,
+                 pup.name AS profile_name,
+                 pup.department AS profile_department,
+                 u.created_at AS created_at
           FROM users u
           LEFT JOIN auth_user_domain_access da
             ON da.user_id = u.id AND da.domain = 'platform'
+          LEFT JOIN platform_user_profiles pup
+            ON pup.user_id = u.id
           WHERE u.id = ?
           LIMIT 1
         `,
@@ -3441,10 +3819,153 @@ const createMySqlAuthStore = ({
       if (!VALID_PLATFORM_USER_STATUS.has(normalizedStatus)) {
         throw new Error('getPlatformUserById returned invalid platform status');
       }
+      const resolvedName = row.profile_name === null || row.profile_name === undefined
+        ? null
+        : normalizeRequiredPlatformUserProfileField({
+          value: row.profile_name,
+          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+          fieldName: 'profile_name'
+        });
+      const resolvedDepartment = row.profile_department === null || row.profile_department === undefined
+        ? null
+        : normalizeOptionalPlatformUserProfileField({
+          value: row.profile_department,
+          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+          fieldName: 'profile_department'
+        });
+      const resolvedCreatedAt = normalizeStoreIsoTimestamp(row.created_at);
+      if (!resolvedCreatedAt) {
+        throw new Error('getPlatformUserById returned invalid created_at');
+      }
+
+      const roleRows = await dbClient.query(
+        `
+          SELECT upr.role_id,
+                 prc.code AS role_code,
+                 prc.name AS role_name,
+                 prc.status AS role_status
+          FROM auth_user_platform_roles upr
+          LEFT JOIN platform_role_catalog prc
+            ON prc.role_id = upr.role_id
+           AND prc.scope = 'platform'
+           AND prc.tenant_id = ''
+          WHERE upr.user_id = ?
+            AND upr.status IN ('active', 'enabled')
+          ORDER BY upr.role_id ASC
+        `,
+        [normalizedUserId]
+      );
+      const roles = [];
+      for (const roleRow of Array.isArray(roleRows) ? roleRows : []) {
+        const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleRow.role_id);
+        if (!normalizedRoleId) {
+          throw new Error('getPlatformUserById returned invalid role binding');
+        }
+        const roleCode = roleRow.role_code === null || roleRow.role_code === undefined
+          ? null
+          : normalizeRequiredPlatformUserProfileField({
+            value: roleRow.role_code,
+            maxLength: MAX_PLATFORM_ROLE_CODE_LENGTH,
+            fieldName: 'role_code'
+          });
+        const roleName = roleRow.role_name === null || roleRow.role_name === undefined
+          ? null
+          : normalizeRequiredPlatformUserProfileField({
+            value: roleRow.role_name,
+            maxLength: MAX_PLATFORM_ROLE_NAME_LENGTH,
+            fieldName: 'role_name'
+          });
+        const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
+          roleRow.role_status || 'disabled'
+        );
+        roles.push({
+          role_id: normalizedRoleId,
+          code: roleCode,
+          name: roleName,
+          status: VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedRoleStatus)
+            ? normalizedRoleStatus
+            : 'disabled'
+        });
+      }
+
       return {
         user_id: String(row.user_id || '').trim(),
         phone: String(row.phone || '').trim(),
-        status: normalizedStatus
+        name: resolvedName,
+        department: resolvedDepartment,
+        status: normalizedStatus,
+        created_at: resolvedCreatedAt,
+        roles
+      };
+    },
+
+    upsertPlatformUserProfile: async ({
+      userId,
+      name,
+      department = null
+    } = {}) => {
+      const normalizedUserId = String(userId || '').trim();
+      if (!normalizedUserId) {
+        throw new Error('upsertPlatformUserProfile requires userId');
+      }
+      const normalizedName = normalizeRequiredPlatformUserProfileField({
+        value: name,
+        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+        fieldName: 'name'
+      });
+      const normalizedDepartment = normalizeOptionalPlatformUserProfileField({
+        value: department,
+        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+        fieldName: 'department'
+      });
+
+      await dbClient.query(
+        `
+          INSERT INTO platform_user_profiles (
+            user_id,
+            name,
+            department
+          )
+          VALUES (?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            department = VALUES(department),
+            updated_at = CURRENT_TIMESTAMP(3)
+        `,
+        [
+          normalizedUserId,
+          normalizedName,
+          normalizedDepartment
+        ]
+      );
+
+      const rows = await dbClient.query(
+        `
+          SELECT user_id,
+                 name,
+                 department
+          FROM platform_user_profiles
+          WHERE user_id = ?
+          LIMIT 1
+        `,
+        [normalizedUserId]
+      );
+      const row = rows?.[0];
+      if (!row) {
+        throw new Error('upsertPlatformUserProfile write not applied');
+      }
+      return {
+        user_id: String(row.user_id || '').trim(),
+        name: normalizeRequiredPlatformUserProfileField({
+          value: row.name,
+          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+          fieldName: 'name'
+        }),
+        department: normalizeOptionalPlatformUserProfileField({
+          value: row.department,
+          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+          fieldName: 'department'
+        })
       };
     },
 
@@ -8431,6 +8952,7 @@ const createMySqlAuthStore = ({
     createOrganizationWithOwner: async ({
       orgId = randomUUID(),
       orgName,
+      ownerDisplayName = null,
       ownerUserId,
       operatorUserId,
       operatorSessionId = null,
@@ -8443,6 +8965,10 @@ const createMySqlAuthStore = ({
           dbClient.inTransaction(async (tx) => {
             const normalizedOrgId = String(orgId || '').trim() || randomUUID();
             const normalizedOrgName = normalizeOrgName(orgName);
+            const normalizedOwnerDisplayName = normalizeOptionalTenantMemberProfileField({
+              value: ownerDisplayName,
+              maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+            });
             const normalizedOwnerUserId = String(ownerUserId || '').trim();
             const normalizedOperatorUserId = String(operatorUserId || '').trim();
             if (
@@ -8480,6 +9006,40 @@ const createMySqlAuthStore = ({
             );
             if (Number(insertMembershipResult?.affectedRows || 0) !== 1) {
               throw new Error('org-membership-write-not-applied');
+            }
+            if (normalizedOwnerDisplayName !== null) {
+              const ownerMembershipUpsertResult = await tx.query(
+                `
+                  INSERT INTO auth_user_tenants (
+                    membership_id,
+                    user_id,
+                    tenant_id,
+                    tenant_name,
+                    status,
+                    display_name,
+                    department_name,
+                    joined_at,
+                    left_at
+                  )
+                  VALUES (?, ?, ?, ?, 'active', ?, NULL, CURRENT_TIMESTAMP(3), NULL)
+                  ON DUPLICATE KEY UPDATE
+                    tenant_name = VALUES(tenant_name),
+                    status = 'active',
+                    display_name = VALUES(display_name),
+                    left_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP(3)
+                `,
+                [
+                  randomUUID(),
+                  normalizedOwnerUserId,
+                  normalizedOrgId,
+                  normalizedOrgName,
+                  normalizedOwnerDisplayName
+                ]
+              );
+              if (Number(ownerMembershipUpsertResult?.affectedRows || 0) <= 0) {
+                throw new Error('org-owner-profile-write-not-applied');
+              }
             }
             let auditRecorded = false;
             if (auditContext && typeof auditContext === 'object') {
@@ -8631,8 +9191,8 @@ const createMySqlAuthStore = ({
         requiredPermissionCodes
       );
       const missingRequiredPermissionCodes = [
-        'tenant.member_admin.view',
-        'tenant.member_admin.operate'
+        TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+        TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
       ].filter(
         (permissionCode) =>
           !normalizedRequiredPermissionCodes.includes(permissionCode)

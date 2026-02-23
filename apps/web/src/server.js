@@ -1,8 +1,10 @@
 const http = require('node:http');
-const { existsSync, readFileSync } = require('node:fs');
-const { resolve } = require('node:path');
+const { existsSync, readFileSync, statSync } = require('node:fs');
+const { extname, posix, resolve, sep } = require('node:path');
 const { randomUUID } = require('node:crypto');
 
+const WORKSPACE_ROOT = resolve(__dirname, '../../..');
+const CLIENT_DIST_ROOT = resolve(WORKSPACE_ROOT, 'dist/apps/web/client');
 const fallbackHtml = `<!doctype html>
 <html lang="en">
   <head>
@@ -18,6 +20,33 @@ const fallbackHtml = `<!doctype html>
   </body>
 </html>`;
 
+const CONTENT_TYPE_BY_EXTENSION = Object.freeze({
+  '.avif': 'image/avif',
+  '.css': 'text/css; charset=utf-8',
+  '.gif': 'image/gif',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.webp': 'image/webp',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.xml': 'application/xml; charset=utf-8'
+});
+const IMMUTABLE_ASSET_PATTERN = /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
+const asHttpDate = (value) => new Date(value).toUTCString();
+const asWeakEtag = (stat) => `W/"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
+
 const problem = (status, title, detail, requestId) => ({
   type: 'about:blank',
   title,
@@ -26,19 +55,133 @@ const problem = (status, title, detail, requestId) => ({
   request_id: requestId
 });
 
-const readClientHtml = () => {
-  const distCandidate = resolve(process.cwd(), 'dist/apps/web/client/index.html');
-  const sourceCandidate = resolve(process.cwd(), 'apps/web/index.html');
-
-  if (existsSync(distCandidate)) {
-    return readFileSync(distCandidate, 'utf8');
+const resolveClientFile = (requestPath) => {
+  if (!existsSync(CLIENT_DIST_ROOT)) {
+    return null;
   }
 
-  if (existsSync(sourceCandidate)) {
-    return readFileSync(sourceCandidate, 'utf8');
+  let decodedPath = null;
+  try {
+    decodedPath = decodeURIComponent(String(requestPath || '/'));
+  } catch (_error) {
+    return null;
   }
 
-  return fallbackHtml;
+  if (!decodedPath.startsWith('/') || decodedPath.includes('\0') || decodedPath.includes('\\')) {
+    return null;
+  }
+
+  const segments = decodedPath.split('/');
+  if (segments.some((segment) => segment === '..')) {
+    return null;
+  }
+
+  const normalizedPath = posix.normalize(decodedPath);
+  const relativePath = normalizedPath.replace(/^\/+/, '');
+  if (!relativePath) {
+    return null;
+  }
+
+  const absolutePath = resolve(CLIENT_DIST_ROOT, relativePath);
+  const allowedPrefix = `${CLIENT_DIST_ROOT}${sep}`;
+  if (absolutePath !== CLIENT_DIST_ROOT && !absolutePath.startsWith(allowedPrefix)) {
+    return null;
+  }
+
+  if (!existsSync(absolutePath)) {
+    return null;
+  }
+
+  let fileStat = null;
+  try {
+    fileStat = statSync(absolutePath);
+    if (!fileStat.isFile()) {
+      return null;
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  return { absolutePath, relativePath, stat: fileStat };
+};
+
+const resolveContentType = (filePath) =>
+  CONTENT_TYPE_BY_EXTENSION[extname(filePath).toLowerCase()] || 'application/octet-stream';
+
+const buildFileRoute = ({
+  resolvedFile,
+  method = 'GET',
+  cacheControl = 'no-cache'
+}) => {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  const isHead = normalizedMethod === 'HEAD';
+  const stat = resolvedFile.stat;
+
+  return {
+    status: 200,
+    headers: {
+      'content-type': resolveContentType(resolvedFile.absolutePath),
+      'cache-control': cacheControl,
+      'content-length': String(stat.size),
+      etag: asWeakEtag(stat),
+      'last-modified': asHttpDate(stat.mtimeMs)
+    },
+    body: isHead ? '' : readFileSync(resolvedFile.absolutePath)
+  };
+};
+
+const buildClientShellRoute = ({
+  method = 'GET',
+  allowFallbackHtml = true
+}) => {
+  const clientIndex = resolveClientFile('/index.html');
+  if (clientIndex) {
+    return buildFileRoute({
+      resolvedFile: clientIndex,
+      method,
+      cacheControl: 'no-cache'
+    });
+  }
+
+  if (!allowFallbackHtml) {
+    return null;
+  }
+
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  const isHead = normalizedMethod === 'HEAD';
+  return {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-cache',
+      'content-length': String(Buffer.byteLength(fallbackHtml, 'utf8'))
+    },
+    body: isHead ? '' : fallbackHtml
+  };
+};
+
+const buildStaticRoute = (requestPath, method = 'GET') => {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD') {
+    return null;
+  }
+
+  const resolved = resolveClientFile(requestPath);
+  if (!resolved) {
+    return null;
+  }
+
+  const isImmutableAsset =
+    resolved.relativePath.startsWith('assets/') &&
+    IMMUTABLE_ASSET_PATTERN.test(resolved.relativePath);
+
+  return buildFileRoute({
+    resolvedFile: resolved,
+    method: normalizedMethod,
+    cacheControl: isImmutableAsset
+      ? 'public, max-age=31536000, immutable'
+      : 'no-cache'
+  });
 };
 
 const createApiTransport = ({ apiBaseUrl, apiClient }) =>
@@ -100,10 +243,29 @@ const parseRequestPath = (inputPath) => {
   }
 };
 
+const shouldServeSpaFallback = ({ method, routePath, headers }) => {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD') {
+    return false;
+  }
+
+  if (extname(routePath).length > 0) {
+    return false;
+  }
+
+  const acceptHeader = selectHeader(headers, 'accept');
+  if (typeof acceptHeader !== 'string' || acceptHeader.length === 0) {
+    return false;
+  }
+
+  return acceptHeader.includes('text/html');
+};
+
 const handleWebRoute = async (
   { pathname, method = 'GET', headers = {}, body = '' },
   { apiBaseUrl, apiClient = null }
 ) => {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
   const requestId = headers['x-request-id'] || randomUUID();
   const transport = createApiTransport({ apiBaseUrl, apiClient });
   const parsedPath = parseRequestPath(pathname);
@@ -157,9 +319,12 @@ const handleWebRoute = async (
     try {
       const apiPath = `${routePath.slice('/api'.length)}${routeQuery}`;
       const upstream = await transport(apiPath, forwardableHeaders(headers, requestId), {
-        method,
+        method: normalizedMethod,
         body:
-          typeof body === 'string' && body.length > 0 && method !== 'GET' && method !== 'HEAD'
+          typeof body === 'string' &&
+          body.length > 0 &&
+          normalizedMethod !== 'GET' &&
+          normalizedMethod !== 'HEAD'
             ? body
             : undefined
       });
@@ -190,11 +355,41 @@ const handleWebRoute = async (
     }
   }
 
-  if (routePath === '/' || routePath === '/index.html') {
+  if (
+    (routePath === '/' || routePath === '/index.html')
+    && (normalizedMethod === 'GET' || normalizedMethod === 'HEAD')
+  ) {
+    return buildClientShellRoute({
+      method: normalizedMethod,
+      allowFallbackHtml: true
+    });
+  }
+
+  const staticRoute = buildStaticRoute(routePath, normalizedMethod);
+  if (staticRoute) {
+    return staticRoute;
+  }
+
+  if (shouldServeSpaFallback({ method, routePath, headers })) {
+    const clientShellRoute = buildClientShellRoute({
+      method: normalizedMethod,
+      allowFallbackHtml: false
+    });
+    if (clientShellRoute) {
+      return clientShellRoute;
+    }
+
     return {
-      status: 200,
-      headers: { 'content-type': 'text/html; charset=utf-8' },
-      body: readClientHtml()
+      status: 503,
+      headers: { 'content-type': 'application/problem+json' },
+      body: JSON.stringify(
+        problem(
+          503,
+          'Client Build Missing',
+          'Client entrypoint index.html is missing from dist/apps/web/client',
+          requestId
+        )
+      )
     };
   }
 
@@ -226,6 +421,11 @@ const createWebServer = ({ apiBaseUrl }) =>
     for (const [name, value] of Object.entries(route.headers)) {
       res.setHeader(name, value);
     }
+    if ((req.method || 'GET').toUpperCase() === 'HEAD') {
+      res.end();
+      return;
+    }
+
     res.end(route.body);
   });
 

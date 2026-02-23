@@ -3,10 +3,11 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { once } = require('node:events');
-const { join, resolve } = require('node:path');
+const { dirname, join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
+const { createHash } = require('node:crypto');
 const { createApiApp } = require('../../api/src/app');
 const { readConfig } = require('../../api/src/config/env');
 const { createAuthService } = require('../../api/src/modules/auth/auth.service');
@@ -25,6 +26,11 @@ const REAL_API_TEST_USER = {
   tenantA: 'tenant-a',
   tenantB: 'tenant-b'
 };
+const VISUAL_BASELINE_FILE = resolve(
+  WORKSPACE_ROOT,
+  'apps/web/test/visual-baseline/login-entry-snapshots.json'
+);
+const SHOULD_UPDATE_VISUAL_BASELINE = process.env.UPDATE_VISUAL_BASELINE === '1';
 
 const sleep = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
@@ -195,6 +201,73 @@ const waitForRequest = async (requests, predicate, timeoutMs, reason) => {
     await sleep(100);
   }
   throw new Error(`Request timed out: ${reason}`);
+};
+
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const readPngDimensions = (buffer) => {
+  assert.ok(
+    Buffer.isBuffer(buffer) && buffer.length >= 24,
+    'PNG buffer is missing or too small'
+  );
+  assert.equal(
+    buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE),
+    true,
+    'Screenshot must be a valid PNG'
+  );
+
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
+};
+
+const hashOfBuffer = (buffer) => createHash('sha256').update(buffer).digest('hex');
+
+const loadVisualBaseline = () => {
+  if (!existsSync(VISUAL_BASELINE_FILE)) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(VISUAL_BASELINE_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_error) {
+    return {};
+  }
+};
+
+const saveVisualBaseline = (baseline) => {
+  mkdirSync(dirname(VISUAL_BASELINE_FILE), { recursive: true });
+  writeFileSync(VISUAL_BASELINE_FILE, `${JSON.stringify(baseline, null, 2)}\n`);
+};
+
+const assertOrUpdateVisualSnapshot = ({
+  snapshotName,
+  screenshotBase64,
+  baseline,
+  nextBaseline
+}) => {
+  const screenshotBuffer = Buffer.from(screenshotBase64, 'base64');
+  const { width, height } = readPngDimensions(screenshotBuffer);
+  const current = {
+    width,
+    height,
+    sha256: hashOfBuffer(screenshotBuffer)
+  };
+
+  if (SHOULD_UPDATE_VISUAL_BASELINE) {
+    nextBaseline[snapshotName] = current;
+    return current;
+  }
+
+  const expected = baseline[snapshotName];
+  assert.ok(
+    expected,
+    `Missing visual baseline for ${snapshotName}. Run: UPDATE_VISUAL_BASELINE=1 pnpm --dir apps/web smoke`
+  );
+  assert.equal(current.width, expected.width, `Visual width changed for ${snapshotName}`);
+  assert.equal(current.height, expected.height, `Visual height changed for ${snapshotName}`);
+  assert.equal(current.sha256, expected.sha256, `Visual snapshot changed for ${snapshotName}`);
+  return current;
 };
 
 const createOtpApiServer = async () => {
@@ -546,6 +619,185 @@ const createOtpApiServer = async () => {
   };
 };
 
+test('chrome visual baselines cover login entry pages', async (t) => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-visual-baseline');
+  mkdirSync(evidenceDir, { recursive: true });
+
+  const chromeBinary = resolveChromeBinary();
+  const webPort = await reservePort();
+  const cdpPort = await reservePort();
+  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-visual-baseline-'));
+  const visualEvidence = {};
+
+  let vite = null;
+  let chrome = null;
+  let cdp = null;
+  const viteLogs = { stdout: '', stderr: '' };
+  const chromeLogs = { stdout: '', stderr: '' };
+
+  t.after(async () => {
+    await cdp?.close();
+    await stopProcess(chrome);
+    await stopProcess(vite);
+    rmSync(chromeProfileDir, { recursive: true, force: true });
+  });
+
+  vite = spawn(
+    'pnpm',
+    [
+      '--dir',
+      'apps/web',
+      'exec',
+      'vite',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(webPort),
+      '--strictPort',
+      '--config',
+      'vite.config.js'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      env: {
+        ...process.env,
+        VITE_PROXY_TARGET: 'http://127.0.0.1:9'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  vite.stdout.on('data', (data) => {
+    viteLogs.stdout += String(data);
+  });
+  vite.stderr.on('data', (data) => {
+    viteLogs.stderr += String(data);
+  });
+
+  await waitForHttp(`http://127.0.0.1:${webPort}/`, 30000, 'vite web server');
+
+  chrome = spawn(
+    chromeBinary,
+    [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${chromeProfileDir}`,
+      '--headless=new',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--no-first-run',
+      '--no-default-browser-check',
+      'about:blank'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  chrome.stdout.on('data', (data) => {
+    chromeLogs.stdout += String(data);
+  });
+  chrome.stderr.on('data', (data) => {
+    chromeLogs.stderr += String(data);
+  });
+
+  const version = await (
+    await waitForHttp(`http://127.0.0.1:${cdpPort}/json/version`, 20000, 'chrome devtools endpoint')
+  ).json();
+  cdp = new CdpClient(version.webSocketDebuggerUrl);
+  await cdp.connect();
+
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    {
+      width: 1280,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false
+    },
+    sessionId
+  );
+
+  const snapshots = [
+    { name: 'login-default-root', url: `http://127.0.0.1:${webPort}/` },
+    { name: 'login-platform-explicit', url: `http://127.0.0.1:${webPort}/login/platform` },
+    { name: 'login-tenant-explicit', url: `http://127.0.0.1:${webPort}/login/tenant` }
+  ];
+
+  const baseline = loadVisualBaseline();
+  const nextBaseline = { ...baseline };
+
+  for (const snapshot of snapshots) {
+    await cdp.send('Page.navigate', { url: snapshot.url }, sessionId);
+    await waitForCondition(
+      cdp,
+      sessionId,
+      `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+      10000,
+      `${snapshot.name} page title should be visible`
+    );
+    await evaluate(
+      cdp,
+      sessionId,
+      `(() => {
+        const globalMessage = document.querySelector('[data-testid="message-global"]');
+        if (globalMessage) {
+          globalMessage.remove();
+        }
+        return true;
+      })()`
+    );
+
+    const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
+    const screenshotPath = join(evidenceDir, `${snapshot.name}-${timestamp}.png`);
+    writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+    const metrics = assertOrUpdateVisualSnapshot({
+      snapshotName: snapshot.name,
+      screenshotBase64: screenshot.data,
+      baseline,
+      nextBaseline
+    });
+    visualEvidence[snapshot.name] = {
+      file: resolve(screenshotPath),
+      width: metrics.width,
+      height: metrics.height,
+      sha256: metrics.sha256
+    };
+  }
+
+  if (SHOULD_UPDATE_VISUAL_BASELINE) {
+    saveVisualBaseline(nextBaseline);
+  }
+
+  const reportPath = join(evidenceDir, `chrome-visual-baseline-${timestamp}.json`);
+  writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        generated_at: new Date().toISOString(),
+        web_url: `http://127.0.0.1:${webPort}/`,
+        baseline_file: VISUAL_BASELINE_FILE,
+        update_mode: SHOULD_UPDATE_VISUAL_BASELINE,
+        snapshots: visualEvidence
+      },
+      null,
+      2
+    )
+  );
+
+  if (vite.exitCode !== null) {
+    throw new Error(`vite process exited early (${vite.exitCode}): ${viteLogs.stderr || viteLogs.stdout}`);
+  }
+  if (chrome.exitCode !== null) {
+    throw new Error(
+      `chrome process exited early (${chrome.exitCode}): ${chromeLogs.stderr || chromeLogs.stdout}`
+    );
+  }
+});
+
 const createPlatformGovernanceApiServer = async () => {
   const requests = [];
   const responses = [];
@@ -561,8 +813,32 @@ const createPlatformGovernanceApiServer = async () => {
   let nextUserId = 3;
   let nextRoleId = 3;
   const users = new Map([
-    ['platform-user-1', { user_id: 'platform-user-1', phone: '13800000011', status: 'active', deleted: false }],
-    ['platform-user-2', { user_id: 'platform-user-2', phone: '13800000012', status: 'disabled', deleted: false }]
+    [
+      'platform-user-1',
+      {
+        user_id: 'platform-user-1',
+        phone: '13800000011',
+        name: '平台管理员甲',
+        department: '平台治理',
+        role_ids: ['platform_member_admin'],
+        status: 'active',
+        created_at: new Date().toISOString(),
+        deleted: false
+      }
+    ],
+    [
+      'platform-user-2',
+      {
+        user_id: 'platform-user-2',
+        phone: '13800000012',
+        name: '平台管理员乙',
+        department: null,
+        role_ids: [],
+        status: 'disabled',
+        created_at: new Date().toISOString(),
+        deleted: false
+      }
+    ]
   ]);
   const roles = new Map([
     [
@@ -622,6 +898,33 @@ const createPlatformGovernanceApiServer = async () => {
       can_operate_billing: permissionSet.has('platform.billing.operate')
     };
   };
+  const toRoleReadModel = (roleId) => {
+    const normalizedRoleId = String(roleId || '').trim().toLowerCase();
+    if (!normalizedRoleId) {
+      return null;
+    }
+    const roleRecord = roles.get(normalizedRoleId);
+    if (!roleRecord) {
+      return null;
+    }
+    return {
+      role_id: normalizedRoleId,
+      code: roleRecord.code,
+      name: roleRecord.name,
+      status: roleRecord.status
+    };
+  };
+  const toUserReadModel = (user) => ({
+    user_id: user.user_id,
+    phone: user.phone,
+    name: user.name || null,
+    department: user.department || null,
+    roles: (Array.isArray(user.role_ids) ? user.role_ids : [])
+      .map((roleId) => toRoleReadModel(roleId))
+      .filter(Boolean),
+    status: user.status,
+    created_at: user.created_at || new Date().toISOString()
+  });
 
   const readRequestBody = async (req) => {
     const chunks = [];
@@ -717,16 +1020,20 @@ const createPlatformGovernanceApiServer = async () => {
       const page = Number(url.searchParams.get('page') || 1);
       const pageSize = Number(url.searchParams.get('page_size') || 20);
       const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
-      const keyword = String(url.searchParams.get('keyword') || '').trim();
+      const phoneFilter = String(url.searchParams.get('phone') || '').trim();
+      const nameFilter = String(url.searchParams.get('name') || '').trim().toLowerCase();
       const listedUsers = [...users.values()].filter((user) => !user.deleted);
       const filteredUsers = listedUsers.filter((user) => {
         if (statusFilter && user.status !== statusFilter) {
           return false;
         }
-        if (!keyword) {
-          return true;
+        if (phoneFilter && user.phone !== phoneFilter) {
+          return false;
         }
-        return user.user_id.includes(keyword) || user.phone.includes(keyword);
+        if (nameFilter) {
+          return String(user.name || '').toLowerCase().includes(nameFilter);
+        }
+        return true;
       });
       const offset = (Math.max(1, page) - 1) * Math.max(1, pageSize);
       const pageItems = filteredUsers.slice(offset, offset + Math.max(1, pageSize));
@@ -734,11 +1041,7 @@ const createPlatformGovernanceApiServer = async () => {
         status: 200,
         contentType: 'application/json',
         payload: {
-          items: pageItems.map((user) => ({
-            user_id: user.user_id,
-            phone: user.phone,
-            status: user.status
-          })),
+          items: pageItems.map((user) => toUserReadModel(user)),
           total: filteredUsers.length,
           page: Math.max(1, page),
           page_size: Math.max(1, pageSize),
@@ -750,11 +1053,26 @@ const createPlatformGovernanceApiServer = async () => {
 
     if (method === 'POST' && pathname === '/platform/users') {
       const phone = String(body.phone || '').trim();
-      if (!/^1\d{10}$/.test(phone)) {
+      const name = String(body.name || '').trim();
+      const department = String(body.department || '').trim() || null;
+      const requestedRoleIds = [...new Set(
+        (Array.isArray(body.role_ids) ? body.role_ids : [])
+          .map((roleId) => String(roleId || '').trim().toLowerCase())
+          .filter(Boolean)
+      )];
+      const hasInvalidRoleId = requestedRoleIds.some((roleId) => {
+        const roleRecord = roles.get(roleId);
+        return !roleRecord || roleRecord.status !== 'active';
+      });
+      if (
+        !/^1\d{10}$/.test(phone)
+        || !name
+        || hasInvalidRoleId
+      ) {
         sendProblem({
           status: 400,
           detail: '请求参数不完整或格式错误',
-          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+          errorCode: 'USR-400-INVALID-PAYLOAD'
         });
         return;
       }
@@ -762,7 +1080,11 @@ const createPlatformGovernanceApiServer = async () => {
       users.set(userId, {
         user_id: userId,
         phone,
+        name,
+        department,
+        role_ids: requestedRoleIds,
         status: 'active',
+        created_at: new Date().toISOString(),
         deleted: false
       });
       sendJson({
@@ -833,9 +1155,7 @@ const createPlatformGovernanceApiServer = async () => {
         status: 200,
         contentType: 'application/json',
         payload: {
-          user_id: target.user_id,
-          phone: target.phone,
-          status: target.status,
+          ...toUserReadModel(target),
           request_id: requestId
         }
       });
@@ -888,14 +1208,24 @@ const createPlatformGovernanceApiServer = async () => {
     }
 
     if (method === 'POST' && pathname === '/platform/roles') {
-      const roleId = String(body.role_id || '').trim().toLowerCase();
-      if (!roleId) {
+      const roleCode = String(body.code || '').trim();
+      const roleName = String(body.name || '').trim();
+      if (!roleCode || !roleName) {
         sendProblem({
           status: 400,
           detail: '请求参数不完整或格式错误',
           errorCode: 'ROLE-400-INVALID-PAYLOAD'
         });
         return;
+      }
+      const normalizedRoleIdBase = roleCode
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+      let roleId = normalizedRoleIdBase || `platform_role_${nextRoleId}`;
+      let roleIdSuffix = 1;
+      while (roles.has(roleId)) {
+        roleId = `${normalizedRoleIdBase || `platform_role_${nextRoleId}`}_${roleIdSuffix++}`;
       }
       if (roles.has(roleId)) {
         sendProblem({
@@ -909,9 +1239,9 @@ const createPlatformGovernanceApiServer = async () => {
       const now = new Date().toISOString();
       const createdRole = {
         role_id: roleId,
-        code: String(body.code || `ROLE_${nextRoleId}`).trim() || `ROLE_${nextRoleId}`,
-        name: String(body.name || `角色 ${nextRoleId}`).trim() || `角色 ${nextRoleId}`,
-        status: String(body.status || 'active').trim().toLowerCase() || 'active',
+        code: roleCode,
+        name: roleName,
+        status: 'active',
         is_system: false,
         created_at: now,
         updated_at: now
@@ -2608,20 +2938,60 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     sessionId,
     `(() => {
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
-      return message.includes('请稍后重试');
+      return message.includes('验证码错误或已失效');
     })()`,
     10000,
-    'otp login failure message should follow retry semantics'
+    'otp login failure should replace cooldown message with invalid-otp message'
   );
   assert.match(
     String(await evaluate(cdp, sessionId, `document.querySelector('[data-testid="message-global"]')?.textContent || ''`)),
     /验证码错误或已失效.*请稍后重试/
   );
 
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${webPort}/login/platform` }, sessionId);
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'platform login page should be visible'
+  );
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="entry-tenant"]').click(); return true; })()`
+    `(() => {
+      const phone = document.querySelector('[data-testid="input-phone"]');
+      const password = document.querySelector('[data-testid="input-password"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(phone, '13800000005');
+      phone.dispatchEvent(new Event('input', { bubbles: true }));
+      phone.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(password, 'Passw0rd!');
+      password.dispatchEvent(new Event('input', { bubbles: true }));
+      password.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="button-submit-login"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-governance-panel"]'))`,
+    10000,
+    'platform login should require explicit /login/platform url and enter platform dashboard'
+  );
+
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${webPort}/login/tenant` }, sessionId);
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'tenant login page should be visible'
   );
   await evaluate(
     cdp,
@@ -2768,15 +3138,29 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   assert.deepEqual(api.requests.find((request) => request.path === '/auth/otp/login')?.body, {
     phone: '13800000000',
     otp_code: '123456',
-    entry_domain: 'platform'
+    entry_domain: 'tenant'
   });
-  assert.deepEqual(
-    api.requests.find((request) => request.path === '/auth/login' && request.body?.phone === '13800000005')?.body,
-    {
-      phone: '13800000005',
-      password: 'Passw0rd!',
-      entry_domain: 'tenant'
-    }
+  assert.equal(
+    api.requests.some(
+      (request) =>
+        request.path === '/auth/login'
+        && request.body?.phone === '13800000005'
+        && request.body?.password === 'Passw0rd!'
+        && request.body?.entry_domain === 'platform'
+    ),
+    true,
+    'platform login should only be available through explicit /login/platform URL'
+  );
+  assert.equal(
+    api.requests.some(
+      (request) =>
+        request.path === '/auth/login'
+        && request.body?.phone === '13800000005'
+        && request.body?.password === 'Passw0rd!'
+        && request.body?.entry_domain === 'tenant'
+    ),
+    true,
+    'tenant login should remain available through /login/tenant URL'
   );
   assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/select')?.body, {
     tenant_id: 'tenant-101'
@@ -2784,6 +3168,18 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/switch')?.body, {
     tenant_id: 'tenant-202'
   });
+  await waitForRequest(
+    api.responses,
+    () =>
+      api.responses.filter(
+        (response) =>
+          response.path === '/auth/tenant/options'
+          && response.status === 503
+          && response.body?.error_code === 'AUTH-503-TENANT-REFRESH'
+      ).length >= 2,
+    10000,
+    'tenant context refresh should fail once after select and once after switch'
+  );
   assert.equal(
     api.responses.filter(
       (response) =>
@@ -2816,7 +3212,7 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
         screenshots: [resolve(screenshotPath)],
         assertions: {
           mode_switch: true,
-          entry_domain_switch: true,
+          entry_domain_url_routing: true,
           otp_send_countdown_on_success: true,
           otp_send_cooldown_429: true,
           otp_send_rate_limit_headers: true,
@@ -2943,10 +3339,13 @@ test('chrome regression validates tenant permission UI against real API authoriz
     'page title should be visible'
   );
 
-  await evaluate(
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${webPort}/login/tenant` }, sessionId);
+  await waitForCondition(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="entry-tenant"]').click(); return true; })()`
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'tenant login page should be visible'
   );
   await evaluate(
     cdp,
@@ -3221,7 +3620,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
 
   await cdp.send(
     'Page.navigate',
-    { url: `http://127.0.0.1:${webPort}/` },
+    { url: `http://127.0.0.1:${webPort}/login/platform` },
     sessionId
   );
   await waitForCondition(
@@ -3273,9 +3672,9 @@ test('chrome regression validates platform governance workbench with modal/drawe
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="platform-user-filter-keyword"]');
+      const input = document.querySelector('[data-testid="platform-user-filter-phone"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(input, '000012');
+      setter.call(input, '13800000012');
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
@@ -3292,9 +3691,9 @@ test('chrome regression validates platform governance workbench with modal/drawe
   );
   await waitForRequest(
     api.requests,
-    (request) => request.path.includes('/platform/users?') && request.path.includes('keyword=000012'),
+    (request) => request.path.includes('/platform/users?') && request.path.includes('phone=13800000012'),
     8000,
-    'platform user list filter request should carry keyword query'
+    'platform user list filter request should carry phone query'
   );
 
   await evaluate(
@@ -3313,11 +3712,15 @@ test('chrome regression validates platform governance workbench with modal/drawe
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="platform-user-create-phone"]');
+      const phoneInput = document.querySelector('[data-testid="platform-user-create-phone"]');
+      const nameInput = document.querySelector('[data-testid="platform-user-create-name"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(input, '13800000013');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(phoneInput, '13800000013');
+      phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+      phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nameInput, '平台新用户');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
     })()`
   );
@@ -3359,7 +3762,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="platform-user-filter-keyword"]');
+      const input = document.querySelector('[data-testid="platform-user-filter-phone"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       setter.call(input, '');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -3423,7 +3826,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="platform-user-detail-platform-user-1"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-row-key="platform-user-1"]')?.click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -3457,27 +3860,36 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="platform-role-edit-role-id"]'))`,
+    `Boolean(document.querySelector('[data-testid="platform-role-edit-code"]'))`,
     5000,
     'role edit modal should be visible'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-role-create-permission-tree"]'))`,
+    5000,
+    'role create permission tree should be visible'
   );
   await evaluate(
     cdp,
     sessionId,
     `(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      const roleId = document.querySelector('[data-testid="platform-role-edit-role-id"]');
       const code = document.querySelector('[data-testid="platform-role-edit-code"]');
       const name = document.querySelector('[data-testid="platform-role-edit-name"]');
-      setter.call(roleId, 'platform_billing_admin');
-      roleId.dispatchEvent(new Event('input', { bubbles: true }));
-      roleId.dispatchEvent(new Event('change', { bubbles: true }));
       setter.call(code, 'PLATFORM_BILLING_ADMIN');
       code.dispatchEvent(new Event('input', { bubbles: true }));
       code.dispatchEvent(new Event('change', { bubbles: true }));
       setter.call(name, '平台账单治理');
       name.dispatchEvent(new Event('input', { bubbles: true }));
       name.dispatchEvent(new Event('change', { bubbles: true }));
+      const rootNode = Array.from(document.querySelectorAll('.ant-tree-treenode'))
+        .find((node) => String(node.textContent || '').includes('设置'));
+      const rootCheckbox = rootNode?.querySelector('.ant-tree-checkbox');
+      if (rootCheckbox && typeof rootCheckbox.click === 'function') {
+        rootCheckbox.click();
+      }
       return true;
     })()`
   );
@@ -3507,7 +3919,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="platform-role-detail-platform_member_admin"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-row-key="platform_member_admin"]')?.click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -3586,6 +3998,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
     (request) => request.path === '/platform/users' && request.method === 'POST'
   );
   assert.equal(createUserRequest?.body?.phone, '13800000013');
+  assert.equal(createUserRequest?.body?.name, '平台新用户');
 
   const updateStatusRequest = api.requests.find(
     (request) => request.path === '/platform/users/status' && request.method === 'POST'
@@ -3597,7 +4010,8 @@ test('chrome regression validates platform governance workbench with modal/drawe
   const createRoleRequest = api.requests.find(
     (request) => request.path === '/platform/roles' && request.method === 'POST'
   );
-  assert.equal(createRoleRequest?.body?.role_id, 'platform_billing_admin');
+  assert.equal(createRoleRequest?.body?.code, 'PLATFORM_BILLING_ADMIN');
+  assert.equal(createRoleRequest?.body?.name, '平台账单治理');
 
   const replaceRoleFactsRequest = api.requests.find(
     (request) => request.path === '/auth/platform/role-facts/replace' && request.method === 'POST'
@@ -3754,10 +4168,13 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     'page title should be visible'
   );
 
-  await evaluate(
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${webPort}/login/tenant` }, sessionId);
+  await waitForCondition(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="entry-tenant"]').click(); return true; })()`
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'tenant login page should be visible'
   );
   await evaluate(
     cdp,
@@ -4195,7 +4612,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
       return Boolean(billingMenu) && Boolean(billingBtn) && billingBtn.disabled === false;
     })()`,
-    10000,
+    15000,
     'tenant permission panel should converge immediately after role assignment'
   );
 

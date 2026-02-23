@@ -9,6 +9,7 @@ const {
   markRoutePreauthorizedContext
 } = require('./modules/auth/route-preauthorization');
 const {
+  PLATFORM_ORG_LIST_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
@@ -2470,6 +2471,17 @@ const createRouteTable = ({
             requestId
           )
       }),
+    [PLATFORM_ORG_LIST_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.platformListOrgs(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     [PLATFORM_ORG_CREATE_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
         routeKey: PLATFORM_ORG_CREATE_ROUTE_KEY,

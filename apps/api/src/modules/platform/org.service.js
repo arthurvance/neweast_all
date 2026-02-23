@@ -5,7 +5,8 @@ const {
   resolveRoutePreauthorizedContext
 } = require('../auth/route-preauthorization');
 const {
-  PLATFORM_ORG_CREATE_PERMISSION_CODE,
+  PLATFORM_ORG_VIEW_PERMISSION_CODE,
+  PLATFORM_ORG_OPERATE_PERMISSION_CODE,
   PLATFORM_ORG_SCOPE
 } = require('./org.constants');
 
@@ -16,12 +17,30 @@ const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const WHITESPACE_PATTERN = /\s/;
 const MAX_ORG_NAME_LENGTH = 128;
 const MAX_ORG_ID_LENGTH = 64;
+const MAX_OWNER_NAME_LENGTH = 64;
+const MAX_OWNER_PHONE_LENGTH = 32;
 const MAX_STATUS_REASON_LENGTH = 256;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 const MAX_ORG_STATUS_CASCADE_COUNT = 100000;
-const CREATE_ORG_ALLOWED_FIELDS = new Set(['org_name', 'initial_owner_phone']);
+const MAX_QUERY_PAGE_SIZE = 100;
+const MAX_QUERY_ORG_NAME_LENGTH = 128;
+const MAX_QUERY_OWNER_LENGTH = 64;
+const CREATE_ORG_ALLOWED_FIELDS = new Set([
+  'org_name',
+  'initial_owner_name',
+  'initial_owner_phone'
+]);
 const UPDATE_ORG_STATUS_ALLOWED_FIELDS = new Set(['org_id', 'status', 'reason']);
 const OWNER_TRANSFER_ALLOWED_FIELDS = new Set(['org_id', 'new_owner_phone', 'reason']);
+const LIST_ORG_ALLOWED_QUERY_FIELDS = new Set([
+  'page',
+  'page_size',
+  'org_name',
+  'owner',
+  'status',
+  'created_at_start',
+  'created_at_end'
+]);
 const VALID_ORG_STATUSES = new Set(['active', 'disabled']);
 const MAX_UNKNOWN_PAYLOAD_KEYS_IN_DETAIL = 8;
 const MAX_UNKNOWN_PAYLOAD_KEY_LENGTH_IN_DETAIL = 64;
@@ -38,6 +57,43 @@ const normalizeRequiredString = (candidate) => {
     return '';
   }
   return candidate.trim();
+};
+
+const normalizeOptionalString = (candidate) => {
+  if (candidate === null || candidate === undefined) {
+    return null;
+  }
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+  const normalized = candidate.trim();
+  return normalized || null;
+};
+
+const normalizeOrgStatus = (candidate) => {
+  const normalized = String(candidate || '').trim().toLowerCase();
+  if (normalized === 'enabled') {
+    return 'active';
+  }
+  return normalized;
+};
+
+const toIsoTimestamp = (candidate) => {
+  if (candidate === null || candidate === undefined) {
+    return '';
+  }
+  if (candidate instanceof Date) {
+    return Number.isNaN(candidate.getTime()) ? '' : candidate.toISOString();
+  }
+  const normalized = String(candidate || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  const parsedDate = new Date(normalized);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+  return parsedDate.toISOString();
 };
 
 const sanitizeUnknownPayloadKeyForDetail = (key) => {
@@ -75,10 +131,13 @@ const isResolvedOperatorIdentifier = (value) => {
   return normalized.length > 0 && normalized.toLowerCase() !== 'unknown';
 };
 
-const resolveAuthorizedOperatorContext = (authorizationContext = null) => {
+const resolveAuthorizedOperatorContext = ({
+  authorizationContext = null,
+  expectedPermissionCode = PLATFORM_ORG_OPERATE_PERMISSION_CODE
+} = {}) => {
   const preauthorizedContext = resolveRoutePreauthorizedContext({
     authorizationContext,
-    expectedPermissionCode: PLATFORM_ORG_CREATE_PERMISSION_CODE,
+    expectedPermissionCode,
     expectedScope: PLATFORM_ORG_SCOPE,
     expectedEntryDomain: PLATFORM_ORG_SCOPE
   });
@@ -184,6 +243,14 @@ const orgErrors = {
       errorCode: 'ORG-400-INITIAL-OWNER-PHONE-REQUIRED'
     }),
 
+  initialOwnerNameRequired: () =>
+    orgProblem({
+      status: 400,
+      title: 'Bad Request',
+      detail: '创建组织必须提供 initial_owner_name',
+      errorCode: 'ORG-400-INITIAL-OWNER-NAME-REQUIRED'
+    }),
+
   forbidden: () =>
     orgProblem({
       status: 403,
@@ -196,7 +263,7 @@ const orgErrors = {
     orgProblem({
       status: 409,
       title: 'Conflict',
-      detail: '组织已存在或负责人关系已建立，请勿重复提交',
+      detail: '组织名称已存在，请重新输入',
       errorCode: 'ORG-409-ORG-CONFLICT',
       extensions: {
         retryable: false
@@ -332,6 +399,10 @@ const parseCreateOrgPayload = (payload) => {
   }
 
   const hasOrgName = Object.prototype.hasOwnProperty.call(payload, 'org_name');
+  const hasInitialOwnerName = Object.prototype.hasOwnProperty.call(
+    payload,
+    'initial_owner_name'
+  );
   const hasInitialOwnerPhone = Object.prototype.hasOwnProperty.call(
     payload,
     'initial_owner_phone'
@@ -343,15 +414,22 @@ const parseCreateOrgPayload = (payload) => {
   if (!hasOrgName) {
     throw orgErrors.invalidPayload('创建组织必须提供 org_name');
   }
+  if (!hasInitialOwnerName) {
+    throw orgErrors.initialOwnerNameRequired();
+  }
 
   if (typeof payload.org_name !== 'string') {
     throw orgErrors.invalidPayload('org_name 必须为字符串');
+  }
+  if (typeof payload.initial_owner_name !== 'string') {
+    throw orgErrors.invalidPayload('initial_owner_name 必须为字符串');
   }
   if (typeof payload.initial_owner_phone !== 'string') {
     throw orgErrors.invalidPayload('initial_owner_phone 格式错误');
   }
 
   const orgName = normalizeRequiredString(payload.org_name);
+  const ownerName = normalizeRequiredString(payload.initial_owner_name);
   const ownerPhoneInput = payload.initial_owner_phone;
   const ownerPhoneRaw = normalizeRequiredString(ownerPhoneInput);
 
@@ -364,11 +442,22 @@ const parseCreateOrgPayload = (payload) => {
   if (!orgName) {
     throw orgErrors.invalidPayload('创建组织必须提供 org_name');
   }
+  if (!ownerName) {
+    throw orgErrors.initialOwnerNameRequired();
+  }
   if (CONTROL_CHAR_PATTERN.test(orgName)) {
     throw orgErrors.invalidPayload('org_name 不能包含控制字符');
   }
+  if (CONTROL_CHAR_PATTERN.test(ownerName)) {
+    throw orgErrors.invalidPayload('initial_owner_name 不能包含控制字符');
+  }
   if (orgName.length > MAX_ORG_NAME_LENGTH) {
     throw orgErrors.invalidPayload(`org_name 长度不能超过 ${MAX_ORG_NAME_LENGTH}`);
+  }
+  if (ownerName.length > MAX_OWNER_NAME_LENGTH) {
+    throw orgErrors.invalidPayload(
+      `initial_owner_name 长度不能超过 ${MAX_OWNER_NAME_LENGTH}`
+    );
   }
   if (!OWNER_PHONE_PATTERN.test(ownerPhoneRaw)) {
     throw orgErrors.invalidPayload('initial_owner_phone 格式错误');
@@ -376,6 +465,7 @@ const parseCreateOrgPayload = (payload) => {
 
   return {
     orgName,
+    ownerName,
     ownerPhone: ownerPhoneRaw
   };
 };
@@ -567,6 +657,217 @@ const toNormalizedOrgStatusCascadeCount = ({
   return Math.min(value, MAX_ORG_STATUS_CASCADE_COUNT);
 };
 
+const parseStrictPositiveInteger = ({
+  value,
+  field,
+  max = Number.MAX_SAFE_INTEGER
+}) => {
+  const normalizedRaw = String(value ?? '').trim();
+  if (!/^\d+$/.test(normalizedRaw)) {
+    throw orgErrors.invalidPayload(`${field} 必须为正整数`);
+  }
+  const parsed = Number(normalizedRaw);
+  if (
+    !Number.isInteger(parsed)
+    || parsed <= 0
+    || parsed > max
+  ) {
+    throw orgErrors.invalidPayload(`${field} 必须为正整数`);
+  }
+  return parsed;
+};
+
+const parseListOrgQuery = (query) => {
+  if (!isPlainObject(query)) {
+    throw orgErrors.invalidPayload();
+  }
+  const unknownQueryKeys = Object.keys(query).filter(
+    (key) => !LIST_ORG_ALLOWED_QUERY_FIELDS.has(key)
+  );
+  if (unknownQueryKeys.length > 0) {
+    throw orgErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+
+  const page = Object.prototype.hasOwnProperty.call(query, 'page')
+    ? parseStrictPositiveInteger({
+      value: query.page,
+      field: 'page'
+    })
+    : 1;
+  const pageSize = Object.prototype.hasOwnProperty.call(query, 'page_size')
+    ? parseStrictPositiveInteger({
+      value: query.page_size,
+      field: 'page_size',
+      max: MAX_QUERY_PAGE_SIZE
+    })
+    : 20;
+
+  let orgName = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'org_name')) {
+    if (typeof query.org_name !== 'string') {
+      throw orgErrors.invalidPayload('org_name 必须为字符串');
+    }
+    const normalizedOrgName = query.org_name.trim();
+    if (CONTROL_CHAR_PATTERN.test(normalizedOrgName)) {
+      throw orgErrors.invalidPayload('org_name 不能包含控制字符');
+    }
+    if (normalizedOrgName.length > MAX_QUERY_ORG_NAME_LENGTH) {
+      throw orgErrors.invalidPayload(
+        `org_name 长度不能超过 ${MAX_QUERY_ORG_NAME_LENGTH}`
+      );
+    }
+    orgName = normalizedOrgName || null;
+  }
+
+  let owner = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'owner')) {
+    if (typeof query.owner !== 'string') {
+      throw orgErrors.invalidPayload('owner 必须为字符串');
+    }
+    const normalizedOwner = query.owner.trim();
+    if (CONTROL_CHAR_PATTERN.test(normalizedOwner)) {
+      throw orgErrors.invalidPayload('owner 不能包含控制字符');
+    }
+    if (normalizedOwner.length > MAX_QUERY_OWNER_LENGTH) {
+      throw orgErrors.invalidPayload(
+        `owner 长度不能超过 ${MAX_QUERY_OWNER_LENGTH}`
+      );
+    }
+    owner = normalizedOwner || null;
+  }
+
+  let status = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'status')) {
+    if (typeof query.status !== 'string') {
+      throw orgErrors.invalidPayload('status 必须为 active 或 disabled');
+    }
+    const normalizedStatus = normalizeOrgStatus(query.status);
+    if (!VALID_ORG_STATUSES.has(normalizedStatus)) {
+      throw orgErrors.invalidPayload('status 必须为 active 或 disabled');
+    }
+    status = normalizedStatus;
+  }
+
+  let createdAtStart = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'created_at_start')) {
+    if (typeof query.created_at_start !== 'string') {
+      throw orgErrors.invalidPayload('created_at_start 必须为字符串');
+    }
+    const normalizedCreatedAtStart = query.created_at_start.trim();
+    if (normalizedCreatedAtStart) {
+      const parsedCreatedAtStart = toIsoTimestamp(normalizedCreatedAtStart);
+      if (!parsedCreatedAtStart) {
+        throw orgErrors.invalidPayload('created_at_start 必须为合法时间');
+      }
+      createdAtStart = parsedCreatedAtStart;
+    }
+  }
+
+  let createdAtEnd = null;
+  if (Object.prototype.hasOwnProperty.call(query, 'created_at_end')) {
+    if (typeof query.created_at_end !== 'string') {
+      throw orgErrors.invalidPayload('created_at_end 必须为字符串');
+    }
+    const normalizedCreatedAtEnd = query.created_at_end.trim();
+    if (normalizedCreatedAtEnd) {
+      const parsedCreatedAtEnd = toIsoTimestamp(normalizedCreatedAtEnd);
+      if (!parsedCreatedAtEnd) {
+        throw orgErrors.invalidPayload('created_at_end 必须为合法时间');
+      }
+      createdAtEnd = parsedCreatedAtEnd;
+    }
+  }
+
+  if (
+    createdAtStart
+    && createdAtEnd
+    && new Date(createdAtStart).getTime() > new Date(createdAtEnd).getTime()
+  ) {
+    throw orgErrors.invalidPayload('created_at_start 不能晚于 created_at_end');
+  }
+
+  return {
+    page,
+    pageSize,
+    orgName,
+    owner,
+    status,
+    createdAtStart,
+    createdAtEnd
+  };
+};
+
+const normalizeOrgListItem = (candidate) => {
+  if (!isPlainObject(candidate)) {
+    throw orgErrors.dependencyUnavailable();
+  }
+
+  const orgId = normalizeRequiredString(candidate.org_id ?? candidate.orgId);
+  const orgName = normalizeRequiredString(candidate.org_name ?? candidate.orgName);
+  const ownerName = normalizeOptionalString(
+    candidate.owner_name
+      ?? candidate.ownerName
+      ?? candidate.display_name
+      ?? candidate.displayName
+  );
+  const ownerPhone = normalizeRequiredString(
+    candidate.owner_phone
+      ?? candidate.ownerPhone
+      ?? candidate.phone
+  );
+  const status = normalizeOrgStatus(candidate.status);
+  const createdAt = toIsoTimestamp(
+    candidate.created_at ?? candidate.createdAt
+  );
+
+  if (
+    !orgId
+    || orgId.length > MAX_ORG_ID_LENGTH
+    || CONTROL_CHAR_PATTERN.test(orgId)
+    || WHITESPACE_PATTERN.test(orgId)
+  ) {
+    throw orgErrors.dependencyUnavailable();
+  }
+  if (
+    !orgName
+    || orgName.length > MAX_ORG_NAME_LENGTH
+    || CONTROL_CHAR_PATTERN.test(orgName)
+  ) {
+    throw orgErrors.dependencyUnavailable();
+  }
+  if (
+    ownerName !== null
+    && (
+      ownerName.length > MAX_OWNER_NAME_LENGTH
+      || CONTROL_CHAR_PATTERN.test(ownerName)
+    )
+  ) {
+    throw orgErrors.dependencyUnavailable();
+  }
+  if (
+    !ownerPhone
+    || ownerPhone.length > MAX_OWNER_PHONE_LENGTH
+    || CONTROL_CHAR_PATTERN.test(ownerPhone)
+  ) {
+    throw orgErrors.dependencyUnavailable();
+  }
+  if (!VALID_ORG_STATUSES.has(status)) {
+    throw orgErrors.dependencyUnavailable();
+  }
+  if (!createdAt) {
+    throw orgErrors.dependencyUnavailable();
+  }
+
+  return {
+    org_id: orgId,
+    org_name: orgName,
+    owner_name: ownerName,
+    owner_phone: ownerPhone,
+    status,
+    created_at: createdAt
+  };
+};
+
 const createPlatformOrgService = ({ authService } = {}) => {
   const auditTrail = [];
   const ownerTransferLocksByOrgId = new Map();
@@ -619,6 +920,16 @@ const createPlatformOrgService = ({ authService } = {}) => {
     if (!authService || typeof authService[methodName] !== 'function') {
       throw orgErrors.dependencyUnavailable();
     }
+  };
+
+  const resolveAuthStore = () => authService?._internals?.authStore || null;
+
+  const assertAuthStoreMethod = (methodName) => {
+    const authStore = resolveAuthStore();
+    if (!authStore || typeof authStore[methodName] !== 'function') {
+      throw orgErrors.dependencyUnavailable();
+    }
+    return authStore;
   };
 
   const acquireOwnerTransferLock = async ({
@@ -782,10 +1093,14 @@ const createPlatformOrgService = ({ authService } = {}) => {
   const resolveOperatorContext = async ({
     requestId,
     accessToken,
-    authorizationContext = null
+    authorizationContext = null,
+    expectedPermissionCode = PLATFORM_ORG_OPERATE_PERMISSION_CODE
   }) => {
     const preAuthorizedOperatorContext =
-      resolveAuthorizedOperatorContext(authorizationContext);
+      resolveAuthorizedOperatorContext({
+        authorizationContext,
+        expectedPermissionCode
+      });
     let operatorUserId = preAuthorizedOperatorContext?.operatorUserId || 'unknown';
     let operatorSessionId = preAuthorizedOperatorContext?.operatorSessionId || 'unknown';
     if (!preAuthorizedOperatorContext) {
@@ -793,7 +1108,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
       const authorized = await authService.authorizeRoute({
         requestId,
         accessToken,
-        permissionCode: PLATFORM_ORG_CREATE_PERMISSION_CODE,
+        permissionCode: expectedPermissionCode,
         scope: PLATFORM_ORG_SCOPE,
         authorizationContext
       });
@@ -811,6 +1126,149 @@ const createPlatformOrgService = ({ authService } = {}) => {
     return {
       operatorUserId,
       operatorSessionId
+    };
+  };
+
+  const listOrgs = async ({
+    requestId,
+    accessToken,
+    query = {},
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    let parsedQuery;
+    try {
+      parsedQuery = parseListOrgQuery(query);
+    } catch (error) {
+      addAuditEvent({
+        type: 'org.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'query validation failed',
+        metadata: {
+          error_code: error?.errorCode || orgErrors.invalidPayload().errorCode
+        }
+      });
+      throw error;
+    }
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext,
+        expectedPermissionCode: PLATFORM_ORG_VIEW_PERMISSION_CODE
+      });
+    } catch (error) {
+      const mappedError =
+        error instanceof AuthProblemError ? error : orgErrors.forbidden();
+      addAuditEvent({
+        type: 'org.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+    const { operatorUserId } = operatorContext;
+
+    let result;
+    try {
+      const authStore = assertAuthStoreMethod('listPlatformOrgs');
+      result = await authStore.listPlatformOrgs({
+        page: parsedQuery.page,
+        pageSize: parsedQuery.pageSize,
+        orgName: parsedQuery.orgName,
+        owner: parsedQuery.owner,
+        status: parsedQuery.status,
+        createdAtStart: parsedQuery.createdAtStart,
+        createdAtEnd: parsedQuery.createdAtEnd
+      });
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'org.list.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          detail: 'organization list dependency rejected',
+          metadata: {
+            error_code: error.errorCode
+          }
+        });
+        throw error;
+      }
+      addAuditEvent({
+        type: 'org.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'organization list dependency unavailable',
+        metadata: {
+          error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw orgErrors.dependencyUnavailable();
+    }
+
+    const total = Number(result?.total);
+    if (!Array.isArray(result?.items) || !Number.isInteger(total) || total < 0) {
+      addAuditEvent({
+        type: 'org.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'organization list dependency returned invalid payload',
+        metadata: {
+          error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: 'ORG-LIST-RESULT-INVALID'
+        }
+      });
+      throw orgErrors.dependencyUnavailable();
+    }
+
+    let items;
+    try {
+      items = result.items.map((item) => normalizeOrgListItem(item));
+    } catch (_error) {
+      addAuditEvent({
+        type: 'org.list.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        detail: 'organization list dependency returned invalid item schema',
+        metadata: {
+          error_code: 'ORG-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: 'ORG-LIST-ITEM-INVALID'
+        }
+      });
+      throw orgErrors.dependencyUnavailable();
+    }
+
+    addAuditEvent({
+      type: 'org.listed',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      detail: 'organizations listed',
+      metadata: {
+        total,
+        page: parsedQuery.page,
+        page_size: parsedQuery.pageSize,
+        result_count: items.length,
+        org_name: parsedQuery.orgName,
+        owner: parsedQuery.owner,
+        status: parsedQuery.status,
+        created_at_start: parsedQuery.createdAtStart,
+        created_at_end: parsedQuery.createdAtEnd
+      }
+    });
+
+    return {
+      items,
+      total,
+      page: parsedQuery.page,
+      page_size: parsedQuery.pageSize,
+      request_id: resolvedRequestId
     };
   };
 
@@ -913,6 +1371,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
         traceparent,
         orgId,
         orgName: parsedPayload.orgName,
+        ownerDisplayName: parsedPayload.ownerName,
         ownerUserId: ownerIdentity.user_id,
         operatorUserId,
         operatorSessionId
@@ -1499,6 +1958,7 @@ const createPlatformOrgService = ({ authService } = {}) => {
   };
 
   return {
+    listOrgs,
     createOrg,
     updateOrgStatus,
     ownerTransfer,

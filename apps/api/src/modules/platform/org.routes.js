@@ -3,15 +3,19 @@ const {
   resolveRoutePreauthorizedContext
 } = require('../auth/route-preauthorization');
 const {
-  PLATFORM_ORG_CREATE_PERMISSION_CODE,
+  PLATFORM_ORG_VIEW_PERMISSION_CODE,
+  PLATFORM_ORG_OPERATE_PERMISSION_CODE,
   PLATFORM_ORG_SCOPE
 } = require('./org.constants');
 
-const hasTrustedPreauthorizedContext = (authorizationContext = null) =>
+const hasTrustedPreauthorizedContext = ({
+  authorizationContext = null,
+  expectedPermissionCode = PLATFORM_ORG_OPERATE_PERMISSION_CODE
+} = {}) =>
   Boolean(
     resolveRoutePreauthorizedContext({
       authorizationContext,
-      expectedPermissionCode: PLATFORM_ORG_CREATE_PERMISSION_CODE,
+      expectedPermissionCode,
       expectedScope: PLATFORM_ORG_SCOPE,
       expectedEntryDomain: PLATFORM_ORG_SCOPE
     })
@@ -19,9 +23,15 @@ const hasTrustedPreauthorizedContext = (authorizationContext = null) =>
 
 const resolveAccessToken = ({
   authorization,
-  authorizationContext = null
+  authorizationContext = null,
+  expectedPermissionCode = PLATFORM_ORG_OPERATE_PERMISSION_CODE
 }) => {
-  if (hasTrustedPreauthorizedContext(authorizationContext)) {
+  if (
+    hasTrustedPreauthorizedContext({
+      authorizationContext,
+      expectedPermissionCode
+    })
+  ) {
     return null;
   }
   const normalizedAuthorization = String(authorization || '').trim();
@@ -34,16 +44,33 @@ const resolveAccessToken = ({
 const createPlatformOrgHandlers = (platformOrgService) => {
   if (
     !platformOrgService
+    || typeof platformOrgService.listOrgs !== 'function'
     || typeof platformOrgService.createOrg !== 'function'
     || typeof platformOrgService.updateOrgStatus !== 'function'
     || typeof platformOrgService.ownerTransfer !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformOrgHandlers requires a platformOrgService with createOrg, updateOrgStatus and ownerTransfer'
+      'createPlatformOrgHandlers requires a platformOrgService with listOrgs, createOrg, updateOrgStatus and ownerTransfer'
     );
   }
 
   return {
+    listOrgs: async ({
+      requestId,
+      authorization,
+      query,
+      authorizationContext = null
+    }) =>
+      platformOrgService.listOrgs({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_ORG_VIEW_PERMISSION_CODE
+        }),
+        query: query || {},
+        authorizationContext
+      }),
     createOrg: async ({
       requestId,
       authorization,
@@ -55,7 +82,8 @@ const createPlatformOrgHandlers = (platformOrgService) => {
         requestId,
         accessToken: resolveAccessToken({
           authorization,
-          authorizationContext
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_ORG_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
         traceparent,
@@ -72,7 +100,8 @@ const createPlatformOrgHandlers = (platformOrgService) => {
         requestId,
         accessToken: resolveAccessToken({
           authorization,
-          authorizationContext
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_ORG_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
         traceparent,
@@ -89,7 +118,8 @@ const createPlatformOrgHandlers = (platformOrgService) => {
         requestId,
         accessToken: resolveAccessToken({
           authorization,
-          authorizationContext
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_ORG_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
         traceparent,

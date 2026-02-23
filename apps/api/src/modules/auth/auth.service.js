@@ -3,6 +3,23 @@ const { createHash, createDecipheriv, generateKeyPairSync, pbkdf2Sync, randomByt
 const { log } = require('../../common/logger');
 const { normalizeTraceparent } = require('../../common/trace-context');
 const { createInMemoryAuthStore } = require('./auth.store.memory');
+const {
+  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
+  PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
+  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+  SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET,
+  TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT,
+  ROUTE_PERMISSION_EVALUATORS,
+  ROUTE_PERMISSION_SCOPE_RULES,
+  listSupportedRoutePermissionCodes,
+  listSupportedRoutePermissionScopes,
+  listSupportedPlatformPermissionCodes,
+  listSupportedTenantPermissionCodes,
+  toPlatformPermissionSnapshotFromCodes,
+  toTenantPermissionSnapshotFromCodes
+} = require('./permission-catalog');
 
 const ACCESS_TTL_SECONDS = 15 * 60;
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -35,8 +52,8 @@ const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
 const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'TENANT_OWNER';
 const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = '组织负责人';
 const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
-  'tenant.member_admin.view',
-  'tenant.member_admin.operate'
+  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
 ]);
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
@@ -64,13 +81,7 @@ const REJECTED_SYSTEM_CONFIG_AUDIT_EVENT_TYPES = new Set([
   'auth.system_config.read.rejected',
   'auth.system_config.update.rejected'
 ]);
-const PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE = 'platform.system_config.view';
-const PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE = 'platform.system_config.operate';
-const SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET = new Set([
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
-].map((permissionCode) => permissionCode.toLowerCase()));
-const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE;
 const PLATFORM_ROLE_CATALOG_SCOPE = 'platform';
 const TENANT_ROLE_SCOPE = 'tenant';
 const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
@@ -93,55 +104,6 @@ const UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD = Symbol(
 );
 
 const DEFAULT_SEED_USERS = [];
-const ROUTE_PERMISSION_EVALUATORS = Object.freeze({
-  'tenant.context.read': () => true,
-  'tenant.context.switch': () => true,
-  'auth.session.logout': () => true,
-  'auth.session.change_password': () => true,
-  'platform.member_admin.view': ({ platformPermissionContext }) =>
-    Boolean(platformPermissionContext?.can_view_member_admin),
-  'platform.member_admin.operate': ({ platformPermissionContext }) =>
-    Boolean(platformPermissionContext?.can_view_member_admin)
-    && Boolean(platformPermissionContext?.can_operate_member_admin),
-  'platform.billing.view': ({ platformPermissionContext }) =>
-    Boolean(platformPermissionContext?.can_view_billing),
-  'platform.billing.operate': ({ platformPermissionContext }) =>
-    Boolean(platformPermissionContext?.can_view_billing)
-    && Boolean(platformPermissionContext?.can_operate_billing),
-  [PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE]: ({ platformPermissionContext }) =>
-    Boolean(platformPermissionContext?.can_view_system_config),
-  [PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE]: ({ platformPermissionContext }) =>
-    Boolean(platformPermissionContext?.can_view_system_config)
-    && Boolean(platformPermissionContext?.can_operate_system_config),
-  'tenant.member_admin.view': ({ tenantPermissionContext }) =>
-    Boolean(tenantPermissionContext?.can_view_member_admin),
-  'tenant.member_admin.operate': ({ tenantPermissionContext }) =>
-    Boolean(tenantPermissionContext?.can_view_member_admin) && Boolean(tenantPermissionContext?.can_operate_member_admin),
-  'tenant.billing.view': ({ tenantPermissionContext }) =>
-    Boolean(tenantPermissionContext?.can_view_billing),
-  'tenant.billing.operate': ({ tenantPermissionContext }) =>
-    Boolean(tenantPermissionContext?.can_view_billing) && Boolean(tenantPermissionContext?.can_operate_billing)
-});
-const ROUTE_PERMISSION_SCOPE_RULES = Object.freeze({
-  'tenant.context.read': Object.freeze(['tenant']),
-  'tenant.context.switch': Object.freeze(['tenant']),
-  'auth.session.logout': Object.freeze(['session']),
-  'auth.session.change_password': Object.freeze(['session']),
-  'platform.member_admin.view': Object.freeze(['platform']),
-  'platform.member_admin.operate': Object.freeze(['platform']),
-  'platform.billing.view': Object.freeze(['platform']),
-  'platform.billing.operate': Object.freeze(['platform']),
-  [PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE]: Object.freeze(['platform']),
-  [PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE]: Object.freeze(['platform']),
-  'tenant.member_admin.view': Object.freeze(['tenant']),
-  'tenant.member_admin.operate': Object.freeze(['tenant']),
-  'tenant.billing.view': Object.freeze(['tenant']),
-  'tenant.billing.operate': Object.freeze(['tenant'])
-});
-const TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT = new Set([
-  'tenant.context.read',
-  'tenant.context.switch'
-]);
 const hasOwnProperty = (target, key) =>
   target !== null
   && typeof target === 'object'
@@ -352,26 +314,11 @@ const isPlatformPermissionCode = (permissionCode) =>
   String(permissionCode || '').trim().startsWith('platform.');
 const isTenantPermissionCode = (permissionCode) =>
   String(permissionCode || '').trim().startsWith('tenant.');
-const listSupportedPlatformPermissionCodes = () =>
-  Object.keys(ROUTE_PERMISSION_EVALUATORS)
-    .filter((permissionCode) =>
-      isPlatformPermissionCode(permissionCode)
-      && (ROUTE_PERMISSION_SCOPE_RULES[permissionCode] || []).includes('platform')
-    )
-    .sort((left, right) => left.localeCompare(right));
 const SUPPORTED_PLATFORM_PERMISSION_CODE_SET = new Set(
   listSupportedPlatformPermissionCodes().map((permissionCode) =>
     toPlatformPermissionCodeKey(permissionCode)
   )
 );
-const listSupportedTenantPermissionCodes = () =>
-  Object.keys(ROUTE_PERMISSION_EVALUATORS)
-    .filter((permissionCode) =>
-      isTenantPermissionCode(permissionCode)
-      && (ROUTE_PERMISSION_SCOPE_RULES[permissionCode] || []).includes('tenant')
-      && !TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT.has(permissionCode)
-    )
-    .sort((left, right) => left.localeCompare(right));
 const normalizeTenantPermissionCode = (permissionCode) =>
   String(permissionCode || '').trim();
 const toTenantPermissionCodeKey = (permissionCode) =>
@@ -381,80 +328,6 @@ const SUPPORTED_TENANT_PERMISSION_CODE_SET = new Set(
     toTenantPermissionCodeKey(permissionCode)
   )
 );
-const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
-  const snapshot = {
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false,
-    canViewSystemConfig: false,
-    canOperateSystemConfig: false
-  };
-  for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
-    switch (toPlatformPermissionCodeKey(permissionCode)) {
-      case 'platform.member_admin.view':
-        snapshot.canViewMemberAdmin = true;
-        break;
-      case 'platform.member_admin.operate':
-        snapshot.canViewMemberAdmin = true;
-        snapshot.canOperateMemberAdmin = true;
-        break;
-      case 'platform.system_config.view':
-        snapshot.canViewSystemConfig = true;
-        break;
-      case 'platform.system_config.operate':
-        snapshot.canViewSystemConfig = true;
-        snapshot.canOperateSystemConfig = true;
-        break;
-      case 'platform.billing.view':
-        snapshot.canViewBilling = true;
-        break;
-      case 'platform.billing.operate':
-        snapshot.canViewBilling = true;
-        snapshot.canOperateBilling = true;
-        break;
-      default:
-        break;
-    }
-  }
-  return snapshot;
-};
-const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
-  const snapshot = {
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
-  };
-  for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
-    switch (toTenantPermissionCodeKey(permissionCode)) {
-      case 'tenant.member_admin.view':
-        snapshot.canViewMemberAdmin = true;
-        break;
-      case 'tenant.member_admin.operate':
-        snapshot.canViewMemberAdmin = true;
-        snapshot.canOperateMemberAdmin = true;
-        break;
-      case 'tenant.billing.view':
-        snapshot.canViewBilling = true;
-        break;
-      case 'tenant.billing.operate':
-        snapshot.canViewBilling = true;
-        snapshot.canOperateBilling = true;
-        break;
-      default:
-        break;
-    }
-  }
-  return snapshot;
-};
-const listSupportedRoutePermissionScopes = () =>
-  Object.fromEntries(
-    Object.entries(ROUTE_PERMISSION_SCOPE_RULES).map(([permissionCode, scopes]) => [
-      permissionCode,
-      [...scopes]
-    ])
-  );
 const normalizeSystemSensitiveConfigKey = (configKey) =>
   String(configKey || '').trim().toLowerCase();
 const normalizeSystemSensitiveConfigStatus = (status) => {
@@ -4673,6 +4546,7 @@ const createAuthService = (options = {}) => {
     traceparent = null,
     orgId = randomUUID(),
     orgName,
+    ownerDisplayName = null,
     ownerUserId,
     operatorUserId,
     operatorSessionId = null
@@ -4684,12 +4558,21 @@ const createAuthService = (options = {}) => {
     const normalizedOwnerUserId = normalizeAuditStringOrNull(ownerUserId, 64);
     const normalizedOperatorUserId = normalizeAuditStringOrNull(operatorUserId, 64);
     const normalizedOperatorSessionId = normalizeAuditStringOrNull(operatorSessionId, 128);
+    const ownerDisplayNameCandidate = ownerDisplayName === null || ownerDisplayName === undefined
+      ? null
+      : String(ownerDisplayName || '').trim();
+    const normalizedOwnerDisplayName = ownerDisplayNameCandidate
+      && ownerDisplayNameCandidate.length <= MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      && !CONTROL_CHAR_PATTERN.test(ownerDisplayNameCandidate)
+      ? ownerDisplayNameCandidate
+      : null;
     assertStoreMethod(authStore, 'createOrganizationWithOwner', 'authStore');
     let createdOrg = null;
     try {
       createdOrg = await authStore.createOrganizationWithOwner({
         orgId: normalizedOrgId,
         orgName,
+        ownerDisplayName: normalizedOwnerDisplayName,
         ownerUserId,
         operatorUserId,
         operatorSessionId: normalizedOperatorSessionId,
@@ -8574,8 +8457,8 @@ const createAuthService = (options = {}) => {
     }
 
     const permissionCode = normalizedScope === 'platform'
-      ? 'platform.member_admin.operate'
-      : 'tenant.member_admin.operate';
+      ? PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+      : TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE;
     const normalizedAuthorizedRoute =
       authorizedRoute && typeof authorizedRoute === 'object'
         ? {
@@ -9019,7 +8902,7 @@ const createAuthService = (options = {}) => {
       resolvedAuthorizedRoute = await authorizeRoute({
         requestId: input.requestId,
         accessToken: input.accessToken,
-        permissionCode: 'tenant.member_admin.operate',
+        permissionCode: TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
         scope: 'tenant',
         authorizationContext: input.authorizationContext || null
       });
@@ -9163,7 +9046,7 @@ const createAuthService = (options = {}) => {
       resolvedAuthorizedRoute = await authorizeRoute({
         requestId: normalizedRequestId,
         accessToken,
-        permissionCode: 'tenant.member_admin.operate',
+        permissionCode: TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
         scope: 'tenant',
         authorizationContext
       });
@@ -9490,7 +9373,7 @@ module.exports = {
   OTP_TTL_SECONDS,
   RATE_LIMIT_WINDOW_SECONDS,
   RATE_LIMIT_MAX_ATTEMPTS,
-  listSupportedRoutePermissionCodes: () => Object.keys(ROUTE_PERMISSION_EVALUATORS),
+  listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes,
   AuthProblemError,
   createAuthService

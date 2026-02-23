@@ -20,7 +20,7 @@ const readJsonSafely = async (response) => {
   };
 };
 
-const buildIdempotencyKey = (prefix = 'ui-platform-governance') => {
+const buildIdempotencyKey = (prefix = 'ui-platform-settings') => {
   const randomPart = Math.random().toString(16).slice(2);
   return `${prefix}-${Date.now()}-${randomPart}`;
 };
@@ -90,17 +90,68 @@ export const toProblemMessage = (error, fallback = '操作失败') => {
   return `${detail}，${RETRY_SUFFIX}`;
 };
 
-export const createPlatformGovernanceApi = ({ accessToken }) => {
+export const createPlatformSettingsApi = ({ accessToken }) => {
   const withToken = (options) => requestJson({ ...options, accessToken });
 
   return {
-    listUsers: async ({ page = 1, pageSize = 20, status = null, keyword = null } = {}) =>
+    listOrgs: async ({
+      page = 1,
+      pageSize = 20,
+      orgName = null,
+      owner = null,
+      status = null,
+      createdAtStart = null,
+      createdAtEnd = null
+    } = {}) =>
+      withToken({
+        path: `/platform/orgs${toSearch({
+          page,
+          page_size: pageSize,
+          org_name: orgName,
+          owner,
+          status,
+          created_at_start: createdAtStart,
+          created_at_end: createdAtEnd
+        })}`,
+        method: 'GET'
+      }),
+
+    createOrg: async ({
+      orgName,
+      initialOwnerName,
+      initialOwnerPhone
+    } = {}) =>
+      withToken({
+        path: '/platform/orgs',
+        method: 'POST',
+        payload: {
+          org_name: orgName,
+          initial_owner_name: initialOwnerName,
+          initial_owner_phone: initialOwnerPhone
+        },
+        idempotencyKey: buildIdempotencyKey('ui-platform-orgs-create')
+      }),
+
+    listUsers: async ({
+      page = 1,
+      pageSize = 20,
+      status = null,
+      keyword = null,
+      phone = null,
+      name = null,
+      createdAtStart = null,
+      createdAtEnd = null
+    } = {}) =>
       withToken({
         path: `/platform/users${toSearch({
           page,
           page_size: pageSize,
           status,
-          keyword
+          keyword,
+          phone,
+          name,
+          created_at_start: createdAtStart,
+          created_at_end: createdAtEnd
         })}`,
         method: 'GET'
       }),
@@ -111,12 +162,20 @@ export const createPlatformGovernanceApi = ({ accessToken }) => {
         method: 'GET'
       }),
 
-    createUser: async ({ phone }) =>
+    createUser: async ({
+      phone,
+      name,
+      department = null,
+      roleIds = []
+    }) =>
       withToken({
         path: '/platform/users',
         method: 'POST',
         payload: {
-          phone
+          phone,
+          name,
+          department,
+          role_ids: Array.isArray(roleIds) ? roleIds : []
         },
         idempotencyKey: buildIdempotencyKey('ui-platform-users-create')
       }),

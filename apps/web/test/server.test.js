@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
+const { mkdirSync, rmSync, writeFileSync } = require('node:fs');
+const { dirname, resolve } = require('node:path');
 const { handleWebRoute } = require('../src/server');
+
+const WORKSPACE_ROOT = resolve(__dirname, '../../..');
 
 test('web smoke endpoint validates web->api chain', async () => {
   const route = await handleWebRoute(
@@ -78,7 +83,96 @@ test('web root route accepts query string for invite/deeplink flows', async () =
 
   assert.equal(route.status, 200);
   assert.equal(route.headers['content-type'], 'text/html; charset=utf-8');
-  assert.match(route.body, /<!doctype html>/i);
+  assert.match(String(route.body), /<!doctype html>/i);
+});
+
+test('web serves built static assets with immutable cache headers', async () => {
+  const relativeAssetPath = `assets/unit-test-asset-${randomUUID()}-abcdefgh.js`;
+  const absoluteAssetPath = resolve(WORKSPACE_ROOT, 'dist/apps/web/client', relativeAssetPath);
+  const payload = 'console.log("asset-ok");';
+
+  mkdirSync(dirname(absoluteAssetPath), { recursive: true });
+  writeFileSync(absoluteAssetPath, payload, 'utf8');
+
+  try {
+    const route = await handleWebRoute(
+      {
+        pathname: `/${relativeAssetPath}`,
+        method: 'GET',
+        headers: { accept: '*/*' }
+      },
+      { apiBaseUrl: 'http://api' }
+    );
+
+    assert.equal(route.status, 200);
+    assert.equal(route.headers['content-type'], 'text/javascript; charset=utf-8');
+    assert.equal(route.headers['cache-control'], 'public, max-age=31536000, immutable');
+    assert.match(String(route.headers.etag || ''), /^W\/".+"$/);
+    assert.equal(typeof route.headers['last-modified'], 'string');
+    assert.equal(String(route.body), payload);
+  } finally {
+    rmSync(absoluteAssetPath, { force: true });
+  }
+});
+
+test('web supports SPA history fallback for html navigation', async () => {
+  const route = await handleWebRoute(
+    {
+      pathname: '/login',
+      method: 'GET',
+      headers: { accept: 'text/html,application/xhtml+xml' }
+    },
+    { apiBaseUrl: 'http://api' }
+  );
+
+  assert.equal(route.status, 200);
+  assert.equal(route.headers['content-type'], 'text/html; charset=utf-8');
+  assert.match(String(route.body), /<!doctype html>/i);
+});
+
+test('web does not apply SPA fallback for non-html requests', async () => {
+  const route = await handleWebRoute(
+    {
+      pathname: '/login',
+      method: 'GET',
+      headers: { accept: 'application/json' }
+    },
+    { apiBaseUrl: 'http://api' }
+  );
+
+  assert.equal(route.status, 404);
+  const body = JSON.parse(route.body);
+  assert.equal(body.status, 404);
+});
+
+test('web static route rejects path traversal attempts', async () => {
+  const route = await handleWebRoute(
+    {
+      pathname: '/assets/../secrets.txt',
+      method: 'GET',
+      headers: { accept: '*/*' }
+    },
+    { apiBaseUrl: 'http://api' }
+  );
+
+  assert.equal(route.status, 404);
+  const body = JSON.parse(route.body);
+  assert.equal(body.status, 404);
+});
+
+test('web static route rejects encoded path traversal attempts', async () => {
+  const route = await handleWebRoute(
+    {
+      pathname: '/assets/%2e%2e/secrets.txt',
+      method: 'GET',
+      headers: { accept: '*/*' }
+    },
+    { apiBaseUrl: 'http://api' }
+  );
+
+  assert.equal(route.status, 404);
+  const body = JSON.parse(route.body);
+  assert.equal(body.status, 404);
 });
 
 test('tenant mutation resolver differentiates missing tenant_options vs explicit empty list', async () => {

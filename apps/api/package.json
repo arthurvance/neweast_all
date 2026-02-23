@@ -8,6 +8,7 @@
     "build": "node ../../tools/build-api.js",
     "test": "node --test --test-force-exit test/**/*.test.js",
     "check:route-permissions": "node scripts/check-route-permissions.js",
+    "bootstrap:first-admin": "node scripts/bootstrap-first-platform-admin.js",
     "check:integration-contract-consistency": "node scripts/check-integration-contract-consistency.js",
     "check:integration-freeze-gate": "node scripts/check-integration-freeze-gate.js",
     "check:integration-release-window": "node scripts/check-integration-freeze-gate.js",
