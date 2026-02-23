@@ -1,39 +1,80 @@
+import { Empty } from 'antd';
 import { useMemo, useState } from 'react';
 import CustomLayout from '../../components/CustomLayout';
 import CustomPage from '../../components/CustomPage';
 import {
   PLATFORM_DEFAULT_MENU_KEY,
   PLATFORM_NAV_GROUP_FALLBACK,
-  PLATFORM_NAV_ITEMS,
   PLATFORM_PAGE_REGISTRY,
-  resolvePlatformMenuKey,
+  resolveFirstPlatformVisibleMenuKey,
+  resolvePlatformMenuKeyByPermission,
+  resolvePlatformNavItemsByPermission,
   resolvePlatformOpenKeys
 } from './platform-management.config';
 
-export default function PlatformManagementLayoutPage({ accessToken, onLogout }) {
+export default function PlatformManagementLayoutPage({
+  accessToken,
+  userName,
+  onLogout,
+  platformPermissionContext = null
+}) {
   const [activeMenuKey, setActiveMenuKey] = useState(PLATFORM_DEFAULT_MENU_KEY);
-  const resolvedMenuKey = resolvePlatformMenuKey(activeMenuKey);
-  const pageMeta = PLATFORM_PAGE_REGISTRY[resolvedMenuKey] || PLATFORM_PAGE_REGISTRY[PLATFORM_DEFAULT_MENU_KEY];
-  const ActivePageComponent = pageMeta.Component;
+  const firstVisibleMenuKey = useMemo(
+    () => resolveFirstPlatformVisibleMenuKey(platformPermissionContext),
+    [platformPermissionContext]
+  );
+  const hasVisiblePage = Boolean(firstVisibleMenuKey);
+  const resolvedMenuKey = resolvePlatformMenuKeyByPermission(
+    activeMenuKey,
+    platformPermissionContext
+  );
+  const pageMeta = hasVisiblePage
+    ? PLATFORM_PAGE_REGISTRY[resolvedMenuKey] || PLATFORM_PAGE_REGISTRY[firstVisibleMenuKey]
+    : null;
+  const displayPageMeta = pageMeta || {
+    title: '平台设置',
+    subTitle: '平台设置',
+    breadcrumbItems: []
+  };
+  const ActivePageComponent = pageMeta?.Component || null;
 
-  const menuItems = useMemo(() => PLATFORM_NAV_ITEMS, []);
-  const openKeys = resolvePlatformOpenKeys(resolvedMenuKey);
+  const menuItems = useMemo(
+    () => resolvePlatformNavItemsByPermission(platformPermissionContext),
+    [platformPermissionContext]
+  );
+  const openKeys = hasVisiblePage ? resolvePlatformOpenKeys(resolvedMenuKey) : [];
+  const displayUserName = String(userName || '').trim() || '-';
 
   return (
     <section data-testid="platform-governance-panel" style={{ minHeight: '100vh' }}>
       <CustomLayout
         title="平台管理"
         menuItems={menuItems}
-        selectedKeys={[resolvedMenuKey]}
+        selectedKeys={hasVisiblePage ? [resolvedMenuKey] : []}
         openKeys={openKeys}
         onMenuClick={({ key }) => {
           const nextKey = String(key || '').trim();
+          if (!nextKey) {
+            return;
+          }
           if (PLATFORM_PAGE_REGISTRY[nextKey]) {
-            setActiveMenuKey(nextKey);
+            const nextPermittedMenuKey = resolvePlatformMenuKeyByPermission(
+              nextKey,
+              platformPermissionContext
+            );
+            if (nextPermittedMenuKey) {
+              setActiveMenuKey(nextPermittedMenuKey);
+            }
             return;
           }
           if (PLATFORM_NAV_GROUP_FALLBACK[nextKey]) {
-            setActiveMenuKey(PLATFORM_NAV_GROUP_FALLBACK[nextKey]);
+            const fallbackMenuKey = resolvePlatformMenuKeyByPermission(
+              PLATFORM_NAV_GROUP_FALLBACK[nextKey],
+              platformPermissionContext
+            );
+            if (fallbackMenuKey) {
+              setActiveMenuKey(fallbackMenuKey);
+            }
           }
         }}
         onUserMenuClick={({ key }) => {
@@ -49,16 +90,29 @@ export default function PlatformManagementLayoutPage({ accessToken, onLogout }) 
           padding: 16,
           minHeight: 'calc(100vh - 88px)'
         }}
-        userInfo={{ name: '平台管理员' }}
+        userInfo={{ name: displayUserName }}
       >
         <CustomPage
-          title={pageMeta.title}
-          subTitle={pageMeta.subTitle}
-          showBreadcrumb
-          breadcrumbItems={pageMeta.breadcrumbItems}
+          title={displayPageMeta.title}
+          subTitle={displayPageMeta.subTitle}
+          showBreadcrumb={hasVisiblePage}
+          breadcrumbItems={displayPageMeta.breadcrumbItems}
           bodyStyle={{ display: 'grid', gap: 12 }}
         >
-          <ActivePageComponent accessToken={accessToken} />
+          {hasVisiblePage && ActivePageComponent ? (
+            <ActivePageComponent accessToken={accessToken} />
+          ) : (
+            <section
+              data-testid="platform-menu-empty"
+              style={{
+                minHeight: 240,
+                display: 'grid',
+                placeItems: 'center'
+              }}
+            >
+              <Empty description="当前账号暂无可访问菜单" />
+            </section>
+          )}
         </CustomPage>
       </CustomLayout>
     </section>

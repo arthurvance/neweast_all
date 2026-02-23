@@ -248,6 +248,11 @@ const asTenantOptions = (options) => {
     .filter((item) => item.tenant_id.length > 0);
 };
 
+const normalizeUserName = (value) => {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+};
+
 const clearPersistedAuthSession = () => {
   if (typeof window === 'undefined') {
     return;
@@ -278,8 +283,14 @@ const readPersistedAuthSession = () => {
       access_token: accessToken,
       session_id: rawSession?.session_id ? String(rawSession.session_id) : null,
       entry_domain: normalizeEntryDomain(rawSession?.entry_domain),
+      user_name: normalizeUserName(rawSession?.user_name),
       active_tenant_id: rawSession?.active_tenant_id ? String(rawSession.active_tenant_id).trim() : null,
       tenant_selection_required: Boolean(rawSession?.tenant_selection_required),
+      platform_permission_context:
+        rawSession?.platform_permission_context
+        && typeof rawSession.platform_permission_context === 'object'
+          ? rawSession.platform_permission_context
+          : null,
       tenant_permission_context:
         rawSession?.tenant_permission_context && typeof rawSession.tenant_permission_context === 'object'
           ? rawSession.tenant_permission_context
@@ -326,8 +337,14 @@ const persistAuthSession = ({
       access_token: accessToken,
       session_id: sessionState?.session_id ? String(sessionState.session_id) : null,
       entry_domain: normalizeEntryDomain(sessionState?.entry_domain),
+      user_name: normalizeUserName(sessionState?.user_name),
       active_tenant_id: sessionState?.active_tenant_id ? String(sessionState.active_tenant_id).trim() : null,
       tenant_selection_required: Boolean(sessionState?.tenant_selection_required),
+      platform_permission_context:
+        sessionState?.platform_permission_context
+        && typeof sessionState.platform_permission_context === 'object'
+          ? sessionState.platform_permission_context
+          : null,
       tenant_permission_context:
         sessionState?.tenant_permission_context && typeof sessionState.tenant_permission_context === 'object'
           ? sessionState.tenant_permission_context
@@ -689,6 +706,9 @@ export default function App() {
           ...(previous || {}),
           session_id: payload.session_id || previous?.session_id || null,
           entry_domain: payload.entry_domain,
+          user_name: Object.prototype.hasOwnProperty.call(payload, 'user_name')
+            ? normalizeUserName(payload.user_name)
+            : normalizeUserName(previous?.user_name),
           active_tenant_id: payload.active_tenant_id,
           tenant_selection_required: Boolean(payload.tenant_selection_required),
           tenant_permission_context: payload.tenant_permission_context || null
@@ -816,8 +836,10 @@ export default function App() {
         access_token: payload.access_token,
         session_id: payload.session_id,
         entry_domain: payload.entry_domain,
+        user_name: normalizeUserName(payload.user_name),
         active_tenant_id: payload.active_tenant_id,
         tenant_selection_required: Boolean(payload.tenant_selection_required),
+        platform_permission_context: payload.platform_permission_context || null,
         tenant_permission_context: payload.tenant_permission_context || null
       };
 
@@ -1248,6 +1270,8 @@ export default function App() {
         sessionState?.entry_domain === 'platform' ? (
           <PlatformManagementLayoutPage
             accessToken={sessionState?.access_token}
+            userName={sessionState?.user_name}
+            platformPermissionContext={sessionState?.platform_permission_context || null}
             onLogout={handleLogout}
           />
         ) : (

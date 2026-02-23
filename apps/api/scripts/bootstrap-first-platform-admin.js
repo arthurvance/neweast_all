@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const { randomBytes, pbkdf2Sync, randomUUID } = require('node:crypto');
+const { existsSync, readFileSync } = require('node:fs');
 const { readConfig } = require('../src/config/env');
 const { connectMySql } = require('../src/infrastructure/mysql-client');
 const { log } = require('../src/common/logger');
@@ -101,6 +102,32 @@ const printHelp = () => {
 const toBool = (value) => {
   const normalized = normalizeNonEmptyText(value).toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
+};
+
+const isContainerRuntime = () => {
+  if (existsSync('/.dockerenv')) {
+    return true;
+  }
+  try {
+    const cgroup = readFileSync('/proc/1/cgroup', 'utf8');
+    return /docker|containerd|kubepods|podman/i.test(cgroup);
+  } catch (_error) {
+    return false;
+  }
+};
+
+const resolveBootstrapDbHost = (configuredHost) => {
+  const normalizedHost = normalizeNonEmptyText(configuredHost).toLowerCase();
+  if (!normalizedHost) {
+    return '127.0.0.1';
+  }
+
+  const containerAliasHosts = new Set(['mysql', 'mariadb', 'db']);
+  if (!isContainerRuntime() && containerAliasHosts.has(normalizedHost)) {
+    return '127.0.0.1';
+  }
+
+  return configuredHost;
 };
 
 const loadSysAdminPermissionFlags = async (queryClient) => {
@@ -289,8 +316,16 @@ const run = async () => {
   assertPassword(resolvedPassword);
 
   const config = readConfig();
+  const resolvedDbHost = resolveBootstrapDbHost(config.DB_HOST);
+  if (resolvedDbHost !== config.DB_HOST) {
+    log('info', 'Bootstrap first platform admin remapped DB host for local execution', {
+      request_id: `bootstrap-first-admin-${randomUUID()}`,
+      configured_db_host: config.DB_HOST,
+      resolved_db_host: resolvedDbHost
+    });
+  }
   const dbClient = await connectMySql({
-    host: config.DB_HOST,
+    host: resolvedDbHost,
     port: config.DB_PORT,
     user: config.DB_USER,
     password: config.DB_PASSWORD,

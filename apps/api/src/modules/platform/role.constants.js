@@ -9,8 +9,8 @@ const PLATFORM_ROLE_DELETE_ROUTE_KEY = 'DELETE /platform/roles/:role_id';
 const PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY = 'GET /platform/roles/:role_id/permissions';
 const PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY = 'PUT /platform/roles/:role_id/permissions';
 
-const PLATFORM_ROLE_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
-const PLATFORM_ROLE_OPERATE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_ROLE_VIEW_PERMISSION_CODE = 'platform.system_config.view';
+const PLATFORM_ROLE_OPERATE_PERMISSION_CODE = 'platform.system_config.operate';
 const PLATFORM_ROLE_SCOPE = 'platform';
 
 const PROTECTED_PLATFORM_ROLE_IDS = Object.freeze(['sys_admin']);

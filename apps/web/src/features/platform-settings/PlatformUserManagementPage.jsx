@@ -99,6 +99,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
   const [userStatusModalOpen, setUserStatusModalOpen] = useState(false);
   const [userStatusModalSubmitting, setUserStatusModalSubmitting] = useState(false);
   const [userStatusActionTarget, setUserStatusActionTarget] = useState(null);
+  const [statusActionSubmittingByUserId, setStatusActionSubmittingByUserId] = useState({});
   const [userDetailOpen, setUserDetailOpen] = useState(false);
   const [userDetailLoading, setUserDetailLoading] = useState(false);
   const [userDetail, setUserDetail] = useState(null);
@@ -229,7 +230,6 @@ export default function PlatformUserManagementPage({ accessToken }) {
       setUserModalOpen(false);
       createUserForm.resetFields();
       refreshUserTable();
-      void openUserDetail(payload.user_id, latestAction);
     } catch (error) {
       if (error?.errorFields) {
         return;
@@ -238,17 +238,25 @@ export default function PlatformUserManagementPage({ accessToken }) {
     } finally {
       setUserModalSubmitting(false);
     }
-  }, [api, createUserForm, notify, openUserDetail, refreshUserTable, withErrorNotice]);
+  }, [api, createUserForm, notify, refreshUserTable, withErrorNotice]);
 
   const handleSubmitStatusAction = useCallback(async () => {
     if (!userStatusActionTarget) {
       return;
     }
+    const normalizedUserId = String(userStatusActionTarget.user_id || '').trim();
+    if (!normalizedUserId) {
+      return;
+    }
     try {
       const values = await statusActionForm.validateFields();
+      setStatusActionSubmittingByUserId((previous) => ({
+        ...previous,
+        [normalizedUserId]: true
+      }));
       setUserStatusModalSubmitting(true);
       const payload = await api.updateUserStatus({
-        user_id: userStatusActionTarget.user_id,
+        user_id: normalizedUserId,
         status: statusToggleValue(userStatusActionTarget.status),
         reason: values.reason || null
       });
@@ -263,7 +271,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
       }));
       notify({
         type: 'success',
-        text: `用户状态更新成功（request_id: ${payload.request_id}）`
+        text: '操作成功'
       });
       setUserStatusModalOpen(false);
       setUserStatusActionTarget(null);
@@ -276,6 +284,10 @@ export default function PlatformUserManagementPage({ accessToken }) {
       }
       withErrorNotice(error, '更新用户状态失败');
     } finally {
+      setStatusActionSubmittingByUserId((previous) => ({
+        ...previous,
+        [normalizedUserId]: false
+      }));
       setUserStatusModalSubmitting(false);
     }
   }, [
@@ -287,6 +299,59 @@ export default function PlatformUserManagementPage({ accessToken }) {
     userStatusActionTarget,
     withErrorNotice
   ]);
+
+  const handleDirectToggleUserStatus = useCallback(
+    async (record) => {
+      const normalizedUserId = String(record?.user_id || '').trim();
+      if (!normalizedUserId) {
+        return;
+      }
+      if (statusActionSubmittingByUserId[normalizedUserId]) {
+        return;
+      }
+
+      try {
+        setStatusActionSubmittingByUserId((previous) => ({
+          ...previous,
+          [normalizedUserId]: true
+        }));
+        const targetStatus = statusToggleValue(record?.status);
+        const payload = await api.updateUserStatus({
+          user_id: normalizedUserId,
+          status: targetStatus,
+          reason: null
+        });
+        const latestAction = {
+          action: 'status',
+          request_id: payload.request_id,
+          result: `${payload.previous_status} -> ${payload.current_status}`
+        };
+        setLatestUserActionById((previous) => ({
+          ...previous,
+          [payload.user_id]: latestAction
+        }));
+        notify({
+          type: 'success',
+          text: '操作成功'
+        });
+        refreshUserTable();
+      } catch (error) {
+        withErrorNotice(error, '更新用户状态失败');
+      } finally {
+        setStatusActionSubmittingByUserId((previous) => ({
+          ...previous,
+          [normalizedUserId]: false
+        }));
+      }
+    },
+    [
+      api,
+      notify,
+      refreshUserTable,
+      statusActionSubmittingByUserId,
+      withErrorNotice
+    ]
+  );
 
   const handleSoftDeleteUser = useCallback(
     async (userId) => {
@@ -341,6 +406,23 @@ export default function PlatformUserManagementPage({ accessToken }) {
       userFilters.phone,
       userFilters.status,
       userTableRefreshToken
+    ]
+  );
+  const userTableQueryKey = useMemo(
+    () =>
+      [
+        userFilters.phone,
+        userFilters.name,
+        userFilters.status,
+        userFilters.created_at_start,
+        userFilters.created_at_end
+      ].join('|'),
+    [
+      userFilters.created_at_end,
+      userFilters.created_at_start,
+      userFilters.name,
+      userFilters.phone,
+      userFilters.status
     ]
   );
 
@@ -422,7 +504,14 @@ export default function PlatformUserManagementPage({ accessToken }) {
         title: '操作',
         key: 'actions',
         render: (_value, record) => (
-          <Space>
+          <Space
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
+          >
             <Button
               data-testid={`platform-user-edit-${record.user_id}`}
               size="small"
@@ -438,9 +527,10 @@ export default function PlatformUserManagementPage({ accessToken }) {
               data-testid={`platform-user-status-${record.user_id}`}
               size="small"
               type="link"
+              loading={Boolean(statusActionSubmittingByUserId[record.user_id])}
               onClick={(event) => {
                 event.stopPropagation();
-                openStatusActionModal(record);
+                void handleDirectToggleUserStatus(record);
               }}
             >
               {statusToggleLabel(record.status)}
@@ -448,8 +538,12 @@ export default function PlatformUserManagementPage({ accessToken }) {
             {isDisabledStatus(record.status) ? (
               <Popconfirm
                 title="确认删除该平台用户吗？"
-                onConfirm={() => {
+                onConfirm={(event) => {
+                  event?.stopPropagation?.();
                   void handleSoftDeleteUser(record.user_id);
+                }}
+                onCancel={(event) => {
+                  event?.stopPropagation?.();
                 }}
               >
                 <Button
@@ -469,7 +563,12 @@ export default function PlatformUserManagementPage({ accessToken }) {
         )
       }
     ],
-    [handleSoftDeleteUser, openEditUser, openStatusActionModal]
+    [
+      handleDirectToggleUserStatus,
+      handleSoftDeleteUser,
+      openEditUser,
+      statusActionSubmittingByUserId
+    ]
   );
 
   if (!accessToken) {
@@ -541,6 +640,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
         </CustomFilter>
 
         <CustomCardTable
+          key={userTableQueryKey}
           title="平台用户列表"
           rowKey="user_id"
           columns={userColumns}

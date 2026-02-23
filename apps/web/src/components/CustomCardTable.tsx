@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Table, theme, type TableProps } from 'antd';
 import type { ColumnType, ColumnsType } from 'antd/es/table';
@@ -37,16 +37,28 @@ export default function CustomCardTable<T extends object>({
     const [tableData, setTableData] = useState<T[]>([]);
     const [total, setTotal] = useState(0);
     const [pageParams, setPageParams] = useState({ current: 1, pageSize: DEFAULT_PAGE_SIZE });
+    const requestSequenceRef = useRef(0);
 
     const fetchData = useCallback(async () => {
         if (!request) return;
+        const requestSequence = requestSequenceRef.current + 1;
+        requestSequenceRef.current = requestSequence;
         setInternalLoading(true);
         try {
             const response = await request({ current: pageParams.current, pageSize: pageParams.pageSize });
+            if (requestSequence !== requestSequenceRef.current) {
+                return;
+            }
             setTableData(response.data);
             setTotal(response.total);
+        } catch (_error) {
+            if (requestSequence !== requestSequenceRef.current) {
+                return;
+            }
         } finally {
-            setInternalLoading(false);
+            if (requestSequence === requestSequenceRef.current) {
+                setInternalLoading(false);
+            }
         }
     }, [pageParams.current, pageParams.pageSize, request]);
 

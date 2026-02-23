@@ -224,6 +224,7 @@ const CustomLayout: React.FC<CustomLayoutProps> = ({
   const renderRightContent = (isDark: boolean = false) => {
     if (rightContentRender) return rightContentRender();
     const avatarSrc = userInfo.avatar?.trim();
+    const displayUserName = String(userInfo?.name || '').trim() || '-';
 
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: headerHeight }}>
@@ -252,7 +253,12 @@ const CustomLayout: React.FC<CustomLayoutProps> = ({
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer' }}>
             <Avatar size="small" src={avatarSrc || undefined} icon={!avatarSrc && <UserOutlined />} />
-            <Text style={isDark ? { color: 'rgba(255, 255, 255, 0.85)' } : undefined}>{userInfo.name}</Text>
+            <Text
+              data-testid="layout-user-name"
+              style={isDark ? { color: 'rgba(255, 255, 255, 0.85)' } : undefined}
+            >
+              {displayUserName}
+            </Text>
             <DownOutlined style={{ fontSize: 12, color: isDark ? 'rgba(255, 255, 255, 0.65)' : undefined }} />
           </span>
         </Dropdown>

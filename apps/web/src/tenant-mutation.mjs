@@ -1,6 +1,10 @@
 const normalizeTenantId = (value) => String(value || '').trim();
 const normalizeSessionField = (value) => String(value || '').trim();
 const normalizeSessionBindingValue = (value) => String(value || '').trim();
+const normalizeUserName = (value) => {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+};
 const asNullableObject = (value) =>
   value && typeof value === 'object' ? value : null;
 const asObjectOrEmpty = (value) =>
@@ -188,12 +192,16 @@ export const resolveTenantMutationSessionState = ({
   const nextSessionId = normalizeSessionField(normalizedPayload.session_id);
   const nextEntryDomain = normalizeSessionField(normalizedPayload.entry_domain);
   const normalizedActiveTenantId = normalizeTenantId(nextActiveTenantId);
+  const hasUserNameField = Object.prototype.hasOwnProperty.call(normalizedPayload, 'user_name');
 
   return {
     ...previous,
     access_token: nextAccessToken || previous.access_token || null,
     session_id: nextSessionId || previous.session_id || null,
     entry_domain: nextEntryDomain || previous.entry_domain || 'tenant',
+    user_name: hasUserNameField
+      ? normalizeUserName(normalizedPayload.user_name)
+      : normalizeUserName(previous.user_name),
     active_tenant_id: normalizedActiveTenantId || null,
     tenant_selection_required: Boolean(normalizedPayload.tenant_selection_required),
     tenant_permission_context: nextTenantPermissionContext

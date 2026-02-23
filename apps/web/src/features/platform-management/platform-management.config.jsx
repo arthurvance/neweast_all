@@ -12,7 +12,14 @@ const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ORG_MENU_KEY = 'settings/orgs';
 const ROLE_MENU_KEY = 'settings/roles';
-const SETTINGS_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
+const USER_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
+const ROLE_VIEW_PERMISSION_CODE = 'platform.system_config.view';
+const ORG_VIEW_PERMISSION_CODE = 'platform.billing.view';
+const PLATFORM_MENU_ORDER = Object.freeze([
+  USER_MENU_KEY,
+  ROLE_MENU_KEY,
+  ORG_MENU_KEY
+]);
 
 export const PLATFORM_DEFAULT_MENU_KEY = USER_MENU_KEY;
 
@@ -21,15 +28,48 @@ export const PLATFORM_NAV_GROUP_FALLBACK = Object.freeze({
 });
 
 export const PLATFORM_MENU_PERMISSION_REGISTRY = Object.freeze({
-  [SETTINGS_MENU_KEY]: SETTINGS_VIEW_PERMISSION_CODE,
-  [USER_MENU_KEY]: SETTINGS_VIEW_PERMISSION_CODE,
-  [ROLE_MENU_KEY]: SETTINGS_VIEW_PERMISSION_CODE,
-  [ORG_MENU_KEY]: SETTINGS_VIEW_PERMISSION_CODE
+  [SETTINGS_MENU_KEY]: '',
+  [USER_MENU_KEY]: USER_VIEW_PERMISSION_CODE,
+  [ROLE_MENU_KEY]: ROLE_VIEW_PERMISSION_CODE,
+  [ORG_MENU_KEY]: ORG_VIEW_PERMISSION_CODE
+});
+
+const PLATFORM_PERMISSION_FLAG_REGISTRY = Object.freeze({
+  [USER_VIEW_PERMISSION_CODE]: Object.freeze([
+    'can_view_member_admin',
+    'canViewMemberAdmin',
+    'can_operate_member_admin',
+    'canOperateMemberAdmin'
+  ]),
+  [ROLE_VIEW_PERMISSION_CODE]: Object.freeze([
+    'can_view_system_config',
+    'canViewSystemConfig',
+    'can_operate_system_config',
+    'canOperateSystemConfig'
+  ]),
+  [ORG_VIEW_PERMISSION_CODE]: Object.freeze([
+    'can_view_billing',
+    'canViewBilling',
+    'can_operate_billing',
+    'canOperateBilling'
+  ])
 });
 
 export const resolvePlatformMenuPermissionCode = (menuKey) => {
   const normalizedKey = String(menuKey || '').trim();
   return PLATFORM_MENU_PERMISSION_REGISTRY[normalizedKey] || '';
+};
+
+export const hasPlatformMenuAccess = ({ menuKey, permissionContext = null }) => {
+  const permissionCode = resolvePlatformMenuPermissionCode(menuKey);
+  if (!permissionCode) {
+    return true;
+  }
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return false;
+  }
+  const permissionFlagNames = PLATFORM_PERMISSION_FLAG_REGISTRY[permissionCode] || [];
+  return permissionFlagNames.some((flagName) => Boolean(permissionContext?.[flagName]));
 };
 
 export const PLATFORM_NAV_ITEMS = [
@@ -101,6 +141,61 @@ export const resolvePlatformMenuKey = (menuKey) => {
   }
   return PLATFORM_DEFAULT_MENU_KEY;
 };
+
+export const resolvePlatformVisiblePageKeys = (permissionContext = null) =>
+  PLATFORM_MENU_ORDER.filter((menuKey) =>
+    hasPlatformMenuAccess({
+      menuKey,
+      permissionContext
+    })
+  );
+
+export const resolveFirstPlatformVisibleMenuKey = (permissionContext = null) =>
+  resolvePlatformVisiblePageKeys(permissionContext)[0] || '';
+
+export const resolvePlatformMenuKeyByPermission = (menuKey, permissionContext = null) => {
+  const normalizedMenuKey = resolvePlatformMenuKey(menuKey);
+  if (
+    hasPlatformMenuAccess({
+      menuKey: normalizedMenuKey,
+      permissionContext
+    })
+  ) {
+    return normalizedMenuKey;
+  }
+  return resolveFirstPlatformVisibleMenuKey(permissionContext);
+};
+
+export const resolvePlatformNavItemsByPermission = (permissionContext = null) =>
+  PLATFORM_NAV_ITEMS
+    .map((item) => {
+      const children = Array.isArray(item?.children) ? item.children : [];
+      if (children.length > 0) {
+        const visibleChildren = children.filter((child) =>
+          hasPlatformMenuAccess({
+            menuKey: child?.key,
+            permissionContext
+          })
+        );
+        if (visibleChildren.length < 1) {
+          return null;
+        }
+        return {
+          ...item,
+          children: visibleChildren
+        };
+      }
+      if (
+        hasPlatformMenuAccess({
+          menuKey: item?.key,
+          permissionContext
+        })
+      ) {
+        return item;
+      }
+      return null;
+    })
+    .filter(Boolean);
 
 export const resolvePlatformOpenKeys = (menuKey) => {
   const normalizedKey = String(menuKey || '').trim();

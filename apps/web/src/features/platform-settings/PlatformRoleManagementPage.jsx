@@ -25,14 +25,6 @@ import {
 
 const { Text } = Typography;
 
-const EMPTY_PERMISSION_CONTEXT = Object.freeze({
-  scope_label: '平台权限（待同步）',
-  can_view_member_admin: false,
-  can_operate_member_admin: false,
-  can_view_billing: false,
-  can_operate_billing: false
-});
-
 const ROLE_STATUS_SELECT_OPTIONS = [
   { label: '全部', value: '' },
   { label: '启用', value: 'active' },
@@ -145,17 +137,6 @@ const toPermissionTreeData = (availablePermissionCodes = []) => {
   ];
 };
 
-const normalizeRoleIds = (rawRoleIds = []) => {
-  const deduped = new Set();
-  for (const roleId of Array.isArray(rawRoleIds) ? rawRoleIds : []) {
-    const normalizedRoleId = String(roleId || '').trim().toLowerCase();
-    if (normalizedRoleId) {
-      deduped.add(normalizedRoleId);
-    }
-  }
-  return [...deduped];
-};
-
 const statusToggleLabel = (status) => (status === 'active' ? '禁用' : '启用');
 const statusToggleValue = (status) => (status === 'active' ? 'disabled' : 'active');
 const isDisabledStatus = (status) => String(status || '').trim().toLowerCase() === 'disabled';
@@ -197,7 +178,6 @@ export default function PlatformRoleManagementPage({ accessToken }) {
 
   const [roleFilterForm] = Form.useForm();
   const [roleEditForm] = Form.useForm();
-  const [assignRoleForm] = Form.useForm();
 
   const [roleFilters, setRoleFilters] = useState({
     code: '',
@@ -222,11 +202,6 @@ export default function PlatformRoleManagementPage({ accessToken }) {
   const [permissionCodesChecked, setPermissionCodesChecked] = useState([]);
   const [permissionLoading, setPermissionLoading] = useState(false);
   const [permissionSaving, setPermissionSaving] = useState(false);
-
-  const [assigningRoleFacts, setAssigningRoleFacts] = useState(false);
-  const [platformPermissionContext, setPlatformPermissionContext] = useState(
-    EMPTY_PERMISSION_CONTEXT
-  );
 
   const notify = useCallback(
     ({ type = 'success', text = '' }) => {
@@ -544,49 +519,6 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     }
   }, [api, notify, permissionCodesChecked, roleDetail, withErrorNotice]);
 
-  const handleReplaceRoleFacts = useCallback(async () => {
-    try {
-      const values = await assignRoleForm.validateFields();
-      const normalizedRoleIds = normalizeRoleIds(
-        String(values.role_ids_text || '')
-          .split(',')
-          .map((value) => String(value || '').trim())
-      );
-      if (normalizedRoleIds.length < 1 || normalizedRoleIds.length > 5) {
-        notify({
-          type: 'error',
-          text: '角色分配必须为 1 到 5 个角色，请稍后重试'
-        });
-        return;
-      }
-
-      setAssigningRoleFacts(true);
-      const payload = await api.replaceRoleFacts({
-        userId: values.user_id,
-        roleIds: normalizedRoleIds
-      });
-      const context = payload.platform_permission_context || EMPTY_PERMISSION_CONTEXT;
-      setPlatformPermissionContext({
-        ...EMPTY_PERMISSION_CONTEXT,
-        ...context
-      });
-      notify({
-        type: 'success',
-        text: `角色分配已生效（request_id: ${payload.request_id}）`
-      });
-      assignRoleForm.setFieldsValue({
-        role_ids_text: normalizedRoleIds.join(',')
-      });
-    } catch (error) {
-      if (error?.errorFields) {
-        return;
-      }
-      withErrorNotice(error, '平台角色分配失败');
-    } finally {
-      setAssigningRoleFacts(false);
-    }
-  }, [api, assignRoleForm, notify, withErrorNotice]);
-
   const roleColumns = useMemo(
     () => [
       {
@@ -773,105 +705,6 @@ export default function PlatformRoleManagementPage({ accessToken }) {
             </Button>
           )}
         />
-
-        <CustomForm
-          form={assignRoleForm}
-          title="平台角色分配（1-5）"
-          layout="vertical"
-          submitter={{
-            align: 'left',
-            searchConfig: {
-              submitText: assigningRoleFacts ? '提交中...' : '保存角色分配',
-              resetText: '重置'
-            },
-            submitButtonProps: {
-              disabled: assigningRoleFacts,
-              'data-testid': 'platform-role-facts-submit'
-            },
-            resetButtonProps: {
-              disabled: assigningRoleFacts
-            }
-          }}
-          onFinish={() => {
-            void handleReplaceRoleFacts();
-          }}
-          onReset={() => {
-            assignRoleForm.resetFields();
-          }}
-        >
-          <CustomForm.Item
-            label="目标 user_id"
-            name="user_id"
-            rules={[{ required: true, message: '请输入目标 user_id' }]}
-          >
-            <Input data-testid="platform-role-facts-user-id" placeholder="platform-user-id" />
-          </CustomForm.Item>
-          <CustomForm.Item
-            label="角色列表（逗号分隔 role_id）"
-            name="role_ids_text"
-            rules={[{ required: true, message: '请输入至少一个 role_id' }]}
-          >
-            <Input
-              data-testid="platform-role-facts-role-ids"
-              placeholder="sys_admin,platform_member_admin"
-            />
-          </CustomForm.Item>
-        </CustomForm>
-
-        <div
-          data-testid="platform-permission-context-panel"
-          style={{
-            border: '1px solid #e5e7eb',
-            borderRadius: 8,
-            padding: 12,
-            display: 'grid',
-            gap: 8
-          }}
-        >
-          <Text>权限上下文：{platformPermissionContext.scope_label}</Text>
-          <div>
-            可见菜单：
-            <Space size="small" style={{ marginInlineStart: 8 }}>
-              {platformPermissionContext.can_view_member_admin ? (
-                <Text data-testid="platform-menu-member-admin">成员治理</Text>
-              ) : null}
-              {platformPermissionContext.can_view_billing ? (
-                <Text data-testid="platform-menu-billing">账单治理</Text>
-              ) : null}
-              {!platformPermissionContext.can_view_member_admin
-              && !platformPermissionContext.can_view_billing ? (
-                <Text data-testid="platform-menu-empty" type="secondary">当前无可见菜单</Text>
-                ) : null}
-            </Space>
-          </div>
-          <div>
-            操作按钮：
-            <Space size="small" style={{ marginInlineStart: 8 }}>
-              {platformPermissionContext.can_operate_member_admin ? (
-                <Button
-                  data-testid="platform-action-member-admin"
-                  size="small"
-                  type="default"
-                >
-                  成员治理
-                </Button>
-              ) : null}
-              {platformPermissionContext.can_operate_billing ? (
-                <Button
-                  data-testid="platform-action-billing"
-                  size="small"
-                  type="default"
-                >
-                  账单治理
-                </Button>
-              ) : null}
-              {!platformPermissionContext.can_operate_member_admin
-              && !platformPermissionContext.can_operate_billing ? (
-                <Text data-testid="platform-action-empty" type="secondary">当前无可操作按钮</Text>
-                ) : null}
-            </Space>
-          </div>
-        </div>
 
         <Modal
           open={roleEditModalOpen}

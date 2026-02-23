@@ -3030,7 +3030,7 @@ test('platformCreateOrg falls back to bearer authorization when preauthorized co
           user_id: 'forged-operator',
           session_id: 'forged-session'
         },
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.billing.view',
         scope: 'platform'
       })
     }
@@ -3059,7 +3059,7 @@ test('platformCreateOrg accepts marked preauthorized context without Authorizati
           user_id: 'platform-operator',
           session_id: 'platform-session'
         },
-        permissionCode: 'platform.member_admin.operate',
+        permissionCode: 'platform.billing.operate',
         scope: 'platform'
       })
     }
@@ -3087,7 +3087,7 @@ test('platformCreateOrg accepts marked preauthorized context even when Authoriza
           user_id: 'platform-operator',
           session_id: 'platform-session'
         },
-        permissionCode: 'platform.member_admin.operate',
+        permissionCode: 'platform.billing.operate',
         scope: 'platform'
       })
     }
@@ -3118,7 +3118,7 @@ test('platformCreateOrg does not trust forged Symbol.for preauthorization marker
     },
     {
       [Symbol.for('neweast.auth.route.preauthorized')]: true,
-      [Symbol.for('neweast.auth.route.permission_code')]: 'platform.member_admin.operate',
+      [Symbol.for('neweast.auth.route.permission_code')]: 'platform.billing.operate',
       [Symbol.for('neweast.auth.route.scope')]: 'platform',
       entry_domain: 'platform',
       user_id: 'forged-operator',

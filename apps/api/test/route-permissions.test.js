@@ -396,7 +396,7 @@ test('platform org create route exposes explicit permission declaration', () => 
   assert.ok(createPlatformOrg);
   assert.equal(createPlatformOrg.access, 'protected');
   assert.equal(createPlatformOrg.scope, 'platform');
-  assert.equal(createPlatformOrg.permission_code, 'platform.member_admin.operate');
+  assert.equal(createPlatformOrg.permission_code, 'platform.billing.operate');
 });
 
 test('platform org status route exposes explicit permission declaration', () => {
@@ -408,7 +408,7 @@ test('platform org status route exposes explicit permission declaration', () => 
   assert.ok(updatePlatformOrgStatus);
   assert.equal(updatePlatformOrgStatus.access, 'protected');
   assert.equal(updatePlatformOrgStatus.scope, 'platform');
-  assert.equal(updatePlatformOrgStatus.permission_code, 'platform.member_admin.operate');
+  assert.equal(updatePlatformOrgStatus.permission_code, 'platform.billing.operate');
 });
 
 test('platform owner-transfer route exposes explicit permission declaration', () => {
@@ -420,7 +420,7 @@ test('platform owner-transfer route exposes explicit permission declaration', ()
   assert.ok(transferPlatformOrgOwner);
   assert.equal(transferPlatformOrgOwner.access, 'protected');
   assert.equal(transferPlatformOrgOwner.scope, 'platform');
-  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.member_admin.operate');
+  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.billing.operate');
 });
 
 test('platform user create route exposes explicit permission declaration', () => {
@@ -492,7 +492,7 @@ test('platform role list route exposes explicit permission declaration', () => {
   assert.ok(listPlatformRoles);
   assert.equal(listPlatformRoles.access, 'protected');
   assert.equal(listPlatformRoles.scope, 'platform');
-  assert.equal(listPlatformRoles.permission_code, 'platform.member_admin.view');
+  assert.equal(listPlatformRoles.permission_code, 'platform.system_config.view');
 });
 
 test('platform role create route exposes explicit permission declaration', () => {
@@ -504,7 +504,7 @@ test('platform role create route exposes explicit permission declaration', () =>
   assert.ok(createPlatformRole);
   assert.equal(createPlatformRole.access, 'protected');
   assert.equal(createPlatformRole.scope, 'platform');
-  assert.equal(createPlatformRole.permission_code, 'platform.member_admin.operate');
+  assert.equal(createPlatformRole.permission_code, 'platform.system_config.operate');
 });
 
 test('platform role update route exposes explicit permission declaration', () => {
@@ -516,7 +516,7 @@ test('platform role update route exposes explicit permission declaration', () =>
   assert.ok(updatePlatformRole);
   assert.equal(updatePlatformRole.access, 'protected');
   assert.equal(updatePlatformRole.scope, 'platform');
-  assert.equal(updatePlatformRole.permission_code, 'platform.member_admin.operate');
+  assert.equal(updatePlatformRole.permission_code, 'platform.system_config.operate');
 });
 
 test('platform role permissions read route exposes explicit permission declaration', () => {
@@ -528,7 +528,7 @@ test('platform role permissions read route exposes explicit permission declarati
   assert.ok(readPlatformRolePermissions);
   assert.equal(readPlatformRolePermissions.access, 'protected');
   assert.equal(readPlatformRolePermissions.scope, 'platform');
-  assert.equal(readPlatformRolePermissions.permission_code, 'platform.member_admin.view');
+  assert.equal(readPlatformRolePermissions.permission_code, 'platform.system_config.view');
 });
 
 test('platform role permissions update route exposes explicit permission declaration', () => {
@@ -540,7 +540,7 @@ test('platform role permissions update route exposes explicit permission declara
   assert.ok(updatePlatformRolePermissions);
   assert.equal(updatePlatformRolePermissions.access, 'protected');
   assert.equal(updatePlatformRolePermissions.scope, 'platform');
-  assert.equal(updatePlatformRolePermissions.permission_code, 'platform.member_admin.operate');
+  assert.equal(updatePlatformRolePermissions.permission_code, 'platform.system_config.operate');
 });
 
 test('route parameter extraction decodes URL-encoded path values', () => {
@@ -635,7 +635,7 @@ test('platform role delete route exposes explicit permission declaration', () =>
   assert.ok(deletePlatformRole);
   assert.equal(deletePlatformRole.access, 'protected');
   assert.equal(deletePlatformRole.scope, 'platform');
-  assert.equal(deletePlatformRole.permission_code, 'platform.member_admin.operate');
+  assert.equal(deletePlatformRole.permission_code, 'platform.system_config.operate');
 });
 
 test('protected routes are fail-closed when declaration is missing', () => {

@@ -46,6 +46,12 @@ const toPlatformPermissionContextResponse = (permissionContext = null) => ({
   ),
   can_operate_billing: Boolean(
     permissionContext?.canOperateBilling ?? permissionContext?.can_operate_billing
+  ),
+  can_view_system_config: Boolean(
+    permissionContext?.canViewSystemConfig ?? permissionContext?.can_view_system_config
+  ),
+  can_operate_system_config: Boolean(
+    permissionContext?.canOperateSystemConfig ?? permissionContext?.can_operate_system_config
   )
 });
 

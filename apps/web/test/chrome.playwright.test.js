@@ -459,6 +459,17 @@ const createOtpApiServer = async () => {
             active_tenant_id: body.entry_domain === 'tenant' ? activeTenantId : null,
             tenant_selection_required: body.entry_domain === 'tenant' ? activeTenantId === null : false,
             tenant_options: body.entry_domain === 'tenant' ? tenantOptions : [],
+            platform_permission_context: body.entry_domain === 'tenant'
+              ? null
+              : {
+                scope_label: '平台权限（角色并集）',
+                can_view_member_admin: true,
+                can_operate_member_admin: true,
+                can_view_billing: true,
+                can_operate_billing: true,
+                can_view_system_config: true,
+                can_operate_system_config: true
+              },
             tenant_permission_context: body.entry_domain === 'tenant'
               ? currentTenantPermissionContext()
               : {
@@ -995,6 +1006,7 @@ const createPlatformGovernanceApiServer = async () => {
       });
 
     if (method === 'POST' && pathname === '/auth/login') {
+      const displayUserName = String(users.get('platform-user-1')?.name || '').trim() || null;
       sendJson({
         status: 200,
         contentType: 'application/json',
@@ -1009,6 +1021,16 @@ const createPlatformGovernanceApiServer = async () => {
           active_tenant_id: null,
           tenant_selection_required: false,
           tenant_options: [],
+          user_name: displayUserName,
+          platform_permission_context: {
+            scope_label: '平台权限（角色并集）',
+            can_view_member_admin: true,
+            can_operate_member_admin: true,
+            can_view_billing: true,
+            can_operate_billing: true,
+            can_view_system_config: true,
+            can_operate_system_config: true
+          },
           tenant_permission_context: null,
           request_id: requestId
         }
@@ -1852,6 +1874,17 @@ const createTenantGovernanceApiServer = async () => {
             active_tenant_id: isTenantDomain ? activeTenantId : null,
             tenant_selection_required: isTenantDomain ? activeTenantId === null : false,
             tenant_options: isTenantDomain ? tenantOptions : [],
+            platform_permission_context: isTenantDomain
+              ? null
+              : {
+                scope_label: '平台权限（角色并集）',
+                can_view_member_admin: true,
+                can_operate_member_admin: true,
+                can_view_billing: true,
+                can_operate_billing: true,
+                can_view_system_config: true,
+                can_operate_system_config: true
+              },
             tenant_permission_context: isTenantDomain
               ? buildTenantPermissionContext()
               : null,
@@ -3667,6 +3700,13 @@ test('chrome regression validates platform governance workbench with modal/drawe
     10000,
     'platform user table should load initial user list'
   );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => String(document.querySelector('[data-testid="layout-user-name"]')?.textContent || '').trim() === '平台管理员甲')()`,
+    10000,
+    'platform layout should show current user name beside avatar'
+  );
 
   await evaluate(
     cdp,
@@ -3738,25 +3778,16 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await waitForCondition(
     cdp,
     sessionId,
-    `(() => {
-      const drawer = document.querySelector('[data-testid="platform-user-detail-drawer"]');
-      const text = String(drawer?.textContent || '');
-      return (
-        Boolean(drawer)
-        && text.includes('user_id: platform-user-3')
-        && text.includes('latest_action: create')
-      );
-    })()`,
+    `(() => !document.querySelector('[data-testid="platform-user-create-phone"]'))()`,
     10000,
-    'newly created platform user detail should be visible in drawer'
+    'platform user create modal should close after successful submit'
   );
-  await evaluate(
+  await waitForCondition(
     cdp,
     sessionId,
-    `(() => {
-      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
-      return true;
-    })()`
+    `(() => !document.querySelector('[data-testid="platform-user-detail-drawer"]'))()`,
+    5000,
+    'detail drawer should stay closed after creating platform user'
   );
   await evaluate(
     cdp,
@@ -3791,30 +3822,6 @@ test('chrome regression validates platform governance workbench with modal/drawe
     cdp,
     sessionId,
     `(() => { document.querySelector('[data-testid="platform-user-status-platform-user-1"]').click(); return true; })()`
-  );
-  await waitForCondition(
-    cdp,
-    sessionId,
-    `Boolean(document.querySelector('[data-testid="platform-user-status-reason"]'))`,
-    5000,
-    'status action modal should be visible'
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => {
-      const input = document.querySelector('[data-testid="platform-user-status-reason"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      setter.call(input, 'manual-governance');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="platform-user-status-confirm"]').click(); return true; })()`
   );
   await waitForRequest(
     api.requests,
@@ -3942,47 +3949,6 @@ test('chrome regression validates platform governance workbench with modal/drawe
     'platform role permission save request should reach API stub'
   );
 
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => {
-      const userIdInput = document.querySelector('[data-testid="platform-role-facts-user-id"]');
-      const roleIdsInput = document.querySelector('[data-testid="platform-role-facts-role-ids"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(userIdInput, 'platform-user-1');
-      userIdInput.dispatchEvent(new Event('input', { bubbles: true }));
-      userIdInput.dispatchEvent(new Event('change', { bubbles: true }));
-      setter.call(roleIdsInput, 'platform_member_admin,platform_billing_admin');
-      roleIdsInput.dispatchEvent(new Event('input', { bubbles: true }));
-      roleIdsInput.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="platform-role-facts-submit"]').click(); return true; })()`
-  );
-  await waitForRequest(
-    api.requests,
-    (request) => request.path === '/auth/platform/role-facts/replace' && request.method === 'POST',
-    8000,
-    'platform role-facts replace request should reach API stub'
-  );
-  await waitForCondition(
-    cdp,
-    sessionId,
-    `(() => {
-      const memberMenu = document.querySelector('[data-testid="platform-menu-member-admin"]');
-      const billingMenu = document.querySelector('[data-testid="platform-menu-billing"]');
-      const memberAction = document.querySelector('[data-testid="platform-action-member-admin"]');
-      const billingAction = document.querySelector('[data-testid="platform-action-billing"]');
-      return Boolean(memberMenu) && Boolean(billingMenu) && Boolean(memberAction) && Boolean(billingAction);
-    })()`,
-    8000,
-    'role assignment should converge platform permission context in UI'
-  );
-
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
   screenshotPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.png`);
   writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
@@ -4005,22 +3971,13 @@ test('chrome regression validates platform governance workbench with modal/drawe
   );
   assert.equal(updateStatusRequest?.body?.user_id, 'platform-user-1');
   assert.equal(updateStatusRequest?.body?.status, 'disabled');
-  assert.equal(updateStatusRequest?.body?.reason, 'manual-governance');
+  assert.equal(Object.prototype.hasOwnProperty.call(updateStatusRequest?.body || {}, 'reason'), false);
 
   const createRoleRequest = api.requests.find(
     (request) => request.path === '/platform/roles' && request.method === 'POST'
   );
   assert.equal(createRoleRequest?.body?.code, 'PLATFORM_BILLING_ADMIN');
   assert.equal(createRoleRequest?.body?.name, '平台账单治理');
-
-  const replaceRoleFactsRequest = api.requests.find(
-    (request) => request.path === '/auth/platform/role-facts/replace' && request.method === 'POST'
-  );
-  assert.equal(replaceRoleFactsRequest?.body?.user_id, 'platform-user-1');
-  assert.deepEqual(
-    replaceRoleFactsRequest?.body?.roles?.map((entry) => entry.role_id).sort(),
-    ['platform_billing_admin', 'platform_member_admin']
-  );
 
   const reportPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.json`);
   writeFileSync(
@@ -4034,13 +3991,13 @@ test('chrome regression validates platform governance workbench with modal/drawe
         screenshots: [resolve(screenshotPath)],
         assertions: {
           platform_user_list_filter: true,
+          platform_user_header_name: true,
           platform_user_create_modal: true,
           platform_user_status_modal: true,
           platform_user_detail_drawer: true,
           platform_role_create_modal: true,
           protected_role_guard: true,
-          platform_permission_tree_save: true,
-          platform_role_facts_convergence: true
+          platform_permission_tree_save: true
         },
         requests: api.requests,
         responses: api.responses

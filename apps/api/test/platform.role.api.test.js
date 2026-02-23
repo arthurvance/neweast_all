@@ -31,7 +31,9 @@ const createHarness = () => {
               canViewMemberAdmin: true,
               canOperateMemberAdmin: true,
               canViewBilling: false,
-              canOperateBilling: false
+              canOperateBilling: false,
+              canViewSystemConfig: true,
+              canOperateSystemConfig: true
             }
           }
         ]
