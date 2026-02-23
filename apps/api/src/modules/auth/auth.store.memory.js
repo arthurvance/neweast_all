@@ -1,4 +1,4 @@
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { normalizeTraceparent } = require('../../common/trace-context');
 const {
   isRetryableDeliveryFailure,
@@ -139,6 +139,14 @@ const createInMemoryAuthStore = ({
   const MAX_ORG_NAME_LENGTH = 128;
   const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
   const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
+  const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
+  const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
+  const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
+  const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
+  const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
+    TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+    TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+  ]);
   const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
   const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
   const invokeFaultInjector = (hookName, payload = {}) => {
@@ -215,6 +223,17 @@ const createInMemoryAuthStore = ({
     return VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedStatus)
       ? normalizedStatus
       : '';
+  };
+  const toOwnerTransferTakeoverRoleId = ({ orgId } = {}) => {
+    const normalizedOrgId = String(orgId || '').trim();
+    if (!normalizedOrgId) {
+      return '';
+    }
+    const digest = createHash('sha256')
+      .update(normalizedOrgId)
+      .digest('hex')
+      .slice(0, OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH);
+    return `${OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX}${digest}`;
   };
   const normalizeOptionalTenantMemberProfileField = ({
     value,
@@ -3499,18 +3518,25 @@ const createInMemoryAuthStore = ({
       auditContext = null
     }) => {
       const shouldRecordAudit = auditContext && typeof auditContext === 'object';
-      const snapshot = shouldRecordAudit
-        ? {
-          orgsById: structuredClone(orgsById),
-          orgIdByName: structuredClone(orgIdByName),
-          membershipsByOrgId: structuredClone(membershipsByOrgId),
-          tenantsByUserId: structuredClone(tenantsByUserId),
-          tenantMembershipRolesByMembershipId: structuredClone(
-            tenantMembershipRolesByMembershipId
-          ),
-          auditEvents: structuredClone(auditEvents)
-        }
-        : null;
+      const snapshot = {
+        orgsById: structuredClone(orgsById),
+        orgIdByName: structuredClone(orgIdByName),
+        membershipsByOrgId: structuredClone(membershipsByOrgId),
+        tenantsByUserId: structuredClone(tenantsByUserId),
+        tenantMembershipRolesByMembershipId: structuredClone(
+          tenantMembershipRolesByMembershipId
+        ),
+        tenantMembershipHistoryByPair: structuredClone(tenantMembershipHistoryByPair),
+        domainsByUserId: structuredClone(domainsByUserId),
+        platformRoleCatalogById: structuredClone(platformRoleCatalogById),
+        platformRoleCatalogCodeIndex: structuredClone(platformRoleCatalogCodeIndex),
+        tenantRolePermissionGrantsByRoleId: structuredClone(
+          tenantRolePermissionGrantsByRoleId
+        ),
+        sessionsById: structuredClone(sessionsById),
+        refreshTokensByHash: structuredClone(refreshTokensByHash),
+        auditEvents: structuredClone(auditEvents)
+      };
       try {
         const normalizedOrgId = String(orgId || '').trim() || randomUUID();
         const normalizedOrgName = String(orgName || '').trim();
@@ -3569,50 +3595,244 @@ const createInMemoryAuthStore = ({
             status: 'active'
           }
         ]);
-        if (normalizedOwnerDisplayName !== null) {
-          const tenantMemberships = Array.isArray(tenantsByUserId.get(normalizedOwnerUserId))
-            ? tenantsByUserId.get(normalizedOwnerUserId)
-            : [];
-          const existingMembership = tenantMemberships.find(
-            (tenant) => String(tenant?.tenantId || '').trim() === normalizedOrgId
+        const normalizedTakeoverRoleId = toOwnerTransferTakeoverRoleId({
+          orgId: normalizedOrgId
+        });
+        const normalizedTakeoverRoleCode = OWNER_TRANSFER_TAKEOVER_ROLE_CODE;
+        const normalizedTakeoverRoleName = OWNER_TRANSFER_TAKEOVER_ROLE_NAME;
+        const normalizedRequiredPermissionCodes = [
+          ...OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES
+        ];
+        if (
+          !normalizedTakeoverRoleId
+          || !normalizedTakeoverRoleCode
+          || !normalizedTakeoverRoleName
+        ) {
+          throw new Error('org-owner-takeover-role-invalid');
+        }
+
+        const tenantMemberships = Array.isArray(tenantsByUserId.get(normalizedOwnerUserId))
+          ? tenantsByUserId.get(normalizedOwnerUserId)
+          : [];
+        let membership = tenantMemberships.find(
+          (tenant) => String(tenant?.tenantId || '').trim() === normalizedOrgId
+        ) || null;
+        if (!membership) {
+          membership = {
+            membershipId: randomUUID(),
+            tenantId: normalizedOrgId,
+            tenantName: normalizedOrgName,
+            status: 'active',
+            displayName: normalizedOwnerDisplayName,
+            departmentName: null,
+            joinedAt: nowIso,
+            leftAt: null,
+            permission: buildEmptyTenantPermission(
+              `组织权限（${normalizedOrgName || normalizedOrgId}）`
+            )
+          };
+          tenantMemberships.push(membership);
+          tenantMembershipRolesByMembershipId.set(
+            String(membership.membershipId || '').trim(),
+            []
           );
-          if (!existingMembership) {
-            const membershipId = randomUUID();
-            tenantMemberships.push({
-              membershipId,
-              tenantId: normalizedOrgId,
-              tenantName: normalizedOrgName,
-              status: 'active',
-              displayName: normalizedOwnerDisplayName,
-              departmentName: null,
-              joinedAt: nowIso,
-              leftAt: null,
-              permission: {
-                scopeLabel: `组织权限（${normalizedOrgName || normalizedOrgId}）`,
-                canViewMemberAdmin: false,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
-              }
+        } else {
+          const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+            membership.status
+          );
+          if (
+            normalizedMembershipStatus !== 'active'
+            && normalizedMembershipStatus !== 'disabled'
+            && normalizedMembershipStatus !== 'left'
+          ) {
+            throw new Error('org-owner-membership-status-invalid');
+          }
+          membership.tenantName = normalizedOrgName;
+          if (normalizedMembershipStatus === 'left') {
+            appendTenantMembershipHistory({
+              membership: {
+                ...membership,
+                userId: normalizedOwnerUserId,
+                tenantId: normalizedOrgId
+              },
+              reason: 'rejoin',
+              operatorUserId: normalizedOperatorUserId
             });
-            tenantMembershipRolesByMembershipId.set(membershipId, []);
-          } else {
-            existingMembership.status = 'active';
-            existingMembership.leftAt = null;
-            existingMembership.displayName = normalizedOwnerDisplayName;
-            if (!existingMembership.joinedAt) {
-              existingMembership.joinedAt = nowIso;
+            const previousMembershipId = String(
+              membership.membershipId || ''
+            ).trim();
+            membership.membershipId = randomUUID();
+            membership.status = 'active';
+            membership.permission = buildEmptyTenantPermission(
+              toTenantMembershipScopeLabel(membership)
+            );
+            membership.joinedAt = nowIso;
+            membership.leftAt = null;
+            if (previousMembershipId) {
+              tenantMembershipRolesByMembershipId.delete(previousMembershipId);
             }
-            if (
-              existingMembership.tenantName === null
-              || existingMembership.tenantName === undefined
-              || !String(existingMembership.tenantName || '').trim()
-            ) {
-              existingMembership.tenantName = normalizedOrgName;
+            tenantMembershipRolesByMembershipId.set(
+              String(membership.membershipId || '').trim(),
+              []
+            );
+          } else if (normalizedMembershipStatus === 'disabled') {
+            membership.status = 'active';
+            membership.leftAt = null;
+          }
+          if (normalizedOwnerDisplayName !== null) {
+            membership.displayName = normalizedOwnerDisplayName;
+          }
+          if (!membership.joinedAt) {
+            membership.joinedAt = nowIso;
+          }
+        }
+        tenantsByUserId.set(normalizedOwnerUserId, tenantMemberships);
+
+        const resolvedMembershipId = String(membership?.membershipId || '').trim();
+        if (!resolvedMembershipId) {
+          throw new Error('org-owner-membership-resolution-failed');
+        }
+
+        const userDomains = domainsByUserId.get(normalizedOwnerUserId) || new Set();
+        userDomains.add('tenant');
+        domainsByUserId.set(normalizedOwnerUserId, userDomains);
+
+        const createRoleInvalidError = () => {
+          const roleInvalidError = new Error(
+            'owner transfer takeover role definition invalid'
+          );
+          roleInvalidError.code = 'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_INVALID';
+          return roleInvalidError;
+        };
+        let existingRole = findPlatformRoleCatalogRecordStateByRoleId(
+          normalizedTakeoverRoleId
+        )?.record || null;
+        if (!existingRole) {
+          try {
+            upsertPlatformRoleCatalogRecord({
+              roleId: normalizedTakeoverRoleId,
+              code: normalizedTakeoverRoleCode,
+              name: normalizedTakeoverRoleName,
+              status: 'active',
+              scope: 'tenant',
+              tenantId: normalizedOrgId,
+              isSystem: true,
+              createdByUserId: normalizedOperatorUserId,
+              updatedByUserId: normalizedOperatorUserId
+            });
+          } catch (error) {
+            if (String(error?.code || '').trim().toUpperCase() === 'ER_DUP_ENTRY') {
+              existingRole = findPlatformRoleCatalogRecordStateByRoleId(
+                normalizedTakeoverRoleId
+              )?.record || null;
+              if (!existingRole) {
+                throw createRoleInvalidError();
+              }
+            } else {
+              throw error;
             }
           }
-          tenantsByUserId.set(normalizedOwnerUserId, tenantMemberships);
         }
+        if (!existingRole) {
+          existingRole = findPlatformRoleCatalogRecordStateByRoleId(
+            normalizedTakeoverRoleId
+          )?.record || null;
+        }
+        if (!existingRole) {
+          throw createRoleInvalidError();
+        }
+        const normalizedRoleScope = normalizePlatformRoleCatalogScope(existingRole.scope);
+        const normalizedRoleTenantId = normalizePlatformRoleCatalogTenantId(
+          existingRole.tenantId
+        );
+        const normalizedRoleCode = normalizePlatformRoleCatalogCode(existingRole.code);
+        if (
+          normalizedRoleScope !== 'tenant'
+          || normalizedRoleTenantId !== normalizedOrgId
+        ) {
+          throw createRoleInvalidError();
+        }
+        if (
+          !normalizedRoleCode
+          || normalizedRoleCode.toLowerCase() !== normalizedTakeoverRoleCode.toLowerCase()
+        ) {
+          throw createRoleInvalidError();
+        }
+        const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
+          existingRole.status || 'disabled'
+        );
+        if (!isActiveLikeStatus(normalizedRoleStatus)) {
+          upsertPlatformRoleCatalogRecord({
+            ...existingRole,
+            roleId: normalizedTakeoverRoleId,
+            status: 'active',
+            updatedByUserId: normalizedOperatorUserId
+          });
+        }
+
+        const grantCodes = new Set(
+          listTenantRolePermissionGrantsForRoleId(normalizedTakeoverRoleId)
+        );
+        for (const permissionCode of normalizedRequiredPermissionCodes) {
+          grantCodes.add(permissionCode);
+        }
+        replaceTenantRolePermissionGrantsForRoleId({
+          roleId: normalizedTakeoverRoleId,
+          permissionCodes: [...grantCodes]
+        });
+
+        const existingRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+          membershipId: resolvedMembershipId,
+          tenantId: normalizedOrgId
+        });
+        const nextRoleIds = [...new Set([
+          ...existingRoleIds,
+          normalizedTakeoverRoleId
+        ])].sort((left, right) => left.localeCompare(right));
+        if (nextRoleIds.length < 1) {
+          const roleBindingError = new Error(
+            'owner transfer takeover role binding invalid'
+          );
+          roleBindingError.code =
+            'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_BINDINGS_INVALID';
+          throw roleBindingError;
+        }
+        replaceTenantMembershipRoleBindingsForMembershipId({
+          membershipId: resolvedMembershipId,
+          roleIds: nextRoleIds
+        });
+
+        const membershipState = findTenantMembershipStateByMembershipId(
+          resolvedMembershipId
+        );
+        const syncResult = syncTenantMembershipPermissionSnapshot({
+          membershipState,
+          reason: 'org-owner-bootstrap'
+        });
+        const syncReason = String(syncResult?.reason || 'unknown')
+          .trim()
+          .toLowerCase();
+        if (syncReason !== 'ok') {
+          const syncError = new Error(
+            `owner transfer takeover sync failed: ${syncReason || 'unknown'}`
+          );
+          syncError.code = 'ERR_OWNER_TRANSFER_TAKEOVER_SYNC_FAILED';
+          syncError.syncReason = syncReason || 'unknown';
+          throw syncError;
+        }
+        const effectivePermission = syncResult?.permission || {};
+        if (
+          !Boolean(effectivePermission.canViewMemberAdmin)
+          || !Boolean(effectivePermission.canOperateMemberAdmin)
+        ) {
+          const permissionInsufficientError = new Error(
+            'owner transfer takeover permission insufficient'
+          );
+          permissionInsufficientError.code =
+            'ERR_OWNER_TRANSFER_TAKEOVER_PERMISSION_INSUFFICIENT';
+          throw permissionInsufficientError;
+        }
+
         let auditRecorded = false;
         if (shouldRecordAudit) {
           try {
@@ -3652,17 +3872,31 @@ const createInMemoryAuthStore = ({
           audit_recorded: auditRecorded
         };
       } catch (error) {
-        if (snapshot) {
-          restoreMapFromSnapshot(orgsById, snapshot.orgsById);
-          restoreMapFromSnapshot(orgIdByName, snapshot.orgIdByName);
-          restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
-          restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
-          restoreMapFromSnapshot(
-            tenantMembershipRolesByMembershipId,
-            snapshot.tenantMembershipRolesByMembershipId
-          );
-          restoreAuditEventsFromSnapshot(snapshot.auditEvents);
-        }
+        restoreMapFromSnapshot(orgsById, snapshot.orgsById);
+        restoreMapFromSnapshot(orgIdByName, snapshot.orgIdByName);
+        restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
+        restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
+        restoreMapFromSnapshot(
+          tenantMembershipRolesByMembershipId,
+          snapshot.tenantMembershipRolesByMembershipId
+        );
+        restoreMapFromSnapshot(
+          tenantMembershipHistoryByPair,
+          snapshot.tenantMembershipHistoryByPair
+        );
+        restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
+        restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
+        restoreMapFromSnapshot(
+          platformRoleCatalogCodeIndex,
+          snapshot.platformRoleCatalogCodeIndex
+        );
+        restoreMapFromSnapshot(
+          tenantRolePermissionGrantsByRoleId,
+          snapshot.tenantRolePermissionGrantsByRoleId
+        );
+        restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
+        restoreMapFromSnapshot(refreshTokensByHash, snapshot.refreshTokensByHash);
+        restoreAuditEventsFromSnapshot(snapshot.auditEvents);
         throw error;
       }
     },
@@ -3723,9 +3957,9 @@ const createInMemoryAuthStore = ({
       operatorUserId = null,
       operatorSessionId = null,
       reason = null,
-      takeoverRoleId = 'tenant_owner',
-      takeoverRoleCode = 'TENANT_OWNER',
-      takeoverRoleName = '组织负责人',
+      takeoverRoleId = 'sys_admin',
+      takeoverRoleCode = 'sys_admin',
+      takeoverRoleName = 'sys_admin',
       requiredPermissionCodes = [],
       auditContext = null
     } = {}) => {

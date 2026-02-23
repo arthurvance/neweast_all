@@ -5057,7 +5057,7 @@ const buildOpenApiSpec = () => {
                       type: 'about:blank',
                       title: 'Conflict',
                       status: 409,
-                      detail: '组织负责人变更请求处理中，请稍后重试',
+                      detail: 'sys_admin 变更请求处理中，请稍后重试',
                       error_code: 'ORG-409-OWNER-TRANSFER-CONFLICT',
                       request_id: 'request_id_unset',
                       org_id: 'f11e9c4b-8d5b-4e44-84df-cd5d0fc5f432',
@@ -11534,6 +11534,7 @@ const buildOpenApiSpec = () => {
           session_id: { type: 'string' },
           entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
           active_tenant_id: { type: 'string', nullable: true },
+          user_name: { type: 'string', nullable: true },
           tenant_selection_required: { type: 'boolean' },
           tenant_options: {
             type: 'array',
@@ -11568,6 +11569,7 @@ const buildOpenApiSpec = () => {
           session_id: { type: 'string' },
           entry_domain: { type: 'string', enum: ['platform', 'tenant'] },
           active_tenant_id: { type: 'string', nullable: true },
+          user_name: { type: 'string', nullable: true },
           tenant_selection_required: { type: 'boolean' },
           tenant_options: {
             type: 'array',
@@ -11600,6 +11602,7 @@ const buildOpenApiSpec = () => {
           session_id: { type: 'string' },
           entry_domain: { type: 'string', enum: ['tenant'] },
           active_tenant_id: { type: 'string' },
+          user_name: { type: 'string', nullable: true },
           tenant_selection_required: { type: 'boolean' },
           tenant_permission_context: {
             $ref: '#/components/schemas/TenantPermissionContext'

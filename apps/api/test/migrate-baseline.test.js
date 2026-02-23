@@ -392,7 +392,7 @@ test('0017 migration migrates legacy tenant_owner bindings to tenant-scoped take
   assert.match(sql, /DROP TEMPORARY TABLE IF EXISTS tmp_owner_takeover_legacy_memberships/i);
   assert.match(sql, /tmp_owner_takeover_legacy_memberships/i);
   assert.match(sql, /tmp_owner_takeover_legacy_tenants/i);
-  assert.match(sql, /CONCAT\('tenant_owner__', SUBSTRING\(SHA2\(legacy\.tenant_id, 256\), 1, 24\)\)/i);
+  assert.match(sql, /CONCAT\('sys_admin__', SUBSTRING\(SHA2\(legacy\.tenant_id, 256\), 1, 24\)\)/i);
   assert.match(sql, /SIGNAL SQLSTATE '45000'/i);
   assert.match(sql, /owner_takeover_tenant_code_collision_count/i);
   assert.match(sql, /tenant code collision detected/i);

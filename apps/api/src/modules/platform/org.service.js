@@ -363,7 +363,7 @@ const orgErrors = {
     orgProblem({
       status: 409,
       title: 'Conflict',
-      detail: '组织负责人变更请求处理中，请稍后重试',
+      detail: 'sys_admin 变更请求处理中，请稍后重试',
       errorCode: 'ORG-409-OWNER-TRANSFER-CONFLICT',
       extensions: toOwnerTransferContractExtensions({
         orgId,

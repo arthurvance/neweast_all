@@ -116,6 +116,14 @@ const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
 const PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET = SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET;
 const OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX = 30;
 const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
+const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
+const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
+const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
+const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
+const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
+  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
+  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+]);
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
 const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
 const AUDIT_EVENT_REDACTION_KEY_PATTERN =
@@ -257,6 +265,17 @@ const normalizePlatformRoleCatalogTenantIdForScope = ({
 };
 const normalizePlatformRoleCatalogRoleId = (roleId) =>
   String(roleId || '').trim().toLowerCase();
+const toOwnerTransferTakeoverRoleId = ({ orgId } = {}) => {
+  const normalizedOrgId = String(orgId || '').trim();
+  if (!normalizedOrgId) {
+    return '';
+  }
+  const digest = createHash('sha256')
+    .update(normalizedOrgId)
+    .digest('hex')
+    .slice(0, OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH);
+  return `${OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX}${digest}`;
+};
 const normalizePlatformRoleCatalogCode = (code) =>
   String(code || '').trim();
 const normalizePlatformIntegrationId = (integrationId) =>
@@ -3426,8 +3445,12 @@ const createMySqlAuthStore = ({
       const whereClauses = ["da.domain = 'platform'"];
       const whereArgs = [];
       if (normalizedStatusFilter !== null) {
-        whereClauses.push('da.status = ?');
-        whereArgs.push(normalizedStatusFilter);
+        if (normalizedStatusFilter === 'active') {
+          whereClauses.push("da.status IN ('active', 'enabled')");
+        } else {
+          whereClauses.push('da.status = ?');
+          whereArgs.push(normalizedStatusFilter);
+        }
       }
       if (normalizedKeyword.length > 0) {
         whereClauses.push('(u.id LIKE ? OR u.phone LIKE ?)');
@@ -9007,39 +9030,428 @@ const createMySqlAuthStore = ({
             if (Number(insertMembershipResult?.affectedRows || 0) !== 1) {
               throw new Error('org-membership-write-not-applied');
             }
-            if (normalizedOwnerDisplayName !== null) {
-              const ownerMembershipUpsertResult = await tx.query(
+            const normalizedTakeoverRoleId = toOwnerTransferTakeoverRoleId({
+              orgId: normalizedOrgId
+            });
+            const normalizedTakeoverRoleCode = OWNER_TRANSFER_TAKEOVER_ROLE_CODE;
+            const normalizedTakeoverRoleName = OWNER_TRANSFER_TAKEOVER_ROLE_NAME;
+            const normalizedRequiredPermissionCodes = [
+              ...OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES
+            ];
+            if (
+              !normalizedTakeoverRoleId
+              || !normalizedTakeoverRoleCode
+              || !normalizedTakeoverRoleName
+            ) {
+              throw new Error('org-owner-takeover-role-invalid');
+            }
+            const ownerMembershipUpsertResult = await tx.query(
+              `
+                INSERT INTO auth_user_tenants (
+                  membership_id,
+                  user_id,
+                  tenant_id,
+                  tenant_name,
+                  status,
+                  display_name,
+                  department_name,
+                  joined_at,
+                  left_at
+                )
+                VALUES (?, ?, ?, ?, 'active', ?, NULL, CURRENT_TIMESTAMP(3), NULL)
+                ON DUPLICATE KEY UPDATE
+                  tenant_name = VALUES(tenant_name),
+                  status = 'active',
+                  display_name = CASE
+                    WHEN VALUES(display_name) IS NULL THEN display_name
+                    ELSE VALUES(display_name)
+                  END,
+                  left_at = NULL,
+                  updated_at = CURRENT_TIMESTAMP(3)
+              `,
+              [
+                randomUUID(),
+                normalizedOwnerUserId,
+                normalizedOrgId,
+                normalizedOrgName,
+                normalizedOwnerDisplayName
+              ]
+            );
+            if (Number(ownerMembershipUpsertResult?.affectedRows || 0) <= 0) {
+              throw new Error('org-owner-profile-write-not-applied');
+            }
+
+            let membershipRows = await tx.query(
+              `
+                SELECT membership_id,
+                       user_id,
+                       tenant_id,
+                       status,
+                       tenant_name,
+                       can_view_member_admin,
+                       can_operate_member_admin,
+                       can_view_billing,
+                       can_operate_billing,
+                       joined_at,
+                       left_at
+                FROM auth_user_tenants
+                WHERE user_id = ? AND tenant_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedOwnerUserId, normalizedOrgId]
+            );
+            let membershipRow = membershipRows?.[0] || null;
+            if (!membershipRow) {
+              throw new Error('org-owner-membership-missing');
+            }
+            const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+              membershipRow.status
+            );
+            if (
+              normalizedMembershipStatus !== 'active'
+              && normalizedMembershipStatus !== 'disabled'
+              && normalizedMembershipStatus !== 'left'
+            ) {
+              throw new Error('org-owner-membership-status-invalid');
+            }
+            if (normalizedMembershipStatus === 'left') {
+              const previousMembershipId = String(
+                membershipRow.membership_id || ''
+              ).trim();
+              await insertTenantMembershipHistoryTx({
+                txClient: tx,
+                row: {
+                  ...membershipRow,
+                  membership_id: previousMembershipId,
+                  user_id: normalizedOwnerUserId,
+                  tenant_id: normalizedOrgId
+                },
+                archivedReason: 'rejoin',
+                archivedByUserId: normalizedOperatorUserId
+              });
+              await tx.query(
                 `
-                  INSERT INTO auth_user_tenants (
-                    membership_id,
-                    user_id,
-                    tenant_id,
-                    tenant_name,
-                    status,
-                    display_name,
-                    department_name,
-                    joined_at,
-                    left_at
-                  )
-                  VALUES (?, ?, ?, ?, 'active', ?, NULL, CURRENT_TIMESTAMP(3), NULL)
-                  ON DUPLICATE KEY UPDATE
-                    tenant_name = VALUES(tenant_name),
-                    status = 'active',
-                    display_name = VALUES(display_name),
-                    left_at = NULL,
-                    updated_at = CURRENT_TIMESTAMP(3)
+                  DELETE FROM auth_tenant_membership_roles
+                  WHERE membership_id = ?
+                `,
+                [previousMembershipId]
+              );
+              const nextMembershipId = randomUUID();
+              await tx.query(
+                `
+                  UPDATE auth_user_tenants
+                  SET membership_id = ?,
+                      status = 'active',
+                      can_view_member_admin = 0,
+                      can_operate_member_admin = 0,
+                      can_view_billing = 0,
+                      can_operate_billing = 0,
+                      display_name = CASE
+                        WHEN ? IS NULL THEN display_name
+                        ELSE ?
+                      END,
+                      joined_at = CURRENT_TIMESTAMP(3),
+                      left_at = NULL,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE user_id = ? AND tenant_id = ?
                 `,
                 [
-                  randomUUID(),
+                  nextMembershipId,
+                  normalizedOwnerDisplayName,
+                  normalizedOwnerDisplayName,
                   normalizedOwnerUserId,
-                  normalizedOrgId,
-                  normalizedOrgName,
-                  normalizedOwnerDisplayName
+                  normalizedOrgId
                 ]
               );
-              if (Number(ownerMembershipUpsertResult?.affectedRows || 0) <= 0) {
-                throw new Error('org-owner-profile-write-not-applied');
+            } else if (normalizedMembershipStatus === 'disabled') {
+              await tx.query(
+                `
+                  UPDATE auth_user_tenants
+                  SET status = 'active',
+                      display_name = CASE
+                        WHEN ? IS NULL THEN display_name
+                        ELSE ?
+                      END,
+                      left_at = NULL,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE user_id = ? AND tenant_id = ?
+                `,
+                [
+                  normalizedOwnerDisplayName,
+                  normalizedOwnerDisplayName,
+                  normalizedOwnerUserId,
+                  normalizedOrgId
+                ]
+              );
+            }
+            membershipRows = await tx.query(
+              `
+                SELECT membership_id,
+                       user_id,
+                       tenant_id,
+                       status,
+                       tenant_name,
+                       can_view_member_admin,
+                       can_operate_member_admin,
+                       can_view_billing,
+                       can_operate_billing,
+                       joined_at,
+                       left_at
+                FROM auth_user_tenants
+                WHERE user_id = ? AND tenant_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedOwnerUserId, normalizedOrgId]
+            );
+            membershipRow = membershipRows?.[0] || null;
+            const resolvedMembershipId = String(
+              membershipRow?.membership_id || ''
+            ).trim();
+            if (
+              !membershipRow
+              || !resolvedMembershipId
+              || String(membershipRow?.user_id || '').trim() !== normalizedOwnerUserId
+            ) {
+              throw new Error('org-owner-membership-resolution-failed');
+            }
+
+            await ensureTenantDomainAccessForUserTx({
+              txClient: tx,
+              userId: normalizedOwnerUserId,
+              skipMembershipCheck: true
+            });
+
+            const createRoleInvalidError = () => {
+              const roleInvalidError = new Error(
+                'owner transfer takeover role definition invalid'
+              );
+              roleInvalidError.code = 'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_INVALID';
+              return roleInvalidError;
+            };
+            let roleRows = await tx.query(
+              `
+                SELECT role_id, tenant_id, code, status, scope
+                FROM platform_role_catalog
+                WHERE role_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedTakeoverRoleId]
+            );
+            let roleRow = roleRows?.[0] || null;
+            if (!roleRow) {
+              try {
+                await tx.query(
+                  `
+                    INSERT INTO platform_role_catalog (
+                      role_id,
+                      tenant_id,
+                      code,
+                      code_normalized,
+                      name,
+                      status,
+                      scope,
+                      is_system,
+                      created_by_user_id,
+                      updated_by_user_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'active', 'tenant', 1, ?, ?)
+                  `,
+                  [
+                    normalizedTakeoverRoleId,
+                    normalizedOrgId,
+                    normalizedTakeoverRoleCode,
+                    normalizedTakeoverRoleCode.toLowerCase(),
+                    normalizedTakeoverRoleName,
+                    normalizedOperatorUserId,
+                    normalizedOperatorUserId
+                  ]
+                );
+              } catch (error) {
+                if (!isDuplicateEntryError(error)) {
+                  throw error;
+                }
+                roleRows = await tx.query(
+                  `
+                    SELECT role_id, tenant_id, code, status, scope
+                    FROM platform_role_catalog
+                    WHERE role_id = ?
+                    LIMIT 1
+                    FOR UPDATE
+                  `,
+                  [normalizedTakeoverRoleId]
+                );
+                roleRow = roleRows?.[0] || null;
+                if (!roleRow) {
+                  throw createRoleInvalidError();
+                }
               }
+            }
+            if (!roleRow) {
+              roleRow = {
+                role_id: normalizedTakeoverRoleId,
+                tenant_id: normalizedOrgId,
+                code: normalizedTakeoverRoleCode,
+                status: 'active',
+                scope: 'tenant'
+              };
+            }
+            const normalizedRoleScope = normalizePlatformRoleCatalogScope(
+              roleRow.scope
+            );
+            const normalizedRoleTenantId = normalizePlatformRoleCatalogTenantId(
+              roleRow.tenant_id
+            );
+            const normalizedRoleCode = normalizePlatformRoleCatalogCode(
+              roleRow.code
+            );
+            if (
+              normalizedRoleScope !== 'tenant'
+              || normalizedRoleTenantId !== normalizedOrgId
+            ) {
+              throw createRoleInvalidError();
+            }
+            if (
+              !normalizedRoleCode
+              || normalizedRoleCode.toLowerCase() !== normalizedTakeoverRoleCode.toLowerCase()
+            ) {
+              throw createRoleInvalidError();
+            }
+            const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
+              roleRow.status || 'disabled'
+            );
+            if (!isActiveLikeStatus(normalizedRoleStatus)) {
+              await tx.query(
+                `
+                  UPDATE platform_role_catalog
+                  SET status = 'active',
+                      updated_by_user_id = ?,
+                      updated_at = CURRENT_TIMESTAMP(3)
+                  WHERE role_id = ?
+                `,
+                [normalizedOperatorUserId, normalizedTakeoverRoleId]
+              );
+            }
+
+            const existingGrantRows = await tx.query(
+              `
+                SELECT permission_code
+                FROM tenant_role_permission_grants
+                WHERE role_id = ?
+                ORDER BY permission_code ASC
+                FOR UPDATE
+              `,
+              [normalizedTakeoverRoleId]
+            );
+            const normalizedGrantSet = new Set();
+            for (const row of Array.isArray(existingGrantRows)
+              ? existingGrantRows
+              : []) {
+              normalizedGrantSet.add(
+                normalizeStrictTenantPermissionCodeFromGrantRow(
+                  row?.permission_code,
+                  'owner-transfer-takeover-role-grants-invalid'
+                )
+              );
+            }
+            for (const permissionCode of normalizedRequiredPermissionCodes) {
+              if (normalizedGrantSet.has(permissionCode)) {
+                continue;
+              }
+              await tx.query(
+                `
+                  INSERT INTO tenant_role_permission_grants (
+                    role_id,
+                    permission_code,
+                    created_by_user_id,
+                    updated_by_user_id
+                  )
+                  VALUES (?, ?, ?, ?)
+                `,
+                [
+                  normalizedTakeoverRoleId,
+                  permissionCode,
+                  normalizedOperatorUserId,
+                  normalizedOperatorUserId
+                ]
+              );
+              normalizedGrantSet.add(permissionCode);
+            }
+
+            const existingRoleIds = await listTenantMembershipRoleBindingsTx({
+              txClient: tx,
+              membershipId: resolvedMembershipId
+            });
+            const nextRoleIds = normalizeTenantMembershipRoleIds([
+              ...existingRoleIds,
+              normalizedTakeoverRoleId
+            ]);
+            if (nextRoleIds.length < 1) {
+              const roleBindingError = new Error(
+                'owner transfer takeover role binding invalid'
+              );
+              roleBindingError.code =
+                'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_BINDINGS_INVALID';
+              throw roleBindingError;
+            }
+            await tx.query(
+              `
+                DELETE FROM auth_tenant_membership_roles
+                WHERE membership_id = ?
+              `,
+              [resolvedMembershipId]
+            );
+            for (const roleId of nextRoleIds) {
+              await tx.query(
+                `
+                  INSERT INTO auth_tenant_membership_roles (
+                    membership_id,
+                    role_id,
+                    created_by_user_id,
+                    updated_by_user_id
+                  )
+                  VALUES (?, ?, ?, ?)
+                `,
+                [
+                  resolvedMembershipId,
+                  roleId,
+                  normalizedOperatorUserId,
+                  normalizedOperatorUserId
+                ]
+              );
+            }
+
+            const syncResult = await syncTenantMembershipPermissionSnapshotInTx({
+              txClient: tx,
+              membershipId: resolvedMembershipId,
+              tenantId: normalizedOrgId,
+              roleIds: nextRoleIds,
+              revokeReason: 'org-owner-bootstrap'
+            });
+            const syncReason = String(syncResult?.reason || 'unknown')
+              .trim()
+              .toLowerCase();
+            if (syncReason !== 'ok') {
+              const syncError = new Error(
+                `owner transfer takeover sync failed: ${syncReason || 'unknown'}`
+              );
+              syncError.code = 'ERR_OWNER_TRANSFER_TAKEOVER_SYNC_FAILED';
+              syncError.syncReason = syncReason || 'unknown';
+              throw syncError;
+            }
+            const effectivePermission = syncResult?.permission || {};
+            if (
+              !Boolean(effectivePermission.canViewMemberAdmin)
+              || !Boolean(effectivePermission.canOperateMemberAdmin)
+            ) {
+              const permissionInsufficientError = new Error(
+                'owner transfer takeover permission insufficient'
+              );
+              permissionInsufficientError.code =
+                'ERR_OWNER_TRANSFER_TAKEOVER_PERMISSION_INSUFFICIENT';
+              throw permissionInsufficientError;
             }
             let auditRecorded = false;
             if (auditContext && typeof auditContext === 'object') {
@@ -9162,9 +9574,9 @@ const createMySqlAuthStore = ({
       operatorUserId = null,
       operatorSessionId = null,
       reason = null,
-      takeoverRoleId = 'tenant_owner',
-      takeoverRoleCode = 'TENANT_OWNER',
-      takeoverRoleName = '组织负责人',
+      takeoverRoleId = 'sys_admin',
+      takeoverRoleCode = 'sys_admin',
+      takeoverRoleName = 'sys_admin',
       requiredPermissionCodes = [],
       auditContext = null
     } = {}) => {

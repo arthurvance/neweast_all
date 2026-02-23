@@ -47,7 +47,7 @@ const tenantPermissionB = {
 
 const createService = () => createAuthService({ seedUsers });
 const toOwnerTransferTakeoverRoleIdForOrg = (orgId) =>
-  `tenant_owner__${createHash('sha256')
+  `sys_admin__${createHash('sha256')
     .update(String(orgId || '').trim())
     .digest('hex')
     .slice(0, 24)}`;
@@ -400,6 +400,55 @@ test('login success returns token pair and session metadata', async () => {
   });
 });
 
+test('platform login includes system config menu flags from role permission grants', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-system-config-menu-user',
+        phone: '13816660001',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform'],
+        platformRoles: [
+          {
+            roleId: 'platform-system-config-menu-role',
+            status: 'active'
+          }
+        ]
+      }
+    ]
+  });
+
+  await service._internals.authStore.createPlatformRoleCatalogEntry({
+    roleId: 'platform-system-config-menu-role',
+    code: 'PLATFORM_SYSTEM_CONFIG_MENU_ROLE',
+    name: 'Platform System Config Menu Role',
+    status: 'active',
+    scope: 'platform'
+  });
+  await service._internals.authStore.replacePlatformRolePermissionGrants({
+    roleId: 'platform-system-config-menu-role',
+    permissionCodes: ['platform.system_config.view']
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-platform-system-config-menu',
+    phone: '13816660001',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
+  assert.equal(login.entry_domain, 'platform');
+  assert.equal(
+    Boolean(login.platform_permission_context?.can_view_system_config),
+    true
+  );
+  assert.equal(
+    Boolean(login.platform_permission_context?.can_operate_system_config),
+    false
+  );
+});
+
 test('tenant entry provisions tenant-domain access from active memberships when explicit tenant-domain row is missing', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -708,8 +757,18 @@ test('tenant entry with multiple options requires selection and persists active 
         status: 'active',
         domains: ['platform', 'tenant'],
         tenants: [
-          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
-          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+          {
+            tenantId: 'tenant-a',
+            tenantName: 'Tenant A',
+            displayName: '租户成员甲',
+            permission: tenantPermissionA
+          },
+          {
+            tenantId: 'tenant-b',
+            tenantName: 'Tenant B',
+            displayName: '租户成员乙',
+            permission: tenantPermissionB
+          }
         ]
       }
     ]
@@ -725,6 +784,7 @@ test('tenant entry with multiple options requires selection and persists active 
   assert.equal(login.entry_domain, 'tenant');
   assert.equal(login.tenant_selection_required, true);
   assert.equal(login.active_tenant_id, null);
+  assert.equal(login.user_name, null);
   assert.equal(login.tenant_options.length, 2);
   assert.deepEqual(login.tenant_permission_context, {
     scope_label: '组织未选择（无可操作权限）',
@@ -738,6 +798,7 @@ test('tenant entry with multiple options requires selection and persists active 
     requestId: 'req-tenant-options-before',
     accessToken: login.access_token
   });
+  assert.equal(beforeSelect.user_name, null);
   assert.equal(beforeSelect.tenant_selection_required, true);
   assert.equal(beforeSelect.active_tenant_id, null);
   assert.deepEqual(beforeSelect.tenant_permission_context, {
@@ -756,6 +817,7 @@ test('tenant entry with multiple options requires selection and persists active 
   assert.equal(selected.entry_domain, 'tenant');
   assert.equal(selected.active_tenant_id, 'tenant-b');
   assert.equal(selected.tenant_selection_required, false);
+  assert.equal(selected.user_name, '租户成员乙');
   assert.deepEqual(selected.tenant_permission_context, {
     scope_label: '组织权限快照 B',
     can_view_member_admin: false,
@@ -768,6 +830,7 @@ test('tenant entry with multiple options requires selection and persists active 
     requestId: 'req-tenant-options-after',
     accessToken: login.access_token
   });
+  assert.equal(afterSelect.user_name, '租户成员乙');
   assert.equal(afterSelect.active_tenant_id, 'tenant-b');
   assert.equal(afterSelect.tenant_selection_required, false);
   assert.deepEqual(afterSelect.tenant_permission_context, {
@@ -791,6 +854,7 @@ test('tenant entry with single option binds active tenant directly', async () =>
         tenants: [{
           tenantId: 'tenant-single',
           tenantName: 'Single Tenant',
+          displayName: '单租户成员',
           permission: {
             scopeLabel: '组织权限快照 Single',
             canViewMemberAdmin: true,
@@ -813,6 +877,7 @@ test('tenant entry with single option binds active tenant directly', async () =>
   assert.equal(login.entry_domain, 'tenant');
   assert.equal(login.tenant_selection_required, false);
   assert.equal(login.active_tenant_id, 'tenant-single');
+  assert.equal(login.user_name, '单租户成员');
 });
 
 test('tenant entry accepts enabled tenant membership in in-memory auth store', async () => {
@@ -4848,17 +4913,17 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reports d
     ]
   });
 
-  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
-    synced: false,
-    reason: 'db-deadlock',
-    permission: null
-  });
-
   const login = await service.login({
     requestId: 'req-route-authz-platform-deadlock-login',
     phone: '13830000060',
     password: 'Passw0rd!',
     entryDomain: 'platform'
+  });
+
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
+    synced: false,
+    reason: 'db-deadlock',
+    permission: null
   });
 
   await assert.rejects(
@@ -4907,6 +4972,13 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync remains c
     ]
   });
 
+  const login = await service.login({
+    requestId: 'req-route-authz-platform-concurrent-login',
+    phone: '13830000061',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+
   let syncCallCount = 0;
   service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => {
     syncCallCount += 1;
@@ -4916,13 +4988,6 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync remains c
       permission: null
     };
   };
-
-  const login = await service.login({
-    requestId: 'req-route-authz-platform-concurrent-login',
-    phone: '13830000061',
-    password: 'Passw0rd!',
-    entryDomain: 'platform'
-  });
 
   await assert.rejects(
     () =>
@@ -4971,17 +5036,17 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync returns u
     ]
   });
 
-  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
-    synced: false,
-    reason: 'unexpected-sync-state',
-    permission: null
-  });
-
   const login = await service.login({
     requestId: 'req-route-authz-platform-unknown-sync-login',
     phone: '13830000062',
     password: 'Passw0rd!',
     entryDomain: 'platform'
+  });
+
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
+    synced: false,
+    reason: 'unexpected-sync-state',
+    permission: null
   });
 
   await assert.rejects(
@@ -5030,17 +5095,17 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reason is
     ]
   });
 
-  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
-    synced: false,
-    reason: '   ',
-    permission: null
-  });
-
   const login = await service.login({
     requestId: 'req-route-authz-platform-empty-sync-login',
     phone: '13830000063',
     password: 'Passw0rd!',
     entryDomain: 'platform'
+  });
+
+  service._internals.authStore.syncPlatformPermissionSnapshotByUserId = async () => ({
+    synced: false,
+    reason: '   ',
+    permission: null
   });
 
   await assert.rejects(
@@ -7942,16 +8007,16 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
     previous_status: 'active',
     current_status: 'disabled',
     affected_membership_count: 1,
-    affected_role_count: 0,
-    affected_role_binding_count: 0,
+    affected_role_count: 1,
+    affected_role_binding_count: 1,
     revoked_session_count: 1,
     revoked_refresh_token_count: 1
   });
   const disableAuditEvent = service._internals.auditTrail.at(-1);
   assert.equal(disableAuditEvent.type, 'auth.org.status.updated');
   assert.equal(disableAuditEvent.affected_membership_count, 1);
-  assert.equal(disableAuditEvent.affected_role_count, 0);
-  assert.equal(disableAuditEvent.affected_role_binding_count, 0);
+  assert.equal(disableAuditEvent.affected_role_count, 1);
+  assert.equal(disableAuditEvent.affected_role_binding_count, 1);
   assert.equal(disableAuditEvent.revoked_session_count, 1);
   assert.equal(disableAuditEvent.revoked_refresh_token_count, 1);
 
@@ -8665,12 +8730,12 @@ test('executeOwnerTransferTakeover fails closed when takeover role definition is
     operatorUserId: 'platform-role-facts-operator'
   });
 
-  await service.createPlatformRoleCatalogEntry({
+  await service.updatePlatformRoleCatalogEntry({
     roleId: takeoverRoleId,
-    code: 'TENANT_BILLING_GUARD',
-    name: '异常接管角色定义',
     scope: 'tenant',
     tenantId: orgId,
+    code: 'TENANT_BILLING_GUARD',
+    name: '异常接管角色定义',
     status: 'active',
     operatorUserId: 'platform-role-facts-operator',
     operatorSessionId: 'platform-role-facts-session'
@@ -8738,9 +8803,20 @@ test('executeOwnerTransferTakeover fails closed when takeover role code is alrea
     operatorUserId: 'platform-role-facts-operator'
   });
 
+  await service.updatePlatformRoleCatalogEntry({
+    roleId: takeoverRoleId,
+    scope: 'tenant',
+    tenantId: orgId,
+    code: 'SYS_ADMIN_RESERVED',
+    name: '预留接管角色定义',
+    status: 'active',
+    operatorUserId: 'platform-role-facts-operator',
+    operatorSessionId: 'platform-role-facts-session'
+  });
+
   await service.createPlatformRoleCatalogEntry({
     roleId: 'owner_transfer_conflict_existing_role',
-    code: 'TENANT_OWNER',
+    code: 'sys_admin',
     name: '冲突接管角色定义',
     scope: 'tenant',
     tenantId: orgId,
@@ -8786,7 +8862,8 @@ test('executeOwnerTransferTakeover fails closed when takeover role code is alrea
     scope: 'tenant',
     tenantId: orgId
   });
-  assert.equal(takeoverRole, null);
+  assert.ok(takeoverRole);
+  assert.equal(takeoverRole.code, 'SYS_ADMIN_RESERVED');
 });
 
 test('executeOwnerTransferTakeover rolls back in-memory owner switch when takeover transaction fails mid-way', async () => {

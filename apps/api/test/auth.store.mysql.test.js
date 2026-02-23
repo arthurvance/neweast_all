@@ -2650,6 +2650,15 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
   let inTransactionCalls = 0;
   const txStatements = [];
   const txParams = [];
+  const txState = {
+    orgId: '',
+    orgName: '',
+    ownerUserId: '',
+    membershipId: 'owner-bootstrap-membership-id',
+    takeoverRoleId: '',
+    grantCodesByRoleId: new Map(),
+    roleIdsByMembershipId: new Map()
+  };
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -2663,10 +2672,158 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
             txStatements.push(normalizedSql);
             txParams.push(params);
             if (normalizedSql.includes('INSERT INTO orgs')) {
+              txState.orgId = String(params[0] || '').trim();
+              txState.orgName = String(params[1] || '').trim();
+              txState.ownerUserId = String(params[2] || '').trim();
               return { affectedRows: 1 };
             }
             if (normalizedSql.includes('INSERT INTO memberships')) {
               return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+              txState.membershipId = String(params[0] || '').trim() || txState.membershipId;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+            ) {
+              return [{
+                membership_id: txState.membershipId,
+                user_id: String(params[0] || '').trim(),
+                tenant_id: String(params[1] || '').trim(),
+                status: 'active',
+                tenant_name: txState.orgName,
+                can_view_member_admin: 0,
+                can_operate_member_admin: 0,
+                can_view_billing: 0,
+                can_operate_billing: 0,
+                joined_at: '2026-01-01T00:00:00.000Z',
+                left_at: null
+              }];
+            }
+            if (
+              normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+            ) {
+              return [{
+                membership_id: String(params[0] || '').trim(),
+                user_id: txState.ownerUserId,
+                tenant_id: String(params[1] || '').trim(),
+                status: 'active',
+                can_view_member_admin: 0,
+                can_operate_member_admin: 0,
+                can_view_billing: 0,
+                can_operate_billing: 0
+              }];
+            }
+            if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM platform_role_catalog')
+              && normalizedSql.includes('WHERE role_id = ?')
+            ) {
+              const requestedRoleId = String(params[0] || '').trim();
+              if (!txState.takeoverRoleId || requestedRoleId !== txState.takeoverRoleId) {
+                return [];
+              }
+              return [{
+                role_id: txState.takeoverRoleId,
+                tenant_id: txState.orgId,
+                code: 'sys_admin',
+                status: 'active',
+                scope: 'tenant'
+              }];
+            }
+            if (normalizedSql.includes('INSERT INTO platform_role_catalog')) {
+              txState.takeoverRoleId = String(params[0] || '').trim();
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM tenant_role_permission_grants')
+              && normalizedSql.includes('WHERE role_id = ?')
+            ) {
+              const requestedRoleId = String(params[0] || '').trim();
+              const permissionCodes = txState.grantCodesByRoleId.get(requestedRoleId) || [];
+              return permissionCodes.map((permissionCode) => ({
+                permission_code: permissionCode
+              }));
+            }
+            if (normalizedSql.includes('INSERT INTO tenant_role_permission_grants')) {
+              const roleId = String(params[0] || '').trim();
+              const permissionCode = String(params[1] || '').trim();
+              const existingPermissionCodes = txState.grantCodesByRoleId.get(roleId) || [];
+              if (!existingPermissionCodes.includes(permissionCode)) {
+                existingPermissionCodes.push(permissionCode);
+              }
+              txState.grantCodesByRoleId.set(roleId, existingPermissionCodes);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('WHERE membership_id = ?')
+            ) {
+              const membershipId = String(params[0] || '').trim();
+              return (txState.roleIdsByMembershipId.get(membershipId) || []).map((roleId) => ({
+                role_id: roleId
+              }));
+            }
+            if (normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')) {
+              const membershipId = String(params[0] || '').trim();
+              txState.roleIdsByMembershipId.set(membershipId, []);
+              return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')) {
+              const membershipId = String(params[0] || '').trim();
+              const roleId = String(params[1] || '').trim();
+              txState.roleIdsByMembershipId.set(membershipId, [roleId]);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM platform_role_catalog')
+              && normalizedSql.includes('WHERE role_id IN')
+            ) {
+              return params.map((roleId) => ({
+                role_id: String(roleId || '').trim(),
+                status: 'active',
+                scope: 'tenant',
+                tenant_id: txState.orgId
+              }));
+            }
+            if (
+              normalizedSql.includes('FROM tenant_role_permission_grants')
+              && normalizedSql.includes('WHERE role_id IN')
+            ) {
+              const rows = [];
+              for (const roleId of params) {
+                const normalizedRoleId = String(roleId || '').trim();
+                for (const permissionCode of txState.grantCodesByRoleId.get(normalizedRoleId) || []) {
+                  rows.push({
+                    role_id: normalizedRoleId,
+                    permission_code: permissionCode
+                  });
+                }
+              }
+              return rows;
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes('SET can_view_member_admin = ?')
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes('SET status = \'revoked\'')
+            ) {
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes('SET status = \'revoked\'')
+            ) {
+              return { affectedRows: 0 };
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
             return [];
@@ -2683,7 +2840,7 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
   });
 
   assert.equal(inTransactionCalls, 1);
-  assert.equal(txStatements.length, 2);
+  assert.ok(txStatements.length > 2);
   assert.match(txStatements[0], /INSERT\s+INTO\s+orgs/i);
   assert.match(txStatements[1], /INSERT\s+INTO\s+memberships/i);
   assert.equal(txParams[0][1], '组织事务测试 A');
@@ -2697,6 +2854,15 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
 test('createOrganizationWithOwner retries deadlock and succeeds on next transaction attempt', async () => {
   let inTransactionCalls = 0;
   const deadlockMetrics = [];
+  const txState = {
+    orgId: '',
+    orgName: '',
+    ownerUserId: '',
+    membershipId: 'owner-bootstrap-membership-id',
+    takeoverRoleId: '',
+    grantCodesByRoleId: new Map(),
+    roleIdsByMembershipId: new Map()
+  };
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -2708,13 +2874,161 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
           throw createDeadlockError();
         }
         return runner({
-          query: async (sql) => {
+          query: async (sql, params = []) => {
             const normalizedSql = String(sql);
             if (normalizedSql.includes('INSERT INTO orgs')) {
+              txState.orgId = String(params[0] || '').trim();
+              txState.orgName = String(params[1] || '').trim();
+              txState.ownerUserId = String(params[2] || '').trim();
               return { affectedRows: 1 };
             }
             if (normalizedSql.includes('INSERT INTO memberships')) {
               return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+              txState.membershipId = String(params[0] || '').trim() || txState.membershipId;
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
+            ) {
+              return [{
+                membership_id: txState.membershipId,
+                user_id: String(params[0] || '').trim(),
+                tenant_id: String(params[1] || '').trim(),
+                status: 'active',
+                tenant_name: txState.orgName,
+                can_view_member_admin: 0,
+                can_operate_member_admin: 0,
+                can_view_billing: 0,
+                can_operate_billing: 0,
+                joined_at: '2026-01-01T00:00:00.000Z',
+                left_at: null
+              }];
+            }
+            if (
+              normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
+            ) {
+              return [{
+                membership_id: String(params[0] || '').trim(),
+                user_id: txState.ownerUserId,
+                tenant_id: String(params[1] || '').trim(),
+                status: 'active',
+                can_view_member_admin: 0,
+                can_operate_member_admin: 0,
+                can_view_billing: 0,
+                can_operate_billing: 0
+              }];
+            }
+            if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM platform_role_catalog')
+              && normalizedSql.includes('WHERE role_id = ?')
+            ) {
+              const requestedRoleId = String(params[0] || '').trim();
+              if (!txState.takeoverRoleId || requestedRoleId !== txState.takeoverRoleId) {
+                return [];
+              }
+              return [{
+                role_id: txState.takeoverRoleId,
+                tenant_id: txState.orgId,
+                code: 'sys_admin',
+                status: 'active',
+                scope: 'tenant'
+              }];
+            }
+            if (normalizedSql.includes('INSERT INTO platform_role_catalog')) {
+              txState.takeoverRoleId = String(params[0] || '').trim();
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM tenant_role_permission_grants')
+              && normalizedSql.includes('WHERE role_id = ?')
+            ) {
+              const requestedRoleId = String(params[0] || '').trim();
+              const permissionCodes = txState.grantCodesByRoleId.get(requestedRoleId) || [];
+              return permissionCodes.map((permissionCode) => ({
+                permission_code: permissionCode
+              }));
+            }
+            if (normalizedSql.includes('INSERT INTO tenant_role_permission_grants')) {
+              const roleId = String(params[0] || '').trim();
+              const permissionCode = String(params[1] || '').trim();
+              const existingPermissionCodes = txState.grantCodesByRoleId.get(roleId) || [];
+              if (!existingPermissionCodes.includes(permissionCode)) {
+                existingPermissionCodes.push(permissionCode);
+              }
+              txState.grantCodesByRoleId.set(roleId, existingPermissionCodes);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('WHERE membership_id = ?')
+            ) {
+              const membershipId = String(params[0] || '').trim();
+              return (txState.roleIdsByMembershipId.get(membershipId) || []).map((roleId) => ({
+                role_id: roleId
+              }));
+            }
+            if (normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')) {
+              const membershipId = String(params[0] || '').trim();
+              txState.roleIdsByMembershipId.set(membershipId, []);
+              return { affectedRows: 1 };
+            }
+            if (normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')) {
+              const membershipId = String(params[0] || '').trim();
+              const roleId = String(params[1] || '').trim();
+              txState.roleIdsByMembershipId.set(membershipId, [roleId]);
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('FROM platform_role_catalog')
+              && normalizedSql.includes('WHERE role_id IN')
+            ) {
+              return params.map((roleId) => ({
+                role_id: String(roleId || '').trim(),
+                status: 'active',
+                scope: 'tenant',
+                tenant_id: txState.orgId
+              }));
+            }
+            if (
+              normalizedSql.includes('FROM tenant_role_permission_grants')
+              && normalizedSql.includes('WHERE role_id IN')
+            ) {
+              const rows = [];
+              for (const roleId of params) {
+                const normalizedRoleId = String(roleId || '').trim();
+                for (const permissionCode of txState.grantCodesByRoleId.get(normalizedRoleId) || []) {
+                  rows.push({
+                    role_id: normalizedRoleId,
+                    permission_code: permissionCode
+                  });
+                }
+              }
+              return rows;
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_user_tenants')
+              && normalizedSql.includes('SET can_view_member_admin = ?')
+            ) {
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE auth_sessions')
+              && normalizedSql.includes('SET status = \'revoked\'')
+            ) {
+              return { affectedRows: 0 };
+            }
+            if (
+              normalizedSql.includes('UPDATE refresh_tokens')
+              && normalizedSql.includes('SET status = \'revoked\'')
+            ) {
+              return { affectedRows: 0 };
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
             return [];
@@ -3598,7 +3912,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         status: 'active',
         scope: 'tenant',
         tenant_id: 'owner-transfer-store-org-success'
@@ -3612,11 +3926,11 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     ) {
       return [
         {
-          role_id: 'tenant_owner',
+          role_id: 'sys_admin',
           permission_code: 'tenant.member_admin.view'
         },
         {
-          role_id: 'tenant_owner',
+          role_id: 'sys_admin',
           permission_code: 'tenant.member_admin.operate'
         }
       ];
@@ -3654,9 +3968,9 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     operatorUserId: 'platform-role-facts-operator',
     operatorSessionId: 'platform-role-facts-session',
     reason: '治理责任移交',
-    takeoverRoleId: 'tenant_owner',
-    takeoverRoleCode: 'TENANT_OWNER',
-    takeoverRoleName: '组织负责人',
+    takeoverRoleId: 'sys_admin',
+    takeoverRoleCode: 'sys_admin',
+    takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
       'tenant.member_admin.view',
       'tenant.member_admin.operate'
@@ -3668,7 +3982,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     old_owner_user_id: 'owner-transfer-store-old-owner',
     new_owner_user_id: 'owner-transfer-store-new-owner',
     membership_id: 'membership-owner-transfer-store-new-owner',
-    role_ids: ['tenant_owner'],
+    role_ids: ['sys_admin'],
     permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view'],
     audit_recorded: false
   });
@@ -3718,9 +4032,9 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         tenant_id: 'owner-transfer-store-left-rejoin',
-        code: 'TENANT_OWNER',
+        code: 'sys_admin',
         status: 'active',
         scope: 'tenant'
       }];
@@ -3846,7 +4160,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         status: 'active',
         scope: 'tenant',
         tenant_id: 'owner-transfer-store-left-rejoin'
@@ -3860,11 +4174,11 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     ) {
       return [
         {
-          role_id: 'tenant_owner',
+          role_id: 'sys_admin',
           permission_code: 'tenant.member_admin.view'
         },
         {
-          role_id: 'tenant_owner',
+          role_id: 'sys_admin',
           permission_code: 'tenant.member_admin.operate'
         }
       ];
@@ -3901,9 +4215,9 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     operatorUserId: 'platform-role-facts-operator',
     operatorSessionId: 'platform-role-facts-session',
     reason: '治理责任移交',
-    takeoverRoleId: 'tenant_owner',
-    takeoverRoleCode: 'TENANT_OWNER',
-    takeoverRoleName: '组织负责人',
+    takeoverRoleId: 'sys_admin',
+    takeoverRoleCode: 'sys_admin',
+    takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
       'tenant.member_admin.view',
       'tenant.member_admin.operate'
@@ -3959,7 +4273,7 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner__aaaaaaaaaaaaaaaaaaaaaaaa',
+        role_id: 'sys_admin__aaaaaaaaaaaaaaaaaaaaaaaa',
         tenant_id: 'owner-transfer-store-role-code-invalid',
         code: 'TENANT_BILLING_GUARD',
         status: 'active',
@@ -3980,9 +4294,9 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
         operatorUserId: 'platform-role-facts-operator',
         operatorSessionId: 'platform-role-facts-session',
         reason: '治理责任移交',
-        takeoverRoleId: 'tenant_owner__aaaaaaaaaaaaaaaaaaaaaaaa',
-        takeoverRoleCode: 'TENANT_OWNER',
-        takeoverRoleName: '组织负责人',
+        takeoverRoleId: 'sys_admin__aaaaaaaaaaaaaaaaaaaaaaaa',
+        takeoverRoleCode: 'sys_admin',
+        takeoverRoleName: 'sys_admin',
         requiredPermissionCodes: [
           'tenant.member_admin.view',
           'tenant.member_admin.operate'
@@ -4057,9 +4371,9 @@ test('executeOwnerTransferTakeover rejects duplicate takeover role insert when r
         operatorUserId: 'platform-role-facts-operator',
         operatorSessionId: 'platform-role-facts-session',
         reason: '治理责任移交',
-        takeoverRoleId: 'tenant_owner__bbbbbbbbbbbbbbbbbbbbbbbb',
-        takeoverRoleCode: 'TENANT_OWNER',
-        takeoverRoleName: '组织负责人',
+        takeoverRoleId: 'sys_admin__bbbbbbbbbbbbbbbbbbbbbbbb',
+        takeoverRoleCode: 'sys_admin',
+        takeoverRoleName: 'sys_admin',
         requiredPermissionCodes: [
           'tenant.member_admin.view',
           'tenant.member_admin.operate'
@@ -4224,7 +4538,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         status: 'active',
         scope: 'tenant',
         tenant_id: 'owner-transfer-store-membership-race'
@@ -4238,11 +4552,11 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     ) {
       return [
         {
-          role_id: 'tenant_owner',
+          role_id: 'sys_admin',
           permission_code: 'tenant.member_admin.view'
         },
         {
-          role_id: 'tenant_owner',
+          role_id: 'sys_admin',
           permission_code: 'tenant.member_admin.operate'
         }
       ];
@@ -4280,9 +4594,9 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     operatorUserId: 'platform-role-facts-operator',
     operatorSessionId: 'platform-role-facts-session',
     reason: '治理责任移交',
-    takeoverRoleId: 'tenant_owner',
-    takeoverRoleCode: 'TENANT_OWNER',
-    takeoverRoleName: '组织负责人',
+    takeoverRoleId: 'sys_admin',
+    takeoverRoleCode: 'sys_admin',
+    takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
       'tenant.member_admin.view',
       'tenant.member_admin.operate'
@@ -4294,7 +4608,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     old_owner_user_id: 'owner-transfer-store-membership-race-old-owner',
     new_owner_user_id: 'owner-transfer-store-membership-race-new-owner',
     membership_id: 'membership-owner-transfer-store-membership-race',
-    role_ids: ['tenant_owner'],
+    role_ids: ['sys_admin'],
     permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view'],
     audit_recorded: false
   });
@@ -4339,9 +4653,9 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         tenant_id: 'owner-transfer-store-permission-invalid',
-        code: 'TENANT_OWNER',
+        code: 'sys_admin',
         status: 'active',
         scope: 'tenant'
       }];
@@ -4436,7 +4750,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         status: 'active',
         scope: 'tenant',
         tenant_id: 'owner-transfer-store-permission-invalid'
@@ -4449,7 +4763,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        role_id: 'tenant_owner',
+        role_id: 'sys_admin',
         permission_code: 'tenant.member_admin.view'
       }];
     }
@@ -4487,9 +4801,9 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
         operatorUserId: 'platform-role-facts-operator',
         operatorSessionId: 'platform-role-facts-session',
         reason: '治理责任移交',
-        takeoverRoleId: 'tenant_owner',
-        takeoverRoleCode: 'TENANT_OWNER',
-        takeoverRoleName: '组织负责人',
+        takeoverRoleId: 'sys_admin',
+        takeoverRoleCode: 'sys_admin',
+        takeoverRoleName: 'sys_admin',
         requiredPermissionCodes: [
           'tenant.member_admin.view',
           'tenant.member_admin.operate'

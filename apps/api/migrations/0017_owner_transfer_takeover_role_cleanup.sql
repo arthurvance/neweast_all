@@ -15,7 +15,7 @@ WHERE mr.role_id = 'tenant_owner'
 CREATE TEMPORARY TABLE IF NOT EXISTS tmp_owner_takeover_legacy_tenants AS
 SELECT DISTINCT
   legacy.tenant_id,
-  CONCAT('tenant_owner__', SUBSTRING(SHA2(legacy.tenant_id, 256), 1, 24)) AS resolved_role_id
+  CONCAT('sys_admin__', SUBSTRING(SHA2(legacy.tenant_id, 256), 1, 24)) AS resolved_role_id
 FROM tmp_owner_takeover_legacy_memberships legacy;
 
 SET @owner_takeover_role_collision_count = (
@@ -25,7 +25,7 @@ SET @owner_takeover_role_collision_count = (
   WHERE NOT (
     prc.scope = 'tenant'
     AND prc.tenant_id = migration_tenants.tenant_id
-    AND prc.code_normalized = 'tenant_owner'
+    AND prc.code_normalized = 'sys_admin'
   )
 );
 
@@ -45,7 +45,7 @@ SET @owner_takeover_tenant_code_collision_count = (
   JOIN platform_role_catalog prc
     ON prc.scope = 'tenant'
    AND prc.tenant_id = migration_tenants.tenant_id
-   AND prc.code_normalized = 'tenant_owner'
+   AND prc.code_normalized = 'sys_admin'
    AND BINARY prc.role_id <> BINARY migration_tenants.resolved_role_id
 );
 
@@ -83,9 +83,9 @@ INSERT INTO platform_role_catalog (
 SELECT
   migration_tenants.resolved_role_id,
   migration_tenants.tenant_id,
-  'TENANT_OWNER',
-  'tenant_owner',
-  '组织负责人',
+  'sys_admin',
+  'sys_admin',
+  'sys_admin',
   'active',
   'tenant',
   1,

@@ -47,10 +47,10 @@ const MAX_TENANT_NAME_LENGTH = 128;
 const MAX_OWNER_TRANSFER_ORG_ID_LENGTH = 64;
 const MAX_OWNER_TRANSFER_REASON_LENGTH = 256;
 const MAX_ORG_STATUS_CASCADE_COUNT = 100000;
-const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'tenant_owner__';
+const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
-const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'TENANT_OWNER';
-const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = '组织负责人';
+const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
+const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
 const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
   TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
   TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
@@ -587,7 +587,7 @@ const errors = {
     authError({
       status: 409,
       title: 'Conflict',
-      detail: '组织负责人变更请求处理中，请稍后重试',
+      detail: 'sys_admin 变更请求处理中，请稍后重试',
       errorCode: 'AUTH-409-OWNER-TRANSFER-CONFLICT',
       extensions: {
         org_id: orgId ? String(orgId).trim() : null,
@@ -2075,7 +2075,85 @@ const createAuthService = (options = {}) => {
       });
       throw errors.forbidden();
     }
+    if (typeof authStore.hasPlatformPermissionByUserId === 'function') {
+      try {
+        const systemConfigGrant = await resolveSystemConfigPermissionGrant({
+          requestId,
+          userId,
+          sessionId,
+          entryDomain,
+          permissionCode: PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+        });
+        normalized.can_view_system_config = Boolean(
+          systemConfigGrant?.can_view_system_config
+        );
+        normalized.can_operate_system_config = Boolean(
+          systemConfigGrant?.can_operate_system_config
+        );
+      } catch (error) {
+        if (
+          !(error instanceof AuthProblemError)
+          || error.errorCode !== 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED'
+        ) {
+          throw error;
+        }
+      }
+    }
     return normalized;
+  };
+
+  const resolveLoginUserName = async ({
+    userId,
+    entryDomain,
+    activeTenantId = null
+  } = {}) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+
+    if (entryDomain === 'platform') {
+      if (typeof authStore.getPlatformUserById !== 'function') {
+        return null;
+      }
+      try {
+        const userProfile = await authStore.getPlatformUserById({
+          userId: normalizedUserId
+        });
+        return normalizeAuditStringOrNull(userProfile?.name, 64);
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    if (entryDomain === 'tenant') {
+      const normalizedTenantId = normalizeTenantId(activeTenantId);
+      if (!normalizedTenantId) {
+        return null;
+      }
+      if (typeof authStore.findTenantMembershipByUserAndTenantId !== 'function') {
+        return null;
+      }
+      try {
+        const membership = await authStore.findTenantMembershipByUserAndTenantId({
+          userId: normalizedUserId,
+          tenantId: normalizedTenantId
+        });
+        const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+          membership,
+          expectedUserId: normalizedUserId,
+          expectedTenantId: normalizedTenantId
+        });
+        if (!normalizedMembership || normalizedMembership.status !== 'active') {
+          return null;
+        }
+        return normalizeAuditStringOrNull(normalizedMembership.display_name, 64);
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    return null;
   };
 
   const resolveSystemConfigPermissionGrant = async ({
@@ -2650,6 +2728,17 @@ const createAuthService = (options = {}) => {
       entryDomain: sessionContext.entry_domain,
       activeTenantId: sessionContext.active_tenant_id
     });
+    const platformPermissionContext = await getPlatformPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain
+    });
+    const userName = await resolveLoginUserName({
+      userId: user.id,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
+    });
 
     return {
       token_type: 'Bearer',
@@ -2662,6 +2751,8 @@ const createAuthService = (options = {}) => {
       active_tenant_id: sessionContext.active_tenant_id,
       tenant_selection_required: tenantSelectionRequired,
       tenant_options: tenantOptions,
+      user_name: userName,
+      platform_permission_context: platformPermissionContext,
       tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
@@ -2934,6 +3025,17 @@ const createAuthService = (options = {}) => {
       entryDomain: sessionContext.entry_domain,
       activeTenantId: sessionContext.active_tenant_id
     });
+    const platformPermissionContext = await getPlatformPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain
+    });
+    const userName = await resolveLoginUserName({
+      userId: user.id,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
+    });
 
     return {
       token_type: 'Bearer',
@@ -2946,6 +3048,8 @@ const createAuthService = (options = {}) => {
       active_tenant_id: sessionContext.active_tenant_id,
       tenant_selection_required: tenantSelectionRequired,
       tenant_options: tenantOptions,
+      user_name: userName,
+      platform_permission_context: platformPermissionContext,
       tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
@@ -3175,6 +3279,17 @@ const createAuthService = (options = {}) => {
       entryDomain: sessionContext.entry_domain,
       activeTenantId: sessionContext.active_tenant_id
     });
+    const platformPermissionContext = await getPlatformPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain
+    });
+    const userName = await resolveLoginUserName({
+      userId: user.id,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
+    });
 
     addAuditEvent({
       type: 'auth.refresh.succeeded',
@@ -3194,6 +3309,8 @@ const createAuthService = (options = {}) => {
       active_tenant_id: sessionContext.active_tenant_id,
       tenant_selection_required: tenantSelectionRequired,
       tenant_options: refreshedTenantOptions,
+      user_name: userName,
+      platform_permission_context: platformPermissionContext,
       tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
@@ -4208,6 +4325,11 @@ const createAuthService = (options = {}) => {
       entryDomain: sessionContext.entry_domain,
       activeTenantId: sessionContext.active_tenant_id
     });
+    const userName = await resolveLoginUserName({
+      userId: user.id,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: sessionContext.active_tenant_id
+    });
 
     return {
       session_id: sessionId,
@@ -4215,6 +4337,7 @@ const createAuthService = (options = {}) => {
       active_tenant_id: sessionContext.active_tenant_id,
       tenant_selection_required: selectionRequired,
       tenant_options: options,
+      user_name: userName,
       tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
@@ -9270,12 +9393,18 @@ const createAuthService = (options = {}) => {
       entryDomain: 'tenant',
       activeTenantId: normalizedTenantId
     });
+    const userName = await resolveLoginUserName({
+      userId: user.id,
+      entryDomain: 'tenant',
+      activeTenantId: normalizedTenantId
+    });
 
     return {
       session_id: sessionId,
       entry_domain: 'tenant',
       active_tenant_id: normalizedTenantId,
       tenant_selection_required: false,
+      user_name: userName,
       tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
