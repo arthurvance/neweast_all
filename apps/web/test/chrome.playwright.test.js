@@ -1143,6 +1143,961 @@ const createPlatformGovernanceApiServer = async () => {
   };
 };
 
+const createTenantGovernanceApiServer = async () => {
+  const requests = [];
+  const responses = [];
+  const tenantOptions = [
+    { tenant_id: 'tenant-101', tenant_name: 'Tenant 101' },
+    { tenant_id: 'tenant-202', tenant_name: 'Tenant 202' }
+  ];
+  const permissionCatalog = [
+    'tenant.member_admin.view',
+    'tenant.member_admin.operate',
+    'tenant.billing.view',
+    'tenant.billing.operate'
+  ];
+  const protectedRoleIds = new Set(['tenant_owner', 'tenant_admin', 'tenant_member']);
+  const sessionMembershipByTenantId = {
+    'tenant-101': 'membership-tenant-101-admin',
+    'tenant-202': 'membership-tenant-202-admin'
+  };
+
+  let activeTenantId = null;
+  let nextMemberId = 3;
+  let nextRoleSequence = 3;
+
+  const membersByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'membership-tenant-101-admin',
+          {
+            membership_id: 'membership-tenant-101-admin',
+            user_id: 'tenant-user-admin',
+            tenant_id: 'tenant-101',
+            tenant_name: 'Tenant 101',
+            phone: '13800000021',
+            status: 'active',
+            display_name: '组织管理员',
+            department_name: '运营',
+            joined_at: new Date().toISOString(),
+            left_at: null
+          }
+        ],
+        [
+          'membership-tenant-101-member',
+          {
+            membership_id: 'membership-tenant-101-member',
+            user_id: 'tenant-user-02',
+            tenant_id: 'tenant-101',
+            tenant_name: 'Tenant 101',
+            phone: '13800000022',
+            status: 'active',
+            display_name: '成员乙',
+            department_name: '产品',
+            joined_at: new Date().toISOString(),
+            left_at: null
+          }
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'membership-tenant-202-admin',
+          {
+            membership_id: 'membership-tenant-202-admin',
+            user_id: 'tenant-user-admin',
+            tenant_id: 'tenant-202',
+            tenant_name: 'Tenant 202',
+            phone: '13800000021',
+            status: 'active',
+            display_name: '组织管理员',
+            department_name: '运营',
+            joined_at: new Date().toISOString(),
+            left_at: null
+          }
+        ]
+      ])
+    ]
+  ]);
+  const rolesByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'tenant_owner',
+          {
+            role_id: 'tenant_owner',
+            tenant_id: 'tenant-101',
+            code: 'TENANT_OWNER',
+            name: '组织负责人',
+            status: 'active',
+            is_system: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        [
+          'tenant_member_admin',
+          {
+            role_id: 'tenant_member_admin',
+            tenant_id: 'tenant-101',
+            code: 'TENANT_MEMBER_ADMIN',
+            name: '组织成员治理',
+            status: 'active',
+            is_system: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        [
+          'tenant_billing_admin',
+          {
+            role_id: 'tenant_billing_admin',
+            tenant_id: 'tenant-101',
+            code: 'TENANT_BILLING_ADMIN',
+            name: '组织账单治理',
+            status: 'active',
+            is_system: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'tenant_owner',
+          {
+            role_id: 'tenant_owner',
+            tenant_id: 'tenant-202',
+            code: 'TENANT_OWNER',
+            name: '组织负责人',
+            status: 'active',
+            is_system: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        [
+          'tenant_member',
+          {
+            role_id: 'tenant_member',
+            tenant_id: 'tenant-202',
+            code: 'TENANT_MEMBER',
+            name: '组织成员',
+            status: 'active',
+            is_system: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ]
+      ])
+    ]
+  ]);
+  const rolePermissionsByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        ['tenant_owner', [...permissionCatalog]],
+        ['tenant_member_admin', ['tenant.member_admin.view', 'tenant.member_admin.operate']],
+        ['tenant_billing_admin', ['tenant.billing.view', 'tenant.billing.operate']]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        ['tenant_owner', [...permissionCatalog]],
+        ['tenant_member', ['tenant.billing.view']]
+      ])
+    ]
+  ]);
+  const memberRoleBindingsByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        ['membership-tenant-101-admin', ['tenant_member_admin']],
+        ['membership-tenant-101-member', ['tenant_member_admin']]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        ['membership-tenant-202-admin', ['tenant_member']]
+      ])
+    ]
+  ]);
+  const tenant101Members = membersByTenantId.get('tenant-101');
+  const tenant101Bindings = memberRoleBindingsByTenantId.get('tenant-101');
+  if (tenant101Members && tenant101Bindings) {
+    for (let index = 1; index <= 9; index += 1) {
+      const membershipId = `membership-tenant-101-extra-${index}`;
+      const userId = `tenant-user-extra-${index}`;
+      tenant101Members.set(membershipId, {
+        membership_id: membershipId,
+        user_id: userId,
+        tenant_id: 'tenant-101',
+        tenant_name: 'Tenant 101',
+        phone: `138000001${String(index).padStart(2, '0')}`,
+        status: 'active',
+        display_name: `成员补充${index}`,
+        department_name: '运营',
+        joined_at: new Date().toISOString(),
+        left_at: null
+      });
+      tenant101Bindings.set(membershipId, ['tenant_member_admin']);
+    }
+  }
+
+  const readRequestBody = async (req) => {
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    if (chunks.length <= 0) {
+      return {};
+    }
+    const text = Buffer.concat(chunks).toString('utf8');
+    if (!text.trim()) {
+      return {};
+    }
+    try {
+      return JSON.parse(text);
+    } catch (_error) {
+      return {};
+    }
+  };
+
+  const normalizeRoleIds = (rawRoleIds = []) => {
+    const deduped = new Set();
+    for (const roleId of Array.isArray(rawRoleIds) ? rawRoleIds : []) {
+      const normalizedRoleId = String(roleId || '').trim().toLowerCase();
+      if (normalizedRoleId) {
+        deduped.add(normalizedRoleId);
+      }
+    }
+    return [...deduped];
+  };
+
+  const ensureTenantMaps = (tenantId) => {
+    if (!membersByTenantId.has(tenantId)) {
+      membersByTenantId.set(tenantId, new Map());
+    }
+    if (!rolesByTenantId.has(tenantId)) {
+      rolesByTenantId.set(tenantId, new Map());
+    }
+    if (!rolePermissionsByTenantId.has(tenantId)) {
+      rolePermissionsByTenantId.set(tenantId, new Map());
+    }
+    if (!memberRoleBindingsByTenantId.has(tenantId)) {
+      memberRoleBindingsByTenantId.set(tenantId, new Map());
+    }
+  };
+
+  const getCurrentTenantMaps = () => {
+    const tenantId = String(activeTenantId || '').trim();
+    ensureTenantMaps(tenantId);
+    return {
+      tenantId,
+      members: membersByTenantId.get(tenantId),
+      roles: rolesByTenantId.get(tenantId),
+      rolePermissions: rolePermissionsByTenantId.get(tenantId),
+      memberRoleBindings: memberRoleBindingsByTenantId.get(tenantId)
+    };
+  };
+
+  const buildTenantPermissionContext = () => {
+    if (!activeTenantId) {
+      return {
+        scope_label: '组织未选择（无可操作权限）',
+        can_view_member_admin: false,
+        can_operate_member_admin: false,
+        can_view_billing: false,
+        can_operate_billing: false
+      };
+    }
+    const { tenantId, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
+    const sessionMembershipId = sessionMembershipByTenantId[tenantId];
+    const roleIds = memberRoleBindings.get(sessionMembershipId) || [];
+    const permissionSet = new Set();
+    for (const roleId of roleIds) {
+      const grants = rolePermissions.get(roleId) || [];
+      for (const permissionCode of grants) {
+        permissionSet.add(permissionCode);
+      }
+    }
+    return {
+      scope_label: `组织权限（${tenantId}）`,
+      can_view_member_admin: permissionSet.has('tenant.member_admin.view'),
+      can_operate_member_admin: permissionSet.has('tenant.member_admin.operate'),
+      can_view_billing: permissionSet.has('tenant.billing.view'),
+      can_operate_billing: permissionSet.has('tenant.billing.operate')
+    };
+  };
+
+  const server = http.createServer(async (req, res) => {
+    const method = req.method || 'GET';
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const pathname = url.pathname;
+    const body = await readRequestBody(req);
+    const requestId = String(req.headers['x-request-id'] || `req-tenant-ui-${Date.now()}`);
+
+    requests.push({
+      method,
+      path: req.url || '/',
+      headers: {
+        ...req.headers
+      },
+      body
+    });
+
+    const sendJson = ({ status, contentType, payload }) => {
+      res.statusCode = status;
+      res.setHeader('content-type', contentType);
+      responses.push({
+        method,
+        path: req.url || '/',
+        status,
+        headers: {
+          'content-type': contentType
+        },
+        body: payload
+      });
+      res.end(JSON.stringify(payload));
+    };
+
+    const sendProblem = ({
+      status = 400,
+      title = 'Bad Request',
+      detail = '请求失败',
+      errorCode = 'AUTH-400-INVALID-PAYLOAD',
+      retryable = false
+    }) =>
+      sendJson({
+        status,
+        contentType: 'application/problem+json',
+        payload: {
+          type: 'about:blank',
+          title,
+          status,
+          detail,
+          error_code: errorCode,
+          request_id: requestId,
+          retryable
+        }
+      });
+
+    const ensureTenantSelected = () => {
+      if (activeTenantId) {
+        return true;
+      }
+      sendProblem({
+        status: 403,
+        title: 'Forbidden',
+        detail: '当前入口无可用访问域权限',
+        errorCode: 'AUTH-403-NO-DOMAIN'
+      });
+      return false;
+    };
+
+    if (method === 'POST' && pathname === '/auth/login') {
+      if (body.phone === '13800000021' && body.password === 'Passw0rd!') {
+        const isTenantDomain = String(body.entry_domain || 'platform') === 'tenant';
+        sendJson({
+          status: 200,
+          contentType: 'application/json',
+          payload: {
+            token_type: 'Bearer',
+            access_token: 'tenant-governance-access-token',
+            refresh_token: 'tenant-governance-refresh-token',
+            expires_in: 900,
+            refresh_expires_in: 1209600,
+            session_id: 'tenant-governance-session',
+            entry_domain: isTenantDomain ? 'tenant' : 'platform',
+            active_tenant_id: isTenantDomain ? activeTenantId : null,
+            tenant_selection_required: isTenantDomain ? activeTenantId === null : false,
+            tenant_options: isTenantDomain ? tenantOptions : [],
+            tenant_permission_context: isTenantDomain
+              ? buildTenantPermissionContext()
+              : null,
+            request_id: requestId
+          }
+        });
+        return;
+      }
+
+      sendProblem({
+        status: 401,
+        title: 'Unauthorized',
+        detail: '手机号或密码错误',
+        errorCode: 'AUTH-401-LOGIN-FAILED'
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/auth/tenant/options') {
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          session_id: 'tenant-governance-session',
+          entry_domain: 'tenant',
+          active_tenant_id: activeTenantId,
+          tenant_selection_required: activeTenantId === null,
+          tenant_options: tenantOptions,
+          tenant_permission_context: buildTenantPermissionContext(),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/auth/tenant/select') {
+      const tenantId = String(body.tenant_id || '').trim();
+      if (!tenantOptions.some((option) => option.tenant_id === tenantId)) {
+        sendProblem({
+          status: 403,
+          title: 'Forbidden',
+          detail: '当前入口无可用访问域权限',
+          errorCode: 'AUTH-403-NO-DOMAIN'
+        });
+        return;
+      }
+      activeTenantId = tenantId;
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          session_id: 'tenant-governance-session',
+          entry_domain: 'tenant',
+          active_tenant_id: activeTenantId,
+          tenant_selection_required: false,
+          tenant_options: tenantOptions,
+          tenant_permission_context: buildTenantPermissionContext(),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/auth/tenant/switch') {
+      const tenantId = String(body.tenant_id || '').trim();
+      if (!tenantOptions.some((option) => option.tenant_id === tenantId)) {
+        sendProblem({
+          status: 403,
+          title: 'Forbidden',
+          detail: '当前入口无可用访问域权限',
+          errorCode: 'AUTH-403-NO-DOMAIN'
+        });
+        return;
+      }
+      activeTenantId = tenantId;
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          session_id: 'tenant-governance-session',
+          entry_domain: 'tenant',
+          active_tenant_id: activeTenantId,
+          tenant_selection_required: false,
+          tenant_options: tenantOptions,
+          tenant_permission_context: buildTenantPermissionContext(),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (!ensureTenantSelected()) {
+      return;
+    }
+    const { tenantId, members, roles, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
+
+    if (method === 'GET' && pathname === '/tenant/members') {
+      const page = Number(url.searchParams.get('page') || 1);
+      const pageSize = Number(url.searchParams.get('page_size') || 20);
+      const listedMembers = [...members.values()];
+      const offset = (Math.max(1, page) - 1) * Math.max(1, pageSize);
+      const pageItems = listedMembers.slice(offset, offset + Math.max(1, pageSize));
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          tenant_id: tenantId,
+          page: Math.max(1, page),
+          page_size: Math.max(1, pageSize),
+          members: pageItems,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/tenant/members') {
+      const phone = String(body.phone || '').trim();
+      if (!/^1\d{10}$/.test(phone)) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      await sleep(250);
+      const membershipId = `membership-${tenantId}-${nextMemberId}`;
+      const userId = `tenant-user-${nextMemberId}`;
+      nextMemberId += 1;
+      members.set(membershipId, {
+        membership_id: membershipId,
+        user_id: userId,
+        tenant_id: tenantId,
+        tenant_name: tenantOptions.find((option) => option.tenant_id === tenantId)?.tenant_name || tenantId,
+        phone,
+        status: 'active',
+        display_name: '',
+        department_name: '',
+        joined_at: new Date().toISOString(),
+        left_at: null
+      });
+      memberRoleBindings.set(membershipId, ['tenant_member_admin']);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          membership_id: membershipId,
+          user_id: userId,
+          tenant_id: tenantId,
+          status: 'active',
+          created_user: true,
+          reused_existing_user: false,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const memberMatch = pathname.match(/^\/tenant\/members\/([^/]+)$/);
+    if (memberMatch && method === 'GET') {
+      const membershipId = decodeURIComponent(memberMatch[1] || '');
+      const member = members.get(membershipId);
+      if (!member) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...member,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const memberStatusMatch = pathname.match(/^\/tenant\/members\/([^/]+)\/status$/);
+    if (memberStatusMatch && method === 'PATCH') {
+      const membershipId = decodeURIComponent(memberStatusMatch[1] || '');
+      const member = members.get(membershipId);
+      if (!member) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      const nextStatus = String(body.status || '').trim().toLowerCase();
+      if (!['active', 'disabled', 'left'].includes(nextStatus)) {
+        sendProblem({
+          status: 400,
+          detail: 'status 必须为 active、disabled 或 left',
+          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const previousStatus = member.status;
+      member.status = nextStatus;
+      members.set(membershipId, member);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          membership_id: membershipId,
+          user_id: member.user_id,
+          tenant_id: tenantId,
+          previous_status: previousStatus,
+          current_status: nextStatus,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const memberProfileMatch = pathname.match(/^\/tenant\/members\/([^/]+)\/profile$/);
+    if (memberProfileMatch && method === 'PATCH') {
+      const membershipId = decodeURIComponent(memberProfileMatch[1] || '');
+      const member = members.get(membershipId);
+      if (!member) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      if (String(body.display_name || '').trim() === 'FAIL-DEPENDENCY') {
+        sendProblem({
+          status: 503,
+          title: 'Service Unavailable',
+          detail: '组织成员治理依赖暂不可用，请稍后重试',
+          errorCode: 'AUTH-503-TENANT-MEMBER-DEPENDENCY-UNAVAILABLE',
+          retryable: true
+        });
+        return;
+      }
+      if (!String(body.display_name || '').trim()) {
+        sendProblem({
+          status: 400,
+          detail: 'display_name 为必填字段',
+          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      member.display_name = String(body.display_name || '').trim();
+      member.department_name = body.department_name == null ? null : String(body.department_name).trim();
+      members.set(membershipId, member);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...member,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const memberRolesMatch = pathname.match(/^\/tenant\/members\/([^/]+)\/roles$/);
+    if (memberRolesMatch && method === 'GET') {
+      const membershipId = decodeURIComponent(memberRolesMatch[1] || '');
+      if (!members.has(membershipId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          membership_id: membershipId,
+          role_ids: memberRoleBindings.get(membershipId) || [],
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (memberRolesMatch && method === 'PUT') {
+      const membershipId = decodeURIComponent(memberRolesMatch[1] || '');
+      if (!members.has(membershipId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      const roleIds = normalizeRoleIds(body.role_ids);
+      if (roleIds.length < 1 || roleIds.length > 5) {
+        sendProblem({
+          status: 400,
+          detail: 'role_ids 必须为 1 到 5 条',
+          errorCode: 'AUTH-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const hasUnknownRole = roleIds.some((roleId) => !roles.has(roleId));
+      if (hasUnknownRole) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标角色不存在',
+          errorCode: 'TROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      memberRoleBindings.set(membershipId, roleIds);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          membership_id: membershipId,
+          role_ids: roleIds,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/tenant/roles') {
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          tenant_id: tenantId,
+          roles: [...roles.values()].map((role) => ({
+            ...role,
+            request_id: requestId
+          })),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/tenant/roles') {
+      const roleId = String(body.role_id || '').trim().toLowerCase();
+      if (!roleId) {
+        sendProblem({
+          status: 400,
+          detail: 'role_id 不能为空',
+          errorCode: 'TROLE-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      if (roles.has(roleId)) {
+        sendProblem({
+          status: 409,
+          title: 'Conflict',
+          detail: '组织角色标识冲突，请使用其他 role_id',
+          errorCode: 'TROLE-409-ROLE-ID-CONFLICT'
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const createdRole = {
+        role_id: roleId,
+        tenant_id: tenantId,
+        code: String(body.code || `TENANT_ROLE_${nextRoleSequence}`).trim(),
+        name: String(body.name || `组织角色 ${nextRoleSequence}`).trim(),
+        status: String(body.status || 'active').trim().toLowerCase() || 'active',
+        is_system: false,
+        created_at: now,
+        updated_at: now
+      };
+      nextRoleSequence += 1;
+      roles.set(roleId, createdRole);
+      rolePermissions.set(roleId, []);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...createdRole,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const roleMatch = pathname.match(/^\/tenant\/roles\/([^/]+)$/);
+    if (roleMatch && method === 'PATCH') {
+      const roleId = decodeURIComponent(roleMatch[1] || '').trim().toLowerCase();
+      const targetRole = roles.get(roleId);
+      if (!targetRole) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标角色不存在',
+          errorCode: 'TROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      if (protectedRoleIds.has(roleId) || targetRole.is_system) {
+        sendProblem({
+          status: 403,
+          title: 'Forbidden',
+          detail: '受保护系统角色定义不允许创建、编辑或删除',
+          errorCode: 'TROLE-403-SYSTEM-ROLE-PROTECTED'
+        });
+        return;
+      }
+      const updatedRole = {
+        ...targetRole,
+        code: String(body.code || targetRole.code).trim(),
+        name: String(body.name || targetRole.name).trim(),
+        status: String(body.status || targetRole.status).trim().toLowerCase(),
+        updated_at: new Date().toISOString()
+      };
+      roles.set(roleId, updatedRole);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...updatedRole,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (roleMatch && method === 'DELETE') {
+      const roleId = decodeURIComponent(roleMatch[1] || '').trim().toLowerCase();
+      const targetRole = roles.get(roleId);
+      if (!targetRole) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标角色不存在',
+          errorCode: 'TROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      if (protectedRoleIds.has(roleId) || targetRole.is_system) {
+        sendProblem({
+          status: 403,
+          title: 'Forbidden',
+          detail: '受保护系统角色定义不允许创建、编辑或删除',
+          errorCode: 'TROLE-403-SYSTEM-ROLE-PROTECTED'
+        });
+        return;
+      }
+      roles.delete(roleId);
+      rolePermissions.delete(roleId);
+      for (const [membershipId, bindingRoleIds] of memberRoleBindings.entries()) {
+        memberRoleBindings.set(
+          membershipId,
+          bindingRoleIds.filter((boundRoleId) => boundRoleId !== roleId)
+        );
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          role_id: roleId,
+          tenant_id: tenantId,
+          status: 'disabled',
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const rolePermissionMatch = pathname.match(/^\/tenant\/roles\/([^/]+)\/permissions$/);
+    if (rolePermissionMatch && method === 'GET') {
+      const roleId = decodeURIComponent(rolePermissionMatch[1] || '').trim().toLowerCase();
+      if (!roles.has(roleId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标角色不存在',
+          errorCode: 'TROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          role_id: roleId,
+          permission_codes: rolePermissions.get(roleId) || [],
+          available_permission_codes: permissionCatalog,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (rolePermissionMatch && method === 'PUT') {
+      const roleId = decodeURIComponent(rolePermissionMatch[1] || '').trim().toLowerCase();
+      if (!roles.has(roleId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标角色不存在',
+          errorCode: 'TROLE-404-ROLE-NOT-FOUND'
+        });
+        return;
+      }
+      const nextPermissionCodes = [...new Set(
+        (Array.isArray(body.permission_codes) ? body.permission_codes : [])
+          .map((permissionCode) => String(permissionCode || '').trim())
+          .filter((permissionCode) => permissionCode.startsWith('tenant.'))
+      )];
+      rolePermissions.set(roleId, nextPermissionCodes);
+      let affectedUserCount = 0;
+      for (const roleIds of memberRoleBindings.values()) {
+        if (roleIds.includes(roleId)) {
+          affectedUserCount += 1;
+        }
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          role_id: roleId,
+          permission_codes: nextPermissionCodes,
+          available_permission_codes: permissionCatalog,
+          affected_user_count: affectedUserCount,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    sendJson({
+      status: 404,
+      contentType: 'application/problem+json',
+      payload: {
+        type: 'about:blank',
+        title: 'Not Found',
+        status: 404,
+        detail: `No route for ${pathname}`,
+        error_code: 'AUTH-404-NOT-FOUND',
+        request_id: requestId,
+        retryable: false
+      }
+    });
+  });
+
+  const apiPort = await reservePort();
+  await new Promise((resolveListen, rejectListen) => {
+    server.listen(apiPort, '127.0.0.1', (error) => {
+      if (error) {
+        rejectListen(error);
+        return;
+      }
+      resolveListen();
+    });
+  });
+
+  return {
+    apiPort,
+    requests,
+    responses,
+    close: async () => {
+      await new Promise((resolveClose) => server.close(() => resolveClose()));
+    }
+  };
+};
+
 const createRealApiServer = async () => {
   const config = readConfig({
     ALLOW_MOCK_BACKENDS: 'true'
@@ -2672,6 +3627,770 @@ test('chrome regression validates platform governance workbench with modal/drawe
           protected_role_guard: true,
           platform_permission_tree_save: true,
           platform_role_facts_convergence: true
+        },
+        requests: api.requests,
+        responses: api.responses
+      },
+      null,
+      2
+    )
+  );
+
+  if (vite.exitCode !== null) {
+    throw new Error(`vite process exited early (${vite.exitCode}): ${viteLogs.stderr || viteLogs.stdout}`);
+  }
+  if (chrome.exitCode !== null) {
+    throw new Error(
+      `chrome process exited early (${chrome.exitCode}): ${chromeLogs.stderr || chromeLogs.stdout}`
+    );
+  }
+});
+
+test('chrome regression validates tenant governance workbench with modal/drawer and permission convergence', async (t) => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-tenant-governance');
+  mkdirSync(evidenceDir, { recursive: true });
+
+  const chromeBinary = resolveChromeBinary();
+  const api = await createTenantGovernanceApiServer();
+  const webPort = await reservePort();
+  const cdpPort = await reservePort();
+  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-tenant-governance-'));
+
+  let vite = null;
+  let chrome = null;
+  let cdp = null;
+  let screenshotPath = '';
+
+  const viteLogs = { stdout: '', stderr: '' };
+  const chromeLogs = { stdout: '', stderr: '' };
+
+  t.after(async () => {
+    await cdp?.close();
+    await stopProcess(chrome);
+    await stopProcess(vite);
+    await api.close();
+    rmSync(chromeProfileDir, { recursive: true, force: true });
+  });
+
+  vite = spawn(
+    'pnpm',
+    [
+      '--dir',
+      'apps/web',
+      'exec',
+      'vite',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(webPort),
+      '--strictPort',
+      '--config',
+      'vite.config.js'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      env: {
+        ...process.env,
+        VITE_PROXY_TARGET: `http://127.0.0.1:${api.apiPort}`
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  vite.stdout.on('data', (data) => {
+    viteLogs.stdout += String(data);
+  });
+  vite.stderr.on('data', (data) => {
+    viteLogs.stderr += String(data);
+  });
+
+  await waitForHttp(`http://127.0.0.1:${webPort}/`, 30000, 'vite web server');
+
+  chrome = spawn(
+    chromeBinary,
+    [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${chromeProfileDir}`,
+      '--headless=new',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--no-first-run',
+      '--no-default-browser-check',
+      'about:blank'
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  );
+  chrome.stdout.on('data', (data) => {
+    chromeLogs.stdout += String(data);
+  });
+  chrome.stderr.on('data', (data) => {
+    chromeLogs.stderr += String(data);
+  });
+
+  const version = await (
+    await waitForHttp(`http://127.0.0.1:${cdpPort}/json/version`, 20000, 'chrome devtools endpoint')
+  ).json();
+  cdp = new CdpClient(version.webSocketDebuggerUrl);
+  await cdp.connect();
+
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  await cdp.send('Page.enable', {}, sessionId);
+  await cdp.send('Runtime.enable', {}, sessionId);
+
+  await cdp.send(
+    'Page.navigate',
+    { url: `http://127.0.0.1:${webPort}/` },
+    sessionId
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="page-title"]'))`,
+    10000,
+    'page title should be visible'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="entry-tenant"]').click(); return true; })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="mode-password"]').click(); return true; })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const phone = document.querySelector('[data-testid="input-phone"]');
+      const password = document.querySelector('[data-testid="input-password"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(phone, '13800000021');
+      phone.dispatchEvent(new Event('input', { bubbles: true }));
+      phone.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(password, 'Passw0rd!');
+      password.dispatchEvent(new Event('input', { bubbles: true }));
+      password.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="button-submit-login"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-select"]'))`,
+    10000,
+    'tenant entry login should require tenant selection'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-select"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      setter.call(select, 'tenant-101');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-select-confirm"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-governance-panel"]'))`,
+    12000,
+    'tenant governance panel should be visible after tenant selection'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-detail-membership-tenant-101-admin"]'))`,
+    12000,
+    'tenant member table should load initial records'
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'GET'
+      && request.path.includes('/tenant/members?')
+      && request.path.includes('page=1')
+      && request.path.includes('page_size=10'),
+    8000,
+    'tenant member list should request first page with page/page_size semantics'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const nextButton = document.querySelector('[data-testid="tenant-members-module"] .ant-pagination-next button');
+      return Boolean(nextButton) && !nextButton.disabled;
+    })()`,
+    8000,
+    'tenant member list should expose next page when more records exist'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-members-module"] .ant-pagination-next button')?.click();
+      return true;
+    })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'GET'
+      && request.path.includes('/tenant/members?')
+      && request.path.includes('page=2')
+      && request.path.includes('page_size=10'),
+    8000,
+    'tenant member pagination should request second page'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-detail-membership-tenant-101-extra-9"]'))`,
+    8000,
+    'tenant member second page should render paged records'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-members-module"] .ant-pagination-prev button')?.click();
+      return true;
+    })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'GET'
+      && request.path.includes('/tenant/members?')
+      && request.path.includes('page=1')
+      && request.path.includes('page_size=10')
+      && api.requests.filter(
+        (entry) =>
+          entry.method === 'GET'
+          && entry.path.includes('/tenant/members?')
+          && entry.path.includes('page=1')
+          && entry.path.includes('page_size=10')
+      ).length >= 2,
+    8000,
+    'tenant member pagination should support navigating back to first page'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
+      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      return billingMenu === null && billingBtn === null;
+    })()`,
+    8000,
+    'tenant permission panel should not expose billing before role assignment'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-member-filter-keyword"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, 'tenant-101-member');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const submit = document.querySelector('[data-testid="tenant-members-module"] button[type="submit"]');
+      submit?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-detail-membership-tenant-101-member"]'))`,
+    8000,
+    'member filter should keep target member visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-member-filter-keyword"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const submit = document.querySelector('[data-testid="tenant-members-module"] button[type="submit"]');
+      submit?.click();
+      return true;
+    })()`
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-create-open"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-create-phone"]'))`,
+    8000,
+    'tenant member create modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-member-create-phone"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, '13800000029');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const submit = document.querySelector('[data-testid="tenant-member-create-confirm"]');
+      submit?.click();
+      submit?.click();
+      return true;
+    })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/members' && request.method === 'POST',
+    8000,
+    'tenant member create request should reach API stub'
+  );
+  await sleep(500);
+  assert.equal(
+    api.requests.filter((request) => request.path === '/tenant/members' && request.method === 'POST').length,
+    1,
+    'loading lock should prevent duplicate create submissions'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="tenant-member-detail-drawer"]');
+      const text = String(drawer?.textContent || '');
+      return Boolean(drawer) && text.includes('membership-tenant-101-3');
+    })()`,
+    12000,
+    'newly created tenant member detail should be visible in drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
+      return true;
+    })()`
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-status-membership-tenant-101-admin"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-status-reason"]'))`,
+    8000,
+    'tenant member status modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-member-status-reason"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter.call(input, 'manual-governance');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-status-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'PATCH'
+      && request.path.includes('/tenant/members/membership-tenant-101-admin/status'),
+    8000,
+    'tenant member status patch should reach API stub'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-profile-membership-tenant-101-admin"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-profile-display-name"]'))`,
+    8000,
+    'tenant member profile modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-member-profile-display-name"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, 'FAIL-DEPENDENCY');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-profile-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.responses,
+    (response) =>
+      response.method === 'PATCH'
+      && response.path.includes('/tenant/members/membership-tenant-101-admin/profile')
+      && response.status === 503,
+    8000,
+    'tenant member profile dependency failure should be observable'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const nameInput = document.querySelector('[data-testid="tenant-member-profile-display-name"]');
+      const deptInput = document.querySelector('[data-testid="tenant-member-profile-department-name"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(nameInput, '组织管理员（更新）');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(deptInput, '运营一部');
+      deptInput.dispatchEvent(new Event('input', { bubbles: true }));
+      deptInput.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-profile-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.responses,
+    (response) =>
+      response.method === 'PATCH'
+      && response.path.includes('/tenant/members/membership-tenant-101-admin/profile')
+      && response.status === 200,
+    8000,
+    'tenant member profile update should succeed after retry'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-roles-membership-tenant-101-admin"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-roles-input"]'))`,
+    8000,
+    'tenant member role assignment modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-member-roles-input"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, 'tenant_member_admin,tenant_billing_admin');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  const tenantOptionsRefreshCountBeforeRoleAssignment = api.requests.filter(
+    (request) => request.method === 'GET' && request.path === '/auth/tenant/options'
+  ).length;
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-roles-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'PUT'
+      && request.path.includes('/tenant/members/membership-tenant-101-admin/roles'),
+    8000,
+    'tenant member roles replace request should reach API stub'
+  );
+  await waitForRequest(
+    api.responses,
+    (response) =>
+      response.method === 'PUT'
+      && response.path.includes('/tenant/members/membership-tenant-101-admin/roles')
+      && response.status === 200,
+    8000,
+    'tenant member roles replace request should return success before permission refresh'
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'GET'
+      && request.path === '/auth/tenant/options'
+      && api.requests.filter(
+        (entry) => entry.method === 'GET' && entry.path === '/auth/tenant/options'
+      ).length > tenantOptionsRefreshCountBeforeRoleAssignment,
+    8000,
+    'tenant permission refresh should call /auth/tenant/options after role assignment'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
+      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      return Boolean(billingMenu) && Boolean(billingBtn) && billingBtn.disabled === false;
+    })()`,
+    10000,
+    'tenant permission panel should converge immediately after role assignment'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-tab-roles"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-roles-module"]'))`,
+    8000,
+    'tenant role module should be visible'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-create-open"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-role-edit-role-id"]'))`,
+    8000,
+    'tenant role create modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const roleId = document.querySelector('[data-testid="tenant-role-edit-role-id"]');
+      const code = document.querySelector('[data-testid="tenant-role-edit-code"]');
+      const name = document.querySelector('[data-testid="tenant-role-edit-name"]');
+      setter.call(roleId, 'tenant_ops_auditor');
+      roleId.dispatchEvent(new Event('input', { bubbles: true }));
+      roleId.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(code, 'TENANT_OPS_AUDITOR');
+      code.dispatchEvent(new Event('input', { bubbles: true }));
+      code.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(name, '组织运维审计');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      name.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-create-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/roles' && request.method === 'POST',
+    8000,
+    'tenant role create request should reach API stub'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-edit-tenant_owner"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-role-edit-name"]'))`,
+    8000,
+    'tenant protected role edit modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-role-edit-name"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(input, '组织负责人（编辑尝试）');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-edit-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.responses,
+    (response) =>
+      response.method === 'PATCH'
+      && response.path.includes('/tenant/roles/tenant_owner')
+      && response.status === 403
+      && response.body?.error_code === 'TROLE-403-SYSTEM-ROLE-PROTECTED',
+    8000,
+    'protected tenant role update should surface backend 403 semantics'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-modal .ant-modal-close')?.click();
+      return true;
+    })()`
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-detail-tenant_member_admin"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-role-permission-tree"]'))`,
+    8000,
+    'tenant role permission tree should be visible in drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-permission-save"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'PUT'
+      && request.path.includes('/tenant/roles/tenant_member_admin/permissions'),
+    8000,
+    'tenant role permission save request should reach API stub'
+  );
+
+  const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
+  screenshotPath = join(evidenceDir, `chrome-tenant-governance-${timestamp}.png`);
+  writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+
+  const tenantLoginRequest = api.requests.find(
+    (request) => request.path === '/auth/login' && request.body?.entry_domain === 'tenant'
+  );
+  assert.deepEqual(tenantLoginRequest?.body, {
+    phone: '13800000021',
+    password: 'Passw0rd!',
+    entry_domain: 'tenant'
+  });
+
+  const createMemberRequest = api.requests.find(
+    (request) => request.path === '/tenant/members' && request.method === 'POST'
+  );
+  assert.equal(createMemberRequest?.body?.phone, '13800000029');
+
+  const replaceRolesRequest = api.requests.find(
+    (request) =>
+      request.method === 'PUT'
+      && request.path.includes('/tenant/members/membership-tenant-101-admin/roles')
+  );
+  assert.deepEqual(replaceRolesRequest?.body?.role_ids?.sort(), ['tenant_billing_admin', 'tenant_member_admin']);
+
+  const tenantWriteRequests = api.requests.filter(
+    (request) =>
+      request.path.startsWith('/tenant/')
+      && ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method)
+  );
+  assert.ok(tenantWriteRequests.length >= 7, 'tenant governance flow should trigger multiple tenant write operations');
+  for (const request of tenantWriteRequests) {
+    const idempotencyKey = String(request.headers?.['idempotency-key'] || '');
+    assert.ok(
+      idempotencyKey.length > 0,
+      `tenant write request should carry Idempotency-Key: ${request.method} ${request.path}`
+    );
+  }
+
+  const reportPath = join(evidenceDir, `chrome-tenant-governance-${timestamp}.json`);
+  writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        generated_at: new Date().toISOString(),
+        web_url: `http://127.0.0.1:${webPort}/`,
+        api_stub_url: `http://127.0.0.1:${api.apiPort}`,
+        chrome_binary: chromeBinary,
+        screenshots: [resolve(screenshotPath)],
+        assertions: {
+          tenant_member_filtering: true,
+          tenant_member_pagination: true,
+          tenant_member_create_modal: true,
+          tenant_member_status_modal: true,
+          tenant_member_profile_failure_and_retry: true,
+          tenant_member_roles_assignment: true,
+          tenant_write_idempotency_keys: true,
+          tenant_permission_context_refresh: true,
+          tenant_role_create_modal: true,
+          tenant_protected_role_guard: true,
+          tenant_permission_tree_save: true
         },
         requests: api.requests,
         responses: api.responses

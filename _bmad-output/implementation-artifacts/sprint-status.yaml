@@ -71,7 +71,7 @@ development_status:
   3-5-负责人变更后的接管保障: done
   3-6-负责人变更并发冲突与安全重试: done
   3-7-组织软删除级联一致性: done
-  3-8-组织治理前端工作台-组织成员管理-组织角色管理: backlog
+  3-8-组织治理前端工作台-组织成员管理-组织角色管理: done
   epic-3-retrospective: optional
 
   epic-4: in-progress

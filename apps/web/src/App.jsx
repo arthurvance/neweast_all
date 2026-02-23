@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   resolveTenantMutationUiState,
   resolveTenantRefreshUiState,
@@ -9,6 +9,7 @@ import {
 } from './tenant-mutation.mjs';
 import { createLatestRequestExecutor } from './latest-request.mjs';
 import PlatformGovernanceWorkbench from './features/platform-governance/PlatformGovernanceWorkbench';
+import TenantGovernanceWorkbench from './features/tenant-governance/TenantGovernanceWorkbench';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const OTP_RESEND_UNTIL_STORAGE_KEY_PREFIX = 'neweast.auth.otp.resend_until_ms';
@@ -624,6 +625,42 @@ export default function App() {
     }
   };
 
+  const refreshTenantPermissionContextFailClosed = useCallback(async () => {
+    const currentSession = sessionStateRef.current;
+    const accessToken = String(currentSession?.access_token || '').trim();
+    if (!accessToken) {
+      const error = new Error('当前会话无效，请重新登录');
+      error.payload = {
+        detail: '当前会话无效，请重新登录'
+      };
+      throw error;
+    }
+
+    try {
+      await refreshTenantContext(accessToken, {
+        expectedSession: currentSession
+      });
+    } catch (error) {
+      setSessionState((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        return {
+          ...previous,
+          tenant_permission_context: null
+        };
+      });
+      setGlobalMessage({
+        type: 'error',
+        text: formatRetryMessage(
+          error?.payload?.detail || '组织上下文刷新失败，已按 fail-closed 收敛权限'
+        )
+      });
+      error.uiMessageHandled = true;
+      throw error;
+    }
+  }, [refreshTenantContext]);
+
   const isTenantEntry = entryDomain === 'tenant';
 
   return (
@@ -942,6 +979,39 @@ export default function App() {
                   </button>
                 ) : null}
               </section>
+              {permissionUiState.menu.member_admin ? (
+                <section
+                  data-testid="tenant-governance-panel"
+                  style={{
+                    display: 'grid',
+                    gap: 8,
+                    background: '#fff',
+                    borderRadius: 6,
+                    border: '1px solid #e5e7eb',
+                    padding: 10
+                  }}
+                >
+                  <p style={{ margin: 0 }}>组织治理工作台（成员管理 + 角色管理）</p>
+                  <TenantGovernanceWorkbench
+                    accessToken={sessionState?.access_token}
+                    onTenantPermissionContextRefresh={refreshTenantPermissionContextFailClosed}
+                  />
+                </section>
+              ) : (
+                <section
+                  data-testid="tenant-governance-panel"
+                  style={{
+                    display: 'grid',
+                    gap: 8,
+                    background: '#fff',
+                    borderRadius: 6,
+                    border: '1px solid #e5e7eb',
+                    padding: 10
+                  }}
+                >
+                  <p style={{ margin: 0 }}>当前组织无成员治理权限，治理工作台已按 fail-closed 隐藏。</p>
+                </section>
+              )}
             </>
           ) : null}
         </section>
