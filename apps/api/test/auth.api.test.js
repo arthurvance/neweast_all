@@ -356,8 +356,8 @@ test('change password under tenant entry without active tenant falls back to pla
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: false,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             },
             {
@@ -368,8 +368,8 @@ test('change password under tenant entry without active tenant falls back to pla
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: false,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -448,8 +448,8 @@ test('platform role-facts replace converges session and invalidates previous acc
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -495,8 +495,10 @@ test('platform role-facts replace converges session and invalidates previous acc
     scope_label: '平台权限（角色并集）',
     can_view_user_management: true,
     can_operate_user_management: true,
-    can_view_organization_management: true,
-    can_operate_organization_management: true
+    can_view_tenant_management: true,
+    can_operate_tenant_management: true,
+    can_view_role_management: true,
+    can_operate_role_management: true
   });
 
   const oldAccess = await callRoute(
@@ -561,8 +563,8 @@ test('platform role-facts replace replays the same Idempotency-Key without dupli
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -661,8 +663,8 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -680,8 +682,8 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -740,8 +742,8 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
             permission: {
               can_view_user_management: true,
               can_operate_user_management: true,
-              can_view_organization_management: false,
-              can_operate_organization_management: false
+              can_view_tenant_management: false,
+              can_operate_tenant_management: false
             }
           }
         ]
@@ -780,8 +782,8 @@ test('platform role-facts replace rejects unknown user id with AUTH-400-INVALID-
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -841,8 +843,8 @@ test('platform role-facts replace rejects non-string user_id with AUTH-400-INVAL
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -952,8 +954,8 @@ test('platform role-facts replace rejects missing roles field with AUTH-400-INVA
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1012,8 +1014,8 @@ test('platform role-facts replace rejects unsupported role status with AUTH-400-
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1078,8 +1080,8 @@ test('platform role-facts replace rejects blank role status with AUTH-400-INVALI
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1144,8 +1146,8 @@ test('platform role-facts replace rejects payload with more than 5 role facts', 
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1212,8 +1214,8 @@ test('platform role-facts replace rejects role_id longer than 64 chars', async (
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1273,8 +1275,8 @@ test('platform role-facts replace rejects non-boolean permission flags with AUTH
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1342,8 +1344,8 @@ test('platform role-facts replace rejects non-object permission payload with AUT
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1409,8 +1411,8 @@ test('platform role-facts replace rejects top-level permission fields with AUTH-
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1475,8 +1477,8 @@ test('platform role-facts replace rejects duplicate role_id entries with AUTH-40
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1543,8 +1545,8 @@ test('platform role-facts replace rejects duplicate role_id entries regardless o
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1607,8 +1609,8 @@ test('platform role-facts replace rejects role item missing role_id with AUTH-40
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1668,8 +1670,8 @@ test('platform role-facts replace rejects non-string role_id with AUTH-400-INVAL
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1729,8 +1731,8 @@ test('platform role-facts replace maps degraded sync reason to AUTH-503-PLATFORM
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1804,8 +1806,8 @@ test('platform user-management provision-user endpoint creates user and rejects 
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1905,8 +1907,8 @@ test('platform user-management provision-user endpoint rejects tenant_name paylo
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -1975,8 +1977,8 @@ test('platform user-management provision-user endpoint rejects unknown payload p
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2045,8 +2047,8 @@ test('tenant user-management provision-user endpoint creates tenant relationship
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2134,8 +2136,8 @@ test('tenant user-management provision-user endpoint reuses existing user withou
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2219,8 +2221,8 @@ test('tenant user-management provision-user endpoint returns conflict when tenan
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2320,8 +2322,8 @@ test('tenant user-management provision-user endpoint rejects oversized tenant_na
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2390,8 +2392,8 @@ test('tenant user-management provision-user endpoint rejects tenant_name with ov
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2461,8 +2463,8 @@ test('tenant user-management provision-user endpoint rejects blank tenant_name',
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2531,8 +2533,8 @@ test('tenant user-management provision-user endpoint rejects unknown payload pro
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2602,8 +2604,8 @@ test('tenant user-management provision-user endpoint rejects tenant_name that mi
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2674,8 +2676,8 @@ test('tenant user-management provision-user endpoint rejects caller tenant_name 
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2746,8 +2748,8 @@ test('tenant user-management provision-user endpoint rejects request when active
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2811,8 +2813,8 @@ test('platform user-management provision-user endpoint is fail-closed when defau
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2875,8 +2877,8 @@ test('platform user-management provision-user endpoint maps unexpected dependenc
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -2939,8 +2941,8 @@ test('tenant user-management provision-user endpoint maps unexpected dependency 
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3009,8 +3011,8 @@ test('platform user-management provision-user replays the same Idempotency-Key w
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3102,8 +3104,8 @@ test('platform user-management provision-user keeps idempotency semantics after 
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3201,8 +3203,8 @@ test('platform user-management provision-user rejects payload drift when Idempot
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3299,8 +3301,8 @@ test('platform user-management provision-user deduplicates concurrent replays wi
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3374,8 +3376,8 @@ test('tenant user-management provision-user treats equivalent payloads with diff
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3466,8 +3468,8 @@ test('platform user-management provision-user rejects invalid Idempotency-Key he
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]
@@ -3543,8 +3545,8 @@ test('tenant user-management provision-user applies idempotency replay and paylo
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]

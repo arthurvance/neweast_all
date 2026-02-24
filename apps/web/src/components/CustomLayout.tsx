@@ -250,6 +250,7 @@ const CustomLayout: React.FC<CustomLayoutProps> = ({
         <Dropdown
           menu={{ items: userMenuItems || defaultUserMenuItems, onClick: onUserMenuClick }}
           placement="bottomRight"
+          trigger={['click']}
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer' }}>
             <Avatar size="small" src={avatarSrc || undefined} icon={!avatarSrc && <UserOutlined />} />

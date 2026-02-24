@@ -115,8 +115,8 @@ const resolveDuplicateRoleConflictTarget = (error) => {
     error?.sqlMessage || error?.message || ''
   ).trim().toLowerCase();
   if (
-    errorMessage.includes('uk_platform_role_catalog_scope_tenant_code_normalized')
-    || errorMessage.includes('uk_platform_role_catalog_code_normalized')
+    errorMessage.includes('uk_platform_roles_scope_tenant_code_normalized')
+    || errorMessage.includes('uk_platform_roles_code_normalized')
     || errorMessage.includes('code_normalized')
   ) {
     return 'code';

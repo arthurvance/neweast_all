@@ -1,5 +1,5 @@
-import { Empty } from 'antd';
-import { useMemo, useState } from 'react';
+import { Empty, Spin } from 'antd';
+import { Suspense, useMemo, useState } from 'react';
 import CustomLayout from '../../components/CustomLayout';
 import CustomPage from '../../components/CustomPage';
 import {
@@ -46,7 +46,7 @@ export default function PlatformManagementLayoutPage({
   const displayUserName = String(userName || '').trim() || '-';
 
   return (
-    <section data-testid="platform-governance-panel" style={{ minHeight: '100vh' }}>
+    <section data-testid="platform-management-panel" style={{ minHeight: '100vh' }}>
       <CustomLayout
         title="平台管理"
         menuItems={menuItems}
@@ -100,7 +100,22 @@ export default function PlatformManagementLayoutPage({
           bodyStyle={{ display: 'grid', gap: 12 }}
         >
           {hasVisiblePage && ActivePageComponent ? (
-            <ActivePageComponent accessToken={accessToken} />
+            <Suspense
+              fallback={(
+                <section
+                  data-testid="platform-page-loading"
+                  style={{
+                    minHeight: 240,
+                    display: 'grid',
+                    placeItems: 'center'
+                  }}
+                >
+                  <Spin />
+                </section>
+              )}
+            >
+              <ActivePageComponent accessToken={accessToken} />
+            </Suspense>
           ) : (
             <section
               data-testid="platform-menu-empty"

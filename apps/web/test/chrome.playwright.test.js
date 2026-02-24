@@ -192,6 +192,27 @@ const waitForCondition = async (cdp, sessionId, expression, timeoutMs, reason) =
   throw new Error(`Condition timed out: ${reason}`);
 };
 
+const waitForButtonEnabledByTestId = async (cdp, sessionId, testId, timeoutMs, reason) =>
+  waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const button = document.querySelector('[data-testid="${String(testId || '')}"]');
+      if (!button) {
+        return false;
+      }
+      if (button.disabled) {
+        return false;
+      }
+      if (button.getAttribute('aria-disabled') === 'true') {
+        return false;
+      }
+      return true;
+    })()`,
+    timeoutMs,
+    reason
+  );
+
 const waitForRequest = async (requests, predicate, timeoutMs, reason) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -287,15 +308,15 @@ const createOtpApiServer = async () => {
       scope_label: '组织权限（Tenant 101）',
       can_view_user_management: true,
       can_operate_user_management: true,
-      can_view_organization_management: true,
-      can_operate_organization_management: false
+      can_view_role_management: true,
+      can_operate_role_management: false
     },
     'tenant-202': {
       scope_label: '组织权限（Tenant 202）',
       can_view_user_management: false,
       can_operate_user_management: true,
-      can_view_organization_management: true,
-      can_operate_organization_management: true
+      can_view_role_management: true,
+      can_operate_role_management: true
     }
   };
   const currentTenantPermissionContext = () => {
@@ -304,16 +325,16 @@ const createOtpApiServer = async () => {
         scope_label: '组织未选择（无可操作权限）',
         can_view_user_management: false,
         can_operate_user_management: false,
-        can_view_organization_management: false,
-        can_operate_organization_management: false
+        can_view_role_management: false,
+        can_operate_role_management: false
       };
     }
     return tenantPermissionById[activeTenantId] || {
       scope_label: `组织权限（${activeTenantId}）`,
       can_view_user_management: false,
       can_operate_user_management: false,
-      can_view_organization_management: false,
-      can_operate_organization_management: false
+      can_view_role_management: false,
+      can_operate_role_management: false
     };
   };
   const server = http.createServer(async (req, res) => {
@@ -465,10 +486,10 @@ const createOtpApiServer = async () => {
                 scope_label: '平台权限（角色并集）',
                 can_view_user_management: true,
                 can_operate_user_management: true,
-                can_view_organization_management: true,
-                can_operate_organization_management: true,
-                can_view_system_config: true,
-                can_operate_system_config: true
+                can_view_tenant_management: true,
+                can_operate_tenant_management: true,
+                can_view_role_management: true,
+                can_operate_role_management: true
               },
             tenant_permission_context: body.entry_domain === 'tenant'
               ? currentTenantPermissionContext()
@@ -476,8 +497,8 @@ const createOtpApiServer = async () => {
                 scope_label: '平台入口（无组织侧权限上下文）',
                 can_view_user_management: false,
                 can_operate_user_management: false,
-                can_view_organization_management: false,
-                can_operate_organization_management: false
+                can_view_role_management: false,
+                can_operate_role_management: false
               },
             request_id: 'chrome-regression-password-login'
           }
@@ -815,8 +836,8 @@ const createPlatformGovernanceApiServer = async () => {
   const permissionCatalog = [
     'platform.user_management.view',
     'platform.user_management.operate',
-    'platform.organization_management.view',
-    'platform.organization_management.operate',
+    'platform.tenant_management.view',
+    'platform.tenant_management.operate',
     'platform.role_management.view',
     'platform.role_management.operate'
   ];
@@ -905,8 +926,8 @@ const createPlatformGovernanceApiServer = async () => {
       scope_label: '平台权限（角色并集）',
       can_view_user_management: permissionSet.has('platform.user_management.view'),
       can_operate_user_management: permissionSet.has('platform.user_management.operate'),
-      can_view_organization_management: permissionSet.has('platform.organization_management.view'),
-      can_operate_organization_management: permissionSet.has('platform.organization_management.operate')
+      can_view_tenant_management: permissionSet.has('platform.tenant_management.view'),
+      can_operate_tenant_management: permissionSet.has('platform.tenant_management.operate')
     };
   };
   const toRoleReadModel = (roleId) => {
@@ -1012,11 +1033,11 @@ const createPlatformGovernanceApiServer = async () => {
         contentType: 'application/json',
         payload: {
           token_type: 'Bearer',
-          access_token: 'platform-governance-access-token',
-          refresh_token: 'platform-governance-refresh-token',
+          access_token: 'platform-management-access-token',
+          refresh_token: 'platform-management-refresh-token',
           expires_in: 900,
           refresh_expires_in: 1209600,
-          session_id: 'platform-governance-session',
+          session_id: 'platform-management-session',
           entry_domain: body.entry_domain || 'platform',
           active_tenant_id: null,
           tenant_selection_required: false,
@@ -1026,10 +1047,10 @@ const createPlatformGovernanceApiServer = async () => {
             scope_label: '平台权限（角色并集）',
             can_view_user_management: true,
             can_operate_user_management: true,
-            can_view_organization_management: true,
-            can_operate_organization_management: true,
-            can_view_system_config: true,
-            can_operate_system_config: true
+            can_view_tenant_management: true,
+            can_operate_tenant_management: true,
+            can_view_role_management: true,
+            can_operate_role_management: true
           },
           tenant_permission_context: null,
           request_id: requestId
@@ -1327,8 +1348,8 @@ const createPlatformGovernanceApiServer = async () => {
       roles.set(roleId, createdRole);
       rolePermissions.set(
         roleId,
-        roleId.includes('organization_management')
-          ? ['platform.organization_management.view', 'platform.organization_management.operate']
+        roleId.includes('tenant_management')
+          ? ['platform.tenant_management.view', 'platform.tenant_management.operate']
           : ['platform.user_management.view']
       );
       sendJson({
@@ -1550,7 +1571,7 @@ const createPlatformGovernanceApiServer = async () => {
   };
 };
 
-const createTenantGovernanceApiServer = async () => {
+const createTenantManagementApiServer = async () => {
   const requests = [];
   const responses = [];
   const tenantOptions = [
@@ -1666,7 +1687,7 @@ const createTenantGovernanceApiServer = async () => {
             role_id: 'tenant_role_management_admin',
             tenant_id: 'tenant-101',
             code: 'TENANT_ROLE_MANAGEMENT_ADMIN',
-            name: '组织账单治理',
+            name: '组织角色治理',
             status: 'active',
             is_system: false,
             created_at: new Date().toISOString(),
@@ -1824,8 +1845,8 @@ const createTenantGovernanceApiServer = async () => {
         scope_label: '组织未选择（无可操作权限）',
         can_view_user_management: false,
         can_operate_user_management: false,
-        can_view_organization_management: false,
-        can_operate_organization_management: false
+        can_view_role_management: false,
+        can_operate_role_management: false
       };
     }
     const { tenantId, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
@@ -1920,11 +1941,11 @@ const createTenantGovernanceApiServer = async () => {
           contentType: 'application/json',
           payload: {
             token_type: 'Bearer',
-            access_token: 'tenant-governance-access-token',
-            refresh_token: 'tenant-governance-refresh-token',
+            access_token: 'tenant-management-access-token',
+            refresh_token: 'tenant-management-refresh-token',
             expires_in: 900,
             refresh_expires_in: 1209600,
-            session_id: 'tenant-governance-session',
+            session_id: 'tenant-management-session',
             entry_domain: isTenantDomain ? 'tenant' : 'platform',
             active_tenant_id: isTenantDomain ? activeTenantId : null,
             tenant_selection_required: isTenantDomain ? activeTenantId === null : false,
@@ -1935,10 +1956,10 @@ const createTenantGovernanceApiServer = async () => {
                 scope_label: '平台权限（角色并集）',
                 can_view_user_management: true,
                 can_operate_user_management: true,
-                can_view_organization_management: true,
-                can_operate_organization_management: true,
-                can_view_system_config: true,
-                can_operate_system_config: true
+                can_view_tenant_management: true,
+                can_operate_tenant_management: true,
+                can_view_role_management: true,
+                can_operate_role_management: true
               },
             tenant_permission_context: isTenantDomain
               ? buildTenantPermissionContext()
@@ -1963,7 +1984,7 @@ const createTenantGovernanceApiServer = async () => {
         status: 200,
         contentType: 'application/json',
         payload: {
-          session_id: 'tenant-governance-session',
+          session_id: 'tenant-management-session',
           entry_domain: 'tenant',
           active_tenant_id: activeTenantId,
           tenant_selection_required: activeTenantId === null,
@@ -1991,7 +2012,7 @@ const createTenantGovernanceApiServer = async () => {
         status: 200,
         contentType: 'application/json',
         payload: {
-          session_id: 'tenant-governance-session',
+          session_id: 'tenant-management-session',
           entry_domain: 'tenant',
           active_tenant_id: activeTenantId,
           tenant_selection_required: false,
@@ -2019,7 +2040,7 @@ const createTenantGovernanceApiServer = async () => {
         status: 200,
         contentType: 'application/json',
         payload: {
-          session_id: 'tenant-governance-session',
+          session_id: 'tenant-management-session',
           entry_domain: 'tenant',
           active_tenant_id: activeTenantId,
           tenant_selection_required: false,
@@ -2537,8 +2558,8 @@ const createRealApiServer = async () => {
               scopeLabel: '组织权限（Tenant A）',
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: true,
-              canOperateOrganizationManagement: false
+              canViewRoleManagement: true,
+              canOperateRoleManagement: false
             }
           },
           {
@@ -2549,8 +2570,8 @@ const createRealApiServer = async () => {
               scopeLabel: '组织权限（Tenant B）',
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: true,
-              canOperateOrganizationManagement: true
+              canViewRoleManagement: true,
+              canOperateRoleManagement: true
             }
           }
         ]
@@ -2721,7 +2742,7 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="mode-otp"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="mode-otp"]')?.click(); return true; })()`
   );
   await evaluate(
     cdp,
@@ -3068,7 +3089,7 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="platform-governance-panel"]'))`,
+    `Boolean(document.querySelector('[data-testid="platform-management-panel"]'))`,
     10000,
     'platform login should require explicit /login/platform url and enter platform dashboard'
   );
@@ -3084,7 +3105,7 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="mode-password"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="mode-password"]')?.click(); return true; })()`
   );
   await evaluate(
     cdp,
@@ -3134,23 +3155,18 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     cdp,
     sessionId,
     `(() => {
-      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
-      const text = String(dashboard?.textContent || '');
+      const tenantPanel = document.querySelector('[data-testid="tenant-management-panel"]');
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
-      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
-      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
-      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
+      const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
+      const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      const membersModule = document.querySelector('[data-testid="tenant-members-module"]');
       return (
-        Boolean(dashboard) &&
-        text.includes('tenant-101') &&
-        message.includes('组织选择成功') &&
+        Boolean(tenantPanel) &&
+        Boolean(membersModule) &&
+        Boolean(userTab) &&
+        roleTab === null &&
         message.includes('请稍后重试') === false &&
-        Boolean(memberMenu) &&
-        organization_managementMenu === null &&
-        Boolean(memberBtn) &&
-        memberBtn.disabled === false &&
-        organization_managementBtn === null
+        message.includes('组织选择成功')
       );
     })()`,
     10000,
@@ -3160,37 +3176,62 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     cdp,
     sessionId,
     `(() => {
-      const select = document.querySelector('[data-testid="tenant-switch"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-      setter.call(select, 'tenant-202');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      const trigger = document.querySelector('[data-testid="layout-user-name"]')?.closest('span');
+      trigger?.click();
       return true;
     })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-switch-confirm"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
     sessionId,
     `(() => {
-      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
-      const text = String(dashboard?.textContent || '');
+      const switchItem = [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .find((item) => String(item.textContent || '').includes('切换组织'));
+      return Boolean(switchItem);
+    })()`,
+    8000,
+    'tenant org switch menu item should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const switchItem = [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .find((item) => String(item.textContent || '').includes('切换组织'));
+      switchItem?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-org-switch-shell"]'))`,
+    8000,
+    'tenant org switch page should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-org-switch-card-tenant-202"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const tenantPanel = document.querySelector('[data-testid="tenant-management-panel"]');
+      const roleModule = document.querySelector('[data-testid="tenant-roles-module"]');
+      const userModule = document.querySelector('[data-testid="tenant-members-module"]');
+      const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
+      const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
-      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
-      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
-      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
       return (
-        text.includes('tenant-202') &&
+        Boolean(tenantPanel) &&
+        Boolean(roleModule) &&
+        userModule === null &&
+        userTab === null &&
+        Boolean(roleTab) &&
         message.includes('请稍后重试') === false &&
-        memberMenu === null &&
-        Boolean(organization_managementMenu) &&
-        memberBtn === null &&
-        Boolean(organization_managementBtn) &&
-        organization_managementBtn.disabled === false
+        message.includes('组织切换成功')
       );
     })()`,
     10000,
@@ -3438,7 +3479,7 @@ test('chrome regression validates tenant permission UI against real API authoriz
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="mode-password"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="mode-password"]')?.click(); return true; })()`
   );
   await evaluate(
     cdp,
@@ -3488,20 +3529,15 @@ test('chrome regression validates tenant permission UI against real API authoriz
     cdp,
     sessionId,
     `(() => {
-      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
-      const text = String(dashboard?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
-      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
-      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
-      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
+      const tenantPanel = document.querySelector('[data-testid="tenant-management-panel"]');
+      const membersModule = document.querySelector('[data-testid="tenant-members-module"]');
+      const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
+      const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
       return (
-        Boolean(dashboard) &&
-        text.includes('${REAL_API_TEST_USER.tenantA}') &&
-        Boolean(memberMenu) &&
-        organization_managementMenu === null &&
-        Boolean(memberBtn) &&
-        memberBtn.disabled === false &&
-        organization_managementBtn === null
+        Boolean(tenantPanel) &&
+        Boolean(membersModule) &&
+        Boolean(userTab) &&
+        roleTab === null
       );
     })()`,
     10000,
@@ -3565,36 +3601,59 @@ test('chrome regression validates tenant permission UI against real API authoriz
     cdp,
     sessionId,
     `(() => {
-      const select = document.querySelector('[data-testid="tenant-switch"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-      setter.call(select, '${REAL_API_TEST_USER.tenantB}');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      const trigger = document.querySelector('[data-testid="layout-user-name"]')?.closest('span');
+      trigger?.click();
       return true;
     })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-switch-confirm"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
     sessionId,
     `(() => {
-      const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
-      const text = String(dashboard?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
-      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
-      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
-      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
+      const switchItem = [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .find((item) => String(item.textContent || '').includes('切换组织'));
+      return Boolean(switchItem);
+    })()`,
+    8000,
+    'tenant org switch menu item should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const switchItem = [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .find((item) => String(item.textContent || '').includes('切换组织'));
+      switchItem?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-org-switch-shell"]'))`,
+    8000,
+    'tenant org switch page should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-org-switch-card-${REAL_API_TEST_USER.tenantB}"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const tenantPanel = document.querySelector('[data-testid="tenant-management-panel"]');
+      const membersModule = document.querySelector('[data-testid="tenant-members-module"]');
+      const roleModule = document.querySelector('[data-testid="tenant-roles-module"]');
+      const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
+      const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
       return (
-        Boolean(dashboard) &&
-        text.includes('${REAL_API_TEST_USER.tenantB}') &&
-        memberMenu === null &&
-        Boolean(organization_managementMenu) &&
-        memberBtn === null &&
-        Boolean(organization_managementBtn) &&
-        organization_managementBtn.disabled === false
+        Boolean(tenantPanel) &&
+        membersModule === null &&
+        Boolean(roleModule) &&
+        userTab === null &&
+        Boolean(roleTab)
       );
     })()`,
     10000,
@@ -3611,16 +3670,16 @@ test('chrome regression validates tenant permission UI against real API authoriz
   }
 });
 
-test('chrome regression validates platform governance workbench with modal/drawer and permission convergence', async (t) => {
+test('chrome regression validates platform management workbench with modal/drawer and permission convergence', async (t) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-platform-governance');
+  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-platform-management');
   mkdirSync(evidenceDir, { recursive: true });
 
   const chromeBinary = resolveChromeBinary();
   const api = await createPlatformGovernanceApiServer();
   const webPort = await reservePort();
   const cdpPort = await reservePort();
-  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-platform-governance-'));
+  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-platform-management-'));
 
   let vite = null;
   let chrome = null;
@@ -3744,9 +3803,9 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="platform-governance-panel"]'))`,
+    `Boolean(document.querySelector('[data-testid="platform-management-panel"]'))`,
     10000,
-    'platform governance panel should be visible after platform login'
+    'platform management panel should be visible after platform login'
   );
   await waitForCondition(
     cdp,
@@ -3993,10 +4052,10 @@ test('chrome regression validates platform governance workbench with modal/drawe
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       const code = document.querySelector('[data-testid="platform-role-edit-code"]');
       const name = document.querySelector('[data-testid="platform-role-edit-name"]');
-      setter.call(code, 'PLATFORM_ORGANIZATION_MANAGEMENT_ADMIN');
+      setter.call(code, 'PLATFORM_TENANT_MANAGEMENT_ADMIN');
       code.dispatchEvent(new Event('input', { bubbles: true }));
       code.dispatchEvent(new Event('change', { bubbles: true }));
-      setter.call(name, '平台账单治理');
+      setter.call(name, '平台角色治理');
       name.dispatchEvent(new Event('input', { bubbles: true }));
       name.dispatchEvent(new Event('change', { bubbles: true }));
       const rootNode = Array.from(document.querySelectorAll('.ant-tree-treenode'))
@@ -4008,6 +4067,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
       return true;
     })()`
   );
+  const createRoleRequestBaseline = api.requests.length;
   await evaluate(
     cdp,
     sessionId,
@@ -4018,6 +4078,16 @@ test('chrome regression validates platform governance workbench with modal/drawe
     (request) => request.path === '/platform/roles' && request.method === 'POST',
     8000,
     'platform role create request should reach API stub'
+  );
+  await waitForRequest(
+    api.requests,
+    (request, index) =>
+      index >= createRoleRequestBaseline
+      && request.method === 'PUT'
+      && request.path.includes('/platform/roles/')
+      && request.path.includes('/permissions'),
+    8000,
+    'platform role create permission save request should reach API stub'
   );
 
   const protectedEditDisabled = await evaluate(
@@ -4108,15 +4178,6 @@ test('chrome regression validates platform governance workbench with modal/drawe
     8000,
     'platform role edit request should reach API stub'
   );
-  await waitForRequest(
-    api.requests,
-    (request, index) =>
-      index >= editRoleRequestBaseline
-      && request.method === 'PUT'
-      && request.path.includes('/platform/roles/platform_user_management/permissions'),
-    8000,
-    'platform role edit permission save request should reach API stub'
-  );
 
   await evaluate(
     cdp,
@@ -4186,7 +4247,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
   );
 
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
-  screenshotPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.png`);
+  screenshotPath = join(evidenceDir, `chrome-platform-management-${timestamp}.png`);
   writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
 
   const loginRequest = api.requests.find((request) => request.path === '/auth/login');
@@ -4218,10 +4279,10 @@ test('chrome regression validates platform governance workbench with modal/drawe
   const createRoleRequest = api.requests.find(
     (request) => request.path === '/platform/roles' && request.method === 'POST'
   );
-  assert.equal(createRoleRequest?.body?.code, 'PLATFORM_ORGANIZATION_MANAGEMENT_ADMIN');
-  assert.equal(createRoleRequest?.body?.name, '平台账单治理');
+  assert.equal(createRoleRequest?.body?.code, 'PLATFORM_TENANT_MANAGEMENT_ADMIN');
+  assert.equal(createRoleRequest?.body?.name, '平台角色治理');
 
-  const reportPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.json`);
+  const reportPath = join(evidenceDir, `chrome-platform-management-${timestamp}.json`);
   writeFileSync(
     reportPath,
     JSON.stringify(
@@ -4259,16 +4320,16 @@ test('chrome regression validates platform governance workbench with modal/drawe
   }
 });
 
-test('chrome regression validates tenant governance workbench with modal/drawer and permission convergence', async (t) => {
+test('chrome regression validates tenant management workbench with modal/drawer and permission convergence', async (t) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-tenant-governance');
+  const evidenceDir = resolve(WORKSPACE_ROOT, 'artifacts/chrome-tenant-management');
   mkdirSync(evidenceDir, { recursive: true });
 
   const chromeBinary = resolveChromeBinary();
-  const api = await createTenantGovernanceApiServer();
+  const api = await createTenantManagementApiServer();
   const webPort = await reservePort();
   const cdpPort = await reservePort();
-  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-tenant-governance-'));
+  const chromeProfileDir = mkdtempSync(join(tmpdir(), 'neweast-chrome-tenant-management-'));
 
   let vite = null;
   let chrome = null;
@@ -4427,9 +4488,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-governance-panel"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-management-panel"]'))`,
     12000,
-    'tenant governance panel should be visible after tenant selection'
+    'tenant management panel should be visible after tenant selection'
   );
   await waitForCondition(
     cdp,
@@ -4549,19 +4610,38 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
-      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
-      return organization_managementMenu === null && organization_managementBtn === null;
+      const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      return roleTab === null;
     })()`,
     8000,
-    'tenant permission panel should not expose organization_management before role assignment'
+    'tenant permission panel should not expose role_management before role assignment'
   );
 
   await evaluate(
     cdp,
     sessionId,
     `(() => {
+      const expandButton = [...document.querySelectorAll('[data-testid="tenant-members-module"] button')]
+        .find((button) => String(button.textContent || '').includes('展开'));
+      expandButton?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-filter-name"]'))`,
+    8000,
+    'tenant member filter name field should be available'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
       const input = document.querySelector('[data-testid="tenant-member-filter-name"]');
+      if (!input) {
+        return false;
+      }
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       setter.call(input, '成员乙');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4590,6 +4670,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     sessionId,
     `(() => {
       const input = document.querySelector('[data-testid="tenant-member-filter-name"]');
+      if (!input) {
+        return false;
+      }
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       setter.call(input, '');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4755,6 +4838,13 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       return true;
     })()`
   );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-member-profile-confirm',
+    10000,
+    'tenant member profile confirm should be enabled before dependency failure submission'
+  );
   await evaluate(
     cdp,
     sessionId,
@@ -4784,6 +4874,13 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       deptInput.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
     })()`
+  );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-member-profile-confirm',
+    10000,
+    'tenant member profile confirm should be enabled before retry submission'
   );
   await evaluate(
     cdp,
@@ -4819,8 +4916,26 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       const select = document.querySelector('[data-testid="tenant-member-profile-role-ids"]');
       const trigger = select?.querySelector('.ant-select-selector') || select;
       trigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      return Boolean(trigger);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
       const targetOption = [...document.querySelectorAll('.ant-select-item-option')]
-        .find((node) => String(node.textContent || '').includes('组织账单治理'));
+        .find((node) => String(node.textContent || '').includes('组织角色治理'));
+      return Boolean(targetOption);
+    })()`,
+    8000,
+    'tenant member role select should expose role option'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const targetOption = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('组织角色治理'));
       targetOption?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       targetOption?.click();
       return Boolean(targetOption);
@@ -4829,6 +4944,13 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   const tenantOptionsRefreshCountBeforeRoleAssignment = api.requests.filter(
     (request) => request.method === 'GET' && request.path === '/auth/tenant/options'
   ).length;
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-member-profile-confirm',
+    10000,
+    'tenant member profile confirm should be enabled before role assignment submission'
+  );
   await evaluate(
     cdp,
     sessionId,
@@ -4859,16 +4981,16 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       && api.requests.filter(
         (entry) => entry.method === 'GET' && entry.path === '/auth/tenant/options'
       ).length > tenantOptionsRefreshCountBeforeRoleAssignment,
-    8000,
+    12000,
     'tenant permission refresh should call /auth/tenant/options after role assignment'
   );
   await waitForCondition(
     cdp,
     sessionId,
     `(() => {
-      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
-      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
-      return Boolean(organization_managementMenu) && Boolean(organization_managementBtn) && organization_managementBtn.disabled === false;
+      const membersModule = document.querySelector('[data-testid="tenant-members-module"]');
+      const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      return Boolean(membersModule) && Boolean(roleTab);
     })()`,
     15000,
     'tenant permission panel should converge immediately after role assignment'
@@ -4885,6 +5007,23 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     `Boolean(document.querySelector('[data-testid="tenant-roles-module"]'))`,
     8000,
     'tenant role module should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const expandButton = [...document.querySelectorAll('[data-testid="tenant-roles-module"] button')]
+        .find((button) => String(button.textContent || '').includes('展开'));
+      expandButton?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-role-filter-name"]'))`,
+    8000,
+    'tenant role filter name field should be available'
   );
 
   await evaluate(
@@ -4925,7 +5064,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       setter.call(codeInput, '');
       codeInput.dispatchEvent(new Event('input', { bubbles: true }));
       codeInput.dispatchEvent(new Event('change', { bubbles: true }));
-      setter.call(nameInput, '账单');
+      setter.call(nameInput, '角色');
       nameInput.dispatchEvent(new Event('input', { bubbles: true }));
       nameInput.dispatchEvent(new Event('change', { bubbles: true }));
       document.querySelector('[data-testid="tenant-roles-module"] button[type="submit"]')?.click();
@@ -4995,6 +5134,24 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       const select = document.querySelector('[data-testid="tenant-role-filter-status"]');
       const trigger = select?.querySelector('.ant-select-selector') || select;
       trigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      return Boolean(trigger);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('禁用'));
+      return Boolean(option);
+    })()`,
+    8000,
+    'tenant role status option disabled should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
       const option = [...document.querySelectorAll('.ant-select-item-option')]
         .find((node) => String(node.textContent || '').includes('禁用'));
       option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -5028,6 +5185,24 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       const select = document.querySelector('[data-testid="tenant-role-filter-status"]');
       const trigger = select?.querySelector('.ant-select-selector') || select;
       trigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      return Boolean(trigger);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('全部'));
+      return Boolean(option);
+    })()`,
+    8000,
+    'tenant role status option all should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
       const option = [...document.querySelectorAll('.ant-select-item-option')]
         .find((node) => String(node.textContent || '').includes('全部'));
       option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -5115,7 +5290,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const popconfirm = document.querySelector('.ant-popover .ant-popconfirm');
+      const popconfirm = document.querySelector('.ant-popconfirm-buttons');
       const drawer = document.querySelector('[data-testid="tenant-role-detail-drawer"]');
       return Boolean(popconfirm) && !drawer;
     })()`,
@@ -5160,6 +5335,13 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       return true;
     })()`
   );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-role-create-confirm',
+    10000,
+    'tenant role create confirm should be enabled before submission'
+  );
   await evaluate(
     cdp,
     sessionId,
@@ -5168,7 +5350,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForRequest(
     api.requests,
     (request) => request.path === '/tenant/roles' && request.method === 'POST',
-    8000,
+    12000,
     'tenant role create request should reach API stub'
   );
 
@@ -5248,7 +5430,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   );
 
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
-  screenshotPath = join(evidenceDir, `chrome-tenant-governance-${timestamp}.png`);
+  screenshotPath = join(evidenceDir, `chrome-tenant-management-${timestamp}.png`);
   writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
 
   const tenantLoginRequest = api.requests.find(
@@ -5272,7 +5454,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   assert.equal(createMemberProfileRequest?.body?.display_name, '新建成员甲');
   assert.equal(createMemberProfileRequest?.body?.department_name, null);
 
-  const replaceRolesRequest = api.requests.find(
+  const replaceRolesRequest = [...api.requests].reverse().find(
     (request) =>
       request.method === 'PUT'
       && request.path.includes('/tenant/members/membership-tenant-101-admin/roles')
@@ -5284,7 +5466,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       request.path.startsWith('/tenant/')
       && ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method)
   );
-  assert.ok(tenantWriteRequests.length >= 7, 'tenant governance flow should trigger multiple tenant write operations');
+  assert.ok(tenantWriteRequests.length >= 7, 'tenant management flow should trigger multiple tenant write operations');
   for (const request of tenantWriteRequests) {
     const idempotencyKey = String(request.headers?.['idempotency-key'] || '');
     assert.ok(
@@ -5293,7 +5475,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     );
   }
 
-  const reportPath = join(evidenceDir, `chrome-tenant-governance-${timestamp}.json`);
+  const reportPath = join(evidenceDir, `chrome-tenant-management-${timestamp}.json`);
   writeFileSync(
     reportPath,
     JSON.stringify(

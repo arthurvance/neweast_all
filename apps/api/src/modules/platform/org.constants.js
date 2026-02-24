@@ -6,8 +6,8 @@ const PLATFORM_ORG_STATUS_PATH = '/platform/orgs/status';
 const PLATFORM_ORG_STATUS_ROUTE_KEY = 'POST /platform/orgs/status';
 const PLATFORM_ORG_OWNER_TRANSFER_PATH = '/platform/orgs/owner-transfer';
 const PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY = 'POST /platform/orgs/owner-transfer';
-const PLATFORM_ORG_VIEW_PERMISSION_CODE = 'platform.organization_management.view';
-const PLATFORM_ORG_OPERATE_PERMISSION_CODE = 'platform.organization_management.operate';
+const PLATFORM_ORG_VIEW_PERMISSION_CODE = 'platform.tenant_management.view';
+const PLATFORM_ORG_OPERATE_PERMISSION_CODE = 'platform.tenant_management.operate';
 const PLATFORM_ORG_CREATE_PERMISSION_CODE = PLATFORM_ORG_OPERATE_PERMISSION_CODE;
 const PLATFORM_ORG_SCOPE = 'platform';
 

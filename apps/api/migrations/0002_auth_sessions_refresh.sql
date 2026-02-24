@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   KEY idx_auth_sessions_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS refresh_tokens (
+CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   token_hash CHAR(64) NOT NULL,
   session_id CHAR(36) NOT NULL,

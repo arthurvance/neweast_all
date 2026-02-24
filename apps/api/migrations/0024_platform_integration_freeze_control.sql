@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS platform_integration_freeze_control (
   KEY idx_platform_integration_freeze_request_id (request_id),
   KEY idx_platform_integration_freeze_released_at (released_at),
   CONSTRAINT fk_platform_integration_freeze_frozen_by_user
-    FOREIGN KEY (frozen_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (frozen_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_platform_integration_freeze_released_by_user
-    FOREIGN KEY (released_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (released_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -39,14 +39,14 @@ SELECT
   MIN(grants.created_at) AS created_at,
   MAX(grants.updated_at) AS updated_at
 FROM platform_role_permission_grants grants
-JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
+JOIN platform_roles catalog ON catalog.role_id = grants.role_id
 WHERE catalog.scope = 'platform'
   AND COALESCE(catalog.tenant_id, '') = ''
   AND LOWER(TRIM(grants.permission_code)) IN (
     'platform.user_management.view',
     'platform.user_management.operate',
-    'platform.organization_management.view',
-    'platform.organization_management.operate',
+    'platform.tenant_management.view',
+    'platform.tenant_management.operate',
     'platform.role_management.view',
     'platform.role_management.operate'
   )
@@ -54,15 +54,15 @@ GROUP BY grants.role_id, LOWER(TRIM(grants.permission_code));
 
 DELETE grants
 FROM platform_role_permission_grants grants
-JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
+JOIN platform_roles catalog ON catalog.role_id = grants.role_id
 WHERE catalog.scope = 'platform'
   AND COALESCE(catalog.tenant_id, '') = ''
   AND (
     LOWER(TRIM(grants.permission_code)) NOT IN (
       'platform.user_management.view',
       'platform.user_management.operate',
-      'platform.organization_management.view',
-      'platform.organization_management.operate',
+      'platform.tenant_management.view',
+      'platform.tenant_management.operate',
       'platform.role_management.view',
       'platform.role_management.operate'
     )
@@ -133,7 +133,7 @@ SELECT
   MIN(grants.created_at) AS created_at,
   MAX(grants.updated_at) AS updated_at
 FROM tenant_role_permission_grants grants
-JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
+JOIN platform_roles catalog ON catalog.role_id = grants.role_id
 WHERE catalog.scope = 'tenant'
   AND COALESCE(catalog.tenant_id, '') <> ''
   AND LOWER(TRIM(grants.permission_code)) IN (
@@ -146,7 +146,7 @@ GROUP BY grants.role_id, LOWER(TRIM(grants.permission_code));
 
 DELETE grants
 FROM tenant_role_permission_grants grants
-JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
+JOIN platform_roles catalog ON catalog.role_id = grants.role_id
 WHERE catalog.scope = 'tenant'
   AND COALESCE(catalog.tenant_id, '') <> ''
   AND (

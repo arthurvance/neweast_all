@@ -22,6 +22,12 @@ const {
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
+const { createAuthSessionService } = require('./session-service');
+const { createTenantContextService } = require('./tenant-context-service');
+const { createPermissionContextBuilder } = require('./permission-context-builder');
+const { createEntryPolicyService } = require('./entry-policy-service');
+const { createLoginService } = require('./login-service');
+const { createAuthRepositories } = require('./repositories');
 
 const ACCESS_TTL_SECONDS = 15 * 60;
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -91,10 +97,10 @@ const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
   'can_view_user_management',
   'canOperateUserManagement',
   'can_operate_user_management',
-  'canViewOrganizationManagement',
-  'can_view_organization_management',
-  'canOperateOrganizationManagement',
-  'can_operate_organization_management',
+  'canViewTenantManagement',
+  'can_view_tenant_management',
+  'canOperateTenantManagement',
+  'can_operate_tenant_management',
   'canViewRoleManagement',
   'can_view_role_management',
   'canOperateRoleManagement',
@@ -299,7 +305,7 @@ const isMissingTableError = (error) =>
   || Number(error?.errno || 0) === 1146;
 const isMissingPlatformRoleCatalogTableError = (error) =>
   isMissingTableError(error)
-  && /platform_role_catalog/i.test(String(error?.message || ''));
+  && /platform_roles/i.test(String(error?.message || ''));
 const assertOptionalBooleanRolePermission = (candidate, errorFactory) => {
   if (candidate === undefined) {
     return;
@@ -1241,83 +1247,6 @@ const normalizeTenantMembershipRecordFromStore = ({
   };
 };
 
-const buildPlatformPermissionContext = () => ({
-  scope_label: '平台入口（无组织侧权限上下文）',
-  can_view_user_management: false,
-  can_operate_user_management: false,
-  can_view_organization_management: false,
-  can_operate_organization_management: false,
-  can_view_role_management: false,
-  can_operate_role_management: false
-});
-
-const buildTenantUnselectedPermissionContext = () => ({
-  scope_label: '组织未选择（无可操作权限）',
-  can_view_user_management: false,
-  can_operate_user_management: false,
-  can_view_role_management: false,
-  can_operate_role_management: false
-});
-
-const buildTenantPlatformEntryPermissionContext = () => ({
-  scope_label: '平台入口（无组织侧权限上下文）',
-  can_view_user_management: false,
-  can_operate_user_management: false,
-  can_view_role_management: false,
-  can_operate_role_management: false
-});
-
-const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel) => {
-  if (!permissionContext || typeof permissionContext !== 'object') {
-    return null;
-  }
-  return {
-    scope_label: permissionContext.scopeLabel
-      || permissionContext.scope_label
-      || fallbackScopeLabel
-      || '组织权限快照（默认）',
-    can_view_user_management: Boolean(
-      permissionContext.canViewUserManagement ?? permissionContext.can_view_user_management
-    ),
-    can_operate_user_management: Boolean(
-      permissionContext.canOperateUserManagement ?? permissionContext.can_operate_user_management
-    ),
-    can_view_role_management: Boolean(
-      permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management
-    ),
-    can_operate_role_management: Boolean(
-      permissionContext.canOperateRoleManagement ?? permissionContext.can_operate_role_management
-    )
-  };
-};
-
-const normalizePlatformPermissionContext = (permissionContext, fallbackScopeLabel) => {
-  if (!permissionContext || typeof permissionContext !== 'object') {
-    return null;
-  }
-  return {
-    scope_label: permissionContext.scopeLabel
-      || permissionContext.scope_label
-      || fallbackScopeLabel
-      || '平台权限快照（默认）',
-    can_view_user_management: Boolean(
-      permissionContext.canViewUserManagement ?? permissionContext.can_view_user_management
-    ),
-    can_operate_user_management: Boolean(
-      permissionContext.canOperateUserManagement ?? permissionContext.can_operate_user_management
-    ),
-    can_view_organization_management: Boolean(permissionContext.canViewOrganizationManagement ?? permissionContext.can_view_organization_management),
-    can_operate_organization_management: Boolean(
-      permissionContext.canOperateOrganizationManagement ?? permissionContext.can_operate_organization_management
-    ),
-    can_view_role_management: Boolean(
-      permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management
-    ),
-    can_operate_role_management: Boolean(
-      permissionContext.canOperateRoleManagement ?? permissionContext.can_operate_role_management
-    )
-  };
-};
 const parseProvisionPayload = ({ payload, scope }) => {
   if (!isPlainObject(payload)) {
     return { valid: false, phone: undefined, tenantName: undefined, tenantNameProvided: false };
@@ -1424,6 +1353,13 @@ const createAuthService = (options = {}) => {
   const now = options.now || (() => Date.now());
   const seedUsers = options.seedUsers || DEFAULT_SEED_USERS;
   const authStore = options.authStore || createInMemoryAuthStore({ seedUsers, hashPassword });
+  const {
+    userRepository,
+    sessionRepository,
+    domainAccessRepository,
+    tenantMembershipRepository,
+    permissionRepository
+  } = createAuthRepositories({ authStore });
   const hasExternalAuthStore = Boolean(options.authStore);
 
   const isSecureMode = options.requireSecureOtpStores === true;
@@ -1763,362 +1699,75 @@ const createAuthService = (options = {}) => {
     }
   };
 
-  const invalidateSessionCacheBySessionId = (sessionId) => {
-    for (const key of accessSessionCache.keys()) {
-      if (key.startsWith(`${String(sessionId)}:`)) {
-        accessSessionCache.delete(key);
-      }
-    }
-  };
-
-  const invalidateSessionCacheByUserId = (userId) => {
-    for (const key of accessSessionCache.keys()) {
-      const parts = key.split(':');
-      if (parts[1] === String(userId)) {
-        accessSessionCache.delete(key);
-      }
-    }
-  };
-
-  const invalidateAllAccessSessionCache = () => {
-    accessSessionCache.clear();
-  };
-
-  const buildSessionContext = (session = {}) => ({
-    entry_domain: normalizeEntryDomain(session.entryDomain || session.entry_domain || 'platform') || 'platform',
-    active_tenant_id: normalizeTenantId(session.activeTenantId || session.active_tenant_id)
+  const {
+    invalidateSessionCacheBySessionId,
+    invalidateSessionCacheByUserId,
+    invalidateAllAccessSessionCache,
+    buildSessionContext,
+    issueAccessToken,
+    issueRefreshToken,
+    issueLoginTokenPair,
+    createSessionAndIssueLoginTokens,
+    assertValidAccessSession,
+    resolveAuthorizedSession
+  } = createAuthSessionService({
+    userRepository,
+    sessionRepository,
+    jwtKeyPair,
+    signJwt,
+    verifyJwt,
+    tokenHash,
+    randomUUID,
+    now,
+    normalizeEntryDomain,
+    normalizeTenantId,
+    normalizeOrgStatus,
+    accessSessionCache,
+    accessSessionCacheTtlMs,
+    addAccessInvalidAuditEvent,
+    errors,
+    accessTtlSeconds: ACCESS_TTL_SECONDS,
+    refreshTtlSeconds: REFRESH_TTL_SECONDS
   });
 
-  const getDomainAccessForUser = async (userId) => {
-    if (typeof authStore.findDomainAccessByUserId === 'function') {
-      const access = await authStore.findDomainAccessByUserId(String(userId));
-      return {
-        platform: Boolean(access?.platform),
-        tenant: Boolean(access?.tenant)
-      };
-    }
-    return { platform: false, tenant: false };
-  };
+  const tenantContextService = createTenantContextService({
+    sessionRepository,
+    tenantMembershipRepository,
+    normalizeTenantId,
+    addAuditEvent,
+    invalidateSessionCacheBySessionId
+  });
+  const getTenantOptionsForUser = tenantContextService.getTenantOptionsForUser;
+  const {
+    getDomainAccessForUser,
+    ensureDefaultDomainAccessForUser,
+    ensureTenantDomainAccessForUser,
+    shouldProvisionDefaultPlatformDomainAccess,
+    rejectNoDomainAccess,
+    assertDomainAccess
+  } = createEntryPolicyService({
+    domainAccessRepository,
+    addAuditEvent,
+    errors,
+    normalizeTenantId,
+    getTenantOptionsForUser
+  });
 
-  const ensureDefaultDomainAccessForUser = async ({ requestId, userId }) => {
-    if (typeof authStore.ensureDefaultDomainAccessForUser !== 'function') {
-      return { inserted: false };
-    }
-    const result = await authStore.ensureDefaultDomainAccessForUser(String(userId));
-    if (result?.inserted === true) {
-      addAuditEvent({
-        type: 'auth.domain.default_granted',
-        requestId,
-        userId,
-        detail: 'default platform domain access provisioned',
-        metadata: {
-          entry_domain: 'platform',
-          tenant_id: null
-        }
-      });
-    }
-    return {
-      inserted: result?.inserted === true
-    };
-  };
-
-  const ensureTenantDomainAccessForUser = async ({ requestId, userId, entryDomain }) => {
-    if (entryDomain !== 'tenant') {
-      return;
-    }
-    if (typeof authStore.ensureTenantDomainAccessForUser !== 'function') {
-      return;
-    }
-    const result = await authStore.ensureTenantDomainAccessForUser(String(userId));
-    if (result?.inserted === true) {
-      addAuditEvent({
-        type: 'auth.domain.tenant_granted',
-        requestId,
-        userId,
-        detail: 'tenant domain access provisioned from active tenant membership',
-        metadata: {
-          entry_domain: 'tenant',
-          tenant_id: null
-        }
-      });
-    }
-  };
-
-  const getTenantOptionsForUser = async (userId) => {
-    if (typeof authStore.listTenantOptionsByUserId !== 'function') {
-      return [];
-    }
-    const options = await authStore.listTenantOptionsByUserId(String(userId));
-    if (!Array.isArray(options)) {
-      return [];
-    }
-    return options
-      .map((option) => ({
-        tenant_id: normalizeTenantId(option.tenantId || option.tenant_id),
-        tenant_name: option.tenantName || option.tenant_name || null
-      }))
-      .filter((option) => option.tenant_id);
-  };
-
-  const shouldProvisionDefaultPlatformDomainAccess = async ({ userId }) => {
-    const access = await getDomainAccessForUser(userId);
-    if (access.platform || access.tenant) {
-      return false;
-    }
-
-    if (typeof authStore.hasAnyTenantRelationshipByUserId !== 'function') {
-      return false;
-    }
-
-    const hasAnyTenantRelationship = await authStore.hasAnyTenantRelationshipByUserId(
-      String(userId)
-    );
-    if (hasAnyTenantRelationship) {
-      return false;
-    }
-
-    const tenantOptions = await getTenantOptionsForUser(userId);
-    return tenantOptions.length === 0;
-  };
-
-  const rejectNoDomainAccess = ({
-    requestId,
-    userId,
-    sessionId = 'unknown',
-    entryDomain,
-    tenantId,
-    detail,
-    permissionCode = null
-  }) => {
-    addAuditEvent({
-      type: 'auth.domain.rejected',
-      requestId,
-      userId,
-      sessionId,
-      detail,
-      metadata: {
-        permission_code: permissionCode,
-        entry_domain: entryDomain,
-        tenant_id: normalizeTenantId(tenantId)
-      }
-    });
-    throw errors.noDomainAccess();
-  };
-
-  const getTenantPermissionContext = async ({
-    requestId,
-    userId,
-    sessionId,
-    entryDomain,
-    activeTenantId
-  }) => {
-    if (entryDomain !== 'tenant') {
-      return buildTenantPlatformEntryPermissionContext();
-    }
-
-    const normalizedTenantId = normalizeTenantId(activeTenantId);
-    if (!normalizedTenantId) {
-      return buildTenantUnselectedPermissionContext();
-    }
-
-    if (typeof authStore.findTenantPermissionByUserAndTenantId !== 'function') {
-      rejectNoDomainAccess({
-        requestId,
-        userId,
-        sessionId,
-        entryDomain,
-        tenantId: normalizedTenantId,
-        detail: `tenant permission lookup unavailable: ${normalizedTenantId}`
-      });
-    }
-
-    const permissionContext = await authStore.findTenantPermissionByUserAndTenantId({
-      userId: String(userId),
-      tenantId: normalizedTenantId
-    });
-    const normalized = normalizeTenantPermissionContext(
-      permissionContext,
-      `组织权限（${normalizedTenantId}）`
-    );
-    if (!normalized) {
-      rejectNoDomainAccess({
-        requestId,
-        userId,
-        sessionId,
-        entryDomain,
-        tenantId: normalizedTenantId,
-        detail: `tenant permission missing: ${normalizedTenantId}`
-      });
-    }
-    return normalized;
-  };
-
-  const getPlatformPermissionContext = async ({
-    requestId,
-    userId,
-    sessionId,
-    entryDomain,
-    permissionCode = null
-  }) => {
-    if (entryDomain !== 'platform') {
-      return null;
-    }
-
-    const access = await getDomainAccessForUser(userId);
-    if (!access.platform) {
-      rejectNoDomainAccess({
-        requestId,
-        userId,
-        sessionId,
-        entryDomain,
-        tenantId: null,
-        detail: 'platform domain access denied',
-        permissionCode
-      });
-    }
-
-    if (typeof authStore.syncPlatformPermissionSnapshotByUserId === 'function') {
-      let syncResult = await authStore.syncPlatformPermissionSnapshotByUserId({
-        userId: String(userId),
-        forceWhenNoRoleFacts: true
-      });
-      if (syncResult?.reason === 'concurrent-role-facts-update') {
-        syncResult = await authStore.syncPlatformPermissionSnapshotByUserId({
-          userId: String(userId),
-          forceWhenNoRoleFacts: true
-        });
-      }
-      if (syncResult?.reason === 'concurrent-role-facts-update') {
-        addAuditEvent({
-          type: 'auth.platform.snapshot.degraded',
-          requestId,
-          userId,
-          sessionId,
-          detail: 'platform snapshot sync degraded: concurrent-role-facts-update',
-          metadata: {
-            permission_code: permissionCode,
-            entry_domain: entryDomain,
-            tenant_id: null,
-            degradation_reason: 'concurrent-role-facts-update'
-          }
-        });
-        throw errors.platformSnapshotDegraded({
-          reason: 'concurrent-role-facts-update'
-        });
-      }
-      if (syncResult?.reason === 'db-deadlock') {
-        addAuditEvent({
-          type: 'auth.platform.snapshot.degraded',
-          requestId,
-          userId,
-          sessionId,
-          detail: 'platform snapshot sync degraded: db-deadlock',
-          metadata: {
-            permission_code: permissionCode,
-            entry_domain: entryDomain,
-            tenant_id: null,
-            degradation_reason: 'db-deadlock'
-          }
-        });
-        throw errors.platformSnapshotDegraded({
-          reason: 'db-deadlock'
-        });
-      }
-      if (syncResult?.reason === 'role-facts-table-missing') {
-        rejectNoDomainAccess({
-          requestId,
-          userId,
-          sessionId,
-          entryDomain,
-          tenantId: null,
-          detail: 'platform role facts unavailable',
-          permissionCode
-        });
-      }
-
-      const normalizedSyncReason = String(syncResult?.reason || '').trim();
-      const acceptedSyncReasons = new Set([
-        'ok',
-        'up-to-date',
-        'already-empty'
-      ]);
-      if (!acceptedSyncReasons.has(normalizedSyncReason)) {
-        addAuditEvent({
-          type: 'auth.platform.snapshot.degraded',
-          requestId,
-          userId,
-          sessionId,
-          detail: `platform snapshot sync degraded: ${normalizedSyncReason || 'unknown'}`,
-          metadata: {
-            permission_code: permissionCode,
-            entry_domain: entryDomain,
-            tenant_id: null,
-            degradation_reason: normalizedSyncReason || 'unknown'
-          }
-        });
-        throw errors.platformSnapshotDegraded({
-          reason: normalizedSyncReason || 'unknown'
-        });
-      }
-    }
-
-    if (typeof authStore.findPlatformPermissionByUserId !== 'function') {
-      rejectNoDomainAccess({
-        requestId,
-        userId,
-        sessionId,
-        entryDomain,
-        tenantId: null,
-        detail: 'platform permission lookup unavailable',
-        permissionCode
-      });
-    }
-
-    const permissionContext = await authStore.findPlatformPermissionByUserId({
-      userId: String(userId)
-    });
-    const normalized = normalizePlatformPermissionContext(permissionContext);
-    if (!normalized) {
-      addAuditEvent({
-        type: 'auth.route.forbidden',
-        requestId,
-        userId,
-        sessionId,
-        detail: 'platform permission missing',
-        metadata: {
-          permission_code: permissionCode,
-          entry_domain: entryDomain,
-          tenant_id: null
-        }
-      });
-      throw errors.forbidden();
-    }
-    if (typeof authStore.hasPlatformPermissionByUserId === 'function') {
-      try {
-        const systemConfigGrant = await resolveSystemConfigPermissionGrant({
-          requestId,
-          userId,
-          sessionId,
-          entryDomain,
-          permissionCode: PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
-        });
-        normalized.can_view_role_management = Boolean(
-          systemConfigGrant?.can_view_role_management
-        );
-        normalized.can_operate_role_management = Boolean(
-          systemConfigGrant?.can_operate_role_management
-        );
-      } catch (error) {
-        if (
-          !(error instanceof AuthProblemError)
-          || error.errorCode !== 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED'
-        ) {
-          throw error;
-        }
-      }
-    }
-    return normalized;
-  };
+  const {
+    getTenantPermissionContext,
+    getPlatformPermissionContext,
+    resolveSystemConfigPermissionGrant
+  } = createPermissionContextBuilder({
+    permissionRepository,
+    errors,
+    addAuditEvent,
+    rejectNoDomainAccess,
+    getDomainAccessForUser,
+    normalizeTenantId,
+    toPlatformPermissionCodeKey,
+    platformRoleManagementOperatePermissionCode: PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    AuthProblemError
+  });
 
   const resolveLoginUserName = async ({
     userId,
@@ -2131,11 +1780,11 @@ const createAuthService = (options = {}) => {
     }
 
     if (entryDomain === 'platform') {
-      if (typeof authStore.getPlatformUserById !== 'function') {
+      if (typeof userRepository.getPlatformUserById !== 'function') {
         return null;
       }
       try {
-        const userProfile = await authStore.getPlatformUserById({
+        const userProfile = await userRepository.getPlatformUserById({
           userId: normalizedUserId
         });
         return normalizeAuditStringOrNull(userProfile?.name, 64);
@@ -2174,169 +1823,11 @@ const createAuthService = (options = {}) => {
     return null;
   };
 
-  const resolveSystemConfigPermissionGrant = async ({
-    requestId,
-    userId,
-    sessionId,
-    entryDomain,
-    permissionCode
-  }) => {
-    if (entryDomain !== 'platform') {
-      return {
-        can_view_role_management: false,
-        can_operate_role_management: false,
-        granted: false
-      };
-    }
-
-    if (typeof authStore.hasPlatformPermissionByUserId !== 'function') {
-      addAuditEvent({
-        type: 'auth.platform.snapshot.degraded',
-        requestId,
-        userId,
-        sessionId,
-        detail: 'platform permission grant lookup unavailable',
-        metadata: {
-          permission_code: permissionCode,
-          entry_domain: entryDomain,
-          tenant_id: null,
-          degradation_reason: 'platform-permission-grant-lookup-unsupported'
-        }
-      });
-      throw errors.platformSnapshotDegraded({
-        reason: 'platform-permission-grant-lookup-unsupported'
-      });
-    }
-
-    let lookupResult = null;
-    try {
-      lookupResult = await authStore.hasPlatformPermissionByUserId({
-        userId: String(userId || '').trim(),
-        permissionCode
-      });
-    } catch (_error) {
-      addAuditEvent({
-        type: 'auth.platform.snapshot.degraded',
-        requestId,
-        userId,
-        sessionId,
-        detail: 'platform permission grant lookup failed',
-        metadata: {
-          permission_code: permissionCode,
-          entry_domain: entryDomain,
-          tenant_id: null,
-          degradation_reason: 'platform-permission-grant-lookup-failed'
-        }
-      });
-      throw errors.platformSnapshotDegraded({
-        reason: 'platform-permission-grant-lookup-failed'
-      });
-    }
-
-    if (typeof lookupResult === 'boolean') {
-      return {
-        can_view_role_management: lookupResult,
-        can_operate_role_management: lookupResult,
-        granted: lookupResult
-      };
-    }
-
-    const canViewRoleManagement = Boolean(lookupResult?.canViewRoleManagement);
-    const canOperateRoleManagement =
-      canViewRoleManagement && Boolean(lookupResult?.canOperateRoleManagement);
-    const normalizedPermissionCodeKey = toPlatformPermissionCodeKey(permissionCode);
-    const granted =
-      normalizedPermissionCodeKey === PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
-        ? canOperateRoleManagement
-        : canViewRoleManagement;
-    return {
-      can_view_role_management: canViewRoleManagement,
-      can_operate_role_management: canOperateRoleManagement,
-      granted
-    };
-  };
-
-  const reconcileTenantSessionContext = async ({
-    requestId,
-    userId,
-    sessionId,
-    sessionContext,
-    options
-  }) => {
-    if (sessionContext.entry_domain !== 'tenant') {
-      return sessionContext;
-    }
-
-    if (!Array.isArray(options) || options.length === 0) {
-      rejectNoDomainAccess({
-        requestId,
-        userId,
-        sessionId,
-        entryDomain: sessionContext.entry_domain,
-        tenantId: null,
-        detail: 'tenant entry without active tenant relationship'
-      });
-    }
-
-    const optionTenantIds = new Set(options.map((option) => option.tenant_id));
-    const currentActiveTenantId = normalizeTenantId(sessionContext.active_tenant_id);
-
-    if (currentActiveTenantId && optionTenantIds.has(currentActiveTenantId)) {
-      return sessionContext;
-    }
-
-    const nextActiveTenantId = options.length === 1 ? options[0].tenant_id : null;
-    if (currentActiveTenantId && !optionTenantIds.has(currentActiveTenantId)) {
-      addAuditEvent({
-        type: 'auth.tenant.context.invalidated',
-        requestId,
-        userId,
-        sessionId,
-        detail: `active tenant no longer allowed: ${currentActiveTenantId}`,
-        metadata: {
-          entry_domain: sessionContext.entry_domain,
-          tenant_id: currentActiveTenantId
-        }
-      });
-    }
-
-    if (currentActiveTenantId !== nextActiveTenantId) {
-      if (typeof authStore.updateSessionContext !== 'function') {
-        throw new Error('authStore.updateSessionContext is required');
-      }
-      await authStore.updateSessionContext({
-        sessionId,
-        entryDomain: 'tenant',
-        activeTenantId: nextActiveTenantId
-      });
-      invalidateSessionCacheBySessionId(sessionId);
-    }
-
-    return {
-      entry_domain: 'tenant',
-      active_tenant_id: nextActiveTenantId
-    };
-  };
-
-  const assertDomainAccess = async ({ requestId, userId, entryDomain }) => {
-    const access = await getDomainAccessForUser(userId);
-    const allowed = entryDomain === 'platform' ? access.platform : access.tenant;
-    if (!allowed) {
-      addAuditEvent({
-        type: 'auth.domain.rejected',
-        requestId,
-        userId,
-        detail: `domain access denied: ${entryDomain}`,
-        metadata: {
-          permission_code: null,
-          entry_domain: entryDomain,
-          tenant_id: null
-        }
-      });
-      throw errors.noDomainAccess();
-    }
-    return access;
-  };
+  const reconcileTenantSessionContext = (params = {}) =>
+    tenantContextService.reconcileTenantSessionContext({
+      ...params,
+      rejectNoDomainAccess
+    });
 
   const assertRateLimit = async ({ requestId, phone, action }) => {
     const result = await rateLimitStore.consume({
@@ -2370,411 +1861,31 @@ const createAuthService = (options = {}) => {
     });
   };
 
-  const issueAccessToken = ({ userId, sessionId, sessionVersion }) =>
-    signJwt({
-      privateKeyPem: jwtKeyPair.privateKey,
-      ttlSeconds: ACCESS_TTL_SECONDS,
-      payload: {
-        sub: userId,
-        sid: sessionId,
-        sv: sessionVersion,
-        jti: randomUUID(),
-        typ: 'access'
-      }
-    });
-
-  const issueRefreshToken = ({ userId, sessionId, sessionVersion, refreshTokenId }) =>
-    signJwt({
-      privateKeyPem: jwtKeyPair.privateKey,
-      ttlSeconds: REFRESH_TTL_SECONDS,
-      payload: {
-        sub: userId,
-        sid: sessionId,
-        sv: sessionVersion,
-        jti: refreshTokenId,
-        typ: 'refresh'
-      }
-    });
-
-  const issueLoginTokenPair = async ({
-    userId,
-    sessionId,
-    sessionVersion
-  }) => {
-    const refreshTokenId = randomUUID();
-    const refreshHash = tokenHash(refreshTokenId);
-    const expiresAt = now() + REFRESH_TTL_SECONDS * 1000;
-
-    await authStore.createRefreshToken({
-      tokenHash: refreshHash,
-      sessionId,
-      userId,
-      expiresAt
-    });
-
-    const accessToken = signJwt({
-      privateKeyPem: jwtKeyPair.privateKey,
-      ttlSeconds: ACCESS_TTL_SECONDS,
-      payload: {
-        sub: userId,
-        sid: sessionId,
-        sv: sessionVersion,
-        jti: randomUUID(),
-        typ: 'access'
-      }
-    });
-
-    const refreshToken = issueRefreshToken({
-      userId,
-      sessionId,
-      sessionVersion,
-      refreshTokenId
-    });
-
-    return {
-      accessToken,
-      refreshToken,
-      refreshHash
-    };
-  };
-
-  const createSessionAndIssueLoginTokens = async ({
-    userId,
-    sessionVersion,
-    entryDomain,
-    activeTenantId
-  }) => {
-    const sessionId = randomUUID();
-    await authStore.createSession({
-      sessionId,
-      userId,
-      sessionVersion: Number(sessionVersion),
-      entryDomain,
-      activeTenantId
-    });
-
-    const { accessToken, refreshToken } = await issueLoginTokenPair({
-      userId,
-      sessionId,
-      sessionVersion: Number(sessionVersion)
-    });
-
-    return {
-      sessionId,
-      accessToken,
-      refreshToken,
-      sessionContext: {
-        entry_domain: entryDomain,
-        active_tenant_id: normalizeTenantId(activeTenantId)
-      }
-    };
-  };
-
-  const assertValidAccessSession = async ({
-    accessToken,
-    requestId = 'request_id_unset'
-  }) => {
-    let payload;
-    try {
-      payload = verifyJwt({
-        token: accessToken,
-        publicKeyPem: jwtKeyPair.publicKey,
-        expectedTyp: 'access'
-      });
-    } catch (_error) {
-      addAccessInvalidAuditEvent({
-        requestId,
-        dispositionReason: 'access-token-malformed'
-      });
-      throw errors.invalidAccess();
-    }
-
-    const cacheKey = `${String(payload.sid)}:${String(payload.sub)}:${String(payload.sv)}`;
-    if (accessSessionCacheTtlMs > 0) {
-      const cached = accessSessionCache.get(cacheKey);
-      if (cached && cached.expiresAt > now()) {
-        return { payload, session: cached.session, user: cached.user };
-      }
-    }
-
-    const [session, user] = await Promise.all([authStore.findSessionById(payload.sid), authStore.findUserById(payload.sub)]);
-
-    const normalizedSessionStatus = String(session?.status || '').toLowerCase();
-    const normalizedUserStatus = user ? normalizeOrgStatus(user.status) : '';
-    const hasInvalidUserStatus = Boolean(user) && normalizedUserStatus !== 'active';
-    const normalizedRevokedReason = String(
-      session?.revokedReason || session?.revoked_reason || ''
-    ).trim().toLowerCase();
-    const revokedByCriticalStateChange = normalizedSessionStatus === 'revoked'
-      && (
-        normalizedRevokedReason === 'password-changed'
-        || normalizedRevokedReason === 'platform-role-facts-changed'
-        || normalizedRevokedReason === 'critical-state-changed'
-      );
-    if (!session || !user || normalizedSessionStatus !== 'active' || hasInvalidUserStatus) {
-      const dispositionReason = !session
-        ? 'access-session-missing'
-        : !user
-          ? 'access-user-missing'
-          : hasInvalidUserStatus
-            ? `user-status-${normalizedUserStatus || 'invalid'}`
-          : revokedByCriticalStateChange
-            ? 'session-version-mismatch'
-          : `access-session-${normalizedSessionStatus || 'invalid'}`;
-      addAccessInvalidAuditEvent({
-        requestId,
-        payload,
-        userId: payload?.sub || 'unknown',
-        sessionId: payload?.sid || 'unknown',
-        dispositionReason
-      });
-      throw errors.invalidAccess();
-    }
-
-    const boundUserMismatch = String(session.userId) !== String(payload.sub);
-    const sessionVersionMismatch =
-      Number(session.sessionVersion) !== Number(payload.sv)
-      || Number(user.sessionVersion) !== Number(payload.sv);
-    if (boundUserMismatch || sessionVersionMismatch) {
-      const dispositionReason = boundUserMismatch
-        ? 'access-token-binding-mismatch'
-        : sessionVersionMismatch
-          ? 'session-version-mismatch'
-          : 'access-token-state-mismatch';
-      addAccessInvalidAuditEvent({
-        requestId,
-        payload,
-        userId: user.id || payload?.sub || 'unknown',
-        sessionId: session.sessionId || session.session_id || payload?.sid || 'unknown',
-        dispositionReason
-      });
-      throw errors.invalidAccess();
-    }
-
-    if (accessSessionCacheTtlMs > 0) {
-      accessSessionCache.set(cacheKey, {
-        session,
-        user,
-        expiresAt: now() + accessSessionCacheTtlMs
-      });
-    }
-    return { payload, session, user };
-  };
-
-  const resolveAuthorizedSession = async ({
-    requestId,
-    accessToken,
-    authorizationContext = null
-  }) => {
-    const authorizedSession = await assertValidAccessSession({
-      accessToken,
-      requestId
-    });
-    if (!authorizationContext || typeof authorizationContext !== 'object') {
-      return authorizedSession;
-    }
-
-    const contextSession = authorizationContext.session;
-    const contextUser = authorizationContext.user;
-    if (!contextSession || !contextUser) {
-      return authorizedSession;
-    }
-
-    const resolvedSessionId = String(
-      authorizedSession.session?.sessionId || authorizedSession.session?.session_id || ''
-    ).trim();
-    const resolvedUserId = String(
-      authorizedSession.user?.id || authorizedSession.user?.user_id || ''
-    ).trim();
-    const contextSessionId = String(
-      contextSession?.sessionId || contextSession?.session_id || ''
-    ).trim();
-    const contextUserId = String(contextUser?.id || contextUser?.user_id || '').trim();
-
-    if (
-      resolvedSessionId.length === 0
-      || resolvedUserId.length === 0
-      || contextSessionId.length === 0
-      || contextUserId.length === 0
-      || resolvedSessionId !== contextSessionId
-      || resolvedUserId !== contextUserId
-    ) {
-      const auditUserId = contextUserId || resolvedUserId || 'unknown';
-      const auditSessionId = contextSessionId || resolvedSessionId || 'unknown';
-      addAccessInvalidAuditEvent({
-        requestId,
-        userId: auditUserId,
-        sessionId: auditSessionId,
-        dispositionReason: 'access-authorization-context-mismatch'
-      });
-      throw errors.invalidAccess();
-    }
-
-    return authorizedSession;
-  };
-
-  const login = async ({
-    requestId,
-    phone,
-    password,
-    entryDomain,
-    traceparent = null
-  }) => {
-    bindRequestTraceparent({
-      requestId,
-      traceparent
-    });
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
-    if (
-      !normalizedPhone ||
-      typeof password !== 'string' ||
-      password.trim() === '' ||
-      !normalizedEntryDomain
-    ) {
-      throw errors.invalidPayload();
-    }
-
-    const rateLimit = await assertRateLimit({
-      requestId,
-      phone: normalizedPhone,
-      action: 'password_login'
-    });
-
-    const user = await authStore.findUserByPhone(normalizedPhone);
-    const validCredentials = Boolean(
-      user && isUserActive(user) && verifyPassword(password, user.passwordHash)
-    );
-
-    if (!validCredentials) {
-      addAuditEvent({
-        type: 'auth.login.failed',
-        requestId,
-        userId: user?.id,
-        detail: 'invalid credentials or unavailable user',
-        metadata: {
-          phone_masked: maskPhone(normalizedPhone),
-          session_id_hint: 'unknown'
-        }
-      });
-      throw errors.loginFailed();
-    }
-
-    if (normalizedEntryDomain === 'platform') {
-      const shouldProvisionDefaultPlatformDomain =
-        await shouldProvisionDefaultPlatformDomainAccess({ userId: user.id });
-      if (shouldProvisionDefaultPlatformDomain) {
-        await ensureDefaultDomainAccessForUser({
-          requestId,
-          userId: user.id
-        });
-      }
-    }
-    if (normalizedEntryDomain === 'tenant') {
-      await ensureTenantDomainAccessForUser({
-        requestId,
-        userId: user.id,
-        entryDomain: normalizedEntryDomain
-      });
-    }
-
-    await assertDomainAccess({
-      requestId,
-      userId: user.id,
-      entryDomain: normalizedEntryDomain
-    });
-    const tenantOptions = normalizedEntryDomain === 'tenant'
-      ? await getTenantOptionsForUser(user.id)
-      : [];
-
-    if (normalizedEntryDomain === 'tenant' && tenantOptions.length === 0) {
-      addAuditEvent({
-        type: 'auth.domain.rejected',
-        requestId,
-        userId: user.id,
-        detail: 'tenant entry without active tenant relationship',
-        metadata: {
-          permission_code: null,
-          entry_domain: normalizedEntryDomain,
-          tenant_id: null
-        }
-      });
-      throw errors.noDomainAccess();
-    }
-
-    const tenantSelectionRequired = normalizedEntryDomain === 'tenant' && tenantOptions.length > 1;
-    const activeTenantId = normalizedEntryDomain === 'tenant' && tenantOptions.length === 1
-      ? tenantOptions[0].tenant_id
-      : null;
-
-    const { sessionId, accessToken, refreshToken, sessionContext } = await createSessionAndIssueLoginTokens({
-      userId: user.id,
-      sessionVersion: Number(user.sessionVersion),
-      entryDomain: normalizedEntryDomain,
-      activeTenantId
-    });
-
-    addAuditEvent({
-      type: 'auth.domain.bound',
-      requestId,
-      userId: user.id,
-      sessionId,
-      detail: `domain bound to session: ${normalizedEntryDomain}`,
-      metadata: {
-        entry_domain: normalizedEntryDomain,
-        tenant_id: sessionContext.active_tenant_id
-      }
-    });
-
-    addAuditEvent({
-      type: 'auth.login.succeeded',
-      requestId,
-      userId: user.id,
-      sessionId,
-      metadata: {
-        phone_masked: maskPhone(normalizedPhone),
-        resend_after_seconds: rateLimit.remainingSeconds,
-        entry_domain: normalizedEntryDomain,
-        tenant_id: sessionContext.active_tenant_id
-      }
-    });
-
-    const tenantPermissionContext = await getTenantPermissionContext({
-      requestId,
-      userId: user.id,
-      sessionId,
-      entryDomain: sessionContext.entry_domain,
-      activeTenantId: sessionContext.active_tenant_id
-    });
-    const platformPermissionContext = await getPlatformPermissionContext({
-      requestId,
-      userId: user.id,
-      sessionId,
-      entryDomain: sessionContext.entry_domain
-    });
-    const userName = await resolveLoginUserName({
-      userId: user.id,
-      entryDomain: sessionContext.entry_domain,
-      activeTenantId: sessionContext.active_tenant_id
-    });
-
-    return {
-      token_type: 'Bearer',
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires_in: ACCESS_TTL_SECONDS,
-      refresh_expires_in: REFRESH_TTL_SECONDS,
-      session_id: sessionId,
-      entry_domain: sessionContext.entry_domain,
-      active_tenant_id: sessionContext.active_tenant_id,
-      tenant_selection_required: tenantSelectionRequired,
-      tenant_options: tenantOptions,
-      user_name: userName,
-      platform_permission_context: platformPermissionContext,
-      tenant_permission_context: tenantPermissionContext,
-      request_id: requestId || 'request_id_unset'
-    };
-  };
+  const { login, loginWithOtp } = createLoginService({
+    userRepository,
+    otpStore,
+    errors,
+    addAuditEvent,
+    bindRequestTraceparent,
+    now,
+    normalizePhone,
+    normalizeEntryDomain,
+    maskPhone,
+    isUserActive,
+    verifyPassword,
+    assertRateLimit,
+    shouldProvisionDefaultPlatformDomainAccess,
+    ensureDefaultDomainAccessForUser,
+    ensureTenantDomainAccessForUser,
+    assertDomainAccess,
+    getTenantOptionsForUser,
+    createSessionAndIssueLoginTokens,
+    getTenantPermissionContext,
+    getPlatformPermissionContext,
+    resolveLoginUserName,
+    accessTtlSeconds: ACCESS_TTL_SECONDS,
+    refreshTtlSeconds: REFRESH_TTL_SECONDS
+  });
 
   const sendOtp = async ({ requestId, phone, traceparent = null }) => {
     bindRequestTraceparent({
@@ -2881,194 +1992,6 @@ const createAuthService = (options = {}) => {
     return {
       sent: true,
       resend_after_seconds: OTP_RESEND_COOLDOWN_SECONDS,
-      request_id: requestId || 'request_id_unset'
-    };
-  };
-
-  const loginWithOtp = async ({
-    requestId,
-    phone,
-    otpCode,
-    entryDomain,
-    traceparent = null
-  }) => {
-    bindRequestTraceparent({
-      requestId,
-      traceparent
-    });
-    const normalizedPhone = normalizePhone(phone);
-    const normalizedEntryDomain = normalizeEntryDomain(entryDomain);
-    if (
-      !normalizedPhone ||
-      typeof otpCode !== 'string' ||
-      !/^\d{6}$/.test(otpCode.trim()) ||
-      !normalizedEntryDomain
-    ) {
-      throw errors.invalidPayload();
-    }
-
-    await assertRateLimit({
-      requestId,
-      phone: normalizedPhone,
-      action: 'otp_login'
-    });
-
-    let verifyResult;
-    try {
-      verifyResult = await otpStore.verifyAndConsumeOtp({
-        phone: normalizedPhone,
-        code: otpCode.trim(),
-        nowMs: now()
-      });
-    } catch (error) {
-      addAuditEvent({
-        type: 'auth.otp.login.failed',
-        requestId,
-        detail: `otp store failure: ${error.message}`,
-        metadata: { phone_masked: maskPhone(normalizedPhone) }
-      });
-      throw error;
-    }
-
-    if (!verifyResult || verifyResult.ok !== true) {
-      addAuditEvent({
-        type: 'auth.otp.login.failed',
-        requestId,
-        detail: `otp rejected: ${verifyResult?.reason || 'unknown'}`,
-        metadata: {
-          phone_masked: maskPhone(normalizedPhone),
-          session_id_hint: 'unknown'
-        }
-      });
-      throw errors.otpFailed();
-    }
-
-    const user = await authStore.findUserByPhone(normalizedPhone);
-    if (!user || !isUserActive(user)) {
-      addAuditEvent({
-        type: 'auth.otp.login.failed',
-        requestId,
-        userId: user?.id,
-        detail: 'otp accepted but user unavailable',
-        metadata: {
-          phone_masked: maskPhone(normalizedPhone),
-          session_id_hint: 'unknown'
-        }
-      });
-      throw errors.otpFailed();
-    }
-
-    if (normalizedEntryDomain === 'platform') {
-      const shouldProvisionDefaultPlatformDomain =
-        await shouldProvisionDefaultPlatformDomainAccess({ userId: user.id });
-      if (shouldProvisionDefaultPlatformDomain) {
-        await ensureDefaultDomainAccessForUser({
-          requestId,
-          userId: user.id
-        });
-      }
-    }
-    if (normalizedEntryDomain === 'tenant') {
-      await ensureTenantDomainAccessForUser({
-        requestId,
-        userId: user.id,
-        entryDomain: normalizedEntryDomain
-      });
-    }
-
-    await assertDomainAccess({
-      requestId,
-      userId: user.id,
-      entryDomain: normalizedEntryDomain
-    });
-    const tenantOptions = normalizedEntryDomain === 'tenant'
-      ? await getTenantOptionsForUser(user.id)
-      : [];
-
-    if (normalizedEntryDomain === 'tenant' && tenantOptions.length === 0) {
-      addAuditEvent({
-        type: 'auth.domain.rejected',
-        requestId,
-        userId: user.id,
-        detail: 'tenant entry without active tenant relationship',
-        metadata: {
-          permission_code: null,
-          entry_domain: normalizedEntryDomain,
-          tenant_id: null
-        }
-      });
-      throw errors.noDomainAccess();
-    }
-
-    const tenantSelectionRequired = normalizedEntryDomain === 'tenant' && tenantOptions.length > 1;
-    const activeTenantId = normalizedEntryDomain === 'tenant' && tenantOptions.length === 1
-      ? tenantOptions[0].tenant_id
-      : null;
-
-    const { sessionId, accessToken, refreshToken, sessionContext } = await createSessionAndIssueLoginTokens({
-      userId: user.id,
-      sessionVersion: Number(user.sessionVersion),
-      entryDomain: normalizedEntryDomain,
-      activeTenantId
-    });
-
-    addAuditEvent({
-      type: 'auth.domain.bound',
-      requestId,
-      userId: user.id,
-      sessionId,
-      detail: `domain bound to session: ${normalizedEntryDomain}`,
-      metadata: {
-        entry_domain: normalizedEntryDomain,
-        tenant_id: sessionContext.active_tenant_id
-      }
-    });
-
-    addAuditEvent({
-      type: 'auth.otp.login.succeeded',
-      requestId,
-      userId: user.id,
-      sessionId,
-      metadata: {
-        phone_masked: maskPhone(normalizedPhone),
-        entry_domain: normalizedEntryDomain,
-        tenant_id: sessionContext.active_tenant_id
-      }
-    });
-
-    const tenantPermissionContext = await getTenantPermissionContext({
-      requestId,
-      userId: user.id,
-      sessionId,
-      entryDomain: sessionContext.entry_domain,
-      activeTenantId: sessionContext.active_tenant_id
-    });
-    const platformPermissionContext = await getPlatformPermissionContext({
-      requestId,
-      userId: user.id,
-      sessionId,
-      entryDomain: sessionContext.entry_domain
-    });
-    const userName = await resolveLoginUserName({
-      userId: user.id,
-      entryDomain: sessionContext.entry_domain,
-      activeTenantId: sessionContext.active_tenant_id
-    });
-
-    return {
-      token_type: 'Bearer',
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires_in: ACCESS_TTL_SECONDS,
-      refresh_expires_in: REFRESH_TTL_SECONDS,
-      session_id: sessionId,
-      entry_domain: sessionContext.entry_domain,
-      active_tenant_id: sessionContext.active_tenant_id,
-      tenant_selection_required: tenantSelectionRequired,
-      tenant_options: tenantOptions,
-      user_name: userName,
-      platform_permission_context: platformPermissionContext,
-      tenant_permission_context: tenantPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
   };
@@ -3555,7 +2478,7 @@ const createAuthService = (options = {}) => {
     }
     try {
       await authStore.findPlatformRoleCatalogEntriesByRoleIds({
-        roleIds: ['__platform_role_catalog_health_probe__']
+        roleIds: ['__platform_roles_health_probe__']
       });
     } catch (error) {
       throw mapPlatformRoleCatalogLookupErrorToProblem(error);
@@ -4064,11 +2987,11 @@ const createAuthService = (options = {}) => {
           errors.invalidPayload
         );
         assertOptionalBooleanRolePermission(
-          rolePermissionSource?.canViewOrganizationManagement ?? rolePermissionSource?.can_view_organization_management,
+          rolePermissionSource?.canViewTenantManagement ?? rolePermissionSource?.can_view_tenant_management,
           errors.invalidPayload
         );
         assertOptionalBooleanRolePermission(
-          rolePermissionSource?.canOperateOrganizationManagement ?? rolePermissionSource?.can_operate_organization_management,
+          rolePermissionSource?.canOperateTenantManagement ?? rolePermissionSource?.can_operate_tenant_management,
           errors.invalidPayload
         );
         normalizedRoleFacts.push({
@@ -4083,13 +3006,13 @@ const createAuthService = (options = {}) => {
               rolePermissionSource?.canOperateUserManagement
               ?? rolePermissionSource?.can_operate_user_management
             ),
-            canViewOrganizationManagement: Boolean(
-              rolePermissionSource?.canViewOrganizationManagement
-              ?? rolePermissionSource?.can_view_organization_management
+            canViewTenantManagement: Boolean(
+              rolePermissionSource?.canViewTenantManagement
+              ?? rolePermissionSource?.can_view_tenant_management
             ),
-            canOperateOrganizationManagement: Boolean(
-              rolePermissionSource?.canOperateOrganizationManagement
-              ?? rolePermissionSource?.can_operate_organization_management
+            canOperateTenantManagement: Boolean(
+              rolePermissionSource?.canOperateTenantManagement
+              ?? rolePermissionSource?.can_operate_tenant_management
             )
           }
         });
@@ -6173,13 +5096,13 @@ const createAuthService = (options = {}) => {
               roleFact.permission.canOperateUserManagement
               ?? roleFact.permission.can_operate_user_management
             ),
-            canViewOrganizationManagement: Boolean(
-              roleFact.permission.canViewOrganizationManagement
-              ?? roleFact.permission.can_view_organization_management
+            canViewTenantManagement: Boolean(
+              roleFact.permission.canViewTenantManagement
+              ?? roleFact.permission.can_view_tenant_management
             ),
-            canOperateOrganizationManagement: Boolean(
-              roleFact.permission.canOperateOrganizationManagement
-              ?? roleFact.permission.can_operate_organization_management
+            canOperateTenantManagement: Boolean(
+              roleFact.permission.canOperateTenantManagement
+              ?? roleFact.permission.can_operate_tenant_management
             )
           }
           : null
@@ -9390,10 +8313,10 @@ const createAuthService = (options = {}) => {
       throw errors.noDomainAccess();
     }
 
-    if (typeof authStore.updateSessionContext !== 'function') {
-      throw new Error('authStore.updateSessionContext is required');
+    if (typeof sessionRepository.updateSessionContext !== 'function') {
+      throw new Error('sessionRepository.updateSessionContext is required');
     }
-    await authStore.updateSessionContext({
+    await sessionRepository.updateSessionContext({
       sessionId,
       entryDomain: 'tenant',
       activeTenantId: normalizedTenantId

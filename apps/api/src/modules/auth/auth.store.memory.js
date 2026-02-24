@@ -14,6 +14,9 @@ const {
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
+const {
+  createMemoryRepositoryMethods
+} = require('./store-methods/memory-repository-methods');
 
 const createInMemoryAuthStore = ({
   seedUsers = [],
@@ -1473,9 +1476,9 @@ const createInMemoryAuthStore = ({
       canOperateUserManagement: Boolean(
         permission.canOperateUserManagement ?? permission.can_operate_user_management
       ),
-      canViewOrganizationManagement: Boolean(permission.canViewOrganizationManagement ?? permission.can_view_organization_management),
-      canOperateOrganizationManagement: Boolean(
-        permission.canOperateOrganizationManagement ?? permission.can_operate_organization_management
+      canViewTenantManagement: Boolean(permission.canViewTenantManagement ?? permission.can_view_tenant_management),
+      canOperateTenantManagement: Boolean(
+        permission.canOperateTenantManagement ?? permission.can_operate_tenant_management
       ),
       canViewRoleManagement: Boolean(
         permission.canViewRoleManagement ?? permission.can_view_role_management
@@ -1502,9 +1505,9 @@ const createInMemoryAuthStore = ({
         Boolean(left.canViewUserManagement) || Boolean(right.canViewUserManagement),
       canOperateUserManagement:
         Boolean(left.canOperateUserManagement) || Boolean(right.canOperateUserManagement),
-      canViewOrganizationManagement: Boolean(left.canViewOrganizationManagement) || Boolean(right.canViewOrganizationManagement),
-      canOperateOrganizationManagement:
-        Boolean(left.canOperateOrganizationManagement) || Boolean(right.canOperateOrganizationManagement),
+      canViewTenantManagement: Boolean(left.canViewTenantManagement) || Boolean(right.canViewTenantManagement),
+      canOperateTenantManagement:
+        Boolean(left.canOperateTenantManagement) || Boolean(right.canOperateTenantManagement),
       canViewRoleManagement:
         Boolean(left.canViewRoleManagement) || Boolean(right.canViewRoleManagement),
       canOperateRoleManagement:
@@ -1516,8 +1519,8 @@ const createInMemoryAuthStore = ({
     scopeLabel,
     canViewUserManagement: false,
     canOperateUserManagement: false,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false,
+    canViewTenantManagement: false,
+    canOperateTenantManagement: false,
     canViewRoleManagement: false,
     canOperateRoleManagement: false
   });
@@ -1778,8 +1781,8 @@ const createInMemoryAuthStore = ({
     return (
       Boolean(normalizedLeft.canViewUserManagement) === Boolean(normalizedRight.canViewUserManagement)
       && Boolean(normalizedLeft.canOperateUserManagement) === Boolean(normalizedRight.canOperateUserManagement)
-      && Boolean(normalizedLeft.canViewOrganizationManagement) === Boolean(normalizedRight.canViewOrganizationManagement)
-      && Boolean(normalizedLeft.canOperateOrganizationManagement) === Boolean(normalizedRight.canOperateOrganizationManagement)
+      && Boolean(normalizedLeft.canViewTenantManagement) === Boolean(normalizedRight.canViewTenantManagement)
+      && Boolean(normalizedLeft.canOperateTenantManagement) === Boolean(normalizedRight.canOperateTenantManagement)
       && Boolean(normalizedLeft.canViewRoleManagement) === Boolean(normalizedRight.canViewRoleManagement)
       && Boolean(normalizedLeft.canOperateRoleManagement)
         === Boolean(normalizedRight.canOperateRoleManagement)
@@ -1798,10 +1801,10 @@ const createInMemoryAuthStore = ({
       || permissionSource?.can_view_user_management !== undefined
       || permissionSource?.canOperateUserManagement !== undefined
       || permissionSource?.can_operate_user_management !== undefined
-      || permissionSource?.canViewOrganizationManagement !== undefined
-      || permissionSource?.can_view_organization_management !== undefined
-      || permissionSource?.canOperateOrganizationManagement !== undefined
-      || permissionSource?.can_operate_organization_management !== undefined
+      || permissionSource?.canViewTenantManagement !== undefined
+      || permissionSource?.can_view_tenant_management !== undefined
+      || permissionSource?.canOperateTenantManagement !== undefined
+      || permissionSource?.can_operate_tenant_management !== undefined
     );
     const rolePermissionFromPayload = normalizePlatformPermission(
       permissionSource,
@@ -2967,386 +2970,68 @@ const createInMemoryAuthStore = ({
     };
   };
 
+  const repositoryMethods = createMemoryRepositoryMethods({
+    clone,
+    usersByPhone,
+    usersById,
+    orgsById,
+    systemSensitiveConfigsByKey,
+    sessionsById,
+    refreshTokensByHash,
+    domainsByUserId,
+    platformDomainKnownByUserId,
+    tenantsByUserId,
+    platformProfilesByUserId,
+    platformRoleCatalogById,
+    platformRolesByUserId,
+    platformPermissionsByUserId,
+    cloneSystemSensitiveConfigRecord,
+    clonePlatformRoleCatalogRecord,
+    isTenantMembershipActiveForAuth,
+    isActiveLikeStatus,
+    resolvePlatformUserReadModel,
+    resolveLatestTenantMemberProfileByUserId,
+    normalizeSystemSensitiveConfigKey,
+    normalizeSystemSensitiveConfigStatus,
+    normalizeOrgStatus,
+    normalizeDateTimeFilterToEpoch,
+    normalizeRequiredPlatformUserProfileField,
+    normalizeOptionalPlatformUserProfileField,
+    findPlatformRoleCatalogRecordStateByRoleId,
+    normalizePlatformRoleCatalogRoleId,
+    normalizePlatformRoleCatalogScope,
+    normalizePlatformRoleCatalogTenantId,
+    normalizePlatformRoleCatalogTenantIdForScope,
+    normalizePlatformRoleCatalogStatus,
+    listPlatformRolePermissionGrantsForRoleId,
+    toPlatformPermissionCodeKey,
+    syncPlatformPermissionFromRoleFacts,
+    bumpSessionVersionAndConvergeSessions,
+    MAINLAND_PHONE_PATTERN,
+    CONTROL_CHAR_PATTERN,
+    ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS,
+    MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+    MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+    VALID_ORG_STATUS,
+    VALID_PLATFORM_USER_STATUS,
+    PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+    PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+  });
+
   return {
-    findUserByPhone: async (phone) => clone(usersByPhone.get(phone) || null),
+    findUserByPhone: repositoryMethods.findUserByPhone,
 
-    findUserById: async (userId) => clone(usersById.get(String(userId)) || null),
+    findUserById: repositoryMethods.findUserById,
 
-    updateUserPhone: async ({
-      userId,
-      phone
-    } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      const normalizedPhone = String(phone || '').trim();
-      if (
-        !normalizedUserId
-        || !normalizedPhone
-        || !MAINLAND_PHONE_PATTERN.test(normalizedPhone)
-        || CONTROL_CHAR_PATTERN.test(normalizedPhone)
-      ) {
-        throw new Error('updateUserPhone requires valid userId and mainland phone');
-      }
+    updateUserPhone: repositoryMethods.updateUserPhone,
 
-      const existingUser = usersById.get(normalizedUserId);
-      if (!existingUser) {
-        return {
-          reason: 'invalid-user-id'
-        };
-      }
-      if (String(existingUser.phone || '').trim() === normalizedPhone) {
-        return {
-          reason: 'no-op',
-          user_id: normalizedUserId,
-          phone: normalizedPhone
-        };
-      }
+    listPlatformUsers: repositoryMethods.listPlatformUsers,
 
-      const phoneOwner = usersByPhone.get(normalizedPhone);
-      if (
-        phoneOwner
-        && String(phoneOwner.id || '').trim() !== normalizedUserId
-      ) {
-        return {
-          reason: 'phone-conflict'
-        };
-      }
+    listPlatformOrgs: repositoryMethods.listPlatformOrgs,
 
-      usersByPhone.delete(String(existingUser.phone || '').trim());
-      const updatedUser = {
-        ...existingUser,
-        phone: normalizedPhone
-      };
-      usersById.set(normalizedUserId, updatedUser);
-      usersByPhone.set(normalizedPhone, updatedUser);
-      return {
-        reason: 'ok',
-        user_id: normalizedUserId,
-        phone: normalizedPhone
-      };
-    },
+    getPlatformUserById: repositoryMethods.getPlatformUserById,
 
-    listPlatformUsers: async ({
-      page = 1,
-      pageSize = 20,
-      status = null,
-      keyword = null,
-      phone = null,
-      name = null,
-      createdAtStart = null,
-      createdAtEnd = null
-    } = {}) => {
-      const resolvedPage = Number(page);
-      const resolvedPageSize = Number(pageSize);
-      if (
-        !Number.isInteger(resolvedPage)
-        || resolvedPage <= 0
-        || !Number.isInteger(resolvedPageSize)
-        || resolvedPageSize <= 0
-      ) {
-        throw new Error('listPlatformUsers requires positive integer page and pageSize');
-      }
-      const normalizedStatusFilter =
-        status === null || status === undefined || String(status).trim() === ''
-          ? null
-          : normalizeOrgStatus(status);
-      if (
-        normalizedStatusFilter !== null
-        && !VALID_PLATFORM_USER_STATUS.has(normalizedStatusFilter)
-      ) {
-        throw new Error('listPlatformUsers status filter must be active or disabled');
-      }
-      const normalizedKeyword = keyword === null || keyword === undefined
-        ? ''
-        : String(keyword).trim();
-      const normalizedKeywordForMatch = normalizedKeyword.toLowerCase();
-      if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
-        throw new Error('listPlatformUsers keyword cannot contain control chars');
-      }
-      const normalizedPhoneFilter = phone === null || phone === undefined
-        ? ''
-        : String(phone).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedPhoneFilter)) {
-        throw new Error('listPlatformUsers phone cannot contain control chars');
-      }
-      const normalizedNameFilter = name === null || name === undefined
-        ? ''
-        : String(name).trim();
-      const normalizedNameFilterForMatch = normalizedNameFilter.toLowerCase();
-      if (CONTROL_CHAR_PATTERN.test(normalizedNameFilter)) {
-        throw new Error('listPlatformUsers name cannot contain control chars');
-      }
-      const createdAtStartEpoch = normalizeDateTimeFilterToEpoch({
-        value: createdAtStart,
-        fieldName: 'createdAtStart'
-      });
-      const createdAtEndEpoch = normalizeDateTimeFilterToEpoch({
-        value: createdAtEnd,
-        fieldName: 'createdAtEnd'
-      });
-      if (
-        createdAtStartEpoch !== null
-        && createdAtEndEpoch !== null
-        && createdAtStartEpoch > createdAtEndEpoch
-      ) {
-        throw new Error('listPlatformUsers createdAtStart cannot be later than createdAtEnd');
-      }
-
-      const rows = [];
-      for (const [userId, userRecord] of usersById.entries()) {
-        if (!platformDomainKnownByUserId.has(userId)) {
-          continue;
-        }
-        const resolvedUser = resolvePlatformUserReadModel({
-          userId,
-          userRecord
-        });
-        const platformStatus = resolvedUser.status;
-        if (
-          normalizedStatusFilter !== null
-          && platformStatus !== normalizedStatusFilter
-        ) {
-          continue;
-        }
-        if (normalizedPhoneFilter && resolvedUser.phone !== normalizedPhoneFilter) {
-          continue;
-        }
-        if (normalizedNameFilterForMatch) {
-          const resolvedName = String(resolvedUser.name || '').toLowerCase();
-          if (!resolvedName.includes(normalizedNameFilterForMatch)) {
-            continue;
-          }
-        }
-        const createdAtEpoch = new Date(resolvedUser.created_at).getTime();
-        if (
-          createdAtStartEpoch !== null
-          && createdAtEpoch < createdAtStartEpoch
-        ) {
-          continue;
-        }
-        if (
-          createdAtEndEpoch !== null
-          && createdAtEpoch > createdAtEndEpoch
-        ) {
-          continue;
-        }
-        if (normalizedKeywordForMatch) {
-          const userIdForMatch = String(userId).toLowerCase();
-          const phoneForMatch = resolvedUser.phone.toLowerCase();
-          const matched =
-            userIdForMatch.includes(normalizedKeywordForMatch)
-            || phoneForMatch.includes(normalizedKeywordForMatch);
-          if (!matched) {
-            continue;
-          }
-        }
-        rows.push(resolvedUser);
-      }
-
-      rows.sort((left, right) =>
-        String(left.user_id).localeCompare(String(right.user_id))
-      );
-
-      const total = rows.length;
-      const offset = (resolvedPage - 1) * resolvedPageSize;
-      return {
-        total,
-        items: rows.slice(offset, offset + resolvedPageSize)
-      };
-    },
-
-    listPlatformOrgs: async ({
-      page = 1,
-      pageSize = 20,
-      orgName = null,
-      owner = null,
-      status = null,
-      createdAtStart = null,
-      createdAtEnd = null
-    } = {}) => {
-      const resolvedPage = Number(page);
-      const resolvedPageSize = Number(pageSize);
-      if (
-        !Number.isInteger(resolvedPage)
-        || resolvedPage <= 0
-        || !Number.isInteger(resolvedPageSize)
-        || resolvedPageSize <= 0
-      ) {
-        throw new Error('listPlatformOrgs requires positive integer page and pageSize');
-      }
-
-      const normalizedOrgNameFilter = orgName === null || orgName === undefined
-        ? ''
-        : String(orgName).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedOrgNameFilter)) {
-        throw new Error('listPlatformOrgs orgName cannot contain control chars');
-      }
-
-      const normalizedOwnerFilter = owner === null || owner === undefined
-        ? ''
-        : String(owner).trim();
-      const normalizedOwnerFilterForMatch = normalizedOwnerFilter.toLowerCase();
-      if (CONTROL_CHAR_PATTERN.test(normalizedOwnerFilter)) {
-        throw new Error('listPlatformOrgs owner cannot contain control chars');
-      }
-
-      const normalizedStatusFilter =
-        status === null || status === undefined || String(status).trim() === ''
-          ? null
-          : normalizeOrgStatus(status);
-      if (
-        normalizedStatusFilter !== null
-        && !VALID_ORG_STATUS.has(normalizedStatusFilter)
-      ) {
-        throw new Error('listPlatformOrgs status filter must be active or disabled');
-      }
-
-      const createdAtStartEpoch = normalizeDateTimeFilterToEpoch({
-        value: createdAtStart,
-        fieldName: 'createdAtStart'
-      });
-      const createdAtEndEpoch = normalizeDateTimeFilterToEpoch({
-        value: createdAtEnd,
-        fieldName: 'createdAtEnd'
-      });
-      if (
-        createdAtStartEpoch !== null
-        && createdAtEndEpoch !== null
-        && createdAtStartEpoch > createdAtEndEpoch
-      ) {
-        throw new Error('listPlatformOrgs createdAtStart cannot be later than createdAtEnd');
-      }
-
-      const rows = [];
-      for (const org of orgsById.values()) {
-        const orgId = String(org?.id || '').trim();
-        const resolvedOrgName = String(org?.name || '').trim();
-        const normalizedStatus = normalizeOrgStatus(org?.status);
-        const ownerUserId = String(org?.ownerUserId || '').trim();
-        const ownerUser = usersById.get(ownerUserId);
-        const ownerPhone = String(ownerUser?.phone || '').trim();
-        const ownerProfile = resolveLatestTenantMemberProfileByUserId(ownerUserId);
-        const ownerName = ownerProfile.name;
-        const createdAtRaw = org?.createdAt ?? org?.created_at ?? null;
-        const createdAtDate = createdAtRaw ? new Date(createdAtRaw) : null;
-        const createdAt = createdAtDate && !Number.isNaN(createdAtDate.getTime())
-          ? createdAtDate.toISOString()
-          : '';
-
-        if (
-          !orgId
-          || !resolvedOrgName
-          || !ownerUserId
-          || !ownerPhone
-          || !VALID_ORG_STATUS.has(normalizedStatus)
-          || !createdAt
-        ) {
-          throw new Error('listPlatformOrgs returned invalid organization shape');
-        }
-
-        if (
-          normalizedStatusFilter !== null
-          && normalizedStatus !== normalizedStatusFilter
-        ) {
-          continue;
-        }
-        if (
-          normalizedOrgNameFilter
-          && !resolvedOrgName.toLowerCase().includes(normalizedOrgNameFilter.toLowerCase())
-        ) {
-          continue;
-        }
-        if (normalizedOwnerFilter) {
-          const ownerNameForMatch = String(ownerName || '').toLowerCase();
-          const ownerNameMatched = ownerNameForMatch.includes(normalizedOwnerFilterForMatch);
-          const ownerPhoneMatched = ownerPhone === normalizedOwnerFilter;
-          if (!ownerNameMatched && !ownerPhoneMatched) {
-            continue;
-          }
-        }
-
-        const createdAtEpoch = new Date(createdAt).getTime();
-        if (
-          createdAtStartEpoch !== null
-          && createdAtEpoch < createdAtStartEpoch
-        ) {
-          continue;
-        }
-        if (
-          createdAtEndEpoch !== null
-          && createdAtEpoch > createdAtEndEpoch
-        ) {
-          continue;
-        }
-
-        rows.push({
-          org_id: orgId,
-          org_name: resolvedOrgName,
-          owner_name: ownerName,
-          owner_phone: ownerPhone,
-          status: normalizedStatus,
-          created_at: createdAt
-        });
-      }
-
-      rows.sort((left, right) =>
-        String(left.org_id).localeCompare(String(right.org_id))
-      );
-
-      const total = rows.length;
-      const offset = (resolvedPage - 1) * resolvedPageSize;
-      return {
-        total,
-        items: rows.slice(offset, offset + resolvedPageSize)
-      };
-    },
-
-    getPlatformUserById: async ({ userId } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId) {
-        return null;
-      }
-      if (!platformDomainKnownByUserId.has(normalizedUserId)) {
-        return null;
-      }
-      const userRecord = usersById.get(normalizedUserId);
-      if (!userRecord) {
-        return null;
-      }
-      return resolvePlatformUserReadModel({
-        userId: normalizedUserId,
-        userRecord
-      });
-    },
-
-    upsertPlatformUserProfile: async ({
-      userId,
-      name,
-      department = null
-    } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId || !usersById.has(normalizedUserId)) {
-        throw new Error('upsertPlatformUserProfile requires existing userId');
-      }
-      const normalizedName = normalizeRequiredPlatformUserProfileField({
-        value: name,
-        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-        fieldName: 'name'
-      });
-      const normalizedDepartment = normalizeOptionalPlatformUserProfileField({
-        value: department,
-        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
-        fieldName: 'department'
-      });
-      const nextProfile = {
-        name: normalizedName,
-        department: normalizedDepartment
-      };
-      platformProfilesByUserId.set(normalizedUserId, nextProfile);
-      return {
-        user_id: normalizedUserId,
-        ...nextProfile
-      };
-    },
+    upsertPlatformUserProfile: repositoryMethods.upsertPlatformUserProfile,
 
     recordAuditEvent: async (payload = {}) =>
       persistAuditEvent(payload),
@@ -3460,77 +3145,9 @@ const createInMemoryAuthStore = ({
       };
     },
 
-    getSystemSensitiveConfig: async ({ configKey } = {}) => {
-      const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
-      if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
-        return null;
-      }
-      return cloneSystemSensitiveConfigRecord(
-        systemSensitiveConfigsByKey.get(normalizedConfigKey) || null
-      );
-    },
+    getSystemSensitiveConfig: repositoryMethods.getSystemSensitiveConfig,
 
-    upsertSystemSensitiveConfig: async ({
-      configKey,
-      encryptedValue,
-      expectedVersion,
-      updatedByUserId,
-      status = 'active'
-    } = {}) => {
-      const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
-      if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
-        throw new Error('upsertSystemSensitiveConfig requires whitelisted configKey');
-      }
-      const normalizedEncryptedValue = String(encryptedValue || '').trim();
-      if (
-        !normalizedEncryptedValue
-        || CONTROL_CHAR_PATTERN.test(normalizedEncryptedValue)
-      ) {
-        throw new Error('upsertSystemSensitiveConfig requires encryptedValue');
-      }
-      const normalizedUpdatedByUserId = String(updatedByUserId || '').trim();
-      if (!normalizedUpdatedByUserId || !usersById.has(normalizedUpdatedByUserId)) {
-        throw new Error('upsertSystemSensitiveConfig requires existing updatedByUserId');
-      }
-      const normalizedStatus = normalizeSystemSensitiveConfigStatus(status);
-      if (!normalizedStatus) {
-        throw new Error('upsertSystemSensitiveConfig received unsupported status');
-      }
-      const parsedExpectedVersion = Number(expectedVersion);
-      if (
-        !Number.isInteger(parsedExpectedVersion)
-        || parsedExpectedVersion < 0
-      ) {
-        throw new Error('upsertSystemSensitiveConfig requires expectedVersion >= 0');
-      }
-
-      const existingRecord = systemSensitiveConfigsByKey.get(normalizedConfigKey) || null;
-      const currentVersion = existingRecord ? Number(existingRecord.version || 0) : 0;
-      if (parsedExpectedVersion !== currentVersion) {
-        const conflictError = new Error('system sensitive config version conflict');
-        conflictError.code = 'ERR_SYSTEM_SENSITIVE_CONFIG_VERSION_CONFLICT';
-        conflictError.currentVersion = currentVersion;
-        conflictError.expectedVersion = parsedExpectedVersion;
-        conflictError.configKey = normalizedConfigKey;
-        throw conflictError;
-      }
-
-      const nextVersion = currentVersion + 1;
-      const nowIso = new Date().toISOString();
-      const nextRecord = {
-        configKey: normalizedConfigKey,
-        encryptedValue: normalizedEncryptedValue,
-        version: nextVersion,
-        previousVersion: currentVersion,
-        status: normalizedStatus,
-        updatedByUserId: normalizedUpdatedByUserId,
-        updatedAt: nowIso,
-        createdByUserId: existingRecord?.createdByUserId || normalizedUpdatedByUserId,
-        createdAt: existingRecord?.createdAt || nowIso
-      };
-      systemSensitiveConfigsByKey.set(normalizedConfigKey, nextRecord);
-      return cloneSystemSensitiveConfigRecord(nextRecord);
-    },
+    upsertSystemSensitiveConfig: repositoryMethods.upsertSystemSensitiveConfig,
 
     createUserByPhone: async ({ phone, passwordHash, status = 'active' }) => {
       const normalizedPhone = String(phone || '').trim();
@@ -5155,90 +4772,19 @@ const createInMemoryAuthStore = ({
       return { removed: true };
     },
 
-    createSession: async ({ sessionId, userId, sessionVersion, entryDomain = 'platform', activeTenantId = null }) => {
-      sessionsById.set(sessionId, {
-        sessionId,
-        userId: String(userId),
-        sessionVersion: Number(sessionVersion),
-        entryDomain: String(entryDomain || 'platform').toLowerCase(),
-        activeTenantId: activeTenantId ? String(activeTenantId) : null,
-        status: 'active',
-        revokedReason: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-    },
+    createSession: repositoryMethods.createSession,
 
-    findSessionById: async (sessionId) => clone(sessionsById.get(sessionId) || null),
+    findSessionById: repositoryMethods.findSessionById,
 
-    updateSessionContext: async ({ sessionId, entryDomain, activeTenantId }) => {
-      const session = sessionsById.get(sessionId);
-      if (!session) {
-        return false;
-      }
+    updateSessionContext: repositoryMethods.updateSessionContext,
 
-      if (entryDomain !== undefined) {
-        session.entryDomain = String(entryDomain || 'platform').toLowerCase();
-      }
-      if (activeTenantId !== undefined) {
-        session.activeTenantId = activeTenantId ? String(activeTenantId) : null;
-      }
-      session.updatedAt = Date.now();
-      sessionsById.set(sessionId, session);
-      return true;
-    },
+    findDomainAccessByUserId: repositoryMethods.findDomainAccessByUserId,
 
-    findDomainAccessByUserId: async (userId) => {
-      const userDomains = domainsByUserId.get(String(userId)) || new Set();
-      return {
-        platform: userDomains.has('platform'),
-        tenant: userDomains.has('tenant')
-      };
-    },
+    ensureDefaultDomainAccessForUser: repositoryMethods.ensureDefaultDomainAccessForUser,
 
-    ensureDefaultDomainAccessForUser: async (userId) => {
-      const normalizedUserId = String(userId);
-      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
-      if (userDomains.has('platform')) {
-        domainsByUserId.set(normalizedUserId, userDomains);
-        platformDomainKnownByUserId.add(normalizedUserId);
-        return { inserted: false };
-      }
-      if (platformDomainKnownByUserId.has(normalizedUserId)) {
-        domainsByUserId.set(normalizedUserId, userDomains);
-        return { inserted: false };
-      }
-      userDomains.add('platform');
-      domainsByUserId.set(normalizedUserId, userDomains);
-      platformDomainKnownByUserId.add(normalizedUserId);
-      return { inserted: true };
-    },
+    ensureTenantDomainAccessForUser: repositoryMethods.ensureTenantDomainAccessForUser,
 
-    ensureTenantDomainAccessForUser: async (userId) => {
-      const normalizedUserId = String(userId);
-      const userDomains = domainsByUserId.get(normalizedUserId) || new Set();
-      if (userDomains.has('tenant')) {
-        domainsByUserId.set(normalizedUserId, userDomains);
-        return { inserted: false };
-      }
-
-      const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
-        (tenant) => isTenantMembershipActiveForAuth(tenant)
-      );
-      if (!hasActiveTenantMembership) {
-        domainsByUserId.set(normalizedUserId, userDomains);
-        return { inserted: false };
-      }
-
-      userDomains.add('tenant');
-      domainsByUserId.set(normalizedUserId, userDomains);
-      return { inserted: true };
-    },
-
-    listTenantOptionsByUserId: async (userId) =>
-      (tenantsByUserId.get(String(userId)) || [])
-        .filter((tenant) => isTenantMembershipActiveForAuth(tenant))
-        .map((tenant) => ({ ...tenant })),
+    listTenantOptionsByUserId: repositoryMethods.listTenantOptionsByUserId,
 
     findTenantMembershipByUserAndTenantId: async ({ userId, tenantId }) => {
       const normalizedUserId = String(userId || '').trim();
@@ -5894,226 +5440,21 @@ const createInMemoryAuthStore = ({
       }
     },
 
-    hasAnyTenantRelationshipByUserId: async (userId) =>
-      (tenantsByUserId.get(String(userId)) || []).length > 0,
+    hasAnyTenantRelationshipByUserId: repositoryMethods.hasAnyTenantRelationshipByUserId,
 
-    findTenantPermissionByUserAndTenantId: async ({ userId, tenantId }) => {
-      const normalizedTenantId = String(tenantId || '').trim();
-      if (!normalizedTenantId) {
-        return null;
-      }
+    findTenantPermissionByUserAndTenantId: repositoryMethods.findTenantPermissionByUserAndTenantId,
 
-      const tenant = (tenantsByUserId.get(String(userId)) || []).find(
-        (item) =>
-          String(item.tenantId) === normalizedTenantId &&
-          isTenantMembershipActiveForAuth(item)
-      );
-      if (!tenant) {
-        return null;
-      }
-      if (tenant.permission) {
-        return {
-          scopeLabel: tenant.permission.scopeLabel || `组织权限（${tenant.tenantName || tenant.tenantId}）`,
-          canViewUserManagement: Boolean(tenant.permission.canViewUserManagement),
-          canOperateUserManagement: Boolean(tenant.permission.canOperateUserManagement),
-          canViewRoleManagement: Boolean(tenant.permission.canViewRoleManagement),
-          canOperateRoleManagement: Boolean(tenant.permission.canOperateRoleManagement)
-        };
-      }
-      return null;
-    },
+    findPlatformPermissionByUserId: repositoryMethods.findPlatformPermissionByUserId,
 
-    findPlatformPermissionByUserId: async ({ userId }) => {
-      const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId) {
-        return null;
-      }
-      const permission = platformPermissionsByUserId.get(normalizedUserId);
-      return permission ? { ...permission } : null;
-    },
+    hasPlatformPermissionByUserId: repositoryMethods.hasPlatformPermissionByUserId,
 
-    hasPlatformPermissionByUserId: async ({
-      userId,
-      permissionCode
-    } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      const normalizedPermissionCode = toPlatformPermissionCodeKey(permissionCode);
-      if (
-        !normalizedUserId
-        || !normalizedPermissionCode
-        || (
-          normalizedPermissionCode !== PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
-          && normalizedPermissionCode !== PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
-        )
-      ) {
-        return {
-          canViewRoleManagement: false,
-          canOperateRoleManagement: false,
-          granted: false
-        };
-      }
+    countPlatformRoleCatalogEntries: repositoryMethods.countPlatformRoleCatalogEntries,
 
-      const roles = platformRolesByUserId.get(normalizedUserId) || [];
-      let canViewRoleManagement = false;
-      let canOperateRoleManagement = false;
+    listPlatformRoleCatalogEntries: repositoryMethods.listPlatformRoleCatalogEntries,
 
-      for (const role of roles) {
-        if (!role || !isActiveLikeStatus(role.status)) {
-          continue;
-        }
-        const roleCatalogEntry = findPlatformRoleCatalogRecordStateByRoleId(
-          role.roleId
-        )?.record || null;
-        if (roleCatalogEntry) {
-          const roleCatalogScope = normalizePlatformRoleCatalogScope(
-            roleCatalogEntry.scope
-          );
-          const roleCatalogTenantId = normalizePlatformRoleCatalogTenantId(
-            roleCatalogEntry.tenantId
-          );
-          const roleCatalogStatus = normalizePlatformRoleCatalogStatus(
-            roleCatalogEntry.status
-          );
-          if (
-            roleCatalogScope !== 'platform'
-            || roleCatalogTenantId !== ''
-            || !isActiveLikeStatus(roleCatalogStatus)
-          ) {
-            continue;
-          }
-        }
-        const permission = role.permission || {};
-        if (Boolean(permission.canViewRoleManagement ?? permission.can_view_role_management)) {
-          canViewRoleManagement = true;
-        }
-        if (Boolean(permission.canOperateRoleManagement ?? permission.can_operate_role_management)) {
-          canOperateRoleManagement = true;
-          canViewRoleManagement = true;
-        }
+    findPlatformRoleCatalogEntryByRoleId: repositoryMethods.findPlatformRoleCatalogEntryByRoleId,
 
-        const grantCodes = listPlatformRolePermissionGrantsForRoleId(role.roleId);
-        if (grantCodes.includes(PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE)) {
-          canOperateRoleManagement = true;
-          canViewRoleManagement = true;
-        } else if (grantCodes.includes(PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE)) {
-          canViewRoleManagement = true;
-        }
-
-        if (canViewRoleManagement && canOperateRoleManagement) {
-          break;
-        }
-      }
-
-      const granted = normalizedPermissionCode === PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
-        ? canOperateRoleManagement
-        : canViewRoleManagement;
-      return {
-        canViewRoleManagement,
-        canOperateRoleManagement,
-        granted
-      };
-    },
-
-    countPlatformRoleCatalogEntries: async () => platformRoleCatalogById.size,
-
-    listPlatformRoleCatalogEntries: async ({
-      scope = 'platform',
-      tenantId = null
-    } = {}) => {
-      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
-      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
-        scope: normalizedScope,
-        tenantId
-      });
-      return [...platformRoleCatalogById.values()]
-        .filter((entry) => {
-          if (normalizePlatformRoleCatalogScope(entry.scope) !== normalizedScope) {
-            return false;
-          }
-          if (normalizedScope === 'tenant') {
-            return String(entry.tenantId || '') === normalizedTenantId;
-          }
-          return String(entry.tenantId || '') === '';
-        })
-        .sort((left, right) => {
-          const leftCreatedAt = new Date(left.createdAt).getTime();
-          const rightCreatedAt = new Date(right.createdAt).getTime();
-          if (leftCreatedAt !== rightCreatedAt) {
-            return leftCreatedAt - rightCreatedAt;
-          }
-          return String(left.roleId || '').localeCompare(String(right.roleId || ''));
-        })
-        .map((entry) => clonePlatformRoleCatalogRecord(entry));
-    },
-
-    findPlatformRoleCatalogEntryByRoleId: async ({
-      roleId,
-      scope = undefined,
-      tenantId = null
-    }) => {
-      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
-      if (!normalizedRoleId) {
-        return null;
-      }
-      const hasScopeFilter = scope !== undefined && scope !== null;
-      const normalizedScope = hasScopeFilter
-        ? normalizePlatformRoleCatalogScope(scope)
-        : null;
-      const normalizedTenantId = hasScopeFilter
-        ? normalizePlatformRoleCatalogTenantIdForScope({
-          scope: normalizedScope,
-          tenantId
-        })
-        : null;
-      const existingState = findPlatformRoleCatalogRecordStateByRoleId(
-        normalizedRoleId
-      );
-      const existing = existingState?.record || null;
-      if (!existing) {
-        return null;
-      }
-      if (
-        hasScopeFilter
-        && normalizePlatformRoleCatalogScope(existing.scope) !== normalizedScope
-      ) {
-        return null;
-      }
-      if (
-        hasScopeFilter
-        && normalizedScope === 'tenant'
-        && String(existing.tenantId || '') !== normalizedTenantId
-      ) {
-        return null;
-      }
-      if (
-        hasScopeFilter
-        && normalizedScope !== 'tenant'
-        && String(existing.tenantId || '') !== ''
-      ) {
-        return null;
-      }
-      return clonePlatformRoleCatalogRecord(existing);
-    },
-
-    findPlatformRoleCatalogEntriesByRoleIds: async ({ roleIds = [] } = {}) => {
-      const normalizedRoleIdKeys = new Set(
-        (Array.isArray(roleIds) ? roleIds : [])
-          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
-          .filter((roleId) => roleId.length > 0)
-          .map((roleId) => roleId.toLowerCase())
-      );
-      if (normalizedRoleIdKeys.size === 0) {
-        return [];
-      }
-      const matches = [];
-      for (const [roleId, entry] of platformRoleCatalogById.entries()) {
-        if (!normalizedRoleIdKeys.has(String(roleId).toLowerCase())) {
-          continue;
-        }
-        matches.push(clonePlatformRoleCatalogRecord(entry));
-      }
-      return matches;
-    },
+    findPlatformRoleCatalogEntriesByRoleIds: repositoryMethods.findPlatformRoleCatalogEntriesByRoleIds,
 
     listPlatformIntegrationCatalogEntries: async ({
       direction = null,
@@ -8843,14 +8184,7 @@ const createInMemoryAuthStore = ({
       }
     },
 
-    syncPlatformPermissionSnapshotByUserId: async ({
-      userId,
-      forceWhenNoRoleFacts = false
-    }) =>
-      syncPlatformPermissionFromRoleFacts({
-        userId,
-        forceWhenNoRoleFacts
-      }),
+    syncPlatformPermissionSnapshotByUserId: repositoryMethods.syncPlatformPermissionSnapshotByUserId,
 
     replacePlatformRolesAndSyncSnapshot: async ({ userId, roles = [] }) => {
       const normalizedUserId = String(userId || '').trim();
@@ -8891,132 +8225,25 @@ const createInMemoryAuthStore = ({
       return syncResult;
     },
 
-    revokeSession: async ({ sessionId, reason }) => {
-      const session = sessionsById.get(sessionId);
-      if (session && session.status === 'active') {
-        session.status = 'revoked';
-        session.revokedReason = reason;
-        session.updatedAt = Date.now();
-      }
+    revokeSession: repositoryMethods.revokeSession,
 
-      for (const refreshRecord of refreshTokensByHash.values()) {
-        if (refreshRecord.sessionId === sessionId && refreshRecord.status === 'active') {
-          refreshRecord.status = 'revoked';
-          refreshRecord.updatedAt = Date.now();
-        }
-      }
-    },
+    revokeAllUserSessions: repositoryMethods.revokeAllUserSessions,
 
-    revokeAllUserSessions: async ({ userId, reason }) => {
-      for (const session of sessionsById.values()) {
-        if (session.userId === String(userId) && session.status === 'active') {
-          session.status = 'revoked';
-          session.revokedReason = reason;
-          session.updatedAt = Date.now();
-        }
-      }
+    createRefreshToken: repositoryMethods.createRefreshToken,
 
-      for (const refreshRecord of refreshTokensByHash.values()) {
-        if (refreshRecord.userId === String(userId) && refreshRecord.status === 'active') {
-          refreshRecord.status = 'revoked';
-          refreshRecord.updatedAt = Date.now();
-        }
-      }
-    },
+    findRefreshTokenByHash: repositoryMethods.findRefreshTokenByHash,
 
-    createRefreshToken: async ({ tokenHash, sessionId, userId, expiresAt }) => {
-      refreshTokensByHash.set(tokenHash, {
-        tokenHash,
-        sessionId,
-        userId: String(userId),
-        status: 'active',
-        rotatedFrom: null,
-        rotatedTo: null,
-        expiresAt,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-    },
+    markRefreshTokenStatus: repositoryMethods.markRefreshTokenStatus,
 
-    findRefreshTokenByHash: async (tokenHash) => clone(refreshTokensByHash.get(tokenHash) || null),
+    linkRefreshRotation: repositoryMethods.linkRefreshRotation,
 
-    markRefreshTokenStatus: async ({ tokenHash, status }) => {
-      const token = refreshTokensByHash.get(tokenHash);
-      if (!token) {
-        return;
-      }
+    rotateRefreshToken: repositoryMethods.rotateRefreshToken,
 
-      token.status = status;
-      token.updatedAt = Date.now();
-    },
+    updateUserPasswordAndBumpSessionVersion:
+      repositoryMethods.updateUserPasswordAndBumpSessionVersion,
 
-    linkRefreshRotation: async ({ previousTokenHash, nextTokenHash }) => {
-      const previous = refreshTokensByHash.get(previousTokenHash);
-      if (previous) {
-        previous.rotatedTo = nextTokenHash;
-        previous.updatedAt = Date.now();
-      }
-
-      const next = refreshTokensByHash.get(nextTokenHash);
-      if (next) {
-        next.rotatedFrom = previousTokenHash;
-        next.updatedAt = Date.now();
-      }
-    },
-
-    rotateRefreshToken: async ({ previousTokenHash, nextTokenHash, sessionId, userId, expiresAt }) => {
-      const normalizedSessionId = String(sessionId);
-      const normalizedUserId = String(userId);
-      const previous = refreshTokensByHash.get(previousTokenHash);
-      if (
-        !previous
-        || previous.status !== 'active'
-        || String(previous.sessionId || '') !== normalizedSessionId
-        || String(previous.userId || '') !== normalizedUserId
-      ) {
-        return { ok: false };
-      }
-
-      previous.status = 'rotated';
-      previous.rotatedTo = nextTokenHash;
-      previous.updatedAt = Date.now();
-
-      refreshTokensByHash.set(nextTokenHash, {
-        tokenHash: nextTokenHash,
-        sessionId: normalizedSessionId,
-        userId: normalizedUserId,
-        status: 'active',
-        rotatedFrom: previousTokenHash,
-        rotatedTo: null,
-        expiresAt,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-
-      return { ok: true };
-    },
-
-    updateUserPasswordAndBumpSessionVersion: async ({ userId, passwordHash }) => {
-      const user = bumpSessionVersionAndConvergeSessions({
-        userId,
-        passwordHash,
-        reason: 'password-changed',
-        revokeRefreshTokens: false,
-        revokeAuthSessions: false
-      });
-      return clone(user);
-    },
-
-    updateUserPasswordAndRevokeSessions: async ({ userId, passwordHash, reason }) => {
-      const user = bumpSessionVersionAndConvergeSessions({
-        userId,
-        passwordHash,
-        reason: reason || 'password-changed',
-        revokeRefreshTokens: true,
-        revokeAuthSessions: true
-      });
-      return clone(user);
-    }
+    updateUserPasswordAndRevokeSessions:
+      repositoryMethods.updateUserPasswordAndRevokeSessions
   };
 };
 

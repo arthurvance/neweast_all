@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS platform_integration_catalog (
   KEY idx_platform_integration_catalog_lifecycle_status (lifecycle_status),
   KEY idx_platform_integration_catalog_direction_protocol (direction, protocol),
   CONSTRAINT fk_platform_integration_catalog_created_by_user
-    FOREIGN KEY (created_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_platform_integration_catalog_updated_by_user
-    FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

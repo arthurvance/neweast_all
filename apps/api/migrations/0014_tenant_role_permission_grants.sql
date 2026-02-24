@@ -8,10 +8,10 @@ CREATE TABLE IF NOT EXISTS tenant_role_permission_grants (
   PRIMARY KEY (role_id, permission_code),
   KEY idx_tenant_role_permission_grants_permission_code (permission_code),
   CONSTRAINT fk_tenant_role_permission_grants_role_id
-    FOREIGN KEY (role_id) REFERENCES platform_role_catalog (role_id)
+    FOREIGN KEY (role_id) REFERENCES platform_roles (role_id)
     ON DELETE CASCADE,
   CONSTRAINT fk_tenant_role_permission_grants_created_by_user
-    FOREIGN KEY (created_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_tenant_role_permission_grants_updated_by_user
-    FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

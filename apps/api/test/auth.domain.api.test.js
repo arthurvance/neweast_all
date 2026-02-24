@@ -9,15 +9,15 @@ const tenantPermissionA = {
   scopeLabel: '组织权限快照 A',
   canViewUserManagement: true,
   canOperateUserManagement: true,
-  canViewOrganizationManagement: true,
-  canOperateOrganizationManagement: false
+  canViewRoleManagement: true,
+  canOperateRoleManagement: false
 };
 const tenantPermissionB = {
   scopeLabel: '组织权限快照 B',
   canViewUserManagement: false,
   canOperateUserManagement: false,
-  canViewOrganizationManagement: true,
-  canOperateOrganizationManagement: true
+  canViewRoleManagement: true,
+  canOperateRoleManagement: true
 };
 
 const dependencyProbe = async () => ({
@@ -86,8 +86,8 @@ test('tenant login with multiple tenants requires explicit selection', async () 
     scope_label: '组织未选择（无可操作权限）',
     can_view_user_management: false,
     can_operate_user_management: false,
-    can_view_organization_management: false,
-    can_operate_organization_management: false
+    can_view_role_management: false,
+    can_operate_role_management: false
   });
 
   const options = await callRoute(
@@ -120,8 +120,8 @@ test('tenant login with multiple tenants requires explicit selection', async () 
     scope_label: '组织权限快照 B',
     can_view_user_management: false,
     can_operate_user_management: false,
-    can_view_organization_management: true,
-    can_operate_organization_management: true
+    can_view_role_management: true,
+    can_operate_role_management: true
   });
 });
 
@@ -431,8 +431,8 @@ test('platform scoped route is blocked with AUTH-403-NO-DOMAIN in tenant entry',
             scopeLabel: '平台权限快照',
             canViewUserManagement: true,
             canOperateUserManagement: true,
-            canViewOrganizationManagement: true,
-            canOperateOrganizationManagement: true
+            canViewTenantManagement: true,
+            canOperateTenantManagement: true
           }
         }
       ]
@@ -488,8 +488,8 @@ test('platform scoped route is authorized when active platform roles grant union
               permission: {
                 canViewUserManagement: true,
                 canOperateUserManagement: false,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             },
             {
@@ -498,8 +498,8 @@ test('platform scoped route is authorized when active platform roles grant union
               permission: {
                 canViewUserManagement: false,
                 canOperateUserManagement: true,
-                canViewOrganizationManagement: true,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: true,
+                canOperateTenantManagement: false
               }
             },
             {
@@ -508,8 +508,8 @@ test('platform scoped route is authorized when active platform roles grant union
               permission: {
                 canViewUserManagement: false,
                 canOperateUserManagement: false,
-                canViewOrganizationManagement: false,
-                canOperateOrganizationManagement: false
+                canViewTenantManagement: false,
+                canOperateTenantManagement: false
               }
             }
           ]

@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS platform_integration_retry_recovery_queue (
   CONSTRAINT fk_platform_integration_recovery_integration
     FOREIGN KEY (integration_id) REFERENCES platform_integration_catalog (integration_id),
   CONSTRAINT fk_platform_integration_recovery_created_by_user
-    FOREIGN KEY (created_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_platform_integration_recovery_updated_by_user
-    FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

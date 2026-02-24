@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS auth_tenant_membership_roles;
+DROP TABLE IF EXISTS tenant_membership_roles;

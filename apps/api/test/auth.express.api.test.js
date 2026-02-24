@@ -53,6 +53,10 @@ const TEST_USER = {
   password: 'Passw0rd!',
   status: 'active'
 };
+const PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.user_management.view';
+const PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.user_management.operate';
+const PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.tenant_management.view';
+const PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.tenant_management.operate';
 const AUTH_SESSIONS_REQUIRED_COLUMNS = [
   'session_id',
   'user_id',
@@ -72,24 +76,6 @@ const AUTH_SESSIONS_REQUIRED_COLUMN_ROWS_UPPER = AUTH_SESSIONS_REQUIRED_COLUMNS.
 const AUTH_SESSIONS_REQUIRED_COLUMN_ROWS_WITHOUT_ACTIVE_TENANT = AUTH_SESSIONS_REQUIRED_COLUMNS
   .filter((columnName) => columnName !== 'active_tenant_id')
   .map((columnName) => ({ column_name: columnName }));
-const AUTH_DOMAIN_ACCESS_REQUIRED_COLUMNS = [
-  'user_id',
-  'domain',
-  'status',
-  'can_view_user_management',
-  'can_operate_user_management',
-  'can_view_organization_management',
-  'can_operate_organization_management',
-  'updated_at'
-];
-const AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS = AUTH_DOMAIN_ACCESS_REQUIRED_COLUMNS.map((columnName) => ({
-  column_name: columnName
-}));
-const AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS_UPPER = AUTH_DOMAIN_ACCESS_REQUIRED_COLUMNS.map(
-  (columnName) => ({
-    COLUMN_NAME: columnName
-  })
-);
 const AUTH_USER_TENANTS_REQUIRED_COLUMNS = [
   'user_id',
   'tenant_id',
@@ -102,8 +88,8 @@ const AUTH_USER_TENANTS_REQUIRED_COLUMNS = [
   'left_at',
   'can_view_user_management',
   'can_operate_user_management',
-  'can_view_organization_management',
-  'can_operate_organization_management'
+  'can_view_role_management',
+  'can_operate_role_management'
 ];
 const AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS = AUTH_USER_TENANTS_REQUIRED_COLUMNS.map(
   (columnName) => ({
@@ -119,6 +105,7 @@ const PLATFORM_USER_PROFILES_REQUIRED_COLUMNS = [
   'user_id',
   'name',
   'department',
+  'status',
   'created_at',
   'updated_at'
 ];
@@ -138,8 +125,8 @@ const AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMNS = [
   'status',
   'can_view_user_management',
   'can_operate_user_management',
-  'can_view_organization_management',
-  'can_operate_organization_management',
+  'can_view_tenant_management',
+  'can_operate_tenant_management',
   'updated_at'
 ];
 const AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS =
@@ -296,7 +283,7 @@ const runMigrationSql = async (connection, migrationFile) => {
 const ensureTables = async () => {
   await adminConnection.execute(
     `
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS iam_users (
         id VARCHAR(64) NOT NULL,
         phone VARCHAR(32) NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
@@ -305,7 +292,7 @@ const ensureTables = async () => {
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         PRIMARY KEY (id),
-        UNIQUE KEY uk_users_phone (phone)
+        UNIQUE KEY uk_iam_users_phone (phone)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `
   );
@@ -356,7 +343,7 @@ const ensureTables = async () => {
 
   await adminConnection.execute(
     `
-      CREATE TABLE IF NOT EXISTS refresh_tokens (
+      CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         token_hash CHAR(64) NOT NULL,
         session_id CHAR(36) NOT NULL,
@@ -378,63 +365,15 @@ const ensureTables = async () => {
 
   await adminConnection.execute(
     `
-      CREATE TABLE IF NOT EXISTS auth_user_domain_access (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-        user_id VARCHAR(64) NOT NULL,
-        domain VARCHAR(16) NOT NULL,
-        status VARCHAR(16) NOT NULL DEFAULT 'active',
-        can_view_user_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_user_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_view_organization_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_organization_management TINYINT(1) NOT NULL DEFAULT 0,
-        created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-        updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-        PRIMARY KEY (id),
-        UNIQUE KEY uk_auth_user_domain_access_user_domain (user_id, domain),
-        KEY idx_auth_user_domain_access_user_status (user_id, status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `
-  );
-
-  const [domainPermissionColumns] = await adminConnection.execute(
-    `
-      SELECT COLUMN_NAME AS column_name
-      FROM information_schema.columns
-      WHERE table_schema = DATABASE()
-        AND table_name = 'auth_user_domain_access'
-        AND column_name IN (
-          'can_view_user_management',
-          'can_operate_user_management',
-          'can_view_organization_management',
-          'can_operate_organization_management'
-        )
-    `
-  );
-  const existingDomainColumns = new Set(domainPermissionColumns.map((row) => row.column_name));
-  const missingDomainColumnDefinitions = [
-    ['can_view_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_view_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0']
-  ].filter(([columnName]) => !existingDomainColumns.has(columnName));
-
-  for (const [columnName, columnDefinition] of missingDomainColumnDefinitions) {
-    await adminConnection.execute(
-      `ALTER TABLE auth_user_domain_access ADD COLUMN ${columnName} ${columnDefinition}`
-    );
-  }
-
-  await adminConnection.execute(
-    `
-      CREATE TABLE IF NOT EXISTS auth_user_tenants (
+      CREATE TABLE IF NOT EXISTS tenant_memberships (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         user_id VARCHAR(64) NOT NULL,
         tenant_id VARCHAR(64) NOT NULL,
         tenant_name VARCHAR(128) NULL,
         can_view_user_management TINYINT(1) NOT NULL DEFAULT 0,
         can_operate_user_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_view_organization_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_organization_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_role_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_role_management TINYINT(1) NOT NULL DEFAULT 0,
         status VARCHAR(16) NOT NULL DEFAULT 'active',
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -450,12 +389,12 @@ const ensureTables = async () => {
       SELECT COLUMN_NAME AS column_name
       FROM information_schema.columns
       WHERE table_schema = DATABASE()
-        AND table_name = 'auth_user_tenants'
+        AND table_name = 'tenant_memberships'
         AND column_name IN (
           'can_view_user_management',
           'can_operate_user_management',
-          'can_view_organization_management',
-          'can_operate_organization_management'
+          'can_view_role_management',
+          'can_operate_role_management'
         )
     `
   );
@@ -464,27 +403,27 @@ const ensureTables = async () => {
   const missingColumnDefinitions = [
     ['can_view_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
     ['can_operate_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_view_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0']
+    ['can_view_role_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_operate_role_management', 'TINYINT(1) NOT NULL DEFAULT 0']
   ].filter(([columnName]) => !existingColumns.has(columnName));
 
   for (const [columnName, columnDefinition] of missingColumnDefinitions) {
     await adminConnection.execute(
-      `ALTER TABLE auth_user_tenants ADD COLUMN ${columnName} ${columnDefinition}`
+      `ALTER TABLE tenant_memberships ADD COLUMN ${columnName} ${columnDefinition}`
     );
   }
 
   await adminConnection.execute(
     `
-      CREATE TABLE IF NOT EXISTS auth_user_platform_roles (
+      CREATE TABLE IF NOT EXISTS platform_user_roles (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         user_id VARCHAR(64) NOT NULL,
         role_id VARCHAR(64) NOT NULL,
         status VARCHAR(16) NOT NULL DEFAULT 'active',
         can_view_user_management TINYINT(1) NOT NULL DEFAULT 0,
         can_operate_user_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_view_organization_management TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_organization_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_tenant_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_tenant_management TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         PRIMARY KEY (id),
@@ -519,35 +458,75 @@ const ensureTables = async () => {
   await runMigrationSql(adminConnection, '0016_auth_tenant_member_profile_fields.sql');
   await runMigrationSql(adminConnection, '0018_audit_events.sql');
   await runMigrationSql(adminConnection, '0019_system_sensitive_configs.sql');
-  await runMigrationSql(adminConnection, '0025_platform_user_profiles.sql');
+  await runMigrationSql(adminConnection, '0025_platform_user.sql');
+
+  const [platformUserStatusColumns] = await adminConnection.execute(
+    `
+      SELECT COLUMN_NAME AS column_name
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'platform_users'
+        AND column_name = 'status'
+    `
+  );
+  if (!platformUserStatusColumns.length) {
+    await adminConnection.execute(
+      "ALTER TABLE platform_users ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active'"
+    );
+  }
+
+  const [platformUserNameColumnRows] = await adminConnection.execute(
+    `
+      SELECT IS_NULLABLE AS is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'platform_users'
+        AND column_name = 'name'
+      LIMIT 1
+    `
+  );
+  if (String(platformUserNameColumnRows?.[0]?.is_nullable || '').toUpperCase() !== 'YES') {
+    await adminConnection.execute('ALTER TABLE platform_users MODIFY COLUMN name VARCHAR(64) NULL');
+  }
 };
 
 const resetTestData = async () => {
-  await adminConnection.execute('DELETE FROM auth_user_platform_roles WHERE user_id = ?', [
+  await adminConnection.execute(
+    `
+      DELETE prg
+      FROM platform_role_permission_grants prg
+      INNER JOIN platform_user_roles pur
+        ON pur.role_id = prg.role_id
+      WHERE pur.user_id = ?
+    `,
+    [TEST_USER.id]
+  );
+  await adminConnection.execute('DELETE FROM platform_user_roles WHERE user_id = ?', [
     TEST_USER.id
   ]);
-  await adminConnection.execute('DELETE FROM auth_user_tenants WHERE user_id = ?', [TEST_USER.id]);
-  await adminConnection.execute('DELETE FROM auth_user_domain_access WHERE user_id = ?', [TEST_USER.id]);
-  await adminConnection.execute('DELETE FROM refresh_tokens WHERE user_id = ?', [TEST_USER.id]);
+  await adminConnection.execute(
+    `
+      DELETE FROM platform_role_permission_grants
+      WHERE created_by_user_id = ? OR updated_by_user_id = ?
+    `,
+    [TEST_USER.id, TEST_USER.id]
+  );
+  await adminConnection.execute(
+    `
+      DELETE FROM platform_roles
+      WHERE is_system = 0
+        AND (created_by_user_id = ? OR updated_by_user_id = ?)
+    `,
+    [TEST_USER.id, TEST_USER.id]
+  );
+  await adminConnection.execute('DELETE FROM tenant_memberships WHERE user_id = ?', [TEST_USER.id]);
+  await adminConnection.execute('DELETE FROM platform_users WHERE user_id = ?', [TEST_USER.id]);
+  await adminConnection.execute('DELETE FROM auth_refresh_tokens WHERE user_id = ?', [TEST_USER.id]);
   await adminConnection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [TEST_USER.id]);
-  if (await doesTableExist('memberships')) {
+  if (await doesTableExist('tenants')) {
     await adminConnection.execute(
       `
-        DELETE FROM memberships
-        WHERE user_id = ?
-           OR org_id IN (
-             SELECT id
-             FROM orgs
-             WHERE owner_user_id = ? OR created_by_user_id = ?
-           )
-      `,
-      [TEST_USER.id, TEST_USER.id, TEST_USER.id]
-    );
-  }
-  if (await doesTableExist('orgs')) {
-    await adminConnection.execute(
-      `
-        DELETE FROM orgs
+        DELETE FROM tenants
         WHERE owner_user_id = ? OR created_by_user_id = ?
       `,
       [TEST_USER.id, TEST_USER.id]
@@ -556,7 +535,7 @@ const resetTestData = async () => {
   if (await doesTableExist('system_sensitive_configs')) {
     await adminConnection.execute('DELETE FROM system_sensitive_configs');
   }
-  await adminConnection.execute('DELETE FROM users WHERE id = ? OR phone = ?', [
+  await adminConnection.execute('DELETE FROM iam_users WHERE id = ? OR phone = ?', [
     TEST_USER.id,
     TEST_USER.phone
   ]);
@@ -565,7 +544,7 @@ const resetTestData = async () => {
 const seedTestUser = async () => {
   await adminConnection.execute(
     `
-      INSERT INTO users (id, phone, password_hash, status, session_version)
+      INSERT INTO iam_users (id, phone, password_hash, status, session_version)
       VALUES (?, ?, ?, ?, 1)
     `,
     [TEST_USER.id, TEST_USER.phone, hashPassword(TEST_USER.password), TEST_USER.status]
@@ -573,23 +552,19 @@ const seedTestUser = async () => {
 
   await adminConnection.execute(
     `
-      INSERT INTO auth_user_domain_access (user_id, domain, status)
-      VALUES (?, 'platform', 'active')
-      ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = CURRENT_TIMESTAMP(3)
+      INSERT INTO platform_users (user_id, name, department, status)
+      VALUES (?, 'Integration User', NULL, 'active')
+      ON DUPLICATE KEY UPDATE
+        name = VALUES(name),
+        status = VALUES(status),
+        updated_at = CURRENT_TIMESTAMP(3)
     `,
     [TEST_USER.id]
   );
 };
 
 const seedTenantDomainAccess = async () => {
-  await adminConnection.execute(
-    `
-      INSERT INTO auth_user_domain_access (user_id, domain, status)
-      VALUES (?, 'tenant', 'active')
-      ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = CURRENT_TIMESTAMP(3)
-    `,
-    [TEST_USER.id]
-  );
+  // Tenant access is derived from active tenant_memberships.
 };
 
 const doesTableExist = async (tableName) => {
@@ -615,14 +590,14 @@ const ensureActiveOrgsForTenantIds = async (tenantIds = []) => {
   if (normalizedTenantIds.length === 0) {
     return;
   }
-  if (!(await doesTableExist('orgs'))) {
+  if (!(await doesTableExist('tenants'))) {
     return;
   }
 
   for (const tenantId of normalizedTenantIds) {
     await adminConnection.execute(
       `
-        INSERT INTO orgs (
+        INSERT INTO tenants (
           id,
           name,
           owner_user_id,
@@ -646,7 +621,7 @@ const seedTenantOptions = async () => {
   await ensureActiveOrgsForTenantIds(['tenant-a', 'tenant-b']);
   await adminConnection.execute(
     `
-      INSERT INTO auth_user_tenants (
+      INSERT INTO tenant_memberships (
         membership_id,
         user_id,
         tenant_id,
@@ -654,8 +629,8 @@ const seedTenantOptions = async () => {
         status,
         can_view_user_management,
         can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        can_view_role_management,
+        can_operate_role_management
       )
       VALUES
         (?, ?, 'tenant-a', 'Tenant A', 'active', 1, 1, 1, 0),
@@ -665,8 +640,8 @@ const seedTenantOptions = async () => {
         status = VALUES(status),
         can_view_user_management = VALUES(can_view_user_management),
         can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        can_view_role_management = VALUES(can_view_role_management),
+        can_operate_role_management = VALUES(can_operate_role_management),
         updated_at = CURRENT_TIMESTAMP(3)
       `,
     [
@@ -683,37 +658,121 @@ const seedPlatformRoleFacts = async ({
   status = 'active',
   canViewUserManagement = 0,
   canOperateUserManagement = 0,
-  canViewOrganizationManagement = 0,
-  canOperateOrganizationManagement = 0
+  canViewTenantManagement = 0,
+  canOperateTenantManagement = 0
 } = {}) => {
+  const normalizedRoleId = String(roleId || '').trim() || 'platform-role-default';
+  const normalizedRoleStatus = (() => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'disabled') {
+      return 'disabled';
+    }
+    return 'active';
+  })();
+  const normalizedCode = normalizedRoleId.toLowerCase();
+  const permissionCodes = [];
+  if (Number(canViewUserManagement) === 1) {
+    permissionCodes.push(PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE);
+  }
+  if (Number(canOperateUserManagement) === 1) {
+    permissionCodes.push(PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE);
+  }
+  if (Number(canViewTenantManagement) === 1) {
+    permissionCodes.push(PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE);
+  }
+  if (Number(canOperateTenantManagement) === 1) {
+    permissionCodes.push(PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE);
+  }
+
   await adminConnection.execute(
     `
-      INSERT INTO auth_user_platform_roles (
+      INSERT INTO platform_roles (
+        role_id,
+        code,
+        code_normalized,
+        name,
+        status,
+        scope,
+        tenant_id,
+        is_system,
+        created_by_user_id,
+        updated_by_user_id
+      )
+      VALUES (?, ?, ?, ?, ?, 'platform', '', 0, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        code = VALUES(code),
+        code_normalized = VALUES(code_normalized),
+        name = VALUES(name),
+        status = VALUES(status),
+        scope = VALUES(scope),
+        tenant_id = VALUES(tenant_id),
+        updated_by_user_id = VALUES(updated_by_user_id),
+        updated_at = CURRENT_TIMESTAMP(3)
+    `,
+    [
+      normalizedRoleId,
+      normalizedRoleId,
+      normalizedCode,
+      `Role ${normalizedRoleId}`,
+      normalizedRoleStatus,
+      null,
+      null
+    ]
+  );
+
+  await adminConnection.execute(
+    `
+      DELETE FROM platform_role_permission_grants
+      WHERE role_id = ?
+    `,
+    [normalizedRoleId]
+  );
+  for (const permissionCode of permissionCodes) {
+    await adminConnection.execute(
+      `
+        INSERT INTO platform_role_permission_grants (
+          role_id,
+          permission_code,
+          created_by_user_id,
+          updated_by_user_id
+        )
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          updated_by_user_id = VALUES(updated_by_user_id),
+          updated_at = CURRENT_TIMESTAMP(3)
+      `,
+      [normalizedRoleId, permissionCode, null, null]
+    );
+  }
+
+  await adminConnection.execute(
+    `
+      INSERT INTO platform_user_roles (
         user_id,
         role_id,
         status,
         can_view_user_management,
         can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        can_view_tenant_management,
+        can_operate_tenant_management
       )
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         status = VALUES(status),
         can_view_user_management = VALUES(can_view_user_management),
         can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        can_view_tenant_management = VALUES(can_view_tenant_management),
+        can_operate_tenant_management = VALUES(can_operate_tenant_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
       TEST_USER.id,
-      roleId,
-      status,
+      normalizedRoleId,
+      normalizedRoleStatus,
       Number(canViewUserManagement),
       Number(canOperateUserManagement),
-      Number(canViewOrganizationManagement),
-      Number(canOperateOrganizationManagement)
+      Number(canViewTenantManagement),
+      Number(canOperateTenantManagement)
     ]
   );
 };
@@ -721,7 +780,7 @@ const seedPlatformRoleFacts = async ({
 const clearPlatformRoleFacts = async () => {
   await adminConnection.execute(
     `
-      DELETE FROM auth_user_platform_roles
+      DELETE FROM platform_user_roles
       WHERE user_id = ?
     `,
     [TEST_USER.id]
@@ -771,7 +830,7 @@ const readUserSessionVersion = async (userId = TEST_USER.id) => {
   const [rows] = await adminConnection.execute(
     `
       SELECT session_version
-      FROM users
+      FROM iam_users
       WHERE id = ?
       LIMIT 1
     `,
@@ -1040,7 +1099,7 @@ test('express platform provision-user creates user with hashed default credentia
     const [createdRows] = await adminConnection.execute(
       `
         SELECT id, password_hash
-        FROM users
+        FROM iam_users
         WHERE phone = ?
         LIMIT 1
       `,
@@ -1079,7 +1138,7 @@ test('express platform provision-user creates user with hashed default credentia
     const [createdRows] = await adminConnection.execute(
       `
         SELECT id
-        FROM users
+        FROM iam_users
         WHERE phone = ?
         LIMIT 1
       `,
@@ -1087,12 +1146,12 @@ test('express platform provision-user creates user with hashed default credentia
     );
     const createdUserId = String(createdRows?.[0]?.id || '').trim();
     if (createdUserId) {
-      await adminConnection.execute('DELETE FROM auth_user_platform_roles WHERE user_id = ?', [createdUserId]);
-      await adminConnection.execute('DELETE FROM auth_user_tenants WHERE user_id = ?', [createdUserId]);
-      await adminConnection.execute('DELETE FROM auth_user_domain_access WHERE user_id = ?', [createdUserId]);
-      await adminConnection.execute('DELETE FROM refresh_tokens WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM platform_user_roles WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM tenant_memberships WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM platform_users WHERE user_id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM auth_refresh_tokens WHERE user_id = ?', [createdUserId]);
       await adminConnection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [createdUserId]);
-      await adminConnection.execute('DELETE FROM users WHERE id = ?', [createdUserId]);
+      await adminConnection.execute('DELETE FROM iam_users WHERE id = ?', [createdUserId]);
     }
   }
 });
@@ -1163,7 +1222,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
   await seedTenantDomainAccess();
   await adminConnection.execute(
     `
-      INSERT INTO auth_user_tenants (
+      INSERT INTO tenant_memberships (
         membership_id,
         user_id,
         tenant_id,
@@ -1171,8 +1230,8 @@ test('express tenant provision-user reuses existing user without mutating passwo
         status,
         can_view_user_management,
         can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        can_view_role_management,
+        can_operate_role_management
       )
       VALUES (?, ?, 'tenant-provision-a', 'Tenant Provision A', 'active', 1, 1, 0, 0)
       ON DUPLICATE KEY UPDATE
@@ -1180,8 +1239,8 @@ test('express tenant provision-user reuses existing user without mutating passwo
         status = VALUES(status),
         can_view_user_management = VALUES(can_view_user_management),
         can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        can_view_role_management = VALUES(can_view_role_management),
+        can_operate_role_management = VALUES(can_operate_role_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     ['membership-tenant-provision-a', TEST_USER.id]
@@ -1209,7 +1268,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
   const existingPassword = 'LegacyPass!2026';
   await adminConnection.execute(
     `
-      INSERT INTO users (id, phone, password_hash, status, session_version)
+      INSERT INTO iam_users (id, phone, password_hash, status, session_version)
       VALUES (?, ?, ?, 'active', 1)
     `,
     ['tenant-provision-reuse-target', existingPhone, hashPassword(existingPassword)]
@@ -1232,7 +1291,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
     const [beforeRows] = await adminConnection.execute(
       `
         SELECT id, password_hash
-        FROM users
+        FROM iam_users
         WHERE phone = ?
         LIMIT 1
       `,
@@ -1260,7 +1319,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
     const [afterRows] = await adminConnection.execute(
       `
         SELECT password_hash
-        FROM users
+        FROM iam_users
         WHERE id = ?
         LIMIT 1
       `,
@@ -1297,19 +1356,19 @@ test('express tenant provision-user reuses existing user without mutating passwo
     assert.equal(existingUserLogin.body.active_tenant_id, 'tenant-provision-a');
   } finally {
     await harness.close();
-    await adminConnection.execute('DELETE FROM auth_user_tenants WHERE user_id = ?', [
+    await adminConnection.execute('DELETE FROM tenant_memberships WHERE user_id = ?', [
       'tenant-provision-reuse-target'
     ]);
-    await adminConnection.execute('DELETE FROM auth_user_domain_access WHERE user_id = ?', [
+    await adminConnection.execute('DELETE FROM platform_users WHERE user_id = ?', [
       'tenant-provision-reuse-target'
     ]);
-    await adminConnection.execute('DELETE FROM refresh_tokens WHERE user_id = ?', [
+    await adminConnection.execute('DELETE FROM auth_refresh_tokens WHERE user_id = ?', [
       'tenant-provision-reuse-target'
     ]);
     await adminConnection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [
       'tenant-provision-reuse-target'
     ]);
-    await adminConnection.execute('DELETE FROM users WHERE id = ?', ['tenant-provision-reuse-target']);
+    await adminConnection.execute('DELETE FROM iam_users WHERE id = ?', ['tenant-provision-reuse-target']);
   }
 });
 
@@ -1320,7 +1379,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
   await seedTenantDomainAccess();
   await adminConnection.execute(
     `
-      INSERT INTO auth_user_tenants (
+      INSERT INTO tenant_memberships (
         membership_id,
         user_id,
         tenant_id,
@@ -1328,8 +1387,8 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
         status,
         can_view_user_management,
         can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        can_view_role_management,
+        can_operate_role_management
       )
       VALUES (?, ?, 'tenant-provision-b', 'Tenant Provision B', 'active', 1, 1, 0, 0)
       ON DUPLICATE KEY UPDATE
@@ -1337,8 +1396,8 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
         status = VALUES(status),
         can_view_user_management = VALUES(can_view_user_management),
         can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        can_view_role_management = VALUES(can_view_role_management),
+        can_operate_role_management = VALUES(can_operate_role_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     ['membership-tenant-provision-b', TEST_USER.id]
@@ -1394,7 +1453,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
     const [createdRows] = await adminConnection.execute(
       `
         SELECT id
-        FROM users
+        FROM iam_users
         WHERE phone = ?
         LIMIT 1
       `,
@@ -1537,7 +1596,7 @@ test('express refresh persists rotation chain and keeps concurrent sessions isol
     const [tokenRows] = await adminConnection.execute(
       `
         SELECT token_hash, session_id, status, rotated_from_token_hash, rotated_to_token_hash
-        FROM refresh_tokens
+        FROM auth_refresh_tokens
         WHERE token_hash IN (?, ?)
       `,
       [previousHash, nextHash]
@@ -1719,10 +1778,10 @@ test('express platform role-facts replace converges session and invalidates old 
       scope_label: '平台权限（角色并集）',
       can_view_user_management: true,
       can_operate_user_management: true,
-      can_view_organization_management: true,
-      can_operate_organization_management: true,
-      can_view_system_config: false,
-      can_operate_system_config: false
+      can_view_tenant_management: true,
+      can_operate_tenant_management: true,
+      can_view_role_management: false,
+      can_operate_role_management: false
     });
 
     const sessionVersionAfter = await readUserSessionVersion(TEST_USER.id);
@@ -2343,8 +2402,8 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       scope_label: '组织未选择（无可操作权限）',
       can_view_user_management: false,
       can_operate_user_management: false,
-      can_view_organization_management: false,
-      can_operate_organization_management: false
+      can_view_role_management: false,
+      can_operate_role_management: false
     });
     assert.equal(typeof login.body.access_token, 'string');
 
@@ -2365,8 +2424,8 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       scope_label: '组织未选择（无可操作权限）',
       can_view_user_management: false,
       can_operate_user_management: false,
-      can_view_organization_management: false,
-      can_operate_organization_management: false
+      can_view_role_management: false,
+      can_operate_role_management: false
     });
 
     const selected = await invokeRoute(harness, {
@@ -2384,8 +2443,8 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       scope_label: '组织权限（Tenant A）',
       can_view_user_management: true,
       can_operate_user_management: true,
-      can_view_organization_management: true,
-      can_operate_organization_management: false
+      can_view_role_management: true,
+      can_operate_role_management: false
     });
     const userManagementProbeAllowed = await invokeRoute(harness, {
       method: 'get',
@@ -2413,8 +2472,8 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       scope_label: '组织权限（Tenant B）',
       can_view_user_management: false,
       can_operate_user_management: false,
-      can_view_organization_management: true,
-      can_operate_organization_management: true
+      can_view_role_management: true,
+      can_operate_role_management: true
     });
     const userManagementProbeDenied = await invokeRoute(harness, {
       method: 'get',
@@ -2441,8 +2500,8 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
       scope_label: '组织权限（Tenant B）',
       can_view_user_management: false,
       can_operate_user_management: false,
-      can_view_organization_management: true,
-      can_operate_organization_management: true
+      can_view_role_management: true,
+      can_operate_role_management: true
     });
 
     const switchDenied = await invokeRoute(harness, {
@@ -2490,8 +2549,8 @@ test('express platform login rejects tenant-only identity without platform domai
   }
   await adminConnection.execute(
     `
-      DELETE FROM auth_user_domain_access
-      WHERE user_id = ? AND domain = 'platform'
+      DELETE FROM platform_users
+      WHERE user_id = ?
     `,
     [TEST_USER.id]
   );
@@ -2516,8 +2575,8 @@ test('express platform login rejects tenant-only identity without platform domai
     const [platformDomainRows] = await adminConnection.execute(
       `
         SELECT COUNT(*) AS row_count
-        FROM auth_user_domain_access
-        WHERE user_id = ? AND domain = 'platform'
+        FROM platform_users
+        WHERE user_id = ?
       `,
       [TEST_USER.id]
     );
@@ -2533,14 +2592,14 @@ test('express platform login rejects users with disabled tenant relationships an
   }
   await adminConnection.execute(
     `
-      DELETE FROM auth_user_domain_access
-      WHERE user_id = ? AND domain = 'platform'
+      DELETE FROM platform_users
+      WHERE user_id = ?
     `,
     [TEST_USER.id]
   );
   await adminConnection.execute(
     `
-      INSERT INTO auth_user_tenants (
+      INSERT INTO tenant_memberships (
         membership_id,
         user_id,
         tenant_id,
@@ -2548,8 +2607,8 @@ test('express platform login rejects users with disabled tenant relationships an
         status,
         can_view_user_management,
         can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        can_view_role_management,
+        can_operate_role_management
       )
       VALUES (?, ?, ?, ?, 'disabled', 1, 0, 0, 0)
       ON DUPLICATE KEY UPDATE
@@ -2557,8 +2616,8 @@ test('express platform login rejects users with disabled tenant relationships an
         status = VALUES(status),
         can_view_user_management = VALUES(can_view_user_management),
         can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        can_view_role_management = VALUES(can_view_role_management),
+        can_operate_role_management = VALUES(can_operate_role_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
@@ -2588,8 +2647,8 @@ test('express platform login rejects users with disabled tenant relationships an
     const [platformDomainRows] = await adminConnection.execute(
       `
         SELECT COUNT(*) AS row_count
-        FROM auth_user_domain_access
-        WHERE user_id = ? AND domain = 'platform'
+        FROM platform_users
+        WHERE user_id = ?
       `,
       [TEST_USER.id]
     );
@@ -2732,28 +2791,27 @@ test('createApiApp boots with auth schema created only from official migrations'
     );
     await adminConnection.execute('DROP TABLE IF EXISTS platform_integration_contract_versions');
     await adminConnection.execute('DROP TABLE IF EXISTS platform_integration_catalog');
-    await adminConnection.execute('DROP TABLE IF EXISTS refresh_tokens');
+    await adminConnection.execute('DROP TABLE IF EXISTS auth_refresh_tokens');
     await adminConnection.execute('DROP TABLE IF EXISTS auth_sessions');
-    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_platform_roles');
-    await adminConnection.execute('DROP TABLE IF EXISTS auth_tenant_membership_roles');
-    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenants');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_user_roles');
+    await adminConnection.execute('DROP TABLE IF EXISTS tenant_membership_roles');
+    await adminConnection.execute('DROP TABLE IF EXISTS tenant_memberships');
     await adminConnection.execute('DROP TABLE IF EXISTS auth_user_tenant_membership_history');
-    await adminConnection.execute('DROP TABLE IF EXISTS auth_user_domain_access');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_users');
     await adminConnection.execute('DROP TABLE IF EXISTS tenant_role_permission_grants');
     await adminConnection.execute('DROP TABLE IF EXISTS platform_role_permission_grants');
-    await adminConnection.execute('DROP TABLE IF EXISTS platform_role_catalog');
+    await adminConnection.execute('DROP TABLE IF EXISTS platform_roles');
     await adminConnection.execute('DROP TABLE IF EXISTS audit_events');
     await adminConnection.execute('DROP TABLE IF EXISTS system_sensitive_configs');
-    await adminConnection.execute('DROP TABLE IF EXISTS memberships');
-    await adminConnection.execute('DROP TABLE IF EXISTS orgs');
-    await adminConnection.execute('DROP TABLE IF EXISTS users');
+    await adminConnection.execute('DROP TABLE IF EXISTS tenants');
+    await adminConnection.execute('DROP TABLE IF EXISTS iam_users');
   } finally {
     await adminConnection.execute('SET FOREIGN_KEY_CHECKS = 1');
   }
 
   await adminConnection.execute(
     `
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS iam_users (
         id VARCHAR(64) NOT NULL,
         phone VARCHAR(32) NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
@@ -2762,7 +2820,7 @@ test('createApiApp boots with auth schema created only from official migrations'
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         PRIMARY KEY (id),
-        UNIQUE KEY uk_users_phone (phone)
+        UNIQUE KEY uk_iam_users_phone (phone)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `
   );
@@ -2789,7 +2847,7 @@ test('createApiApp boots with auth schema created only from official migrations'
   await runMigrationSql(adminConnection, '0022_platform_integration_contract_versions.sql');
   await runMigrationSql(adminConnection, '0023_platform_integration_retry_recovery.sql');
   await runMigrationSql(adminConnection, '0024_platform_integration_freeze_control.sql');
-  await runMigrationSql(adminConnection, '0025_platform_user_profiles.sql');
+  await runMigrationSql(adminConnection, '0025_platform_user.sql');
   await seedTestUser();
 
   const harness = await createExpressHarness();
@@ -2848,10 +2906,9 @@ test('createApiApp closes db client when auth service init fails after mysql con
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_domain_access' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'auth_user_platform_roles' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_user_roles' },
+                { table_name: 'platform_users' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -2860,16 +2917,13 @@ test('createApiApp closes db client when auth service init fails after mysql con
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_platform_roles') {
+              if (tableName === 'platform_user_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
+              if (tableName === 'platform_users') {
                 return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
@@ -2907,10 +2961,9 @@ test('createApiApp preflight accepts uppercase information_schema field names', 
         if (normalizedSql.includes('FROM information_schema.tables')) {
           return [
             { TABLE_NAME: 'auth_sessions' },
-            { TABLE_NAME: 'auth_user_domain_access' },
-            { TABLE_NAME: 'auth_user_tenants' },
-            { TABLE_NAME: 'auth_user_platform_roles' },
-            { TABLE_NAME: 'platform_user_profiles' },
+            { TABLE_NAME: 'tenant_memberships' },
+            { TABLE_NAME: 'platform_user_roles' },
+            { TABLE_NAME: 'platform_users' },
             { TABLE_NAME: 'platform_role_permission_grants' }
           ];
         }
@@ -2919,16 +2972,13 @@ test('createApiApp preflight accepts uppercase information_schema field names', 
           if (tableName === 'auth_sessions') {
             return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS_UPPER;
           }
-          if (tableName === 'auth_user_domain_access') {
-            return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS_UPPER;
-          }
-          if (tableName === 'auth_user_tenants') {
+          if (tableName === 'tenant_memberships') {
             return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS_UPPER;
           }
-          if (tableName === 'auth_user_platform_roles') {
+          if (tableName === 'platform_user_roles') {
             return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS_UPPER;
           }
-          if (tableName === 'platform_user_profiles') {
+          if (tableName === 'platform_users') {
             return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS_UPPER;
           }
           if (tableName === 'platform_role_permission_grants') {
@@ -2965,9 +3015,8 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'auth_user_platform_roles' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_user_roles' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -2976,14 +3025,14 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
-                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
+              if (tableName === 'platform_user_roles') {
+                return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
+              }
+              if (tableName === 'platform_role_permission_grants') {
+                return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
               }
               return [];
             }
@@ -2995,13 +3044,13 @@ test('createApiApp fails fast when auth schema table is missing', async () => {
           }
         })
       }),
-    /Auth schema preflight failed: missing tables: auth_user_domain_access/
+    /Auth schema preflight failed: missing tables: platform_users/
   );
 
   assert.equal(dbCloseCalls, 1);
 });
 
-test('createApiApp fails fast when auth_user_platform_roles table is missing', async () => {
+test('createApiApp fails fast when platform_user_roles table is missing', async () => {
   let dbCloseCalls = 0;
   const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 
@@ -3016,9 +3065,8 @@ test('createApiApp fails fast when auth_user_platform_roles table is missing', a
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_domain_access' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_users' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3027,13 +3075,10 @@ test('createApiApp fails fast when auth_user_platform_roles table is missing', a
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
+              if (tableName === 'platform_users') {
                 return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               return [];
@@ -3046,7 +3091,7 @@ test('createApiApp fails fast when auth_user_platform_roles table is missing', a
           }
         })
       }),
-    /Auth schema preflight failed: missing tables: auth_user_platform_roles/
+    /Auth schema preflight failed: missing tables: platform_user_roles/
   );
 
   assert.equal(dbCloseCalls, 1);
@@ -3504,7 +3549,7 @@ test('createApiApp uses immutable snapshot for custom routeDefinitions at startu
   }
 });
 
-test('createApiApp fails fast when auth_user_tenants permission columns are missing', async () => {
+test('createApiApp fails fast when tenant_memberships permission columns are missing', async () => {
   let dbCloseCalls = 0;
   const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 
@@ -3519,10 +3564,9 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_domain_access' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'auth_user_platform_roles' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_user_roles' },
+                { table_name: 'platform_users' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3531,10 +3575,7 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return [
                   { column_name: 'user_id' },
                   { column_name: 'tenant_id' },
@@ -3544,10 +3585,10 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
                   { column_name: 'can_operate_user_management' }
                 ];
               }
-              if (tableName === 'auth_user_platform_roles') {
+              if (tableName === 'platform_user_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
+              if (tableName === 'platform_users') {
                 return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
@@ -3563,13 +3604,13 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
           }
         })
       }),
-    /Auth schema preflight failed: auth_user_tenants missing columns/
+    /Auth schema preflight failed: tenant_memberships missing columns/
   );
 
   assert.equal(dbCloseCalls, 1);
 });
 
-test('createApiApp fails fast when auth_user_tenants profile columns are missing', async () => {
+test('createApiApp fails fast when tenant_memberships profile columns are missing', async () => {
   let dbCloseCalls = 0;
   const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 
@@ -3584,10 +3625,9 @@ test('createApiApp fails fast when auth_user_tenants profile columns are missing
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_domain_access' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'auth_user_platform_roles' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_user_roles' },
+                { table_name: 'platform_users' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3596,20 +3636,17 @@ test('createApiApp fails fast when auth_user_tenants profile columns are missing
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS.filter(
                   (row) =>
                     row.column_name !== 'display_name'
                     && row.column_name !== 'department_name'
                 );
               }
-              if (tableName === 'auth_user_platform_roles') {
+              if (tableName === 'platform_user_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
+              if (tableName === 'platform_users') {
                 return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {
@@ -3625,13 +3662,13 @@ test('createApiApp fails fast when auth_user_tenants profile columns are missing
           }
         })
       }),
-    /Auth schema preflight failed: auth_user_tenants missing columns: display_name, department_name/
+    /Auth schema preflight failed: tenant_memberships missing columns: display_name, department_name/
   );
 
   assert.equal(dbCloseCalls, 1);
 });
 
-test('createApiApp fails fast when auth_user_domain_access required columns are missing', async () => {
+test('createApiApp fails fast when platform_users required columns are missing', async () => {
   let dbCloseCalls = 0;
   const mockConfig = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 
@@ -3646,10 +3683,9 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_domain_access' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'auth_user_platform_roles' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_user_roles' },
+                { table_name: 'platform_users' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3658,21 +3694,16 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return [
-                  { column_name: 'user_id' },
-                  { column_name: 'domain' },
-                  { column_name: 'status' }
-                ];
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_platform_roles') {
+              if (tableName === 'platform_user_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
-                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
+              if (tableName === 'platform_users') {
+                return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS.filter(
+                  (row) => row.column_name !== 'status'
+                );
               }
               if (tableName === 'platform_role_permission_grants') {
                 return PLATFORM_ROLE_PERMISSION_GRANTS_REQUIRED_COLUMN_ROWS;
@@ -3687,7 +3718,7 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
           }
         })
       }),
-    /Auth schema preflight failed: auth_user_domain_access missing columns: can_view_user_management/
+    /Auth schema preflight failed: platform_users missing columns: status/
   );
 
   assert.equal(dbCloseCalls, 1);
@@ -3708,10 +3739,9 @@ test('createApiApp fails fast when auth_sessions context columns are missing', a
             if (normalizedSql.includes('FROM information_schema.tables')) {
               return [
                 { table_name: 'auth_sessions' },
-                { table_name: 'auth_user_domain_access' },
-                { table_name: 'auth_user_tenants' },
-                { table_name: 'auth_user_platform_roles' },
-                { table_name: 'platform_user_profiles' },
+                { table_name: 'tenant_memberships' },
+                { table_name: 'platform_user_roles' },
+                { table_name: 'platform_users' },
                 { table_name: 'platform_role_permission_grants' }
               ];
             }
@@ -3720,16 +3750,13 @@ test('createApiApp fails fast when auth_sessions context columns are missing', a
               if (tableName === 'auth_sessions') {
                 return AUTH_SESSIONS_REQUIRED_COLUMN_ROWS_WITHOUT_ACTIVE_TENANT;
               }
-              if (tableName === 'auth_user_domain_access') {
-                return AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS;
-              }
-              if (tableName === 'auth_user_tenants') {
+              if (tableName === 'tenant_memberships') {
                 return AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'auth_user_platform_roles') {
+              if (tableName === 'platform_user_roles') {
                 return AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS;
               }
-              if (tableName === 'platform_user_profiles') {
+              if (tableName === 'platform_users') {
                 return PLATFORM_USER_PROFILES_REQUIRED_COLUMN_ROWS;
               }
               if (tableName === 'platform_role_permission_grants') {

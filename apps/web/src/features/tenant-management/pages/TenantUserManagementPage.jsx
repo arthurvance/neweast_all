@@ -14,18 +14,18 @@ import {
   Typography,
   message
 } from 'antd';
-import CustomCardTable from '../../components/CustomCardTable';
-import CustomFilter from '../../components/CustomFilter';
-import CustomForm from '../../components/CustomForm';
+import CustomCardTable from '../../../components/CustomCardTable';
+import CustomFilter from '../../../components/CustomFilter';
+import CustomForm from '../../../components/CustomForm';
 import {
-  createTenantGovernanceApi,
+  createTenantManagementApi,
   normalizeRoleIds,
   toProblemMessage
-} from '../../api/tenant-governance.mjs';
+} from '../../../api/tenant-management.mjs';
 import {
   formatDateTimeMinute,
   toDateTimeMinuteEpoch
-} from '../../utils/date-time.mjs';
+} from '../../../utils/date-time.mjs';
 
 const { Text } = Typography;
 
@@ -124,7 +124,7 @@ export default function TenantUserManagementPage({
   onTenantPermissionContextRefresh
 }) {
   const api = useMemo(
-    () => createTenantGovernanceApi({ accessToken }),
+    () => createTenantManagementApi({ accessToken }),
     [accessToken]
   );
   const [messageApi, messageContextHolder] = message.useMessage();

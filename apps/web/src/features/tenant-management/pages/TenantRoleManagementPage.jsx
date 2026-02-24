@@ -15,17 +15,17 @@ import {
   Tree,
   message
 } from 'antd';
-import CustomCardTable from '../../components/CustomCardTable';
-import CustomFilter from '../../components/CustomFilter';
-import CustomForm from '../../components/CustomForm';
+import CustomCardTable from '../../../components/CustomCardTable';
+import CustomFilter from '../../../components/CustomFilter';
+import CustomForm from '../../../components/CustomForm';
 import {
-  createTenantGovernanceApi,
+  createTenantManagementApi,
   toProblemMessage
-} from '../../api/tenant-governance.mjs';
+} from '../../../api/tenant-management.mjs';
 import {
   formatDateTimeMinute,
   toDateTimeMinuteEpoch
-} from '../../utils/date-time.mjs';
+} from '../../../utils/date-time.mjs';
 
 const ROLE_STATUS_OPTIONS = [
   { label: '全部', value: '' },
@@ -259,7 +259,7 @@ const formatProblemText = (error, fallback) => {
 
 export default function TenantRoleManagementPage({ accessToken }) {
   const api = useMemo(
-    () => createTenantGovernanceApi({ accessToken }),
+    () => createTenantManagementApi({ accessToken }),
     [accessToken]
   );
   const [messageApi, messageContextHolder] = message.useMessage();

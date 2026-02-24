@@ -15,14 +15,14 @@ import {
   Typography,
   message
 } from 'antd';
-import CustomCardTable from '../../components/CustomCardTable';
-import CustomFilter from '../../components/CustomFilter';
-import CustomForm from '../../components/CustomForm';
+import CustomCardTable from '../../../components/CustomCardTable';
+import CustomFilter from '../../../components/CustomFilter';
+import CustomForm from '../../../components/CustomForm';
 import {
-  createPlatformSettingsApi,
+  createPlatformManagementApi,
   toProblemMessage
-} from '../../api/platform-settings.mjs';
-import { formatDateTimeMinute } from '../../utils/date-time.mjs';
+} from '../../../api/platform-management.mjs';
+import { formatDateTimeMinute } from '../../../utils/date-time.mjs';
 
 const { Text } = Typography;
 
@@ -63,7 +63,7 @@ const normalizeRoleList = (roles = []) =>
 
 export default function PlatformUserManagementPage({ accessToken }) {
   const api = useMemo(
-    () => createPlatformSettingsApi({ accessToken }),
+    () => createPlatformManagementApi({ accessToken }),
     [accessToken]
   );
   const [messageApi, messageContextHolder] = message.useMessage();
@@ -665,14 +665,14 @@ export default function PlatformUserManagementPage({ accessToken }) {
 
   if (!accessToken) {
     return (
-      <section data-testid="platform-governance-no-session" style={{ marginTop: 12 }}>
+      <section data-testid="platform-management-no-session" style={{ marginTop: 12 }}>
         <Alert type="warning" message="当前会话缺失 access_token，无法加载平台治理工作台。" showIcon />
       </section>
     );
   }
 
   return (
-    <section data-testid="platform-governance-workbench" style={{ display: 'grid', gap: 12 }}>
+    <section data-testid="platform-management-workbench" style={{ display: 'grid', gap: 12 }}>
       {messageContextHolder}
       <section data-testid="platform-users-module" style={{ display: 'grid', gap: 12 }}>
         <CustomFilter
@@ -992,7 +992,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
               <Input.TextArea
                 data-testid="platform-user-status-reason"
                 rows={3}
-                placeholder="manual-governance"
+                placeholder="manual-management"
               />
             </CustomForm.Item>
           </CustomForm>

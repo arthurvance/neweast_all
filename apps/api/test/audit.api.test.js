@@ -30,8 +30,8 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -52,8 +52,8 @@ const createHarness = () => {
               scopeLabel: '组织权限（Tenant A）',
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -416,8 +416,8 @@ test('GET /platform/audit/events returns 503 when audit query capability is unav
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]

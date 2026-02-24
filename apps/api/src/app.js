@@ -134,17 +134,7 @@ const REQUIRED_AUTH_SCHEMA = {
     'revoked_reason',
     'updated_at'
   ],
-  auth_user_domain_access: [
-    'user_id',
-    'domain',
-    'status',
-    'can_view_user_management',
-    'can_operate_user_management',
-    'can_view_organization_management',
-    'can_operate_organization_management',
-    'updated_at'
-  ],
-  auth_user_tenants: [
+  tenant_memberships: [
     'user_id',
     'tenant_id',
     'membership_id',
@@ -156,23 +146,24 @@ const REQUIRED_AUTH_SCHEMA = {
     'left_at',
     'can_view_user_management',
     'can_operate_user_management',
-    'can_view_organization_management',
-    'can_operate_organization_management'
+    'can_view_role_management',
+    'can_operate_role_management'
   ],
-  auth_user_platform_roles: [
+  platform_user_roles: [
     'user_id',
     'role_id',
     'status',
     'can_view_user_management',
     'can_operate_user_management',
-    'can_view_organization_management',
-    'can_operate_organization_management',
+    'can_view_tenant_management',
+    'can_operate_tenant_management',
     'updated_at'
   ],
-  platform_user_profiles: [
+  platform_users: [
     'user_id',
     'name',
     'department',
+    'status',
     'created_at',
     'updated_at'
   ],

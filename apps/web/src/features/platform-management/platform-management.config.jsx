@@ -4,21 +4,43 @@ import {
   SettingOutlined,
   TeamOutlined
 } from '@ant-design/icons';
-import PlatformOrgManagementPage from '../platform-settings/PlatformOrgManagementPage';
-import PlatformRoleManagementPage from '../platform-settings/PlatformRoleManagementPage';
-import PlatformUserManagementPage from '../platform-settings/PlatformUserManagementPage';
+import { lazy } from 'react';
+import {
+  PLATFORM_PERMISSION_CODE_BY_GROUP_ACTION
+} from '../auth/generated-permission-catalog';
 
 const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
-const ORG_MENU_KEY = 'settings/orgs';
+const TENANT_MENU_KEY = 'settings/tenants';
 const ROLE_MENU_KEY = 'settings/roles';
-const USER_VIEW_PERMISSION_CODE = 'platform.user_management.view';
-const ROLE_VIEW_PERMISSION_CODE = 'platform.role_management.view';
-const ORG_VIEW_PERMISSION_CODE = 'platform.organization_management.view';
+const PlatformOrgManagementPage = lazy(() => import('./pages/PlatformOrgManagementPage'));
+const PlatformRoleManagementPage = lazy(() => import('./pages/PlatformRoleManagementPage'));
+const PlatformUserManagementPage = lazy(() => import('./pages/PlatformUserManagementPage'));
+const readPlatformPermissionCode = ({ groupKey, actionKey }) => {
+  const code = PLATFORM_PERMISSION_CODE_BY_GROUP_ACTION?.[groupKey]?.[actionKey];
+  if (!code) {
+    throw new Error(
+      `missing generated platform permission code for ${String(groupKey)}.${String(actionKey)}`
+    );
+  }
+  return code;
+};
+const USER_VIEW_PERMISSION_CODE = readPlatformPermissionCode({
+  groupKey: 'user_management',
+  actionKey: 'view'
+});
+const ROLE_VIEW_PERMISSION_CODE = readPlatformPermissionCode({
+  groupKey: 'role_management',
+  actionKey: 'view'
+});
+const TENANT_VIEW_PERMISSION_CODE = readPlatformPermissionCode({
+  groupKey: 'tenant_management',
+  actionKey: 'view'
+});
 const PLATFORM_MENU_ORDER = Object.freeze([
   USER_MENU_KEY,
   ROLE_MENU_KEY,
-  ORG_MENU_KEY
+  TENANT_MENU_KEY
 ]);
 
 export const PLATFORM_DEFAULT_MENU_KEY = USER_MENU_KEY;
@@ -31,7 +53,7 @@ export const PLATFORM_MENU_PERMISSION_REGISTRY = Object.freeze({
   [SETTINGS_MENU_KEY]: '',
   [USER_MENU_KEY]: USER_VIEW_PERMISSION_CODE,
   [ROLE_MENU_KEY]: ROLE_VIEW_PERMISSION_CODE,
-  [ORG_MENU_KEY]: ORG_VIEW_PERMISSION_CODE
+  [TENANT_MENU_KEY]: TENANT_VIEW_PERMISSION_CODE
 });
 
 const PLATFORM_PERMISSION_FLAG_REGISTRY = Object.freeze({
@@ -47,11 +69,11 @@ const PLATFORM_PERMISSION_FLAG_REGISTRY = Object.freeze({
     'can_operate_role_management',
     'canOperateRoleManagement'
   ]),
-  [ORG_VIEW_PERMISSION_CODE]: Object.freeze([
-    'can_view_organization_management',
-    'canViewOrganizationManagement',
-    'can_operate_organization_management',
-    'canOperateOrganizationManagement'
+  [TENANT_VIEW_PERMISSION_CODE]: Object.freeze([
+    'can_view_tenant_management',
+    'canViewTenantManagement',
+    'can_operate_tenant_management',
+    'canOperateTenantManagement'
   ])
 });
 
@@ -92,10 +114,10 @@ export const PLATFORM_NAV_ITEMS = [
         label: <span data-testid="platform-tab-roles">角色管理</span>
       },
       {
-        key: ORG_MENU_KEY,
-        permission_code: resolvePlatformMenuPermissionCode(ORG_MENU_KEY),
+        key: TENANT_MENU_KEY,
+        permission_code: resolvePlatformMenuPermissionCode(TENANT_MENU_KEY),
         icon: <ApartmentOutlined />,
-        label: <span data-testid="platform-tab-orgs">组织管理</span>
+        label: <span data-testid="platform-tab-tenants">组织管理</span>
       }
     ]
   }
@@ -112,13 +134,13 @@ export const PLATFORM_PAGE_REGISTRY = Object.freeze({
     ],
     Component: PlatformUserManagementPage
   },
-  [ORG_MENU_KEY]: {
+  [TENANT_MENU_KEY]: {
     title: '组织管理',
     subTitle: '平台设置 / 组织管理',
-    permission_code: resolvePlatformMenuPermissionCode(ORG_MENU_KEY),
+    permission_code: resolvePlatformMenuPermissionCode(TENANT_MENU_KEY),
     breadcrumbItems: [
       { key: SETTINGS_MENU_KEY, title: '设置' },
-      { key: ORG_MENU_KEY, title: '组织管理' }
+      { key: TENANT_MENU_KEY, title: '组织管理' }
     ],
     Component: PlatformOrgManagementPage
   },

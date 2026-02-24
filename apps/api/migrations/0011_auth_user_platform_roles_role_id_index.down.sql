@@ -1,2 +1,2 @@
-ALTER TABLE auth_user_platform_roles
+ALTER TABLE platform_user_roles
   DROP INDEX idx_auth_user_platform_roles_role_id_user_id;

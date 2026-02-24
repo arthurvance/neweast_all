@@ -54,10 +54,10 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false,
-              canViewSystemConfig: true,
-              canOperateSystemConfig: true
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: true
             }
           }
         ]
@@ -75,10 +75,10 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false,
-              canViewSystemConfig: true,
-              canOperateSystemConfig: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: false
             }
           }
         ]
@@ -96,10 +96,10 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false,
-              canViewSystemConfig: false,
-              canOperateSystemConfig: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false,
+              canViewRoleManagement: false,
+              canOperateRoleManagement: false
             }
           }
         ]

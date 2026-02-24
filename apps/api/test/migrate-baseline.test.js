@@ -96,11 +96,11 @@ test('0005 migration defines tenant permission columns required by runtime prefl
 
   assert.match(sql, /can_view_user_management/i);
   assert.match(sql, /can_operate_user_management/i);
-  assert.match(sql, /can_view_organization_management/i);
-  assert.match(sql, /can_operate_organization_management/i);
+  assert.match(sql, /can_view_role_management/i);
+  assert.match(sql, /can_operate_role_management/i);
 });
 
-test('0006 migration defines guarded platform permission snapshot DDL on auth_user_domain_access', () => {
+test('0006 migration is an explicit no-op marker', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -109,19 +109,10 @@ test('0006 migration defines guarded platform permission snapshot DDL on auth_us
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /table_name = 'auth_user_domain_access'/i);
-  assert.match(sql, /column_name = 'can_view_user_management'/i);
-  assert.match(sql, /column_name = 'can_operate_user_management'/i);
-  assert.match(sql, /column_name = 'can_view_organization_management'/i);
-  assert.match(sql, /column_name = 'can_operate_organization_management'/i);
-  assert.match(sql, /PREPARE migration_stmt FROM @ddl_sql/i);
-  assert.match(sql, /ADD COLUMN can_view_user_management/i);
-  assert.match(sql, /ADD COLUMN can_operate_user_management/i);
-  assert.match(sql, /ADD COLUMN can_view_organization_management/i);
-  assert.match(sql, /ADD COLUMN can_operate_organization_management/i);
+  assert.match(sql, /^\s*SELECT 1;\s*$/i);
 });
 
-test('0006 down migration defines guarded rollback DDL for platform permission snapshot', () => {
+test('0006 down migration is an explicit no-op marker', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -130,19 +121,10 @@ test('0006 down migration defines guarded rollback DDL for platform permission s
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /table_name = 'auth_user_domain_access'/i);
-  assert.match(sql, /column_name = 'can_operate_organization_management'/i);
-  assert.match(sql, /column_name = 'can_view_organization_management'/i);
-  assert.match(sql, /column_name = 'can_operate_user_management'/i);
-  assert.match(sql, /column_name = 'can_view_user_management'/i);
-  assert.match(sql, /PREPARE migration_stmt FROM @ddl_sql/i);
-  assert.match(sql, /DROP COLUMN can_operate_organization_management/i);
-  assert.match(sql, /DROP COLUMN can_view_organization_management/i);
-  assert.match(sql, /DROP COLUMN can_operate_user_management/i);
-  assert.match(sql, /DROP COLUMN can_view_user_management/i);
+  assert.match(sql, /^\s*SELECT 1;\s*$/i);
 });
 
-test('0007 migration defines platform role fact table and reserved legacy snapshot backfill', () => {
+test('0007 migration defines platform role fact table without legacy snapshot backfill', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -151,22 +133,17 @@ test('0007 migration defines platform role fact table and reserved legacy snapsh
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS auth_user_platform_roles/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_user_roles/i);
   assert.match(sql, /role_id/i);
   assert.match(sql, /can_view_user_management/i);
   assert.match(sql, /can_operate_user_management/i);
-  assert.match(sql, /can_view_organization_management/i);
-  assert.match(sql, /can_operate_organization_management/i);
-  assert.match(sql, /INSERT INTO auth_user_platform_roles/i);
-  assert.match(sql, /__migr_0007_legacy_snapshot__/i);
-  assert.match(sql, /FROM auth_user_domain_access/i);
-  assert.match(sql, /domain = 'platform'/i);
-  assert.match(sql, /status IN \('active', 'enabled'\)/i);
-  assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
-  assert.doesNotMatch(sql, /status\s*=\s*VALUES\s*\(\s*status\s*\)/i);
+  assert.match(sql, /can_view_tenant_management/i);
+  assert.match(sql, /can_operate_tenant_management/i);
+  assert.doesNotMatch(sql, /INSERT INTO platform_user_roles/i);
+  assert.doesNotMatch(sql, /__migr_0007_legacy_snapshot__/i);
 });
 
-test('0008 migration defines org bootstrap tables and owner relationship constraints', () => {
+test('0008 migration defines tenant bootstrap table and owner relationship constraints', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -175,17 +152,14 @@ test('0008 migration defines org bootstrap tables and owner relationship constra
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS orgs/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenants/i);
   assert.match(sql, /owner_user_id/i);
-  assert.match(sql, /UNIQUE KEY uk_orgs_name/i);
-  assert.match(sql, /FOREIGN KEY .*owner_user_id.*REFERENCES users \(id\)/is);
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS memberships/i);
-  assert.match(sql, /UNIQUE KEY uk_memberships_org_user/i);
-  assert.match(sql, /FOREIGN KEY .*org_id.*REFERENCES orgs \(id\)/is);
-  assert.match(sql, /FOREIGN KEY .*user_id.*REFERENCES users \(id\)/is);
+  assert.match(sql, /UNIQUE KEY uk_tenants_name/i);
+  assert.match(sql, /FOREIGN KEY .*owner_user_id.*REFERENCES iam_users \(id\)/is);
+  assert.doesNotMatch(sql, /CREATE TABLE IF NOT EXISTS memberships/i);
 });
 
-test('0008 down migration drops memberships and orgs tables in dependency-safe order', () => {
+test('0008 down migration drops tenants table', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -194,15 +168,8 @@ test('0008 down migration drops memberships and orgs tables in dependency-safe o
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  const dropMembershipsIndex = sql.search(/DROP TABLE IF EXISTS memberships/i);
-  const dropOrgsIndex = sql.search(/DROP TABLE IF EXISTS orgs/i);
-
-  assert.ok(dropMembershipsIndex >= 0);
-  assert.ok(dropOrgsIndex >= 0);
-  assert.ok(
-    dropMembershipsIndex < dropOrgsIndex,
-    'expected memberships to be dropped before orgs'
-  );
+  assert.match(sql, /DROP TABLE IF EXISTS tenants/i);
+  assert.doesNotMatch(sql, /DROP TABLE IF EXISTS memberships/i);
 });
 
 test('0009 migration defines platform role catalog table, unique code guard, and sys_admin seed', () => {
@@ -214,12 +181,12 @@ test('0009 migration defines platform role catalog table, unique code guard, and
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_role_catalog/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_roles/i);
   assert.match(sql, /code_normalized/i);
-  assert.match(sql, /UNIQUE KEY uk_platform_role_catalog_code_normalized/i);
+  assert.match(sql, /UNIQUE KEY uk_platform_roles_code_normalized/i);
   assert.match(sql, /scope ENUM\('platform', 'tenant'\)/i);
   assert.match(sql, /is_system/i);
-  assert.match(sql, /INSERT INTO platform_role_catalog/i);
+  assert.match(sql, /INSERT INTO platform_roles/i);
   assert.match(sql, /'sys_admin'/i);
   assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
 });
@@ -233,7 +200,7 @@ test('0009 down migration drops platform role catalog table', () => {
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /DROP TABLE IF EXISTS platform_role_catalog/i);
+  assert.match(sql, /DROP TABLE IF EXISTS platform_roles/i);
 });
 
 test('0010 migration defines platform role permission grants table and sys_admin seed', () => {
@@ -247,13 +214,13 @@ test('0010 migration defines platform role permission grants table and sys_admin
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS platform_role_permission_grants/i);
   assert.match(sql, /PRIMARY KEY \(role_id, permission_code\)/i);
-  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_role_catalog \(role_id\)/i);
+  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_roles \(role_id\)/i);
   assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
   assert.match(sql, /'sys_admin'/i);
   assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
 });
 
-test('0011 migration adds role_id leading index for auth_user_platform_roles lookup', () => {
+test('0011 migration adds role_id leading index for platform_user_roles lookup', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -262,11 +229,11 @@ test('0011 migration adds role_id leading index for auth_user_platform_roles loo
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /ALTER TABLE auth_user_platform_roles/i);
+  assert.match(sql, /ALTER TABLE platform_user_roles/i);
   assert.match(sql, /ADD KEY idx_auth_user_platform_roles_role_id_user_id/i);
 });
 
-test('0011 down migration drops role_id leading index for auth_user_platform_roles lookup', () => {
+test('0011 down migration drops role_id leading index for platform_user_roles lookup', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -275,7 +242,7 @@ test('0011 down migration drops role_id leading index for auth_user_platform_rol
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /ALTER TABLE auth_user_platform_roles/i);
+  assert.match(sql, /ALTER TABLE platform_user_roles/i);
   assert.match(sql, /DROP INDEX idx_auth_user_platform_roles_role_id_user_id/i);
 });
 
@@ -288,14 +255,14 @@ test('0013 migration adds tenant isolation fields and scoped unique key for role
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /table_name = 'platform_role_catalog'/i);
+  assert.match(sql, /table_name = 'platform_roles'/i);
   assert.match(sql, /column_name = 'tenant_id'/i);
   assert.match(sql, /ADD COLUMN tenant_id VARCHAR\(64\) NOT NULL DEFAULT ''/i);
-  assert.match(sql, /DROP INDEX uk_platform_role_catalog_code_normalized/i);
-  assert.match(sql, /uk_platform_role_catalog_scope_tenant_code_normalized/i);
+  assert.match(sql, /DROP INDEX uk_platform_roles_code_normalized/i);
+  assert.match(sql, /uk_platform_roles_scope_tenant_code_normalized/i);
   assert.match(
     sql,
-    /ADD UNIQUE KEY uk_platform_role_catalog_scope_tenant_code_normalized \(scope, tenant_id, code_normalized\)/i
+    /ADD UNIQUE KEY uk_platform_roles_scope_tenant_code_normalized \(scope, tenant_id, code_normalized\)/i
   );
 });
 
@@ -308,10 +275,10 @@ test('0013 down migration drops tenant scoped role catalog indexes and tenant_id
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /DROP INDEX uk_platform_role_catalog_scope_tenant_code_normalized/i);
-  assert.match(sql, /DROP INDEX idx_platform_role_catalog_scope_tenant_status/i);
-  assert.match(sql, /DELETE FROM platform_role_catalog\s+WHERE scope = 'tenant'/i);
-  assert.match(sql, /ADD UNIQUE KEY uk_platform_role_catalog_code_normalized/i);
+  assert.match(sql, /DROP INDEX uk_platform_roles_scope_tenant_code_normalized/i);
+  assert.match(sql, /DROP INDEX idx_platform_roles_scope_tenant_status/i);
+  assert.match(sql, /DELETE FROM platform_roles\s+WHERE scope = 'tenant'/i);
+  assert.match(sql, /ADD UNIQUE KEY uk_platform_roles_code_normalized/i);
   assert.match(sql, /DROP COLUMN IF EXISTS tenant_id/i);
 });
 
@@ -326,7 +293,7 @@ test('0014 migration defines tenant role permission grants table', () => {
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_role_permission_grants/i);
   assert.match(sql, /PRIMARY KEY \(role_id, permission_code\)/i);
-  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_role_catalog \(role_id\)/i);
+  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_roles \(role_id\)/i);
   assert.match(sql, /idx_tenant_role_permission_grants_permission_code/i);
 });
 
@@ -339,10 +306,10 @@ test('0015 migration defines tenant membership role bindings table', () => {
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS auth_tenant_membership_roles/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_membership_roles/i);
   assert.match(sql, /PRIMARY KEY \(membership_id, role_id\)/i);
-  assert.match(sql, /FOREIGN KEY \(membership_id\) REFERENCES auth_user_tenants \(membership_id\)/i);
-  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_role_catalog \(role_id\)/i);
+  assert.match(sql, /FOREIGN KEY \(membership_id\) REFERENCES tenant_memberships \(membership_id\)/i);
+  assert.match(sql, /FOREIGN KEY \(role_id\) REFERENCES platform_roles \(role_id\)/i);
   assert.match(sql, /ON DELETE CASCADE/i);
 });
 
@@ -355,7 +322,7 @@ test('0016 migration adds tenant member profile columns with information_schema 
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /table_name = 'auth_user_tenants'/i);
+  assert.match(sql, /table_name = 'tenant_memberships'/i);
   assert.match(sql, /column_name = 'display_name'/i);
   assert.match(sql, /column_name = 'department_name'/i);
   assert.match(sql, /ADD COLUMN display_name VARCHAR\(64\) NULL/i);
@@ -373,7 +340,7 @@ test('0016 down migration drops tenant member profile columns', () => {
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /ALTER TABLE auth_user_tenants/i);
+  assert.match(sql, /ALTER TABLE tenant_memberships/i);
   assert.match(sql, /DROP COLUMN IF EXISTS department_name/i);
   assert.match(sql, /DROP COLUMN IF EXISTS display_name/i);
 });
@@ -396,15 +363,15 @@ test('0017 migration migrates legacy tenant_owner bindings to tenant-scoped take
   assert.match(sql, /SIGNAL SQLSTATE '45000'/i);
   assert.match(sql, /owner_takeover_tenant_code_collision_count/i);
   assert.match(sql, /tenant code collision detected/i);
-  assert.match(sql, /INSERT INTO platform_role_catalog/i);
+  assert.match(sql, /INSERT INTO platform_roles/i);
   assert.match(sql, /INSERT IGNORE INTO tenant_role_permission_grants/i);
   assert.match(sql, /LOWER\(TRIM\(permission_code\)\) IN/i);
-  assert.match(sql, /tenant\.organization_management\.view/i);
-  assert.match(sql, /tenant\.organization_management\.operate/i);
-  assert.match(sql, /INSERT IGNORE INTO auth_tenant_membership_roles/i);
-  assert.match(sql, /DELETE mr\s+FROM auth_tenant_membership_roles/i);
-  assert.match(sql, /UPDATE auth_user_tenants ut/i);
-  assert.match(sql, /DELETE FROM platform_role_catalog/i);
+  assert.match(sql, /tenant\.role_management\.view/i);
+  assert.match(sql, /tenant\.role_management\.operate/i);
+  assert.match(sql, /INSERT IGNORE INTO tenant_membership_roles/i);
+  assert.match(sql, /DELETE mr\s+FROM tenant_membership_roles/i);
+  assert.match(sql, /UPDATE tenant_memberships ut/i);
+  assert.match(sql, /DELETE FROM platform_roles/i);
   assert.match(sql, /role_id = 'tenant_owner'/i);
 });
 
@@ -481,8 +448,8 @@ test('0019 migration defines system_sensitive_configs table and seeds sys_admin 
   assert.match(sql, /status/i);
   assert.match(sql, /CHECK \(config_key IN \('auth\.default_password'\)\)/i);
   assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
-  assert.match(sql, /platform\.system_config\.view/i);
-  assert.match(sql, /platform\.system_config\.operate/i);
+  assert.match(sql, /platform\.role_management\.view/i);
+  assert.match(sql, /platform\.role_management\.operate/i);
 });
 
 test('0019 down migration drops system_sensitive_configs and removes sys_admin seeded permissions', () => {
@@ -495,8 +462,8 @@ test('0019 down migration drops system_sensitive_configs and removes sys_admin s
   const sql = readFileSync(sqlPath, 'utf8');
 
   assert.match(sql, /DELETE FROM platform_role_permission_grants/i);
-  assert.match(sql, /platform\.system_config\.view/i);
-  assert.match(sql, /platform\.system_config\.operate/i);
+  assert.match(sql, /platform\.role_management\.view/i);
+  assert.match(sql, /platform\.role_management\.operate/i);
   assert.match(sql, /DROP TABLE IF EXISTS system_sensitive_configs/i);
 });
 
@@ -515,12 +482,12 @@ test('0020 migration normalizes and prunes role permission grants to final autho
   assert.match(sql, /GROUP_CONCAT\(\s*NULLIF\(TRIM\(grants\.updated_by_user_id\), ''\)/i);
   assert.match(sql, /SUBSTRING_INDEX\(/i);
   assert.match(sql, /catalog\.scope = 'platform'/i);
-  assert.match(sql, /platform\.system_config\.view/i);
-  assert.match(sql, /platform\.system_config\.operate/i);
+  assert.match(sql, /platform\.role_management\.view/i);
+  assert.match(sql, /platform\.role_management\.operate/i);
   assert.match(sql, /DELETE\s+grants\s+FROM\s+platform_role_permission_grants/i);
   assert.match(
     sql,
-    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'platform\.user_management\.view'[\s\S]*'platform\.system_config\.operate'\s*\)/i
+    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'platform\.user_management\.view'[\s\S]*'platform\.role_management\.operate'\s*\)/i
   );
   const binaryNormalizedComparisonMatches = sql.match(
     /BINARY\s+grants\.permission_code\s*<>\s*BINARY\s+LOWER\(TRIM\(grants\.permission_code\)\)/ig
@@ -532,12 +499,12 @@ test('0020 migration normalizes and prunes role permission grants to final autho
   assert.match(sql, /catalog\.scope = 'tenant'/i);
   assert.match(sql, /tenant\.user_management\.view/i);
   assert.match(sql, /tenant\.user_management\.operate/i);
-  assert.match(sql, /tenant\.organization_management\.view/i);
-  assert.match(sql, /tenant\.organization_management\.operate/i);
+  assert.match(sql, /tenant\.role_management\.view/i);
+  assert.match(sql, /tenant\.role_management\.operate/i);
   assert.match(sql, /DELETE\s+grants\s+FROM\s+tenant_role_permission_grants/i);
   assert.match(
     sql,
-    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'tenant\.user_management\.view'[\s\S]*'tenant\.organization_management\.operate'\s*\)/i
+    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'tenant\.user_management\.view'[\s\S]*'tenant\.role_management\.operate'\s*\)/i
   );
   assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
 });
@@ -755,7 +722,7 @@ test('0004 migration uses information_schema guards for auth_sessions context co
   assert.doesNotMatch(sql, /ADD COLUMN IF NOT EXISTS/i);
 });
 
-test('0005 migration backfills tenant domain access rows from tenant memberships', () => {
+test('0005 migration does not backfill legacy domain access rows', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -764,9 +731,7 @@ test('0005 migration backfills tenant domain access rows from tenant memberships
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /INSERT INTO auth_user_domain_access/i);
-  assert.match(sql, /'tenant'/i);
-  assert.match(sql, /FROM auth_user_tenants/i);
+  assert.doesNotMatch(sql, /INSERT INTO auth_user_domain_access/i);
 });
 
 test('shouldRunStatementsInTransaction disables transaction mode when DDL statements are present', () => {
@@ -775,8 +740,8 @@ test('shouldRunStatementsInTransaction disables transaction mode when DDL statem
     "INSERT INTO sample_table (id) VALUES (1)"
   ];
   const dmlStatements = [
-    "UPDATE users SET status = 'active' WHERE id = 'u-1'",
-    'DELETE FROM users WHERE id = \"u-2\"'
+    "UPDATE iam_users SET status = 'active' WHERE id = 'u-1'",
+    'DELETE FROM iam_users WHERE id = \"u-2\"'
   ];
 
   assert.equal(shouldRunStatementsInTransaction(ddlStatements), false);

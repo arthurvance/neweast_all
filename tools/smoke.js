@@ -11,7 +11,6 @@ const {
 const { basename, dirname, isAbsolute, join, relative, resolve } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createCipheriv, pbkdf2Sync, randomBytes, randomUUID } = require('node:crypto');
-const mysql = require('mysql2/promise');
 
 const now = new Date();
 const timestamp = now.toISOString().replace(/[:.]/g, '-');
@@ -55,9 +54,6 @@ const onlineDrillApiBaseUrl = String(
 ).trim().replace(/\/+$/, '') || 'http://127.0.0.1:3000';
 const releaseGateRunId = String(process.env.RELEASE_GATE_RUN_ID || '').trim() || null;
 
-const PBKDF2_ITERATIONS = 150000;
-const PBKDF2_KEYLEN = 64;
-const PBKDF2_DIGEST = 'sha512';
 const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
 const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
 const SENSITIVE_CONFIG_KEY_DERIVATION_SALT = 'auth.default_password';
@@ -240,160 +236,50 @@ const resolveSmokeComposeEnvironment = (
   };
 };
 
-const hashSeedPassword = (plainTextPassword) => {
-  const salt = randomBytes(16).toString('hex');
-  const derived = pbkdf2Sync(
-    String(plainTextPassword || ''),
-    salt,
-    PBKDF2_ITERATIONS,
-    PBKDF2_KEYLEN,
-    PBKDF2_DIGEST
-  ).toString('hex');
-  return `pbkdf2$${PBKDF2_DIGEST}$${PBKDF2_ITERATIONS}$${salt}$${derived}`;
-};
-
-const ensureUsersTable = async (connection) => {
-  await connection.query(
-    `
-      CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(64) NOT NULL,
-        phone VARCHAR(32) NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        status VARCHAR(32) NOT NULL DEFAULT 'active',
-        session_version INT UNSIGNED NOT NULL DEFAULT 1,
-        created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-        updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-        PRIMARY KEY (id),
-        UNIQUE KEY uk_users_phone (phone)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `
-  );
-};
-
-const ensureAuthDomainPermissionColumns = async (connection) => {
-  const [rows] = await connection.query(
-    `
-      SELECT COLUMN_NAME AS column_name
-      FROM information_schema.columns
-      WHERE table_schema = DATABASE()
-        AND table_name = 'auth_user_domain_access'
-        AND column_name IN (
-          'can_view_member_admin',
-          'can_operate_member_admin',
-          'can_view_billing',
-          'can_operate_billing'
-        )
-    `
-  );
-  const existingColumns = new Set(
-    (Array.isArray(rows) ? rows : []).map((row) => String(row?.column_name || ''))
-  );
-  const missingColumnDefinitions = [
-    ['can_view_member_admin', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_member_admin', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_view_billing', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_billing', 'TINYINT(1) NOT NULL DEFAULT 0']
-  ].filter(([columnName]) => !existingColumns.has(columnName));
-
-  for (const [columnName, definition] of missingColumnDefinitions) {
-    await connection.query(
-      `ALTER TABLE auth_user_domain_access ADD COLUMN ${columnName} ${definition}`
-    );
+const extractBootstrapUserId = (output = '') => {
+  const normalizedOutput = String(output || '');
+  const matched = normalizedOutput.match(/"user_id":"([^"]+)"/);
+  if (matched && typeof matched[1] === 'string' && matched[1].trim()) {
+    return matched[1].trim();
   }
+  return null;
 };
 
 const bootstrapOnlineDrillOperator = async ({
-  connection,
   operatorPhone,
-  operatorPassword
+  operatorPassword,
+  artifacts
 }) => {
-  const operatorUserId = 'smoke-platform-operator';
-  const operatorPasswordHash = hashSeedPassword(operatorPassword);
-
-  await ensureUsersTable(connection);
-  await ensureAuthDomainPermissionColumns(connection);
-
-  await connection.query(
-    `
-      INSERT INTO users (id, phone, password_hash, status, session_version)
-      VALUES (?, ?, ?, 'active', 1)
-      ON DUPLICATE KEY UPDATE
-        phone = VALUES(phone),
-        password_hash = VALUES(password_hash),
-        status = 'active',
-        updated_at = CURRENT_TIMESTAMP(3)
-    `,
-    [operatorUserId, operatorPhone, operatorPasswordHash]
+  const bootstrapEnv = {
+    ...process.env,
+    DB_HOST: onlineDrillDbConfig.host,
+    DB_PORT: String(onlineDrillDbConfig.port),
+    DB_USER: onlineDrillDbConfig.user,
+    DB_PASSWORD: onlineDrillDbConfig.password,
+    DB_NAME: onlineDrillDbConfig.database
+  };
+  const bootstrapResult = runCommand(
+    'node',
+    [
+      'apps/api/scripts/bootstrap-first-platform-admin.js',
+      `--phone=${operatorPhone}`,
+      `--password=${operatorPassword}`,
+      '--force'
+    ],
+    bootstrapEnv
   );
-
-  await connection.query(
-    `
-      INSERT INTO auth_user_domain_access (
-        user_id,
-        domain,
-        status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
-      )
-      VALUES (?, 'platform', 'active', 1, 1, 0, 0)
-      ON DUPLICATE KEY UPDATE
-        status = 'active',
-        can_view_member_admin = 1,
-        can_operate_member_admin = 1,
-        can_view_billing = 0,
-        can_operate_billing = 0,
-        updated_at = CURRENT_TIMESTAMP(3)
-    `,
-    [operatorUserId]
-  );
-
-  await connection.query(
-    `
-      INSERT INTO auth_user_platform_roles (
-        user_id,
-        role_id,
-        status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
-      )
-      VALUES (?, '__smoke_platform_member_admin__', 'active', 1, 1, 0, 0)
-      ON DUPLICATE KEY UPDATE
-        status = 'active',
-        can_view_member_admin = 1,
-        can_operate_member_admin = 1,
-        can_view_billing = 0,
-        can_operate_billing = 0,
-        updated_at = CURRENT_TIMESTAMP(3)
-    `,
-    [operatorUserId]
-  );
-
-  await connection.query(
-    `
-      UPDATE auth_sessions
-      SET status = 'revoked',
-          revoked_reason = 'online-drill-bootstrap',
-          updated_at = CURRENT_TIMESTAMP(3)
-      WHERE user_id = ? AND status = 'active'
-    `,
-    [operatorUserId]
-  );
-  await connection.query(
-    `
-      UPDATE refresh_tokens
-      SET status = 'revoked',
-          updated_at = CURRENT_TIMESTAMP(3)
-      WHERE user_id = ? AND status = 'active'
-    `,
-    [operatorUserId]
-  );
-
+  artifacts.steps.push({
+    step: 'online drill: bootstrap platform operator',
+    ...bootstrapResult
+  });
+  if (bootstrapResult.status !== 0) {
+    const detail = String(bootstrapResult.stderr || bootstrapResult.stdout || '').trim();
+    throw new Error(`online drill bootstrap platform operator failed: ${detail}`);
+  }
   return {
-    operatorUserId,
+    operatorUserId: extractBootstrapUserId(
+      `${bootstrapResult.stdout}\n${bootstrapResult.stderr}`
+    ),
     operatorPhone
   };
 };
@@ -453,23 +339,11 @@ const runOnlineEnvironmentDrill = async ({
   artifacts,
   targetDefaultPassword
 }) => {
-  const connection = await mysql.createConnection({
-    host: onlineDrillDbConfig.host,
-    port: onlineDrillDbConfig.port,
-    user: onlineDrillDbConfig.user,
-    password: onlineDrillDbConfig.password,
-    database: onlineDrillDbConfig.database
+  const operatorSeed = await bootstrapOnlineDrillOperator({
+    operatorPhone: onlineDrillOperatorPhone,
+    operatorPassword: onlineDrillOperatorPassword,
+    artifacts
   });
-  let operatorSeed;
-  try {
-    operatorSeed = await bootstrapOnlineDrillOperator({
-      connection,
-      operatorPhone: onlineDrillOperatorPhone,
-      operatorPassword: onlineDrillOperatorPassword
-    });
-  } finally {
-    await connection.end();
-  }
 
   const loginOperator = await callApi({
     method: 'POST',
@@ -493,13 +367,13 @@ const runOnlineEnvironmentDrill = async ({
   const operatorAccessToken = loginOperator.payload.access_token;
   const probe = await callApi({
     method: 'GET',
-    path: '/auth/platform/member-admin/probe',
+    path: '/auth/platform/user-management/probe',
     headers: {
       authorization: `Bearer ${operatorAccessToken}`
     }
   });
   artifacts.steps.push({
-    step: 'online drill: probe platform member-admin capability',
+    step: 'online drill: probe platform user-management capability',
     status: probe.status
   });
   assertApiResponse(probe.status === 200 && probe.payload?.ok === true, 'online drill probe failed', probe);

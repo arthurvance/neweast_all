@@ -20,7 +20,7 @@ const readJsonSafely = async (response) => {
   };
 };
 
-const buildIdempotencyKey = (prefix = 'ui-platform-settings') => {
+const buildIdempotencyKey = (prefix = 'ui-platform-management') => {
   const randomPart = Math.random().toString(16).slice(2);
   return `${prefix}-${Date.now()}-${randomPart}`;
 };
@@ -90,7 +90,7 @@ export const toProblemMessage = (error, fallback = '操作失败') => {
   return `${detail}，${RETRY_SUFFIX}`;
 };
 
-export const createPlatformSettingsApi = ({ accessToken }) => {
+export const createPlatformManagementApi = ({ accessToken }) => {
   const withToken = (options) => requestJson({ ...options, accessToken });
 
   return {

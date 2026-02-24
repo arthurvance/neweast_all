@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS auth_user_platform_roles;
+DROP TABLE IF EXISTS platform_user_roles;

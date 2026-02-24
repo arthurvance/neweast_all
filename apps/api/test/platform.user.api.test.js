@@ -111,8 +111,8 @@ const createHarness = ({
     permission: {
       canViewUserManagement: false,
       canOperateUserManagement: false,
-      canViewOrganizationManagement: false,
-      canOperateOrganizationManagement: false
+      canViewTenantManagement: false,
+      canOperateTenantManagement: false
     }
   }),
   recordIdempotencyEvent = async () => {},
@@ -500,8 +500,8 @@ test('PATCH /platform/users/:user_id updates platform user profile and roles', a
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       };
     }

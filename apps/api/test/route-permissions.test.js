@@ -396,7 +396,7 @@ test('platform org create route exposes explicit permission declaration', () => 
   assert.ok(createPlatformOrg);
   assert.equal(createPlatformOrg.access, 'protected');
   assert.equal(createPlatformOrg.scope, 'platform');
-  assert.equal(createPlatformOrg.permission_code, 'platform.organization_management.operate');
+  assert.equal(createPlatformOrg.permission_code, 'platform.tenant_management.operate');
 });
 
 test('platform org status route exposes explicit permission declaration', () => {
@@ -408,7 +408,7 @@ test('platform org status route exposes explicit permission declaration', () => 
   assert.ok(updatePlatformOrgStatus);
   assert.equal(updatePlatformOrgStatus.access, 'protected');
   assert.equal(updatePlatformOrgStatus.scope, 'platform');
-  assert.equal(updatePlatformOrgStatus.permission_code, 'platform.organization_management.operate');
+  assert.equal(updatePlatformOrgStatus.permission_code, 'platform.tenant_management.operate');
 });
 
 test('platform owner-transfer route exposes explicit permission declaration', () => {
@@ -420,7 +420,7 @@ test('platform owner-transfer route exposes explicit permission declaration', ()
   assert.ok(transferPlatformOrgOwner);
   assert.equal(transferPlatformOrgOwner.access, 'protected');
   assert.equal(transferPlatformOrgOwner.scope, 'platform');
-  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.organization_management.operate');
+  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.tenant_management.operate');
 });
 
 test('platform user create route exposes explicit permission declaration', () => {

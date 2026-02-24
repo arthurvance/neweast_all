@@ -30,10 +30,10 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false,
-              canViewSystemConfig: true,
-              canOperateSystemConfig: true
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: true
             }
           }
         ]
@@ -1043,7 +1043,7 @@ test('PUT /platform/roles/:role_id/permissions enforces idempotency across canon
       'idempotency-key': 'idem-platform-role-permission-canonicalized-path'
     },
     body: {
-      permission_codes: ['platform.organization_management.view']
+      permission_codes: ['platform.tenant_management.view']
     },
     handlers: harness.handlers
   });
@@ -1263,7 +1263,7 @@ test('GET /platform/roles/:role_id/permissions returns deterministically sorted 
         available_permission_codes: [
           'platform.role_management.view',
           'platform.user_management.view',
-          'platform.organization_management.view',
+          'platform.tenant_management.view',
           'platform.user_management.operate'
         ],
         available_permissions: [
@@ -1284,11 +1284,11 @@ test('GET /platform/roles/:role_id/permissions returns deterministically sorted 
             order: 110
           },
           {
-            code: 'platform.organization_management.view',
+            code: 'platform.tenant_management.view',
             scope: 'platform',
-            group_key: 'role_management',
+            group_key: 'tenant_management',
             action_key: 'view',
-            label_key: 'permission.platform.organization_management.view',
+            label_key: 'permission.platform.tenant_management.view',
             order: 210
           },
           {
@@ -1322,8 +1322,8 @@ test('GET /platform/roles/:role_id/permissions returns deterministically sorted 
       'platform.user_management.view'
     ]);
     assert.deepEqual(payload.available_permission_codes, [
-      'platform.organization_management.view',
       'platform.role_management.view',
+      'platform.tenant_management.view',
       'platform.user_management.operate',
       'platform.user_management.view'
     ]);

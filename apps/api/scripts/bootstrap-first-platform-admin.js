@@ -134,7 +134,7 @@ const loadSysAdminPermissionFlags = async (queryClient) => {
   const roleRows = await queryClient.query(
     `
       SELECT role_id, status, scope
-      FROM platform_role_catalog
+      FROM platform_roles
       WHERE role_id = ?
       LIMIT 1
     `,
@@ -165,9 +165,9 @@ const loadSysAdminPermissionFlags = async (queryClient) => {
   const canOperateUserManagement = permissionCodes.has('platform.user_management.operate');
   const canViewUserManagement =
     canOperateUserManagement || permissionCodes.has('platform.user_management.view');
-  const canOperateOrganizationManagement = permissionCodes.has('platform.organization_management.operate');
-  const canViewOrganizationManagement =
-    canOperateOrganizationManagement || permissionCodes.has('platform.organization_management.view');
+  const canOperateTenantManagement = permissionCodes.has('platform.tenant_management.operate');
+  const canViewTenantManagement =
+    canOperateTenantManagement || permissionCodes.has('platform.tenant_management.view');
 
   if (!canOperateUserManagement) {
     throw new Error(
@@ -178,8 +178,8 @@ const loadSysAdminPermissionFlags = async (queryClient) => {
   return {
     canViewUserManagement,
     canOperateUserManagement,
-    canViewOrganizationManagement,
-    canOperateOrganizationManagement
+    canViewTenantManagement,
+    canOperateTenantManagement
   };
 };
 
@@ -187,19 +187,18 @@ const countExistingPlatformAdmins = async (queryClient) => {
   const rows = await queryClient.query(
     `
       SELECT COUNT(DISTINCT upr.user_id) AS admin_count
-      FROM auth_user_platform_roles upr
-      INNER JOIN platform_role_catalog prc
+      FROM platform_user_roles upr
+      INNER JOIN platform_roles prc
         ON prc.role_id = upr.role_id
        AND prc.scope = 'platform'
        AND prc.status IN ('active', 'enabled')
       INNER JOIN platform_role_permission_grants prg
         ON prg.role_id = upr.role_id
        AND prg.permission_code = ?
-      INNER JOIN auth_user_domain_access uda
-        ON uda.user_id = upr.user_id
-       AND uda.domain = 'platform'
-       AND uda.status IN ('active', 'enabled')
-      INNER JOIN users u
+      INNER JOIN platform_users pu
+        ON pu.user_id = upr.user_id
+       AND pu.status IN ('active', 'enabled')
+      INNER JOIN iam_users u
         ON u.id = upr.user_id
        AND u.status IN ('active', 'enabled')
       WHERE upr.status IN ('active', 'enabled')
@@ -213,22 +212,22 @@ const countExistingPlatformAdmins = async (queryClient) => {
 const upsertPlatformAdminRole = async (tx, { userId, permissionFlags }) => {
   await tx.query(
     `
-      INSERT INTO auth_user_platform_roles (
+      INSERT INTO platform_user_roles (
         user_id,
         role_id,
         status,
         can_view_user_management,
         can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        can_view_tenant_management,
+        can_operate_tenant_management
       )
       VALUES (?, ?, 'active', ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         status = 'active',
         can_view_user_management = VALUES(can_view_user_management),
         can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        can_view_tenant_management = VALUES(can_view_tenant_management),
+        can_operate_tenant_management = VALUES(can_operate_tenant_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
@@ -236,40 +235,27 @@ const upsertPlatformAdminRole = async (tx, { userId, permissionFlags }) => {
       SYS_ADMIN_ROLE_ID,
       Number(permissionFlags.canViewUserManagement),
       Number(permissionFlags.canOperateUserManagement),
-      Number(permissionFlags.canViewOrganizationManagement),
-      Number(permissionFlags.canOperateOrganizationManagement)
+      Number(permissionFlags.canViewTenantManagement),
+      Number(permissionFlags.canOperateTenantManagement)
     ]
   );
 };
 
-const upsertPlatformDomainAccess = async (tx, { userId, permissionFlags }) => {
+const upsertPlatformUserAccess = async (tx, { userId }) => {
   await tx.query(
     `
-      INSERT INTO auth_user_domain_access (
+      INSERT INTO platform_users (
         user_id,
-        domain,
-        status,
-        can_view_user_management,
-        can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
+        name,
+        department,
+        status
       )
-      VALUES (?, 'platform', 'active', ?, ?, ?, ?)
+      VALUES (?, NULL, NULL, 'active')
       ON DUPLICATE KEY UPDATE
-        status = 'active',
-        can_view_user_management = VALUES(can_view_user_management),
-        can_operate_user_management = VALUES(can_operate_user_management),
-        can_view_organization_management = VALUES(can_view_organization_management),
-        can_operate_organization_management = VALUES(can_operate_organization_management),
+        status = VALUES(status),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
-    [
-      userId,
-      Number(permissionFlags.canViewUserManagement),
-      Number(permissionFlags.canOperateUserManagement),
-      Number(permissionFlags.canViewOrganizationManagement),
-      Number(permissionFlags.canOperateOrganizationManagement)
-    ]
+    [userId]
   );
 };
 
@@ -287,7 +273,7 @@ const revokeUserSessions = async (tx, { userId }) => {
   );
   await tx.query(
     `
-      UPDATE refresh_tokens
+      UPDATE auth_refresh_tokens
       SET status = 'revoked',
           updated_at = CURRENT_TIMESTAMP(3)
       WHERE user_id = ?
@@ -347,7 +333,7 @@ const run = async () => {
       const existingRows = await tx.query(
         `
           SELECT id, status, session_version
-          FROM users
+          FROM iam_users
           WHERE phone = ?
           LIMIT 1
           FOR UPDATE
@@ -362,7 +348,7 @@ const run = async () => {
         userId = randomUUID();
         await tx.query(
           `
-            INSERT INTO users (id, phone, password_hash, status, session_version)
+            INSERT INTO iam_users (id, phone, password_hash, status, session_version)
             VALUES (?, ?, ?, 'active', 1)
           `,
           [userId, resolvedPhone, passwordHash]
@@ -371,7 +357,7 @@ const run = async () => {
       } else {
         await tx.query(
           `
-            UPDATE users
+            UPDATE iam_users
             SET password_hash = ?,
                 status = 'active',
                 session_version = session_version + 1,
@@ -384,7 +370,7 @@ const run = async () => {
       }
 
       await upsertPlatformAdminRole(tx, { userId, permissionFlags });
-      await upsertPlatformDomainAccess(tx, { userId, permissionFlags });
+      await upsertPlatformUserAccess(tx, { userId });
 
       return {
         userId,

@@ -29,9 +29,9 @@ CREATE TABLE IF NOT EXISTS platform_integration_contract_versions (
   CONSTRAINT fk_platform_integration_contract_versions_integration
     FOREIGN KEY (integration_id) REFERENCES platform_integration_catalog (integration_id),
   CONSTRAINT fk_platform_integration_contract_versions_created_by_user
-    FOREIGN KEY (created_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_platform_integration_contract_versions_updated_by_user
-    FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS platform_integration_contract_compatibility_checks (
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS platform_integration_contract_compatibility_checks (
   CONSTRAINT fk_platform_integration_contract_checks_integration
     FOREIGN KEY (integration_id) REFERENCES platform_integration_catalog (integration_id),
   CONSTRAINT fk_platform_integration_contract_checks_checked_by_user
-    FOREIGN KEY (checked_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (checked_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_platform_integration_contract_checks_baseline_version
     FOREIGN KEY (integration_id, contract_type, baseline_version)
       REFERENCES platform_integration_contract_versions (

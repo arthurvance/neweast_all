@@ -77,8 +77,8 @@ const createTenantGrantSyncFailureService = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -98,8 +98,8 @@ const createTenantGrantSyncFailureService = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -119,8 +119,8 @@ const createTenantGrantSyncFailureService = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -214,8 +214,8 @@ const buildPlatformRoleFactsOperatorSeed = () => ({
       permission: {
         canViewUserManagement: true,
         canOperateUserManagement: true,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ]
@@ -859,8 +859,8 @@ test('tenant entry with single option binds active tenant directly', async () =>
             scopeLabel: '组织权限快照 Single',
             canViewUserManagement: true,
             canOperateUserManagement: false,
-            canViewOrganizationManagement: false,
-            canOperateOrganizationManagement: false
+            canViewTenantManagement: false,
+            canOperateTenantManagement: false
           }
         }]
       }
@@ -897,8 +897,8 @@ test('tenant entry accepts enabled tenant membership in in-memory auth store', a
             scopeLabel: '组织权限快照 Enabled',
             canViewUserManagement: true,
             canOperateUserManagement: false,
-            canViewOrganizationManagement: false,
-            canOperateOrganizationManagement: false
+            canViewTenantManagement: false,
+            canOperateTenantManagement: false
           }
         }]
       }
@@ -1760,8 +1760,8 @@ test('platform role facts critical change bumps session version, rejects old acc
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -1845,8 +1845,8 @@ test('platform role facts unchanged does not bump session version or invalidate 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -1877,8 +1877,8 @@ test('platform role facts unchanged does not bump session version or invalidate 
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -2510,8 +2510,8 @@ test('platform role facts replace audit includes actor and target identifiers', 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -2529,8 +2529,8 @@ test('platform role facts replace audit includes actor and target identifiers', 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -2688,7 +2688,7 @@ test('platform role facts replace fails closed when platform role catalog table 
 
   service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => {
     const missingTableError = new Error(
-      "Table 'neweast.platform_role_catalog' doesn't exist"
+      "Table 'neweast.platform_roles' doesn't exist"
     );
     missingTableError.code = 'ER_NO_SUCH_TABLE';
     missingTableError.errno = 1146;
@@ -2738,7 +2738,7 @@ test('platform role facts replace fails closed when platform role catalog table 
 
   service._internals.authStore.findPlatformRoleCatalogEntriesByRoleIds = async () => {
     const missingTableError = new Error(
-      "Table 'neweast.platform_role_catalog' doesn't exist"
+      "Table 'neweast.platform_roles' doesn't exist"
     );
     missingTableError.code = 'ER_NO_SUCH_TABLE';
     missingTableError.errno = 1146;
@@ -3093,8 +3093,8 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           },
           {
@@ -3103,8 +3103,8 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3125,7 +3125,7 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-stale-prime-role-beta',
     roleId: 'role_beta',
-    permissionCodes: ['platform.organization_management.view'],
+    permissionCodes: ['platform.tenant_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3151,8 +3151,8 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
           permission: {
             canViewUserManagement: true,
             canOperateUserManagement: false,
-            canViewOrganizationManagement: false,
-            canOperateOrganizationManagement: false
+            canViewTenantManagement: false,
+            canOperateTenantManagement: false
           }
         },
         {
@@ -3161,8 +3161,8 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
           permission: {
             canViewUserManagement: false,
             canOperateUserManagement: false,
-            canViewOrganizationManagement: false,
-            canOperateOrganizationManagement: false
+            canViewTenantManagement: false,
+            canOperateTenantManagement: false
           }
         }
       ];
@@ -3174,8 +3174,8 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       },
       {
@@ -3184,8 +3184,8 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
         permission: {
           canViewUserManagement: false,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: true,
+          canOperateTenantManagement: false
         }
       }
     ];
@@ -3213,7 +3213,7 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
     assert.ok(Array.isArray(capturedSyncedRoles));
     const roleBeta = capturedSyncedRoles.find((role) => role.roleId === 'role_beta');
     assert.ok(roleBeta);
-    assert.equal(roleBeta.permission.canViewOrganizationManagement, true);
+    assert.equal(roleBeta.permission.canViewTenantManagement, true);
   } finally {
     authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
     authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
@@ -3237,8 +3237,8 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           },
           {
@@ -3247,8 +3247,8 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3270,7 +3270,7 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-source-beta',
     roleId: 'role_beta',
-    permissionCodes: ['platform.organization_management.view'],
+    permissionCodes: ['platform.tenant_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3292,8 +3292,8 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
       permission: {
         canViewUserManagement: true,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     },
     {
@@ -3302,8 +3302,8 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
       permission: {
         canViewUserManagement: false,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ];
@@ -3329,7 +3329,7 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
     assert.ok(Array.isArray(capturedSyncedRoles));
     const roleBeta = capturedSyncedRoles.find((role) => role.roleId === 'role_beta');
     assert.ok(roleBeta);
-    assert.equal(roleBeta.permission.canViewOrganizationManagement, true);
+    assert.equal(roleBeta.permission.canViewTenantManagement, true);
   } finally {
     authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
     authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
@@ -3353,8 +3353,8 @@ test('replacePlatformRolePermissionGrants maps invalid stored role facts to snap
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3382,8 +3382,8 @@ test('replacePlatformRolePermissionGrants maps invalid stored role facts to snap
       permission: {
         canViewUserManagement: false,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ];
@@ -3431,8 +3431,8 @@ test('replacePlatformRolePermissionGrants accepts snake_case stored role_id when
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3464,8 +3464,8 @@ test('replacePlatformRolePermissionGrants accepts snake_case stored role_id when
       permission: {
         canViewUserManagement: true,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ];
@@ -3675,8 +3675,8 @@ test('replacePlatformRolePermissionGrants re-loads affected users after write an
       permission: {
         canViewUserManagement: false,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ];
@@ -3726,8 +3726,8 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3745,8 +3745,8 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3788,8 +3788,8 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
       permission: {
         canViewUserManagement: true,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ];
@@ -3818,7 +3818,7 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
         service.replacePlatformRolePermissionGrants({
           requestId: 'req-role-permission-grants-rollback-failed',
           roleId: 'role_delta',
-          permissionCodes: ['platform.organization_management.view'],
+          permissionCodes: ['platform.tenant_management.view'],
           operatorUserId: 'platform-role-grants-operator',
           operatorSessionId: 'platform-role-grants-operator-session'
         }),
@@ -3869,8 +3869,8 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           },
           {
@@ -3879,8 +3879,8 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3898,8 +3898,8 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           },
           {
@@ -3908,8 +3908,8 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -3930,7 +3930,7 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-batch-prime-zeta',
     roleId: 'role_zeta',
-    permissionCodes: ['platform.organization_management.view'],
+    permissionCodes: ['platform.tenant_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3961,8 +3961,8 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
       permission: {
         canViewUserManagement: false,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     },
     {
@@ -3971,8 +3971,8 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
       permission: {
         canViewUserManagement: false,
         canOperateUserManagement: false,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ];
@@ -4607,13 +4607,13 @@ test('authorizeRoute allows operate permission when operate=true and view=false 
   });
   assert.equal(userManagementAuthorized.user_id, 'route-authz-ov-user');
 
-  const organization_managementAuthorized = await service.authorizeRoute({
-    requestId: 'req-ov-organization_management',
+  const tenant_managementAuthorized = await service.authorizeRoute({
+    requestId: 'req-ov-tenant_management',
     accessToken: login.access_token,
     permissionCode: 'tenant.role_management.operate',
     scope: 'tenant'
   });
-  assert.equal(organization_managementAuthorized.user_id, 'route-authz-ov-user');
+  assert.equal(tenant_managementAuthorized.user_id, 'route-authz-ov-user');
 });
 
 test('authorizeRoute returns AUTH-403-NO-DOMAIN for tenant scoped route in platform entry', async () => {
@@ -4749,8 +4749,8 @@ test('authorizeRoute returns AUTH-403-NO-DOMAIN for platform scoped route in ten
           scopeLabel: '平台权限快照',
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: true
+          canViewTenantManagement: true,
+          canOperateTenantManagement: true
         }
       }
     ]
@@ -4838,8 +4838,8 @@ test('authorizeRoute clears stale platform snapshot when role facts are empty', 
           scopeLabel: '平台权限快照（历史）',
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -4890,8 +4890,8 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reports d
           scopeLabel: '平台权限快照',
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: true
+          canViewTenantManagement: true,
+          canOperateTenantManagement: true
         }
       }
     ]
@@ -4949,8 +4949,8 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync remains c
           scopeLabel: '平台权限快照',
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -5013,8 +5013,8 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync returns u
           scopeLabel: '平台权限快照',
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: true
+          canViewTenantManagement: true,
+          canOperateTenantManagement: true
         }
       }
     ]
@@ -5072,8 +5072,8 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reason is
           scopeLabel: '平台权限快照',
           canViewUserManagement: true,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: true
+          canViewTenantManagement: true,
+          canOperateTenantManagement: true
         }
       }
     ]
@@ -5134,8 +5134,8 @@ test('authorizeRoute uses platform role union and ignores explicit deny flags', 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           },
           {
@@ -5144,8 +5144,8 @@ test('authorizeRoute uses platform role union and ignores explicit deny flags', 
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: true,
-              canOperateOrganizationManagement: false,
+              canViewTenantManagement: true,
+              canOperateTenantManagement: false,
               denyUserManagementOperate: true
             }
           },
@@ -5155,8 +5155,8 @@ test('authorizeRoute uses platform role union and ignores explicit deny flags', 
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -5198,8 +5198,8 @@ test('authorizeRoute deduplicates duplicate platform role_id facts using latest 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           },
           {
@@ -5208,8 +5208,8 @@ test('authorizeRoute deduplicates duplicate platform role_id facts using latest 
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -5257,10 +5257,10 @@ test('authorizeRoute rejects system config view when bound role catalog entry is
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false,
-              canViewSystemConfig: true,
-              canOperateSystemConfig: true
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: true
             }
           }
         ]
@@ -5721,8 +5721,8 @@ test('provisionTenantUserByPhone creates tenant relationship and rejects duplica
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -5798,8 +5798,8 @@ test('provisionTenantUserByPhone returns conflict when tenant domain access rema
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -5888,8 +5888,8 @@ test('provisionTenantUserByPhone rolls back membership when tenant domain access
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -5970,8 +5970,8 @@ test('provisionTenantUserByPhone rolls back tenant membership and tenant domain 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6063,8 +6063,8 @@ test('provisionTenantUserByPhone reuses existing user without mutating password 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6128,8 +6128,8 @@ test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6149,8 +6149,8 @@ test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: true,
-              canOperateOrganizationManagement: true
+              canViewTenantManagement: true,
+              canOperateTenantManagement: true
             }
           }
         ]
@@ -6421,8 +6421,8 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6463,8 +6463,8 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when in-memory 
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6780,8 +6780,8 @@ test('updateTenantMemberProfile fails closed without mutation when existing depa
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6841,8 +6841,8 @@ test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6861,8 +6861,8 @@ test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6920,8 +6920,8 @@ test('provisionTenantUserByPhone heals tenant domain access when active relation
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6939,8 +6939,8 @@ test('provisionTenantUserByPhone heals tenant domain access when active relation
             permission: {
               canViewUserManagement: false,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -6997,8 +6997,8 @@ test('provisionTenantUserByPhone rejects oversized tenant_name with AUTH-400-INV
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7056,8 +7056,8 @@ test('provisionTenantUserByPhone rejects tenant_name whose raw payload length ex
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7116,8 +7116,8 @@ test('provisionTenantUserByPhone rejects blank tenant_name with AUTH-400-INVALID
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7175,8 +7175,8 @@ test('provisionTenantUserByPhone rejects unknown payload fields with AUTH-400-IN
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7237,8 +7237,8 @@ test('provisionTenantUserByPhone rejects tenant_name that mismatches active tena
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7298,8 +7298,8 @@ test('provisionTenantUserByPhone rejects caller tenant_name when active tenant c
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7359,8 +7359,8 @@ test('provisionTenantUserByPhone rejects request when active tenant canonical na
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7497,8 +7497,8 @@ test('in-memory auth store deleteUserById clears platform role facts and snapsho
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -7936,8 +7936,8 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ],
@@ -9659,8 +9659,8 @@ test('updatePlatformUserStatus disables platform-domain access immediately and r
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -9779,8 +9779,8 @@ test('updatePlatformUserStatus disabled only affects platform domain and keeps t
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ],
@@ -9894,8 +9894,8 @@ test('updatePlatformUserStatus treats same-status update as no-op and keeps curr
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -10142,8 +10142,8 @@ test('softDeleteUser revokes platform/tenant sessions and refresh tokens and rem
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ],
@@ -10335,8 +10335,8 @@ test('softDeleteUser still revokes stale active sessions and refresh tokens when
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ],
@@ -11741,8 +11741,8 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -11762,8 +11762,8 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: true,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: true,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -11864,8 +11864,8 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -11885,8 +11885,8 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: true,
-              canOperateOrganizationManagement: true
+              canViewTenantManagement: true,
+              canOperateTenantManagement: true
             }
           }
         ]
@@ -12057,8 +12057,8 @@ test('updateTenantMemberStatus persists audit event with request_id and tracepar
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -12160,8 +12160,8 @@ const buildTenantRoleBindingSeed = ({ membershipStatus = 'active' } = {}) => ({
       permission: {
         canViewUserManagement: true,
         canOperateUserManagement: true,
-        canViewOrganizationManagement: false,
-        canOperateOrganizationManagement: false
+        canViewTenantManagement: false,
+        canOperateTenantManagement: false
       }
     }
   ]

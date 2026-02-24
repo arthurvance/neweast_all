@@ -2,16 +2,16 @@
   "login-default-root": {
     "width": 1280,
     "height": 900,
-    "sha256": "81e1aa5f1ae40ab01f2d984351db554fe781b0a3356e8b47599f0f7c92889d64"
+    "sha256": "170145f3b021791945b124cc1bbbbf987453f0de08d08eec55b0cf1f40e223a7"
   },
   "login-platform-explicit": {
     "width": 1280,
     "height": 900,
-    "sha256": "5d3a303e66333b3a97f9135e2a3b4c61fa1f102bbca9053c3f98bcbf5d56bf0d"
+    "sha256": "059f5edeebe736ead67ec64142c7bbca8927bf4c0a8feee58b23a4d3e8cd87f2"
   },
   "login-tenant-explicit": {
     "width": 1280,
     "height": 900,
-    "sha256": "81e1aa5f1ae40ab01f2d984351db554fe781b0a3356e8b47599f0f7c92889d64"
+    "sha256": "170145f3b021791945b124cc1bbbbf987453f0de08d08eec55b0cf1f40e223a7"
   }
 }

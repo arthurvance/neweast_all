@@ -4289,12 +4289,12 @@ const buildOpenApiSpec = () => {
                     value: {
                       role_id: 'platform_permission_editor',
                       permission_codes: [
-                        'platform.organization_management.operate',
+                        'platform.tenant_management.operate',
                         'platform.user_management.operate'
                       ],
                       available_permission_codes: [
-                        'platform.organization_management.operate',
-                        'platform.organization_management.view',
+                        'platform.tenant_management.operate',
+                        'platform.tenant_management.view',
                         'platform.user_management.operate',
                         'platform.user_management.view',
                         'platform.role_management.operate',
@@ -4412,12 +4412,12 @@ const buildOpenApiSpec = () => {
                     value: {
                       role_id: 'platform_permission_editor',
                       permission_codes: [
-                        'platform.organization_management.operate',
+                        'platform.tenant_management.operate',
                         'platform.user_management.operate'
                       ],
                       available_permission_codes: [
-                        'platform.organization_management.operate',
-                        'platform.organization_management.view',
+                        'platform.tenant_management.operate',
+                        'platform.tenant_management.view',
                         'platform.user_management.operate',
                         'platform.user_management.view',
                         'platform.role_management.operate',
@@ -11594,8 +11594,10 @@ const buildOpenApiSpec = () => {
         properties: {
           can_view_user_management: { type: 'boolean' },
           can_operate_user_management: { type: 'boolean' },
-          can_view_organization_management: { type: 'boolean' },
-          can_operate_organization_management: { type: 'boolean' }
+          can_view_tenant_management: { type: 'boolean' },
+          can_operate_tenant_management: { type: 'boolean' },
+          can_view_role_management: { type: 'boolean' },
+          can_operate_role_management: { type: 'boolean' }
         }
       },
       PlatformPermissionCatalogItem: {
@@ -11794,7 +11796,7 @@ const buildOpenApiSpec = () => {
             description: '仅允许 platform.* 最终授权权限点；服务端按大小写不敏感语义去重、排序并持久化，不接受权限树中间态节点。',
             example: [
               'platform.user_management.operate',
-              'platform.organization_management.view'
+              'platform.tenant_management.view'
             ],
             items: {
               type: 'string',
@@ -11824,7 +11826,7 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
             example: [
-              'platform.organization_management.operate',
+              'platform.tenant_management.operate',
               'platform.user_management.operate'
             ],
             items: {
@@ -11836,8 +11838,8 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '当前平台权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
             example: [
-              'platform.organization_management.operate',
-              'platform.organization_management.view',
+              'platform.tenant_management.operate',
+              'platform.tenant_management.view',
               'platform.user_management.operate',
               'platform.user_management.view',
               'platform.role_management.operate',
@@ -11880,7 +11882,7 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
             example: [
-              'platform.organization_management.operate',
+              'platform.tenant_management.operate',
               'platform.user_management.operate'
             ],
             items: {
@@ -11892,8 +11894,8 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '当前平台权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
             example: [
-              'platform.organization_management.operate',
-              'platform.organization_management.view',
+              'platform.tenant_management.operate',
+              'platform.tenant_management.view',
               'platform.user_management.operate',
               'platform.user_management.view',
               'platform.role_management.operate',
@@ -11924,15 +11926,19 @@ const buildOpenApiSpec = () => {
           'scope_label',
           'can_view_user_management',
           'can_operate_user_management',
-          'can_view_organization_management',
-          'can_operate_organization_management'
+          'can_view_tenant_management',
+          'can_operate_tenant_management',
+          'can_view_role_management',
+          'can_operate_role_management'
         ],
         properties: {
           scope_label: { type: 'string' },
           can_view_user_management: { type: 'boolean' },
           can_operate_user_management: { type: 'boolean' },
-          can_view_organization_management: { type: 'boolean' },
-          can_operate_organization_management: { type: 'boolean' }
+          can_view_tenant_management: { type: 'boolean' },
+          can_operate_tenant_management: { type: 'boolean' },
+          can_view_role_management: { type: 'boolean' },
+          can_operate_role_management: { type: 'boolean' }
         }
       },
       ReplacePlatformRoleFactsResponse: {
@@ -12052,15 +12058,15 @@ const buildOpenApiSpec = () => {
           'scope_label',
           'can_view_user_management',
           'can_operate_user_management',
-          'can_view_organization_management',
-          'can_operate_organization_management'
+          'can_view_role_management',
+          'can_operate_role_management'
         ],
         properties: {
           scope_label: { type: 'string' },
           can_view_user_management: { type: 'boolean' },
           can_operate_user_management: { type: 'boolean' },
-          can_view_organization_management: { type: 'boolean' },
-          can_operate_organization_management: { type: 'boolean' }
+          can_view_role_management: { type: 'boolean' },
+          can_operate_role_management: { type: 'boolean' }
         }
       },
       ProblemDetails: {

@@ -1,5 +1,5 @@
-import { Empty } from 'antd';
-import { useMemo, useState } from 'react';
+import { Empty, Spin } from 'antd';
+import { Suspense, useMemo, useState } from 'react';
 import CustomLayout from '../../components/CustomLayout';
 import CustomPage from '../../components/CustomPage';
 import {
@@ -70,7 +70,7 @@ export default function TenantManagementLayoutPage({
   );
 
   return (
-    <section data-testid="tenant-governance-panel" style={{ minHeight: 560 }}>
+    <section data-testid="tenant-management-panel" style={{ minHeight: 560 }}>
       <CustomLayout
         title={layoutTitle}
         menuItems={menuItems}
@@ -133,10 +133,25 @@ export default function TenantManagementLayoutPage({
           bodyStyle={{ display: 'grid', gap: 12 }}
         >
           {hasVisiblePage && ActivePageComponent ? (
-            <ActivePageComponent
-              accessToken={accessToken}
-              onTenantPermissionContextRefresh={onTenantPermissionContextRefresh}
-            />
+            <Suspense
+              fallback={(
+                <section
+                  data-testid="tenant-page-loading"
+                  style={{
+                    minHeight: 240,
+                    display: 'grid',
+                    placeItems: 'center'
+                  }}
+                >
+                  <Spin />
+                </section>
+              )}
+            >
+              <ActivePageComponent
+                accessToken={accessToken}
+                onTenantPermissionContextRefresh={onTenantPermissionContextRefresh}
+              />
+            </Suspense>
           ) : (
             <section
               data-testid="tenant-menu-empty"

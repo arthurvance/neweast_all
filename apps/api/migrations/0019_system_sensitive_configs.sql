@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS system_sensitive_configs (
   CONSTRAINT chk_system_sensitive_configs_key
     CHECK (config_key IN ('auth.default_password')),
   CONSTRAINT fk_system_sensitive_configs_updated_by_user
-    FOREIGN KEY (updated_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_system_sensitive_configs_created_by_user
-    FOREIGN KEY (created_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT INTO platform_role_permission_grants (

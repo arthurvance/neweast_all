@@ -30,8 +30,8 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: true,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]
@@ -49,8 +49,8 @@ const createHarness = () => {
             permission: {
               canViewUserManagement: true,
               canOperateUserManagement: false,
-              canViewOrganizationManagement: false,
-              canOperateOrganizationManagement: false
+              canViewTenantManagement: false,
+              canOperateTenantManagement: false
             }
           }
         ]

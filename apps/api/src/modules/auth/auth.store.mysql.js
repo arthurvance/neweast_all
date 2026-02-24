@@ -11,12 +11,19 @@ const {
   KNOWN_TENANT_PERMISSION_CODES,
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
+const {
+  createMySqlRepositoryMethods
+} = require('./store-methods/mysql-repository-methods');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxRetries: 2,
@@ -1296,40 +1303,19 @@ const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled'
 const toPlatformPermissionSnapshot = ({
   canViewUserManagement = false,
   canOperateUserManagement = false,
-  canViewOrganizationManagement = false,
-  canOperateOrganizationManagement = false,
+  canViewTenantManagement = false,
+  canOperateTenantManagement = false,
   canViewRoleManagement = false,
   canOperateRoleManagement = false
 } = {}, scopeLabel = '平台权限（角色并集）') => ({
   scopeLabel,
   canViewUserManagement: Boolean(canViewUserManagement),
   canOperateUserManagement: Boolean(canOperateUserManagement),
-  canViewOrganizationManagement: Boolean(canViewOrganizationManagement),
-  canOperateOrganizationManagement: Boolean(canOperateOrganizationManagement),
+  canViewTenantManagement: Boolean(canViewTenantManagement),
+  canOperateTenantManagement: Boolean(canOperateTenantManagement),
   canViewRoleManagement: Boolean(canViewRoleManagement),
   canOperateRoleManagement: Boolean(canOperateRoleManagement)
 });
-
-const toPlatformPermissionSnapshotFromRow = (row, scopeLabel = '平台权限（角色并集）') =>
-  toPlatformPermissionSnapshot(
-    {
-      canViewUserManagement: row?.can_view_user_management ?? row?.canViewUserManagement,
-      canOperateUserManagement: row?.can_operate_user_management ?? row?.canOperateUserManagement,
-      canViewOrganizationManagement: row?.can_view_organization_management ?? row?.canViewOrganizationManagement,
-      canOperateOrganizationManagement: row?.can_operate_organization_management ?? row?.canOperateOrganizationManagement,
-      canViewRoleManagement: row?.can_view_role_management ?? row?.canViewRoleManagement,
-      canOperateRoleManagement: row?.can_operate_role_management ?? row?.canOperateRoleManagement
-    },
-    scopeLabel
-  );
-
-const isEmptyPlatformPermissionSnapshot = (permission = {}) =>
-  !Boolean(permission.canViewUserManagement)
-  && !Boolean(permission.canOperateUserManagement)
-  && !Boolean(permission.canViewOrganizationManagement)
-  && !Boolean(permission.canOperateOrganizationManagement)
-  && !Boolean(permission.canViewRoleManagement)
-  && !Boolean(permission.canOperateRoleManagement);
 
 const isSamePlatformPermissionSnapshot = (left, right) => {
   const normalizedLeft = left || toPlatformPermissionSnapshot();
@@ -1337,26 +1323,11 @@ const isSamePlatformPermissionSnapshot = (left, right) => {
   return (
     Boolean(normalizedLeft.canViewUserManagement) === Boolean(normalizedRight.canViewUserManagement)
     && Boolean(normalizedLeft.canOperateUserManagement) === Boolean(normalizedRight.canOperateUserManagement)
-    && Boolean(normalizedLeft.canViewOrganizationManagement) === Boolean(normalizedRight.canViewOrganizationManagement)
-    && Boolean(normalizedLeft.canOperateOrganizationManagement) === Boolean(normalizedRight.canOperateOrganizationManagement)
+    && Boolean(normalizedLeft.canViewTenantManagement) === Boolean(normalizedRight.canViewTenantManagement)
+    && Boolean(normalizedLeft.canOperateTenantManagement) === Boolean(normalizedRight.canOperateTenantManagement)
     && Boolean(normalizedLeft.canViewRoleManagement) === Boolean(normalizedRight.canViewRoleManagement)
     && Boolean(normalizedLeft.canOperateRoleManagement) === Boolean(normalizedRight.canOperateRoleManagement)
   );
-};
-
-const toEpochMilliseconds = (value) => {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : 0;
-  }
-  if (value instanceof Date) {
-    const timestamp = value.getTime();
-    return Number.isFinite(timestamp) ? timestamp : 0;
-  }
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
 };
 
 const normalizePlatformRoleStatus = (status) => {
@@ -1392,11 +1363,11 @@ const aggregatePlatformPermissionFromRoleRows = (rows) => {
       canOperateUserManagement: activeRows.some((row) =>
         toBoolean(row?.can_operate_user_management ?? row?.canOperateUserManagement)
       ),
-      canViewOrganizationManagement: activeRows.some((row) =>
-        toBoolean(row?.can_view_organization_management ?? row?.canViewOrganizationManagement)
+      canViewTenantManagement: activeRows.some((row) =>
+        toBoolean(row?.can_view_tenant_management ?? row?.canViewTenantManagement)
       ),
-      canOperateOrganizationManagement: activeRows.some((row) =>
-        toBoolean(row?.can_operate_organization_management ?? row?.canOperateOrganizationManagement)
+      canOperateTenantManagement: activeRows.some((row) =>
+        toBoolean(row?.can_operate_tenant_management ?? row?.canOperateTenantManagement)
       )
     })
   };
@@ -1417,11 +1388,11 @@ const normalizePlatformRoleFactPayload = (role) => {
     canOperateUserManagement: toBoolean(
       permissionSource?.canOperateUserManagement ?? permissionSource?.can_operate_user_management
     ),
-    canViewOrganizationManagement: toBoolean(
-      permissionSource?.canViewOrganizationManagement ?? permissionSource?.can_view_organization_management
+    canViewTenantManagement: toBoolean(
+      permissionSource?.canViewTenantManagement ?? permissionSource?.can_view_tenant_management
     ),
-    canOperateOrganizationManagement: toBoolean(
-      permissionSource?.canOperateOrganizationManagement ?? permissionSource?.can_operate_organization_management
+    canOperateTenantManagement: toBoolean(
+      permissionSource?.canOperateTenantManagement ?? permissionSource?.can_operate_tenant_management
     )
   };
 };
@@ -1456,9 +1427,9 @@ const isDuplicateEntryError = (error) =>
 const isMissingTenantMembershipHistoryTableError = (error) =>
   isTableMissingError(error)
   && /auth_user_tenant_membership_history/i.test(String(error?.message || ''));
-const isMissingOrgsTableError = (error) =>
+const isMissingTenantsTableError = (error) =>
   isTableMissingError(error)
-  && /\borgs\b/i.test(String(error?.message || ''));
+  && /\btenants\b/i.test(String(error?.message || ''));
 const TENANT_MEMBERSHIP_HISTORY_UNAVAILABLE_CODE =
   'AUTH-503-TENANT-MEMBER-HISTORY-UNAVAILABLE';
 const createTenantMembershipHistoryUnavailableError = () => {
@@ -1590,8 +1561,8 @@ const toPlatformPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
   return toPlatformPermissionSnapshot({
     canViewUserManagement: snapshot.canViewUserManagement,
     canOperateUserManagement: snapshot.canOperateUserManagement,
-    canViewOrganizationManagement: snapshot.canViewOrganizationManagement,
-    canOperateOrganizationManagement: snapshot.canOperateOrganizationManagement,
+    canViewTenantManagement: snapshot.canViewTenantManagement,
+    canOperateTenantManagement: snapshot.canOperateTenantManagement,
     canViewRoleManagement: snapshot.canViewRoleManagement,
     canOperateRoleManagement: snapshot.canOperateRoleManagement
   });
@@ -1739,14 +1710,10 @@ const toTenantPermissionSnapshotFromRow = (row, scopeLabel = '组织权限（角
       canOperateUserManagement: row?.can_operate_user_management ?? row?.canOperateUserManagement,
       canViewRoleManagement:
         row?.can_view_role_management
-        ?? row?.canViewRoleManagement
-        ?? row?.can_view_organization_management
-        ?? row?.canViewOrganizationManagement,
+        ?? row?.canViewRoleManagement,
       canOperateRoleManagement:
         row?.can_operate_role_management
         ?? row?.canOperateRoleManagement
-        ?? row?.can_operate_organization_management
-        ?? row?.canOperateOrganizationManagement
     },
     scopeLabel
   );
@@ -2011,7 +1978,7 @@ const createMySqlAuthStore = ({
     try {
       return await queryClient.query(sqlWithOrgGuard, params);
     } catch (error) {
-      if (!isMissingOrgsTableError(error)) {
+      if (!isMissingTenantsTableError(error)) {
         throw error;
       }
       orgStatusGuardAvailable = false;
@@ -2043,8 +2010,8 @@ const createMySqlAuthStore = ({
             status,
             can_view_user_management,
             can_operate_user_management,
-            can_view_organization_management,
-            can_operate_organization_management,
+            can_view_role_management,
+            can_operate_role_management,
             joined_at,
             left_at,
             archived_reason,
@@ -2062,8 +2029,8 @@ const createMySqlAuthStore = ({
           normalizedRowStatus,
           toBoolean(row?.can_view_user_management) ? 1 : 0,
           toBoolean(row?.can_operate_user_management) ? 1 : 0,
-          toBoolean(row?.can_view_organization_management) ? 1 : 0,
-          toBoolean(row?.can_operate_organization_management) ? 1 : 0,
+          toBoolean(row?.can_view_role_management) ? 1 : 0,
+          toBoolean(row?.can_operate_role_management) ? 1 : 0,
           row?.joined_at || row?.created_at || null,
           row?.left_at || null,
           archivedReason === null || archivedReason === undefined
@@ -2092,48 +2059,32 @@ const createMySqlAuthStore = ({
     if (!normalizedUserId) {
       return { inserted: false };
     }
-    if (!skipMembershipCheck) {
-      const tenantCountRows = await runTenantMembershipQuery({
-        txClient,
-        sqlWithOrgGuard: `
-          SELECT COUNT(*) AS tenant_count
-          FROM auth_user_tenants ut
-          LEFT JOIN orgs o ON o.id = ut.tenant_id
-          WHERE ut.user_id = ?
-            AND ut.status IN ('active', 'enabled')
-            AND o.status IN ('active', 'enabled')
-        `,
-        sqlWithoutOrgGuard: `
-          SELECT COUNT(*) AS tenant_count
-          FROM auth_user_tenants ut
-          WHERE ut.user_id = ?
-            AND ut.status IN ('active', 'enabled')
-        `,
-        params: [normalizedUserId]
-      });
-      const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
-      if (tenantCount <= 0) {
-        return { inserted: false };
-      }
+    if (skipMembershipCheck) {
+      return { inserted: false };
     }
-
-    const result = await txClient.query(
-      `
-        INSERT INTO auth_user_domain_access (user_id, domain, status)
-        VALUES (?, 'tenant', 'active')
-        ON DUPLICATE KEY UPDATE
-          status = CASE
-            WHEN status IN ('active', 'enabled') THEN status
-            ELSE 'active'
-          END,
-          updated_at = CASE
-            WHEN status IN ('active', 'enabled') THEN updated_at
-            ELSE CURRENT_TIMESTAMP(3)
-          END
+    const tenantCountRows = await runTenantMembershipQuery({
+      txClient,
+      sqlWithOrgGuard: `
+        SELECT COUNT(*) AS tenant_count
+        FROM tenant_memberships ut
+        LEFT JOIN tenants o ON o.id = ut.tenant_id
+        WHERE ut.user_id = ?
+          AND ut.status IN ('active', 'enabled')
+          AND o.status IN ('active', 'enabled')
       `,
-      [normalizedUserId]
-    );
-    return { inserted: Number(result?.affectedRows || 0) > 0 };
+      sqlWithoutOrgGuard: `
+        SELECT COUNT(*) AS tenant_count
+        FROM tenant_memberships ut
+        WHERE ut.user_id = ?
+          AND ut.status IN ('active', 'enabled')
+      `,
+      params: [normalizedUserId]
+    });
+    const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
+    return {
+      inserted: false,
+      has_active_tenant_membership: tenantCount > 0
+    };
   };
 
   const removeTenantDomainAccessForUserTx = async ({
@@ -2144,35 +2095,26 @@ const createMySqlAuthStore = ({
     if (!normalizedUserId) {
       return { removed: false };
     }
-    const result = await runTenantMembershipQuery({
+    const tenantCountRows = await runTenantMembershipQuery({
       txClient,
       sqlWithOrgGuard: `
-        DELETE FROM auth_user_domain_access
-        WHERE user_id = ?
-          AND domain = 'tenant'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM auth_user_tenants ut
-            LEFT JOIN orgs o ON o.id = ut.tenant_id
-            WHERE ut.user_id = ?
-              AND ut.status IN ('active', 'enabled')
-              AND o.status IN ('active', 'enabled')
-          )
+        SELECT COUNT(*) AS tenant_count
+        FROM tenant_memberships ut
+        LEFT JOIN tenants o ON o.id = ut.tenant_id
+        WHERE ut.user_id = ?
+          AND ut.status IN ('active', 'enabled')
+          AND o.status IN ('active', 'enabled')
       `,
       sqlWithoutOrgGuard: `
-        DELETE FROM auth_user_domain_access
-        WHERE user_id = ?
-          AND domain = 'tenant'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM auth_user_tenants ut
-            WHERE ut.user_id = ?
-              AND ut.status IN ('active', 'enabled')
-          )
+        SELECT COUNT(*) AS tenant_count
+        FROM tenant_memberships ut
+        WHERE ut.user_id = ?
+          AND ut.status IN ('active', 'enabled')
       `,
-      params: [normalizedUserId, normalizedUserId]
+      params: [normalizedUserId]
     });
-    return { removed: Number(result?.affectedRows || 0) > 0 };
+    const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
+    return { removed: tenantCount <= 0 };
   };
 
   const normalizeTenantMembershipRoleIds = (roleIds = []) =>
@@ -2208,7 +2150,7 @@ const createMySqlAuthStore = ({
     );
     await txClient.query(
       `
-        UPDATE refresh_tokens
+        UPDATE auth_refresh_tokens
         SET status = 'revoked',
             updated_at = CURRENT_TIMESTAMP(3)
         WHERE status = 'active'
@@ -2235,7 +2177,7 @@ const createMySqlAuthStore = ({
     const roleRows = await txClient.query(
       `
         SELECT role_id
-        FROM auth_tenant_membership_roles
+        FROM tenant_membership_roles
         WHERE membership_id = ?
         ORDER BY role_id ASC
         FOR UPDATE
@@ -2281,7 +2223,7 @@ const createMySqlAuthStore = ({
     const roleRows = await txClient.query(
       `
         SELECT role_id, status, scope, tenant_id
-        FROM platform_role_catalog
+        FROM platform_roles
         WHERE role_id IN (${rolePlaceholders})
         ORDER BY role_id ASC
         FOR UPDATE
@@ -2416,9 +2358,9 @@ const createMySqlAuthStore = ({
                status,
                can_view_user_management,
                can_operate_user_management,
-               can_view_organization_management,
-               can_operate_organization_management
-        FROM auth_user_tenants
+               can_view_role_management,
+               can_operate_role_management
+        FROM tenant_memberships
         WHERE membership_id = ? AND tenant_id = ?
         LIMIT 1
         FOR UPDATE
@@ -2455,11 +2397,11 @@ const createMySqlAuthStore = ({
     if (changed) {
       await txClient.query(
         `
-          UPDATE auth_user_tenants
+          UPDATE tenant_memberships
           SET can_view_user_management = ?,
               can_operate_user_management = ?,
-              can_view_organization_management = ?,
-              can_operate_organization_management = ?,
+              can_view_role_management = ?,
+              can_operate_role_management = ?,
               updated_at = CURRENT_TIMESTAMP(3)
           WHERE membership_id = ? AND tenant_id = ?
         `,
@@ -2510,7 +2452,7 @@ const createMySqlAuthStore = ({
     const updateResult = shouldUpdatePassword
       ? await txClient.query(
         `
-          UPDATE users
+          UPDATE iam_users
           SET password_hash = ?,
               session_version = session_version + 1,
               updated_at = CURRENT_TIMESTAMP(3)
@@ -2520,7 +2462,7 @@ const createMySqlAuthStore = ({
       )
       : await txClient.query(
         `
-          UPDATE users
+          UPDATE iam_users
           SET session_version = session_version + 1,
               updated_at = CURRENT_TIMESTAMP(3)
           WHERE id = ?
@@ -2548,7 +2490,7 @@ const createMySqlAuthStore = ({
     if (revokeRefreshTokens) {
       await txClient.query(
         `
-          UPDATE refresh_tokens
+          UPDATE auth_refresh_tokens
           SET status = 'revoked',
               updated_at = CURRENT_TIMESTAMP(3)
           WHERE user_id = ? AND status = 'active'
@@ -2560,7 +2502,7 @@ const createMySqlAuthStore = ({
     const rows = await txClient.query(
       `
         SELECT id, phone, password_hash, status, session_version
-        FROM users
+        FROM iam_users
         WHERE id = ?
         LIMIT 1
       `,
@@ -2569,89 +2511,63 @@ const createMySqlAuthStore = ({
     return toUserRecord(rows[0]);
   };
 
-  const readPlatformRoleFactsSummaryByUserId = async ({ txClient = dbClient, userId }) => {
-    const summaryRows = await txClient.query(
-      `
-        SELECT COUNT(*) AS role_count,
-               MAX(updated_at) AS latest_role_updated_at,
-               MAX(DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')) AS latest_role_updated_at_key,
-               COALESCE(
-                 SUM(
-                   CRC32(
-                     CONCAT_WS(
-                       '#',
-                       role_id,
-                       status,
-                       can_view_user_management,
-                       can_operate_user_management,
-                       can_view_organization_management,
-                       can_operate_organization_management,
-                       DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')
-                     )
-                   )
-                 ),
-                 0
-               ) AS role_facts_checksum
-        FROM auth_user_platform_roles
-        WHERE user_id = ?
-      `,
-      [userId]
-    );
-    const summaryRow = summaryRows?.[0] || null;
-    const rawLatestRoleUpdatedAt = summaryRow?.latest_role_updated_at;
-    let latestRoleUpdatedAtKey = '';
-    if (
-      typeof summaryRow?.latest_role_updated_at_key === 'string'
-      && summaryRow.latest_role_updated_at_key.trim().length > 0
-    ) {
-      latestRoleUpdatedAtKey = summaryRow.latest_role_updated_at_key.trim();
-    } else if (rawLatestRoleUpdatedAt instanceof Date) {
-      latestRoleUpdatedAtKey = rawLatestRoleUpdatedAt.toISOString();
-    } else if (rawLatestRoleUpdatedAt !== null && rawLatestRoleUpdatedAt !== undefined) {
-      latestRoleUpdatedAtKey = String(rawLatestRoleUpdatedAt).trim();
-    }
-    const rawRoleFactsChecksum = summaryRow?.role_facts_checksum;
-    let roleFactsChecksum = null;
-    if (rawRoleFactsChecksum !== null && rawRoleFactsChecksum !== undefined) {
-      const normalizedChecksum = String(rawRoleFactsChecksum).trim();
-      if (normalizedChecksum.length > 0) {
-        roleFactsChecksum = normalizedChecksum;
-      }
-    }
-    return {
-      roleFactCount: Number(summaryRow?.role_count || 0),
-      latestRoleUpdatedAtMs: toEpochMilliseconds(
-        summaryRow?.latest_role_updated_at
-      ),
-      latestRoleUpdatedAtKey,
-      roleFactsChecksum
-    };
-  };
-
-  const didPlatformRoleFactsSummaryChange = async ({
+  const resolveActivePlatformPermissionSnapshotByUserIdTx = async ({
     txClient = dbClient,
-    userId,
-    expectedRoleFactCount,
-    expectedLatestRoleUpdatedAtKey,
-    expectedRoleFactsChecksum = null
-  }) => {
-    const latestSummary = await readPlatformRoleFactsSummaryByUserId({
-      txClient,
-      userId
-    });
-    const normalizedExpectedChecksum =
-      expectedRoleFactsChecksum === null || expectedRoleFactsChecksum === undefined
-        ? null
-        : String(expectedRoleFactsChecksum).trim();
-    return (
-      latestSummary.roleFactCount !== Number(expectedRoleFactCount || 0)
-      || latestSummary.latestRoleUpdatedAtKey
-      !== String(expectedLatestRoleUpdatedAtKey || '')
-      || (
-        normalizedExpectedChecksum !== null
-        && latestSummary.roleFactsChecksum !== normalizedExpectedChecksum
-      )
+    userId
+  } = {}) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+
+    const platformUserRows = await txClient.query(
+      `
+        SELECT pu.status AS platform_status,
+               u.status AS user_status
+        FROM platform_users pu
+        INNER JOIN iam_users u
+          ON u.id = pu.user_id
+        WHERE pu.user_id = ?
+        LIMIT 1
+      `,
+      [normalizedUserId]
     );
+    const platformUser = platformUserRows?.[0] || null;
+    if (!platformUser) {
+      return null;
+    }
+
+    const normalizedPlatformStatus = normalizeOrgStatus(platformUser.platform_status);
+    const normalizedUserStatus = normalizeUserStatus(platformUser.user_status);
+    if (
+      !VALID_PLATFORM_USER_STATUS.has(normalizedPlatformStatus)
+      || normalizedPlatformStatus !== 'active'
+      || normalizedUserStatus !== 'active'
+    ) {
+      return null;
+    }
+
+    const grantRows = await txClient.query(
+      `
+        SELECT prg.permission_code
+        FROM platform_user_roles upr
+        INNER JOIN platform_roles prc
+          ON prc.role_id = upr.role_id
+         AND prc.scope = 'platform'
+         AND prc.tenant_id = ''
+         AND prc.status IN ('active', 'enabled')
+        LEFT JOIN platform_role_permission_grants prg
+          ON prg.role_id = upr.role_id
+        WHERE upr.user_id = ?
+          AND upr.status IN ('active', 'enabled')
+      `,
+      [normalizedUserId]
+    );
+    const permissionCodes = (Array.isArray(grantRows) ? grantRows : [])
+      .map((row) => String(row?.permission_code || '').trim())
+      .filter((permissionCode) => permissionCode.length > 0);
+    const permissionSnapshot = toPlatformPermissionSnapshotFromCodes(permissionCodes);
+    return toPlatformPermissionSnapshot(permissionSnapshot);
   };
 
   const syncPlatformPermissionSnapshotByUserIdOnce = async ({
@@ -2667,254 +2583,27 @@ const createMySqlAuthStore = ({
         permission: null
       };
     }
-
-    const snapshotRows = await txClient.query(
-      `
-        SELECT can_view_user_management,
-               can_operate_user_management,
-               can_view_organization_management,
-               can_operate_organization_management,
-               updated_at
-        FROM auth_user_domain_access
-        WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-        LIMIT 1
-      `,
-      [normalizedUserId]
-    );
-    const snapshotRow = snapshotRows?.[0] || null;
-    const snapshotPermission = toPlatformPermissionSnapshotFromRow(snapshotRow);
-    const snapshotUpdatedAtMs = toEpochMilliseconds(snapshotRow?.updated_at);
-
-    let roleFactsSummary = null;
-    try {
-      roleFactsSummary = await readPlatformRoleFactsSummaryByUserId({
-        txClient,
-        userId: normalizedUserId
-      });
-    } catch (error) {
-      if (isTableMissingError(error)) {
-        return {
-          synced: false,
-          reason: 'role-facts-table-missing',
-          permission: null
-        };
-      }
-      throw error;
-    }
-
-    const roleFactCount = Number(roleFactsSummary?.roleFactCount || 0);
-    const latestRoleUpdatedAtMs = Number(
-      roleFactsSummary?.latestRoleUpdatedAtMs || 0
-    );
-    const latestRoleUpdatedAtKey = String(
-      roleFactsSummary?.latestRoleUpdatedAtKey || ''
-    );
-    const roleFactsChecksum =
-      roleFactsSummary?.roleFactsChecksum === null
-      || roleFactsSummary?.roleFactsChecksum === undefined
-        ? null
-        : String(roleFactsSummary.roleFactsChecksum).trim();
-    if (roleFactCount <= 0) {
-      if (!forceWhenNoRoleFacts) {
-        return {
-          synced: false,
-          reason: 'no-role-facts',
-          permission: null
-        };
-      }
-
-      const emptyPermission = toPlatformPermissionSnapshot();
-      if (!snapshotRow || isEmptyPlatformPermissionSnapshot(snapshotPermission)) {
+    const permission = await resolveActivePlatformPermissionSnapshotByUserIdTx({
+      txClient,
+      userId: normalizedUserId
+    });
+    if (!permission) {
+      if (forceWhenNoRoleFacts) {
         return {
           synced: false,
           reason: 'already-empty',
-          permission: emptyPermission
+          permission: toPlatformPermissionSnapshot()
         };
       }
-
-      const zeroUpdateResult = await txClient.query(
-        `
-          UPDATE auth_user_domain_access
-          SET can_view_user_management = 0,
-              can_operate_user_management = 0,
-              can_view_organization_management = 0,
-              can_operate_organization_management = 0,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-            AND (
-              can_view_user_management <> 0
-              OR can_operate_user_management <> 0
-              OR can_view_organization_management <> 0
-              OR can_operate_organization_management <> 0
-            )
-            AND (
-              SELECT COUNT(*)
-              FROM auth_user_platform_roles
-              WHERE user_id = ?
-            ) = 0
-        `,
-        [normalizedUserId, normalizedUserId]
-      );
-
-      const zeroed = Number(zeroUpdateResult?.affectedRows || 0) > 0;
-      if (!zeroed) {
-        const roleFactsChanged = await didPlatformRoleFactsSummaryChange({
-          txClient,
-          userId: normalizedUserId,
-          expectedRoleFactCount: 0,
-          expectedLatestRoleUpdatedAtKey: '',
-          expectedRoleFactsChecksum: roleFactsChecksum
-        });
-        if (roleFactsChanged) {
-          return {
-            synced: false,
-            reason: 'concurrent-role-facts-update',
-            permission: null
-          };
-        }
-      }
-
-      return {
-        synced: zeroed,
-        reason: 'ok',
-        permission: emptyPermission
-      };
-    }
-
-    if (
-      snapshotRow
-      && latestRoleUpdatedAtMs > 0
-      && snapshotUpdatedAtMs > latestRoleUpdatedAtMs
-    ) {
-      return {
-        synced: false,
-        reason: 'up-to-date',
-        permission: snapshotPermission
-      };
-    }
-
-    const roleRows = await txClient.query(
-      `
-        SELECT role_id,
-               status,
-               can_view_user_management,
-               can_operate_user_management,
-               can_view_organization_management,
-               can_operate_organization_management
-        FROM auth_user_platform_roles
-        WHERE user_id = ?
-      `,
-      [normalizedUserId]
-    );
-
-    const aggregate = aggregatePlatformPermissionFromRoleRows(roleRows);
-    if (!aggregate.hasRoleFacts && !forceWhenNoRoleFacts) {
       return {
         synced: false,
         reason: 'no-role-facts',
         permission: null
       };
     }
-
-    const permission = aggregate.permission;
-    const canViewUserManagement = Number(permission.canViewUserManagement);
-    const canOperateUserManagement = Number(permission.canOperateUserManagement);
-    const canViewOrganizationManagement = Number(permission.canViewOrganizationManagement);
-    const canOperateOrganizationManagement = Number(permission.canOperateOrganizationManagement);
-    const updateResult = await txClient.query(
-      `
-        UPDATE auth_user_domain_access
-        SET can_view_user_management = ?,
-            can_operate_user_management = ?,
-            can_view_organization_management = ?,
-            can_operate_organization_management = ?,
-            updated_at = CURRENT_TIMESTAMP(3)
-        WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-          AND (
-            can_view_user_management <> ?
-            OR can_operate_user_management <> ?
-            OR can_view_organization_management <> ?
-            OR can_operate_organization_management <> ?
-          )
-          AND (
-            SELECT COUNT(*)
-            FROM auth_user_platform_roles
-            WHERE user_id = ?
-          ) = ?
-          AND COALESCE(
-            (
-              SELECT MAX(DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f'))
-              FROM auth_user_platform_roles
-              WHERE user_id = ?
-            ),
-            ''
-          ) = ?
-          AND (
-            ? IS NULL
-            OR (
-              SELECT COALESCE(
-                SUM(
-                  CRC32(
-                    CONCAT_WS(
-                      '#',
-                      role_id,
-                      status,
-                      can_view_user_management,
-                      can_operate_user_management,
-                      can_view_organization_management,
-                      can_operate_organization_management,
-                      DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')
-                    )
-                  )
-                ),
-                0
-              )
-              FROM auth_user_platform_roles
-              WHERE user_id = ?
-            ) = ?
-          )
-      `,
-      [
-        canViewUserManagement,
-        canOperateUserManagement,
-        canViewOrganizationManagement,
-        canOperateOrganizationManagement,
-        normalizedUserId,
-        canViewUserManagement,
-        canOperateUserManagement,
-        canViewOrganizationManagement,
-        canOperateOrganizationManagement,
-        normalizedUserId,
-        roleFactCount,
-        normalizedUserId,
-        latestRoleUpdatedAtKey,
-        roleFactsChecksum,
-        normalizedUserId,
-        roleFactsChecksum
-      ]
-    );
-
-    const synced = Number(updateResult?.affectedRows || 0) > 0;
-    if (!synced) {
-      const roleFactsChanged = await didPlatformRoleFactsSummaryChange({
-        txClient,
-        userId: normalizedUserId,
-        expectedRoleFactCount: roleFactCount,
-        expectedLatestRoleUpdatedAtKey: latestRoleUpdatedAtKey,
-        expectedRoleFactsChecksum: roleFactsChecksum
-      });
-      if (roleFactsChanged) {
-        return {
-          synced: false,
-          reason: 'concurrent-role-facts-update',
-          permission: null
-        };
-      }
-    }
-
     return {
-      synced,
-      reason: 'ok',
+      synced: false,
+      reason: 'up-to-date',
       permission
     };
   };
@@ -2954,7 +2643,7 @@ const createMySqlAuthStore = ({
     const userRows = await transactionalClient.query(
       `
         SELECT id
-        FROM users
+        FROM iam_users
         WHERE id = ?
         LIMIT 1
         FOR UPDATE
@@ -2969,14 +2658,29 @@ const createMySqlAuthStore = ({
       };
     }
 
+    await transactionalClient.query(
+      `
+        INSERT INTO platform_users (
+          user_id,
+          name,
+          department,
+          status
+        )
+        VALUES (?, NULL, NULL, 'active')
+        ON DUPLICATE KEY UPDATE
+          updated_at = updated_at
+      `,
+      [normalizedUserId]
+    );
+
     const previousRoleRows = await transactionalClient.query(
       `
         SELECT status,
                can_view_user_management,
                can_operate_user_management,
-               can_view_organization_management,
-               can_operate_organization_management
-        FROM auth_user_platform_roles
+               can_view_tenant_management,
+               can_operate_tenant_management
+        FROM platform_user_roles
         WHERE user_id = ?
       `,
       [normalizedUserId]
@@ -2985,7 +2689,7 @@ const createMySqlAuthStore = ({
 
     await transactionalClient.query(
       `
-        DELETE FROM auth_user_platform_roles
+        DELETE FROM platform_user_roles
         WHERE user_id = ?
       `,
       [normalizedUserId]
@@ -2994,14 +2698,14 @@ const createMySqlAuthStore = ({
     for (const role of normalizedRoles) {
       await transactionalClient.query(
         `
-          INSERT INTO auth_user_platform_roles (
+          INSERT INTO platform_user_roles (
             user_id,
             role_id,
             status,
             can_view_user_management,
             can_operate_user_management,
-            can_view_organization_management,
-            can_operate_organization_management
+            can_view_tenant_management,
+            can_operate_tenant_management
           )
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
@@ -3011,76 +2715,13 @@ const createMySqlAuthStore = ({
           role.status,
           Number(role.canViewUserManagement),
           Number(role.canOperateUserManagement),
-          Number(role.canViewOrganizationManagement),
-          Number(role.canOperateOrganizationManagement)
+          Number(role.canViewTenantManagement),
+          Number(role.canOperateTenantManagement)
         ]
       );
     }
 
     const permission = aggregatePlatformPermissionFromRoleRows(normalizedRoles).permission;
-    const canViewUserManagement = Number(permission.canViewUserManagement);
-    const canOperateUserManagement = Number(permission.canOperateUserManagement);
-    const canViewOrganizationManagement = Number(permission.canViewOrganizationManagement);
-    const canOperateOrganizationManagement = Number(permission.canOperateOrganizationManagement);
-
-    if (normalizedRoles.length > 0) {
-      await transactionalClient.query(
-        `
-          INSERT INTO auth_user_domain_access (
-            user_id,
-            domain,
-            status,
-            can_view_user_management,
-            can_operate_user_management,
-            can_view_organization_management,
-            can_operate_organization_management
-          )
-          VALUES (?, 'platform', 'active', ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE
-            can_view_user_management = VALUES(can_view_user_management),
-            can_operate_user_management = VALUES(can_operate_user_management),
-            can_view_organization_management = VALUES(can_view_organization_management),
-            can_operate_organization_management = VALUES(can_operate_organization_management),
-            updated_at = CURRENT_TIMESTAMP(3)
-        `,
-        [
-          normalizedUserId,
-          canViewUserManagement,
-          canOperateUserManagement,
-          canViewOrganizationManagement,
-          canOperateOrganizationManagement
-        ]
-      );
-    } else {
-      await transactionalClient.query(
-        `
-          UPDATE auth_user_domain_access
-          SET can_view_user_management = ?,
-              can_operate_user_management = ?,
-              can_view_organization_management = ?,
-              can_operate_organization_management = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-            AND (
-              can_view_user_management <> ?
-              OR can_operate_user_management <> ?
-              OR can_view_organization_management <> ?
-              OR can_operate_organization_management <> ?
-            )
-        `,
-        [
-          canViewUserManagement,
-          canOperateUserManagement,
-          canViewOrganizationManagement,
-          canOperateOrganizationManagement,
-          normalizedUserId,
-          canViewUserManagement,
-          canOperateUserManagement,
-          canViewOrganizationManagement,
-          canOperateOrganizationManagement
-        ]
-      );
-    }
 
     if (!isSamePlatformPermissionSnapshot(previousPermission, permission)) {
       await bumpSessionVersionAndConvergeSessionsTx({
@@ -3339,7 +2980,7 @@ const createMySqlAuthStore = ({
       whereArgs
     );
     const total = Number(countRows?.[0]?.total || 0);
-    const rows = await dbClient.query(
+  const rows = await dbClient.query(
       `
         SELECT event_id,
                domain,
@@ -3369,728 +3010,65 @@ const createMySqlAuthStore = ({
     };
   };
 
+  const repositoryMethods = createMySqlRepositoryMethods({
+    dbClient,
+    runTenantMembershipQuery,
+    toUserRecord,
+    toSessionRecord,
+    toRefreshRecord,
+    toBoolean,
+    isDuplicateEntryError,
+    escapeSqlLikePattern,
+    buildSqlInPlaceholders,
+    toPlatformPermissionCodeKey,
+    normalizeUserStatus,
+    normalizeOrgStatus,
+    normalizeStoreIsoTimestamp,
+    normalizeSystemSensitiveConfigKey,
+    normalizeSystemSensitiveConfigStatus,
+    createSystemSensitiveConfigVersionConflictError,
+    normalizeRequiredPlatformUserProfileField,
+    normalizeOptionalPlatformUserProfileField,
+    normalizePlatformRoleCatalogRoleId,
+    normalizePlatformRoleCatalogScope,
+    normalizePlatformRoleCatalogTenantIdForScope,
+    normalizePlatformRoleCatalogStatus,
+    toSystemSensitiveConfigRecord,
+    toPlatformRoleCatalogRecord,
+    resolveActivePlatformPermissionSnapshotByUserIdTx,
+    syncPlatformPermissionSnapshotByUserIdImpl: syncPlatformPermissionSnapshotByUserId,
+    bumpSessionVersionAndConvergeSessionsTx,
+    MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
+    MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+    MAX_PLATFORM_ROLE_CODE_LENGTH,
+    MAX_PLATFORM_ROLE_NAME_LENGTH,
+    MAINLAND_PHONE_PATTERN,
+    CONTROL_CHAR_PATTERN,
+    MYSQL_DUP_ENTRY_ERRNO,
+    ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS,
+    VALID_ORG_STATUS,
+    VALID_PLATFORM_USER_STATUS,
+    VALID_PLATFORM_ROLE_CATALOG_SCOPE,
+    VALID_PLATFORM_ROLE_CATALOG_STATUS,
+    PLATFORM_ROLE_MANAGEMENT_PERMISSION_CODE_SET,
+    PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+    PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+  });
+
   return {
-    findUserByPhone: async (phone) => {
-      const rows = await dbClient.query(
-        `
-          SELECT id, phone, password_hash, status, session_version
-          FROM users
-          WHERE phone = ?
-          LIMIT 1
-        `,
-        [phone]
-      );
-      return toUserRecord(rows[0]);
-    },
+    findUserByPhone: repositoryMethods.findUserByPhone,
 
-    findUserById: async (userId) => {
-      const rows = await dbClient.query(
-        `
-          SELECT id, phone, password_hash, status, session_version
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-        `,
-        [userId]
-      );
-      return toUserRecord(rows[0]);
-    },
+    findUserById: repositoryMethods.findUserById,
 
-    updateUserPhone: async ({
-      userId,
-      phone
-    } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      const normalizedPhone = String(phone || '').trim();
-      if (
-        !normalizedUserId
-        || !normalizedPhone
-        || !MAINLAND_PHONE_PATTERN.test(normalizedPhone)
-        || CONTROL_CHAR_PATTERN.test(normalizedPhone)
-      ) {
-        throw new Error('updateUserPhone requires valid userId and mainland phone');
-      }
+    updateUserPhone: repositoryMethods.updateUserPhone,
 
-      try {
-        const updateResult = await dbClient.query(
-          `
-            UPDATE users
-            SET phone = ?
-            WHERE id = ?
-            LIMIT 1
-          `,
-          [normalizedPhone, normalizedUserId]
-        );
-        const affectedRows = Number(updateResult?.affectedRows || 0);
-        if (affectedRows >= 1) {
-          return {
-            reason: 'ok',
-            user_id: normalizedUserId,
-            phone: normalizedPhone
-          };
-        }
+    listPlatformUsers: repositoryMethods.listPlatformUsers,
 
-        const rows = await dbClient.query(
-          `
-            SELECT phone
-            FROM users
-            WHERE id = ?
-            LIMIT 1
-          `,
-          [normalizedUserId]
-        );
-        const row = rows?.[0];
-        if (!row) {
-          return {
-            reason: 'invalid-user-id'
-          };
-        }
-        const currentPhone = String(row.phone || '').trim();
-        if (currentPhone === normalizedPhone) {
-          return {
-            reason: 'no-op',
-            user_id: normalizedUserId,
-            phone: normalizedPhone
-          };
-        }
-        return {
-          reason: 'unknown'
-        };
-      } catch (error) {
-        if (isDuplicateEntryError(error)) {
-          return {
-            reason: 'phone-conflict'
-          };
-        }
-        throw error;
-      }
-    },
+    listPlatformOrgs: repositoryMethods.listPlatformOrgs,
 
-    listPlatformUsers: async ({
-      page = 1,
-      pageSize = 20,
-      status = null,
-      keyword = null,
-      phone = null,
-      name = null,
-      createdAtStart = null,
-      createdAtEnd = null
-    } = {}) => {
-      const resolvedPage = Number(page);
-      const resolvedPageSize = Number(pageSize);
-      if (
-        !Number.isInteger(resolvedPage)
-        || resolvedPage <= 0
-        || !Number.isInteger(resolvedPageSize)
-        || resolvedPageSize <= 0
-      ) {
-        throw new Error('listPlatformUsers requires positive integer page and pageSize');
-      }
+    getPlatformUserById: repositoryMethods.getPlatformUserById,
 
-      const normalizedStatusFilter =
-        status === null || status === undefined || String(status).trim() === ''
-          ? null
-          : normalizeOrgStatus(status);
-      if (
-        normalizedStatusFilter !== null
-        && !VALID_PLATFORM_USER_STATUS.has(normalizedStatusFilter)
-      ) {
-        throw new Error('listPlatformUsers status filter must be active or disabled');
-      }
-
-      const normalizedKeyword = keyword === null || keyword === undefined
-        ? ''
-        : String(keyword).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedKeyword)) {
-        throw new Error('listPlatformUsers keyword cannot contain control chars');
-      }
-      const normalizedPhone = phone === null || phone === undefined
-        ? ''
-        : String(phone).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedPhone)) {
-        throw new Error('listPlatformUsers phone cannot contain control chars');
-      }
-      const normalizedName = name === null || name === undefined
-        ? ''
-        : String(name).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedName)) {
-        throw new Error('listPlatformUsers name cannot contain control chars');
-      }
-      const normalizedCreatedAtStart = createdAtStart === null || createdAtStart === undefined
-        ? null
-        : new Date(String(createdAtStart).trim());
-      if (
-        normalizedCreatedAtStart !== null
-        && Number.isNaN(normalizedCreatedAtStart.getTime())
-      ) {
-        throw new Error('listPlatformUsers createdAtStart must be valid datetime');
-      }
-      const normalizedCreatedAtEnd = createdAtEnd === null || createdAtEnd === undefined
-        ? null
-        : new Date(String(createdAtEnd).trim());
-      if (
-        normalizedCreatedAtEnd !== null
-        && Number.isNaN(normalizedCreatedAtEnd.getTime())
-      ) {
-        throw new Error('listPlatformUsers createdAtEnd must be valid datetime');
-      }
-      if (
-        normalizedCreatedAtStart !== null
-        && normalizedCreatedAtEnd !== null
-        && normalizedCreatedAtStart.getTime() > normalizedCreatedAtEnd.getTime()
-      ) {
-        throw new Error('listPlatformUsers createdAtStart cannot be later than createdAtEnd');
-      }
-
-      const whereClauses = ["da.domain = 'platform'"];
-      const whereArgs = [];
-      if (normalizedStatusFilter !== null) {
-        if (normalizedStatusFilter === 'active') {
-          whereClauses.push("da.status IN ('active', 'enabled')");
-        } else {
-          whereClauses.push('da.status = ?');
-          whereArgs.push(normalizedStatusFilter);
-        }
-      }
-      if (normalizedKeyword.length > 0) {
-        whereClauses.push('(u.id LIKE ? OR u.phone LIKE ?)');
-        const keywordLike = `%${normalizedKeyword}%`;
-        whereArgs.push(keywordLike, keywordLike);
-      }
-      if (normalizedPhone.length > 0) {
-        whereClauses.push('u.phone = ?');
-        whereArgs.push(normalizedPhone);
-      }
-      if (normalizedName.length > 0) {
-        whereClauses.push('LOWER(COALESCE(pup.name, \'\')) LIKE ?');
-        whereArgs.push(`%${escapeSqlLikePattern(normalizedName.toLowerCase())}%`);
-      }
-      if (normalizedCreatedAtStart !== null) {
-        whereClauses.push('u.created_at >= ?');
-        whereArgs.push(normalizedCreatedAtStart);
-      }
-      if (normalizedCreatedAtEnd !== null) {
-        whereClauses.push('u.created_at <= ?');
-        whereArgs.push(normalizedCreatedAtEnd);
-      }
-      const whereSql = whereClauses.length > 0
-        ? `WHERE ${whereClauses.join(' AND ')}`
-        : '';
-
-      const countRows = await dbClient.query(
-        `
-          SELECT COUNT(*) AS total
-          FROM users u
-          INNER JOIN auth_user_domain_access da
-            ON da.user_id = u.id
-          LEFT JOIN platform_user_profiles pup
-            ON pup.user_id = u.id
-          ${whereSql}
-        `,
-        whereArgs
-      );
-      const total = Number(countRows?.[0]?.total || 0);
-
-      const offset = (resolvedPage - 1) * resolvedPageSize;
-      const rows = await dbClient.query(
-        `
-          SELECT u.id AS user_id,
-                 u.phone AS phone,
-                 da.status AS platform_status,
-                 pup.name AS profile_name,
-                 pup.department AS profile_department,
-                 u.created_at AS created_at
-          FROM users u
-          INNER JOIN auth_user_domain_access da
-            ON da.user_id = u.id
-          LEFT JOIN platform_user_profiles pup
-            ON pup.user_id = u.id
-          ${whereSql}
-          ORDER BY u.id ASC
-          LIMIT ? OFFSET ?
-        `,
-        [...whereArgs, resolvedPageSize, offset]
-      );
-
-      const items = (Array.isArray(rows) ? rows : []).map((row) => {
-        const normalizedStatus = normalizeOrgStatus(row.platform_status);
-        if (!VALID_PLATFORM_USER_STATUS.has(normalizedStatus)) {
-          throw new Error('listPlatformUsers returned invalid platform status');
-        }
-        const resolvedName = row.profile_name === null || row.profile_name === undefined
-          ? null
-          : normalizeRequiredPlatformUserProfileField({
-            value: row.profile_name,
-            maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-            fieldName: 'profile_name'
-          });
-        const resolvedDepartment = row.profile_department === null || row.profile_department === undefined
-          ? null
-          : normalizeOptionalPlatformUserProfileField({
-            value: row.profile_department,
-            maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
-            fieldName: 'profile_department'
-          });
-        const resolvedCreatedAt = normalizeStoreIsoTimestamp(row.created_at);
-        if (!resolvedCreatedAt) {
-          throw new Error('listPlatformUsers returned invalid created_at');
-        }
-        return {
-          user_id: String(row.user_id || '').trim(),
-          phone: String(row.phone || '').trim(),
-          name: resolvedName,
-          department: resolvedDepartment,
-          status: normalizedStatus,
-          created_at: resolvedCreatedAt,
-          roles: []
-        };
-      });
-
-      const listedUserIds = [...new Set(items.map((item) => item.user_id))];
-      if (listedUserIds.length > 0) {
-        const placeholders = buildSqlInPlaceholders(listedUserIds.length);
-        const roleRows = await dbClient.query(
-          `
-            SELECT upr.user_id,
-                   upr.role_id,
-                   prc.code AS role_code,
-                   prc.name AS role_name,
-                   prc.status AS role_status
-            FROM auth_user_platform_roles upr
-            LEFT JOIN platform_role_catalog prc
-              ON prc.role_id = upr.role_id
-             AND prc.scope = 'platform'
-             AND prc.tenant_id = ''
-            WHERE upr.user_id IN (${placeholders})
-              AND upr.status IN ('active', 'enabled')
-            ORDER BY upr.user_id ASC, upr.role_id ASC
-          `,
-          listedUserIds
-        );
-        const rolesByUserId = new Map();
-        for (const row of Array.isArray(roleRows) ? roleRows : []) {
-          const normalizedUserId = String(row.user_id || '').trim();
-          const normalizedRoleId = normalizePlatformRoleCatalogRoleId(row.role_id);
-          if (!normalizedUserId || !normalizedRoleId) {
-            throw new Error('listPlatformUsers returned invalid role binding');
-          }
-          const roleCode = row.role_code === null || row.role_code === undefined
-            ? null
-            : normalizeRequiredPlatformUserProfileField({
-              value: row.role_code,
-              maxLength: MAX_PLATFORM_ROLE_CODE_LENGTH,
-              fieldName: 'role_code'
-            });
-          const roleName = row.role_name === null || row.role_name === undefined
-            ? null
-            : normalizeRequiredPlatformUserProfileField({
-              value: row.role_name,
-              maxLength: MAX_PLATFORM_ROLE_NAME_LENGTH,
-              fieldName: 'role_name'
-            });
-          const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
-            row.role_status || 'disabled'
-          );
-          const roleStatus = VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedRoleStatus)
-            ? normalizedRoleStatus
-            : 'disabled';
-          const existingRoles = rolesByUserId.get(normalizedUserId) || [];
-          existingRoles.push({
-            role_id: normalizedRoleId,
-            code: roleCode,
-            name: roleName,
-            status: roleStatus
-          });
-          rolesByUserId.set(normalizedUserId, existingRoles);
-        }
-        for (const item of items) {
-          item.roles = rolesByUserId.get(item.user_id) || [];
-        }
-      }
-
-      return {
-        total,
-        items
-      };
-    },
-
-    listPlatformOrgs: async ({
-      page = 1,
-      pageSize = 20,
-      orgName = null,
-      owner = null,
-      status = null,
-      createdAtStart = null,
-      createdAtEnd = null
-    } = {}) => {
-      const resolvedPage = Number(page);
-      const resolvedPageSize = Number(pageSize);
-      if (
-        !Number.isInteger(resolvedPage)
-        || resolvedPage <= 0
-        || !Number.isInteger(resolvedPageSize)
-        || resolvedPageSize <= 0
-      ) {
-        throw new Error('listPlatformOrgs requires positive integer page and pageSize');
-      }
-
-      const normalizedOrgName = orgName === null || orgName === undefined
-        ? ''
-        : String(orgName).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedOrgName)) {
-        throw new Error('listPlatformOrgs orgName cannot contain control chars');
-      }
-
-      const normalizedOwner = owner === null || owner === undefined
-        ? ''
-        : String(owner).trim();
-      if (CONTROL_CHAR_PATTERN.test(normalizedOwner)) {
-        throw new Error('listPlatformOrgs owner cannot contain control chars');
-      }
-
-      const normalizedStatusFilter =
-        status === null || status === undefined || String(status).trim() === ''
-          ? null
-          : normalizeOrgStatus(status);
-      if (
-        normalizedStatusFilter !== null
-        && !VALID_ORG_STATUS.has(normalizedStatusFilter)
-      ) {
-        throw new Error('listPlatformOrgs status filter must be active or disabled');
-      }
-
-      const normalizedCreatedAtStart = createdAtStart === null || createdAtStart === undefined
-        ? null
-        : new Date(String(createdAtStart).trim());
-      if (
-        normalizedCreatedAtStart !== null
-        && Number.isNaN(normalizedCreatedAtStart.getTime())
-      ) {
-        throw new Error('listPlatformOrgs createdAtStart must be valid datetime');
-      }
-      const normalizedCreatedAtEnd = createdAtEnd === null || createdAtEnd === undefined
-        ? null
-        : new Date(String(createdAtEnd).trim());
-      if (
-        normalizedCreatedAtEnd !== null
-        && Number.isNaN(normalizedCreatedAtEnd.getTime())
-      ) {
-        throw new Error('listPlatformOrgs createdAtEnd must be valid datetime');
-      }
-      if (
-        normalizedCreatedAtStart !== null
-        && normalizedCreatedAtEnd !== null
-        && normalizedCreatedAtStart.getTime() > normalizedCreatedAtEnd.getTime()
-      ) {
-        throw new Error('listPlatformOrgs createdAtStart cannot be later than createdAtEnd');
-      }
-
-      const whereClauses = [];
-      const whereArgs = [];
-      if (normalizedStatusFilter !== null) {
-        whereClauses.push('o.status = ?');
-        whereArgs.push(normalizedStatusFilter);
-      }
-      if (normalizedOrgName.length > 0) {
-        whereClauses.push('LOWER(o.name) LIKE ?');
-        whereArgs.push(`%${escapeSqlLikePattern(normalizedOrgName.toLowerCase())}%`);
-      }
-      if (normalizedOwner.length > 0) {
-        whereClauses.push(
-          `(
-            u.phone = ?
-            OR EXISTS (
-              SELECT 1
-              FROM auth_user_tenants ut_owner_name
-              WHERE ut_owner_name.user_id = o.owner_user_id
-                AND LOWER(COALESCE(ut_owner_name.display_name, '')) LIKE ?
-            )
-          )`
-        );
-        whereArgs.push(
-          normalizedOwner,
-          `%${escapeSqlLikePattern(normalizedOwner.toLowerCase())}%`
-        );
-      }
-      if (normalizedCreatedAtStart !== null) {
-        whereClauses.push('o.created_at >= ?');
-        whereArgs.push(normalizedCreatedAtStart);
-      }
-      if (normalizedCreatedAtEnd !== null) {
-        whereClauses.push('o.created_at <= ?');
-        whereArgs.push(normalizedCreatedAtEnd);
-      }
-      const whereSql = whereClauses.length > 0
-        ? `WHERE ${whereClauses.join(' AND ')}`
-        : '';
-
-      const countRows = await dbClient.query(
-        `
-          SELECT COUNT(*) AS total
-          FROM orgs o
-          INNER JOIN users u
-            ON u.id = o.owner_user_id
-          ${whereSql}
-        `,
-        whereArgs
-      );
-      const total = Number(countRows?.[0]?.total || 0);
-
-      const offset = (resolvedPage - 1) * resolvedPageSize;
-      const rows = await dbClient.query(
-        `
-          SELECT o.id AS org_id,
-                 o.name AS org_name,
-                 o.status AS status,
-                 o.created_at AS created_at,
-                 u.phone AS owner_phone,
-                 (
-                   SELECT ut_owner.display_name
-                   FROM auth_user_tenants ut_owner
-                   WHERE ut_owner.user_id = o.owner_user_id
-                     AND ut_owner.display_name IS NOT NULL
-                     AND TRIM(ut_owner.display_name) <> ''
-                   ORDER BY ut_owner.joined_at DESC, ut_owner.membership_id DESC
-                   LIMIT 1
-                 ) AS owner_name
-          FROM orgs o
-          INNER JOIN users u
-            ON u.id = o.owner_user_id
-          ${whereSql}
-          ORDER BY o.id ASC
-          LIMIT ? OFFSET ?
-        `,
-        [...whereArgs, resolvedPageSize, offset]
-      );
-
-      const items = (Array.isArray(rows) ? rows : []).map((row) => {
-        const normalizedStatus = normalizeOrgStatus(row.status);
-        if (!VALID_ORG_STATUS.has(normalizedStatus)) {
-          throw new Error('listPlatformOrgs returned invalid status');
-        }
-
-        const resolvedOrgId = String(row.org_id || '').trim();
-        const resolvedOrgName = String(row.org_name || '').trim();
-        const resolvedOwnerPhone = String(row.owner_phone || '').trim();
-        const resolvedOwnerName = row.owner_name === null || row.owner_name === undefined
-          ? null
-          : String(row.owner_name).trim();
-        const resolvedCreatedAt = normalizeStoreIsoTimestamp(row.created_at);
-        if (
-          !resolvedOrgId
-          || !resolvedOrgName
-          || !resolvedOwnerPhone
-          || !resolvedCreatedAt
-        ) {
-          throw new Error('listPlatformOrgs returned invalid org record');
-        }
-        if (
-          resolvedOwnerName !== null
-          && (
-            !resolvedOwnerName
-            || resolvedOwnerName.length > MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
-            || CONTROL_CHAR_PATTERN.test(resolvedOwnerName)
-          )
-        ) {
-          throw new Error('listPlatformOrgs returned invalid owner_name');
-        }
-
-        return {
-          org_id: resolvedOrgId,
-          org_name: resolvedOrgName,
-          owner_name: resolvedOwnerName,
-          owner_phone: resolvedOwnerPhone,
-          status: normalizedStatus,
-          created_at: resolvedCreatedAt
-        };
-      });
-
-      return {
-        total,
-        items
-      };
-    },
-
-    getPlatformUserById: async ({ userId } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId) {
-        return null;
-      }
-      const rows = await dbClient.query(
-        `
-          SELECT u.id AS user_id,
-                 u.phone AS phone,
-                 da.status AS platform_status,
-                 pup.name AS profile_name,
-                 pup.department AS profile_department,
-                 u.created_at AS created_at
-          FROM users u
-          LEFT JOIN auth_user_domain_access da
-            ON da.user_id = u.id AND da.domain = 'platform'
-          LEFT JOIN platform_user_profiles pup
-            ON pup.user_id = u.id
-          WHERE u.id = ?
-          LIMIT 1
-        `,
-        [normalizedUserId]
-      );
-      const row = rows?.[0];
-      if (!row || row.platform_status === null || row.platform_status === undefined) {
-        return null;
-      }
-      const normalizedStatus = normalizeOrgStatus(row.platform_status);
-      if (!VALID_PLATFORM_USER_STATUS.has(normalizedStatus)) {
-        throw new Error('getPlatformUserById returned invalid platform status');
-      }
-      const resolvedName = row.profile_name === null || row.profile_name === undefined
-        ? null
-        : normalizeRequiredPlatformUserProfileField({
-          value: row.profile_name,
-          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-          fieldName: 'profile_name'
-        });
-      const resolvedDepartment = row.profile_department === null || row.profile_department === undefined
-        ? null
-        : normalizeOptionalPlatformUserProfileField({
-          value: row.profile_department,
-          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
-          fieldName: 'profile_department'
-        });
-      const resolvedCreatedAt = normalizeStoreIsoTimestamp(row.created_at);
-      if (!resolvedCreatedAt) {
-        throw new Error('getPlatformUserById returned invalid created_at');
-      }
-
-      const roleRows = await dbClient.query(
-        `
-          SELECT upr.role_id,
-                 prc.code AS role_code,
-                 prc.name AS role_name,
-                 prc.status AS role_status
-          FROM auth_user_platform_roles upr
-          LEFT JOIN platform_role_catalog prc
-            ON prc.role_id = upr.role_id
-           AND prc.scope = 'platform'
-           AND prc.tenant_id = ''
-          WHERE upr.user_id = ?
-            AND upr.status IN ('active', 'enabled')
-          ORDER BY upr.role_id ASC
-        `,
-        [normalizedUserId]
-      );
-      const roles = [];
-      for (const roleRow of Array.isArray(roleRows) ? roleRows : []) {
-        const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleRow.role_id);
-        if (!normalizedRoleId) {
-          throw new Error('getPlatformUserById returned invalid role binding');
-        }
-        const roleCode = roleRow.role_code === null || roleRow.role_code === undefined
-          ? null
-          : normalizeRequiredPlatformUserProfileField({
-            value: roleRow.role_code,
-            maxLength: MAX_PLATFORM_ROLE_CODE_LENGTH,
-            fieldName: 'role_code'
-          });
-        const roleName = roleRow.role_name === null || roleRow.role_name === undefined
-          ? null
-          : normalizeRequiredPlatformUserProfileField({
-            value: roleRow.role_name,
-            maxLength: MAX_PLATFORM_ROLE_NAME_LENGTH,
-            fieldName: 'role_name'
-          });
-        const normalizedRoleStatus = normalizePlatformRoleCatalogStatus(
-          roleRow.role_status || 'disabled'
-        );
-        roles.push({
-          role_id: normalizedRoleId,
-          code: roleCode,
-          name: roleName,
-          status: VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedRoleStatus)
-            ? normalizedRoleStatus
-            : 'disabled'
-        });
-      }
-
-      return {
-        user_id: String(row.user_id || '').trim(),
-        phone: String(row.phone || '').trim(),
-        name: resolvedName,
-        department: resolvedDepartment,
-        status: normalizedStatus,
-        created_at: resolvedCreatedAt,
-        roles
-      };
-    },
-
-    upsertPlatformUserProfile: async ({
-      userId,
-      name,
-      department = null
-    } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId) {
-        throw new Error('upsertPlatformUserProfile requires userId');
-      }
-      const normalizedName = normalizeRequiredPlatformUserProfileField({
-        value: name,
-        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-        fieldName: 'name'
-      });
-      const normalizedDepartment = normalizeOptionalPlatformUserProfileField({
-        value: department,
-        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
-        fieldName: 'department'
-      });
-
-      await dbClient.query(
-        `
-          INSERT INTO platform_user_profiles (
-            user_id,
-            name,
-            department
-          )
-          VALUES (?, ?, ?)
-          ON DUPLICATE KEY UPDATE
-            name = VALUES(name),
-            department = VALUES(department),
-            updated_at = CURRENT_TIMESTAMP(3)
-        `,
-        [
-          normalizedUserId,
-          normalizedName,
-          normalizedDepartment
-        ]
-      );
-
-      const rows = await dbClient.query(
-        `
-          SELECT user_id,
-                 name,
-                 department
-          FROM platform_user_profiles
-          WHERE user_id = ?
-          LIMIT 1
-        `,
-        [normalizedUserId]
-      );
-      const row = rows?.[0];
-      if (!row) {
-        throw new Error('upsertPlatformUserProfile write not applied');
-      }
-      return {
-        user_id: String(row.user_id || '').trim(),
-        name: normalizeRequiredPlatformUserProfileField({
-          value: row.name,
-          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-          fieldName: 'name'
-        }),
-        department: normalizeOptionalPlatformUserProfileField({
-          value: row.department,
-          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
-          fieldName: 'department'
-        })
-      };
-    },
+    upsertPlatformUserProfile: repositoryMethods.upsertPlatformUserProfile,
 
     recordAuditEvent: async (payload = {}) =>
       recordAuditEvent(payload),
@@ -4098,331 +3076,17 @@ const createMySqlAuthStore = ({
     listAuditEvents: async (query = {}) =>
       listAuditEvents(query),
 
-    getSystemSensitiveConfig: async ({ configKey } = {}) => {
-      const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
-      if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
-        return null;
-      }
-      const rows = await dbClient.query(
-        `
-          SELECT config_key,
-                 encrypted_value,
-                 version,
-                 status,
-                 updated_by_user_id,
-                 updated_at,
-                 created_by_user_id,
-                 created_at
-          FROM system_sensitive_configs
-          WHERE config_key = ?
-          LIMIT 1
-        `,
-        [normalizedConfigKey]
-      );
-      return toSystemSensitiveConfigRecord(rows?.[0]);
-    },
+    getSystemSensitiveConfig: repositoryMethods.getSystemSensitiveConfig,
 
-    upsertSystemSensitiveConfig: async ({
-      configKey,
-      encryptedValue,
-      expectedVersion,
-      updatedByUserId,
-      status = 'active'
-    } = {}) =>
-      dbClient.inTransaction(async (tx) => {
-        const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
-        if (!normalizedConfigKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(normalizedConfigKey)) {
-          throw new Error('upsertSystemSensitiveConfig requires whitelisted configKey');
-        }
-        const normalizedEncryptedValue = String(encryptedValue || '').trim();
-        if (
-          !normalizedEncryptedValue
-          || CONTROL_CHAR_PATTERN.test(normalizedEncryptedValue)
-        ) {
-          throw new Error('upsertSystemSensitiveConfig requires encryptedValue');
-        }
-        const parsedExpectedVersion = Number(expectedVersion);
-        if (
-          !Number.isInteger(parsedExpectedVersion)
-          || parsedExpectedVersion < 0
-        ) {
-          throw new Error('upsertSystemSensitiveConfig requires expectedVersion >= 0');
-        }
-        const normalizedUpdatedByUserId = String(updatedByUserId || '').trim();
-        if (!normalizedUpdatedByUserId) {
-          throw new Error('upsertSystemSensitiveConfig requires updatedByUserId');
-        }
-        const normalizedStatus = normalizeSystemSensitiveConfigStatus(status);
-        if (!normalizedStatus) {
-          throw new Error('upsertSystemSensitiveConfig received unsupported status');
-        }
+    upsertSystemSensitiveConfig: repositoryMethods.upsertSystemSensitiveConfig,
 
-        const existingRows = await tx.query(
-          `
-            SELECT config_key,
-                   version,
-                   created_by_user_id,
-                   created_at
-            FROM system_sensitive_configs
-            WHERE config_key = ?
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [normalizedConfigKey]
-        );
-        const existingRow = existingRows?.[0] || null;
-        const currentVersion = existingRow ? Number(existingRow.version || 0) : 0;
-        if (parsedExpectedVersion !== currentVersion) {
-          throw createSystemSensitiveConfigVersionConflictError({
-            configKey: normalizedConfigKey,
-            expectedVersion: parsedExpectedVersion,
-            currentVersion
-          });
-        }
+    countPlatformRoleCatalogEntries: repositoryMethods.countPlatformRoleCatalogEntries,
 
-        const nextVersion = currentVersion + 1;
-        if (existingRow) {
-          await tx.query(
-            `
-              UPDATE system_sensitive_configs
-              SET encrypted_value = ?,
-                  version = ?,
-                  status = ?,
-                  updated_by_user_id = ?,
-                  updated_at = CURRENT_TIMESTAMP(3)
-              WHERE config_key = ?
-            `,
-            [
-              normalizedEncryptedValue,
-              nextVersion,
-              normalizedStatus,
-              normalizedUpdatedByUserId,
-              normalizedConfigKey
-            ]
-          );
-        } else {
-          try {
-            await tx.query(
-              `
-                INSERT INTO system_sensitive_configs (
-                  config_key,
-                  encrypted_value,
-                  version,
-                  status,
-                  updated_by_user_id,
-                  created_by_user_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-              `,
-              [
-                normalizedConfigKey,
-                normalizedEncryptedValue,
-                nextVersion,
-                normalizedStatus,
-                normalizedUpdatedByUserId,
-                normalizedUpdatedByUserId
-              ]
-            );
-          } catch (error) {
-            const normalizedErrorCode = String(error?.code || '').trim();
-            if (
-              normalizedErrorCode !== 'ER_DUP_ENTRY'
-              && Number(error?.errno || 0) !== MYSQL_DUP_ENTRY_ERRNO
-            ) {
-              throw error;
-            }
-            let conflictCurrentVersion = currentVersion;
-            try {
-              const conflictRows = await tx.query(
-                `
-                  SELECT version
-                  FROM system_sensitive_configs
-                  WHERE config_key = ?
-                  LIMIT 1
-                `,
-                [normalizedConfigKey]
-              );
-              const loadedVersion = Number(conflictRows?.[0]?.version);
-              if (Number.isInteger(loadedVersion) && loadedVersion >= 0) {
-                conflictCurrentVersion = loadedVersion;
-              }
-            } catch (_lookupError) {}
-            throw createSystemSensitiveConfigVersionConflictError({
-              configKey: normalizedConfigKey,
-              expectedVersion: parsedExpectedVersion,
-              currentVersion: conflictCurrentVersion
-            });
-          }
-        }
+    listPlatformRoleCatalogEntries: repositoryMethods.listPlatformRoleCatalogEntries,
 
-        const rows = await tx.query(
-          `
-            SELECT config_key,
-                   encrypted_value,
-                   version,
-                   status,
-                   updated_by_user_id,
-                   updated_at,
-                   created_by_user_id,
-                   created_at
-            FROM system_sensitive_configs
-            WHERE config_key = ?
-            LIMIT 1
-          `,
-          [normalizedConfigKey]
-        );
-        const record = toSystemSensitiveConfigRecord(rows?.[0]);
-        if (!record) {
-          throw new Error('upsertSystemSensitiveConfig result unavailable');
-        }
-        return {
-          ...record,
-          previousVersion: currentVersion
-        };
-      }),
+    findPlatformRoleCatalogEntryByRoleId: repositoryMethods.findPlatformRoleCatalogEntryByRoleId,
 
-    countPlatformRoleCatalogEntries: async () => {
-      const rows = await dbClient.query(
-        `
-          SELECT COUNT(*) AS role_count
-          FROM platform_role_catalog
-        `
-      );
-      return Number(rows?.[0]?.role_count || 0);
-    },
-
-    listPlatformRoleCatalogEntries: async ({
-      scope = 'platform',
-      tenantId = null
-    } = {}) => {
-      const normalizedScope = normalizePlatformRoleCatalogScope(scope);
-      if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
-        throw new Error('listPlatformRoleCatalogEntries received unsupported scope');
-      }
-      const normalizedTenantId = normalizePlatformRoleCatalogTenantIdForScope({
-        scope: normalizedScope,
-        tenantId
-      });
-      const whereClause = normalizedScope === 'tenant'
-        ? 'scope = ? AND tenant_id = ?'
-        : "scope = ? AND tenant_id = ''";
-      const queryArgs = normalizedScope === 'tenant'
-        ? [normalizedScope, normalizedTenantId]
-        : [normalizedScope];
-      const rows = await dbClient.query(
-        `
-          SELECT role_id,
-                 tenant_id,
-                 code,
-                 name,
-                 status,
-                 scope,
-                 is_system,
-                 created_by_user_id,
-                 updated_by_user_id,
-                 created_at,
-                 updated_at
-          FROM platform_role_catalog
-          WHERE ${whereClause}
-          ORDER BY created_at ASC, role_id ASC
-        `,
-        queryArgs
-      );
-      return (Array.isArray(rows) ? rows : [])
-        .map((row) => toPlatformRoleCatalogRecord(row))
-        .filter(Boolean);
-    },
-
-    findPlatformRoleCatalogEntryByRoleId: async ({
-      roleId,
-      scope = undefined,
-      tenantId = null
-    }) => {
-      const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
-      if (!normalizedRoleId) {
-        return null;
-      }
-      const hasScopeFilter = scope !== undefined && scope !== null;
-      const normalizedScope = hasScopeFilter
-        ? normalizePlatformRoleCatalogScope(scope)
-        : null;
-      if (
-        hasScopeFilter
-        && !VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)
-      ) {
-        throw new Error('findPlatformRoleCatalogEntryByRoleId received unsupported scope');
-      }
-      const normalizedTenantId = hasScopeFilter
-        ? normalizePlatformRoleCatalogTenantIdForScope({
-          scope: normalizedScope,
-          tenantId
-        })
-        : null;
-      const whereClause = !hasScopeFilter
-        ? 'role_id = ?'
-        : normalizedScope === 'tenant'
-          ? 'role_id = ? AND scope = ? AND tenant_id = ?'
-          : "role_id = ? AND scope = ? AND tenant_id = ''";
-      const queryArgs = !hasScopeFilter
-        ? [normalizedRoleId]
-        : normalizedScope === 'tenant'
-          ? [normalizedRoleId, normalizedScope, normalizedTenantId]
-          : [normalizedRoleId, normalizedScope];
-      const rows = await dbClient.query(
-        `
-          SELECT role_id,
-                 tenant_id,
-                 code,
-                 name,
-                 status,
-                 scope,
-                 is_system,
-                 created_by_user_id,
-                 updated_by_user_id,
-                 created_at,
-                 updated_at
-          FROM platform_role_catalog
-          WHERE ${whereClause}
-          LIMIT 1
-        `,
-        queryArgs
-      );
-      return toPlatformRoleCatalogRecord(rows?.[0] || null);
-    },
-
-    findPlatformRoleCatalogEntriesByRoleIds: async ({ roleIds = [] } = {}) => {
-      const normalizedRoleIds = [...new Set(
-        (Array.isArray(roleIds) ? roleIds : [])
-          .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
-          .filter((roleId) => roleId.length > 0)
-      )];
-      if (normalizedRoleIds.length === 0) {
-        return [];
-      }
-      const placeholders = buildSqlInPlaceholders(normalizedRoleIds.length);
-      const rows = await dbClient.query(
-        `
-          SELECT role_id,
-                 tenant_id,
-                 code,
-                 name,
-                 status,
-                 scope,
-                 is_system,
-                 created_by_user_id,
-                 updated_by_user_id,
-                 created_at,
-                 updated_at
-          FROM platform_role_catalog
-          WHERE role_id IN (${placeholders})
-          ORDER BY created_at ASC, role_id ASC
-        `,
-        normalizedRoleIds
-      );
-      return (Array.isArray(rows) ? rows : [])
-        .map((row) => toPlatformRoleCatalogRecord(row))
-        .filter(Boolean);
-    },
+    findPlatformRoleCatalogEntriesByRoleIds: repositoryMethods.findPlatformRoleCatalogEntriesByRoleIds,
 
     listPlatformIntegrationCatalogEntries: async ({
       direction = null,
@@ -7925,7 +6589,7 @@ const createMySqlAuthStore = ({
             const roleRows = await tx.query(
               `
                 SELECT role_id
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -8018,7 +6682,7 @@ const createMySqlAuthStore = ({
             const roleRows = await tx.query(
               `
                 SELECT role_id
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -8032,7 +6696,7 @@ const createMySqlAuthStore = ({
             const affectedUserRows = await tx.query(
               `
                 SELECT user_id
-                FROM auth_user_platform_roles
+                FROM platform_user_roles
                 WHERE role_id = ?
                 ORDER BY user_id ASC
                 FOR UPDATE
@@ -8114,7 +6778,7 @@ const createMySqlAuthStore = ({
               const roleRowsForUser = await tx.query(
                 `
                   SELECT role_id, status
-                  FROM auth_user_platform_roles
+                  FROM platform_user_roles
                   WHERE user_id = ?
                   ORDER BY role_id ASC
                   FOR UPDATE
@@ -8193,8 +6857,8 @@ const createMySqlAuthStore = ({
                     status: normalizePlatformRoleStatus(row?.status),
                     canViewUserManagement: permissionSnapshot.canViewUserManagement,
                     canOperateUserManagement: permissionSnapshot.canOperateUserManagement,
-                    canViewOrganizationManagement: permissionSnapshot.canViewOrganizationManagement,
-                    canOperateOrganizationManagement: permissionSnapshot.canOperateOrganizationManagement
+                    canViewTenantManagement: permissionSnapshot.canViewTenantManagement,
+                    canOperateTenantManagement: permissionSnapshot.canOperateTenantManagement
                   };
                 })
                 .filter(Boolean);
@@ -8378,7 +7042,7 @@ const createMySqlAuthStore = ({
             const roleRows = await tx.query(
               `
                 SELECT role_id
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                   AND scope = 'tenant'
                   AND tenant_id = ?
@@ -8394,8 +7058,8 @@ const createMySqlAuthStore = ({
             const membershipRows = await tx.query(
               `
                 SELECT ut.membership_id, ut.user_id
-                FROM auth_tenant_membership_roles mr
-                JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id
+                FROM tenant_membership_roles mr
+                JOIN tenant_memberships ut ON ut.membership_id = mr.membership_id
                 WHERE mr.role_id = ?
                   AND ut.tenant_id = ?
                   AND ut.status IN ('active', 'enabled')
@@ -8559,7 +7223,7 @@ const createMySqlAuthStore = ({
       const rows = await dbClient.query(
         `
           SELECT user_id
-          FROM auth_user_platform_roles
+          FROM platform_user_roles
           WHERE role_id = ?
           ORDER BY user_id ASC
         `,
@@ -8581,9 +7245,9 @@ const createMySqlAuthStore = ({
                  status,
                  can_view_user_management,
                  can_operate_user_management,
-                 can_view_organization_management,
-                 can_operate_organization_management
-          FROM auth_user_platform_roles
+                 can_view_tenant_management,
+                 can_operate_tenant_management
+          FROM platform_user_roles
           WHERE user_id = ?
           ORDER BY role_id ASC
         `,
@@ -8596,8 +7260,8 @@ const createMySqlAuthStore = ({
         permission: {
           canViewUserManagement: toBoolean(row?.can_view_user_management),
           canOperateUserManagement: toBoolean(row?.can_operate_user_management),
-          canViewOrganizationManagement: toBoolean(row?.can_view_organization_management),
-          canOperateOrganizationManagement: toBoolean(row?.can_operate_organization_management)
+          canViewTenantManagement: toBoolean(row?.can_view_tenant_management),
+          canOperateTenantManagement: toBoolean(row?.can_operate_tenant_management)
         }
       }));
     },
@@ -8640,7 +7304,7 @@ const createMySqlAuthStore = ({
           dbClient.inTransaction(async (tx) => {
             await tx.query(
               `
-                INSERT INTO platform_role_catalog (
+                INSERT INTO platform_roles (
                   role_id,
                   tenant_id,
                   code,
@@ -8680,7 +7344,7 @@ const createMySqlAuthStore = ({
                        updated_by_user_id,
                        created_at,
                        updated_at
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
               `,
@@ -8782,7 +7446,7 @@ const createMySqlAuthStore = ({
                        updated_by_user_id,
                        created_at,
                        updated_at
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE ${whereClause}
                 LIMIT 1
                 FOR UPDATE
@@ -8813,7 +7477,7 @@ const createMySqlAuthStore = ({
 
             await tx.query(
               `
-                UPDATE platform_role_catalog
+                UPDATE platform_roles
                 SET code = ?,
                     code_normalized = ?,
                     name = ?,
@@ -8845,7 +7509,7 @@ const createMySqlAuthStore = ({
                        updated_by_user_id,
                        created_at,
                        updated_at
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
               `,
@@ -8949,7 +7613,7 @@ const createMySqlAuthStore = ({
                        updated_by_user_id,
                        created_at,
                        updated_at
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE ${whereClause}
                 LIMIT 1
                 FOR UPDATE
@@ -8963,7 +7627,7 @@ const createMySqlAuthStore = ({
 
             await tx.query(
               `
-                UPDATE platform_role_catalog
+                UPDATE platform_roles
                 SET status = 'disabled',
                     updated_by_user_id = ?,
                     updated_at = CURRENT_TIMESTAMP(3)
@@ -8988,7 +7652,7 @@ const createMySqlAuthStore = ({
                        updated_by_user_id,
                        created_at,
                        updated_at
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
               `,
@@ -9049,7 +7713,7 @@ const createMySqlAuthStore = ({
       try {
         await dbClient.query(
           `
-            INSERT INTO users (id, phone, password_hash, status, session_version)
+            INSERT INTO iam_users (id, phone, password_hash, status, session_version)
             VALUES (?, ?, ?, ?, 1)
           `,
           [userId, normalizedPhone, normalizedPasswordHash, normalizedStatus]
@@ -9063,7 +7727,7 @@ const createMySqlAuthStore = ({
       const rows = await dbClient.query(
         `
           SELECT id, phone, password_hash, status, session_version
-          FROM users
+          FROM iam_users
           WHERE id = ?
           LIMIT 1
         `,
@@ -9106,7 +7770,7 @@ const createMySqlAuthStore = ({
 
             const insertOrgResult = await tx.query(
               `
-                INSERT INTO orgs (id, name, owner_user_id, status, created_by_user_id)
+                INSERT INTO tenants (id, name, owner_user_id, status, created_by_user_id)
                 VALUES (?, ?, ?, 'active', ?)
               `,
               [
@@ -9120,16 +7784,6 @@ const createMySqlAuthStore = ({
               throw new Error('org-create-write-not-applied');
             }
 
-            const insertMembershipResult = await tx.query(
-              `
-                INSERT INTO memberships (org_id, user_id, membership_role, status)
-                VALUES (?, ?, 'owner', 'active')
-              `,
-              [normalizedOrgId, normalizedOwnerUserId]
-            );
-            if (Number(insertMembershipResult?.affectedRows || 0) !== 1) {
-              throw new Error('org-membership-write-not-applied');
-            }
             const normalizedTakeoverRoleId = toOwnerTransferTakeoverRoleId({
               orgId: normalizedOrgId
             });
@@ -9147,7 +7801,7 @@ const createMySqlAuthStore = ({
             }
             const ownerMembershipUpsertResult = await tx.query(
               `
-                INSERT INTO auth_user_tenants (
+                INSERT INTO tenant_memberships (
                   membership_id,
                   user_id,
                   tenant_id,
@@ -9190,11 +7844,11 @@ const createMySqlAuthStore = ({
                        tenant_name,
                        can_view_user_management,
                        can_operate_user_management,
-                       can_view_organization_management,
-                       can_operate_organization_management,
+                       can_view_role_management,
+                       can_operate_role_management,
                        joined_at,
                        left_at
-                FROM auth_user_tenants
+                FROM tenant_memberships
                 WHERE user_id = ? AND tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9232,7 +7886,7 @@ const createMySqlAuthStore = ({
               });
               await tx.query(
                 `
-                  DELETE FROM auth_tenant_membership_roles
+                  DELETE FROM tenant_membership_roles
                   WHERE membership_id = ?
                 `,
                 [previousMembershipId]
@@ -9240,13 +7894,13 @@ const createMySqlAuthStore = ({
               const nextMembershipId = randomUUID();
               await tx.query(
                 `
-                  UPDATE auth_user_tenants
+                  UPDATE tenant_memberships
                   SET membership_id = ?,
                       status = 'active',
                       can_view_user_management = 0,
                       can_operate_user_management = 0,
-                      can_view_organization_management = 0,
-                      can_operate_organization_management = 0,
+                      can_view_role_management = 0,
+                      can_operate_role_management = 0,
                       display_name = CASE
                         WHEN ? IS NULL THEN display_name
                         ELSE ?
@@ -9267,7 +7921,7 @@ const createMySqlAuthStore = ({
             } else if (normalizedMembershipStatus === 'disabled') {
               await tx.query(
                 `
-                  UPDATE auth_user_tenants
+                  UPDATE tenant_memberships
                   SET status = 'active',
                       display_name = CASE
                         WHEN ? IS NULL THEN display_name
@@ -9294,11 +7948,11 @@ const createMySqlAuthStore = ({
                        tenant_name,
                        can_view_user_management,
                        can_operate_user_management,
-                       can_view_organization_management,
-                       can_operate_organization_management,
+                       can_view_role_management,
+                       can_operate_role_management,
                        joined_at,
                        left_at
-                FROM auth_user_tenants
+                FROM tenant_memberships
                 WHERE user_id = ? AND tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9333,7 +7987,7 @@ const createMySqlAuthStore = ({
             let roleRows = await tx.query(
               `
                 SELECT role_id, tenant_id, code, status, scope
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9345,7 +7999,7 @@ const createMySqlAuthStore = ({
               try {
                 await tx.query(
                   `
-                    INSERT INTO platform_role_catalog (
+                    INSERT INTO platform_roles (
                       role_id,
                       tenant_id,
                       code,
@@ -9376,7 +8030,7 @@ const createMySqlAuthStore = ({
                 roleRows = await tx.query(
                   `
                     SELECT role_id, tenant_id, code, status, scope
-                    FROM platform_role_catalog
+                    FROM platform_roles
                     WHERE role_id = ?
                     LIMIT 1
                     FOR UPDATE
@@ -9425,7 +8079,7 @@ const createMySqlAuthStore = ({
             if (!isActiveLikeStatus(normalizedRoleStatus)) {
               await tx.query(
                 `
-                  UPDATE platform_role_catalog
+                  UPDATE platform_roles
                   SET status = 'active',
                       updated_by_user_id = ?,
                       updated_at = CURRENT_TIMESTAMP(3)
@@ -9498,7 +8152,7 @@ const createMySqlAuthStore = ({
             }
             await tx.query(
               `
-                DELETE FROM auth_tenant_membership_roles
+                DELETE FROM tenant_membership_roles
                 WHERE membership_id = ?
               `,
               [resolvedMembershipId]
@@ -9506,7 +8160,7 @@ const createMySqlAuthStore = ({
             for (const roleId of nextRoleIds) {
               await tx.query(
                 `
-                  INSERT INTO auth_tenant_membership_roles (
+                  INSERT INTO tenant_membership_roles (
                     membership_id,
                     role_id,
                     created_by_user_id,
@@ -9603,7 +8257,7 @@ const createMySqlAuthStore = ({
       const rows = await dbClient.query(
         `
           SELECT id, name, owner_user_id, status, created_by_user_id
-          FROM orgs
+          FROM tenants
           WHERE BINARY id = ?
           LIMIT 1
         `,
@@ -9738,7 +8392,7 @@ const createMySqlAuthStore = ({
             const orgRows = await tx.query(
               `
                 SELECT id, status, owner_user_id
-                FROM orgs
+                FROM tenants
                 WHERE BINARY id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9782,7 +8436,7 @@ const createMySqlAuthStore = ({
             const newOwnerRows = await tx.query(
               `
                 SELECT id, status
-                FROM users
+                FROM iam_users
                 WHERE BINARY id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9818,7 +8472,7 @@ const createMySqlAuthStore = ({
             let roleRows = await tx.query(
               `
                 SELECT role_id, tenant_id, code, status, scope
-                FROM platform_role_catalog
+                FROM platform_roles
                 WHERE role_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9830,7 +8484,7 @@ const createMySqlAuthStore = ({
               try {
                 await tx.query(
                   `
-                    INSERT INTO platform_role_catalog (
+                    INSERT INTO platform_roles (
                       role_id,
                       tenant_id,
                       code,
@@ -9861,7 +8515,7 @@ const createMySqlAuthStore = ({
                 roleRows = await tx.query(
                   `
                     SELECT role_id, tenant_id, code, status, scope
-                    FROM platform_role_catalog
+                    FROM platform_roles
                     WHERE role_id = ?
                     LIMIT 1
                     FOR UPDATE
@@ -9911,7 +8565,7 @@ const createMySqlAuthStore = ({
             if (!isActiveLikeStatus(normalizedRoleStatus)) {
               await tx.query(
                 `
-                  UPDATE platform_role_catalog
+                  UPDATE platform_roles
                   SET status = 'active',
                       updated_by_user_id = ?,
                       updated_at = CURRENT_TIMESTAMP(3)
@@ -9975,11 +8629,11 @@ const createMySqlAuthStore = ({
                        tenant_name,
                        can_view_user_management,
                        can_operate_user_management,
-                       can_view_organization_management,
-                       can_operate_organization_management,
+                       can_view_role_management,
+                       can_operate_role_management,
                        joined_at,
                        left_at
-                FROM auth_user_tenants
+                FROM tenant_memberships
                 WHERE user_id = ? AND tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -9996,7 +8650,7 @@ const createMySqlAuthStore = ({
               try {
                 insertedMembership = await tx.query(
                   `
-                    INSERT INTO auth_user_tenants (
+                    INSERT INTO tenant_memberships (
                       membership_id,
                       user_id,
                       tenant_id,
@@ -10039,11 +8693,11 @@ const createMySqlAuthStore = ({
                          tenant_name,
                          can_view_user_management,
                          can_operate_user_management,
-                         can_view_organization_management,
-                         can_operate_organization_management,
+                         can_view_role_management,
+                         can_operate_role_management,
                          joined_at,
                          left_at
-                  FROM auth_user_tenants
+                  FROM tenant_memberships
                   WHERE user_id = ? AND tenant_id = ?
                   LIMIT 1
                   FOR UPDATE
@@ -10084,7 +8738,7 @@ const createMySqlAuthStore = ({
                 });
                 await tx.query(
                   `
-                    DELETE FROM auth_tenant_membership_roles
+                    DELETE FROM tenant_membership_roles
                     WHERE membership_id = ?
                   `,
                   [previousMembershipId]
@@ -10092,13 +8746,13 @@ const createMySqlAuthStore = ({
                 const nextMembershipId = randomUUID();
                 await tx.query(
                   `
-                    UPDATE auth_user_tenants
+                    UPDATE tenant_memberships
                     SET membership_id = ?,
                         status = 'active',
                         can_view_user_management = 0,
                         can_operate_user_management = 0,
-                        can_view_organization_management = 0,
-                        can_operate_organization_management = 0,
+                        can_view_role_management = 0,
+                        can_operate_role_management = 0,
                         joined_at = CURRENT_TIMESTAMP(3),
                         left_at = NULL,
                         updated_at = CURRENT_TIMESTAMP(3)
@@ -10113,7 +8767,7 @@ const createMySqlAuthStore = ({
               } else if (normalizedMembershipStatus === 'disabled') {
                 await tx.query(
                   `
-                    UPDATE auth_user_tenants
+                    UPDATE tenant_memberships
                     SET status = 'active',
                         left_at = NULL,
                         updated_at = CURRENT_TIMESTAMP(3)
@@ -10131,11 +8785,11 @@ const createMySqlAuthStore = ({
                          tenant_name,
                          can_view_user_management,
                          can_operate_user_management,
-                         can_view_organization_management,
-                         can_operate_organization_management,
+                         can_view_role_management,
+                         can_operate_role_management,
                          joined_at,
                          left_at
-                  FROM auth_user_tenants
+                  FROM tenant_memberships
                   WHERE user_id = ? AND tenant_id = ?
                   LIMIT 1
                   FOR UPDATE
@@ -10170,7 +8824,7 @@ const createMySqlAuthStore = ({
 
             const ownerSwitchResult = await tx.query(
               `
-                UPDATE orgs
+                UPDATE tenants
                 SET owner_user_id = ?,
                     updated_at = CURRENT_TIMESTAMP(3)
                 WHERE BINARY id = ?
@@ -10204,7 +8858,7 @@ const createMySqlAuthStore = ({
             }
             await tx.query(
               `
-                DELETE FROM auth_tenant_membership_roles
+                DELETE FROM tenant_membership_roles
                 WHERE membership_id = ?
               `,
               [resolvedMembershipId]
@@ -10212,7 +8866,7 @@ const createMySqlAuthStore = ({
             for (const roleId of nextRoleIds) {
               await tx.query(
                 `
-                  INSERT INTO auth_tenant_membership_roles (
+                  INSERT INTO tenant_membership_roles (
                     membership_id,
                     role_id,
                     created_by_user_id,
@@ -10346,7 +9000,7 @@ const createMySqlAuthStore = ({
             const orgRows = await tx.query(
               `
                 SELECT id, status, owner_user_id
-                FROM orgs
+                FROM tenants
                 WHERE BINARY id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -10367,7 +9021,7 @@ const createMySqlAuthStore = ({
             if (previousStatus !== normalizedNextStatus) {
               const updateResult = await tx.query(
                 `
-                  UPDATE orgs
+                  UPDATE tenants
                   SET status = ?,
                       updated_at = CURRENT_TIMESTAMP(3)
                   WHERE BINARY id = ? AND status <> ?
@@ -10379,35 +9033,13 @@ const createMySqlAuthStore = ({
               }
 
               if (normalizedNextStatus === 'disabled') {
-                const membershipRows = await tx.query(
-                  `
-                    SELECT DISTINCT user_id
-                    FROM memberships
-                    WHERE org_id = ? AND status IN ('active', 'enabled')
-                  `,
-                  [normalizedOrgId]
-                );
-                const affectedMembershipUserIds = new Set(
-                  (Array.isArray(membershipRows) ? membershipRows : [])
-                    .map((row) => String(row?.user_id || '').trim())
-                    .filter((userId) => userId.length > 0)
-                );
-                const affectedUserIds = new Set(affectedMembershipUserIds);
-                await tx.query(
-                  `
-                    UPDATE memberships
-                    SET status = 'disabled',
-                        updated_at = CURRENT_TIMESTAMP(3)
-                    WHERE org_id = ?
-                      AND status IN ('active', 'enabled')
-                  `,
-                  [normalizedOrgId]
-                );
+                const affectedMembershipUserIds = new Set();
+                const affectedUserIds = new Set();
 
                 const tenantMembershipRows = await tx.query(
                   `
                     SELECT membership_id, user_id, status
-                    FROM auth_user_tenants
+                    FROM tenant_memberships
                     WHERE tenant_id = ?
                     FOR UPDATE
                   `,
@@ -10429,12 +9061,12 @@ const createMySqlAuthStore = ({
                 }
                 await tx.query(
                   `
-                    UPDATE auth_user_tenants
+                    UPDATE tenant_memberships
                     SET status = 'disabled',
                         can_view_user_management = 0,
                         can_operate_user_management = 0,
-                        can_view_organization_management = 0,
-                        can_operate_organization_management = 0,
+                        can_view_role_management = 0,
+                        can_operate_role_management = 0,
                         updated_at = CURRENT_TIMESTAMP(3)
                     WHERE tenant_id = ?
                       AND status IN ('active', 'enabled')
@@ -10443,7 +9075,7 @@ const createMySqlAuthStore = ({
                 );
                 const disableTenantRolesResult = await tx.query(
                   `
-                    UPDATE platform_role_catalog
+                    UPDATE platform_roles
                     SET status = 'disabled',
                         updated_by_user_id = ?,
                         updated_at = CURRENT_TIMESTAMP(3)
@@ -10456,8 +9088,8 @@ const createMySqlAuthStore = ({
                 const deleteTenantRoleBindingsResult = await tx.query(
                   `
                     DELETE amr
-                    FROM auth_tenant_membership_roles amr
-                    INNER JOIN auth_user_tenants ut
+                    FROM tenant_membership_roles amr
+                    INNER JOIN tenant_memberships ut
                       ON ut.membership_id = amr.membership_id
                     WHERE ut.tenant_id = ?
                   `,
@@ -10493,7 +9125,7 @@ const createMySqlAuthStore = ({
                   );
                   const revokeRefreshTokensResult = await tx.query(
                     `
-                      UPDATE refresh_tokens
+                      UPDATE auth_refresh_tokens
                       SET status = 'revoked',
                           updated_at = CURRENT_TIMESTAMP(3)
                       WHERE status = 'active'
@@ -10601,10 +9233,10 @@ const createMySqlAuthStore = ({
             const userRows = await tx.query(
               `
                 SELECT u.id AS user_id,
-                       da.status AS platform_status
-                FROM users u
-                LEFT JOIN auth_user_domain_access da
-                  ON da.user_id = u.id AND da.domain = 'platform'
+                       pu.status AS platform_status
+                FROM iam_users u
+                INNER JOIN platform_users pu
+                  ON pu.user_id = u.id
                 WHERE u.id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -10612,11 +9244,7 @@ const createMySqlAuthStore = ({
               [normalizedUserId]
             );
             const user = userRows?.[0] || null;
-            if (
-              !user
-              || user.platform_status === null
-              || user.platform_status === undefined
-            ) {
+            if (!user) {
               return null;
             }
 
@@ -10628,11 +9256,10 @@ const createMySqlAuthStore = ({
             if (previousStatus !== normalizedNextStatus) {
               const updateResult = await tx.query(
                 `
-                  UPDATE auth_user_domain_access
+                  UPDATE platform_users
                   SET status = ?,
                       updated_at = CURRENT_TIMESTAMP(3)
                   WHERE user_id = ?
-                    AND domain = 'platform'
                     AND status <> ?
                 `,
                 [normalizedNextStatus, normalizedUserId, normalizedNextStatus]
@@ -10656,7 +9283,7 @@ const createMySqlAuthStore = ({
                 );
                 await tx.query(
                   `
-                    UPDATE refresh_tokens
+                    UPDATE auth_refresh_tokens
                     SET status = 'revoked',
                         updated_at = CURRENT_TIMESTAMP(3)
                     WHERE status = 'active'
@@ -10739,7 +9366,7 @@ const createMySqlAuthStore = ({
             const userRows = await tx.query(
               `
                 SELECT id AS user_id, status
-                FROM users
+                FROM iam_users
                 WHERE BINARY id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -10761,7 +9388,7 @@ const createMySqlAuthStore = ({
             if (previousStatus !== 'disabled') {
               const updateUserResult = await tx.query(
                 `
-                  UPDATE users
+                  UPDATE iam_users
                   SET status = 'disabled',
                       updated_at = CURRENT_TIMESTAMP(3)
                   WHERE BINARY id = ?
@@ -10776,22 +9403,12 @@ const createMySqlAuthStore = ({
 
             await tx.query(
               `
-                UPDATE memberships
-                SET status = 'disabled',
-                    updated_at = CURRENT_TIMESTAMP(3)
-                WHERE user_id = ?
-                  AND status IN ('active', 'enabled')
-              `,
-              [normalizedUserId]
-            );
-            await tx.query(
-              `
-                UPDATE auth_user_tenants
+                UPDATE tenant_memberships
                 SET status = 'disabled',
                     can_view_user_management = 0,
                     can_operate_user_management = 0,
-                    can_view_organization_management = 0,
-                    can_operate_organization_management = 0,
+                    can_view_role_management = 0,
+                    can_operate_role_management = 0,
                     updated_at = CURRENT_TIMESTAMP(3)
                 WHERE user_id = ?
                   AND status IN ('active', 'enabled')
@@ -10800,7 +9417,17 @@ const createMySqlAuthStore = ({
             );
             await tx.query(
               `
-                UPDATE auth_user_platform_roles
+                UPDATE platform_user_roles
+                SET status = 'disabled',
+                    updated_at = CURRENT_TIMESTAMP(3)
+                WHERE user_id = ?
+                  AND status IN ('active', 'enabled')
+              `,
+              [normalizedUserId]
+            );
+            await tx.query(
+              `
+                UPDATE platform_users
                 SET status = 'disabled',
                     updated_at = CURRENT_TIMESTAMP(3)
                 WHERE user_id = ?
@@ -10811,8 +9438,8 @@ const createMySqlAuthStore = ({
             await tx.query(
               `
                 DELETE amr
-                FROM auth_tenant_membership_roles amr
-                INNER JOIN auth_user_tenants ut
+                FROM tenant_membership_roles amr
+                INNER JOIN tenant_memberships ut
                   ON ut.membership_id = amr.membership_id
                 WHERE ut.user_id = ?
               `,
@@ -10834,7 +9461,7 @@ const createMySqlAuthStore = ({
 
             const revokeRefreshTokensResult = await tx.query(
               `
-                UPDATE refresh_tokens
+                UPDATE auth_refresh_tokens
                 SET status = 'revoked',
                     updated_at = CURRENT_TIMESTAMP(3)
                 WHERE user_id = ?
@@ -10844,15 +9471,6 @@ const createMySqlAuthStore = ({
             );
             revokedRefreshTokenCount = Number(
               revokeRefreshTokensResult?.affectedRows || 0
-            );
-
-            await tx.query(
-              `
-                DELETE FROM auth_user_domain_access
-                WHERE user_id = ?
-                  AND domain IN ('platform', 'tenant')
-              `,
-              [normalizedUserId]
             );
 
             let auditRecorded = false;
@@ -10916,7 +9534,7 @@ const createMySqlAuthStore = ({
           dbClient.inTransaction(async (tx) => {
             await tx.query(
               `
-                DELETE FROM refresh_tokens
+                DELETE FROM auth_refresh_tokens
                 WHERE user_id = ?
               `,
               [normalizedUserId]
@@ -10930,28 +9548,28 @@ const createMySqlAuthStore = ({
             );
             await tx.query(
               `
-                DELETE FROM auth_user_platform_roles
+                DELETE FROM platform_user_roles
                 WHERE user_id = ?
               `,
               [normalizedUserId]
             );
             await tx.query(
               `
-                DELETE FROM auth_user_domain_access
+                DELETE FROM platform_users
                 WHERE user_id = ?
               `,
               [normalizedUserId]
             );
             await tx.query(
               `
-                DELETE FROM auth_user_tenants
+                DELETE FROM tenant_memberships
                 WHERE user_id = ?
               `,
               [normalizedUserId]
             );
             const result = await tx.query(
               `
-                DELETE FROM users
+                DELETE FROM iam_users
                 WHERE id = ?
               `,
               [normalizedUserId]
@@ -10978,7 +9596,7 @@ const createMySqlAuthStore = ({
             const userRows = await tx.query(
               `
                 SELECT id
-                FROM users
+                FROM iam_users
                 WHERE id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -11000,11 +9618,11 @@ const createMySqlAuthStore = ({
                        department_name,
                        can_view_user_management,
                        can_operate_user_management,
-                       can_view_organization_management,
-                       can_operate_organization_management,
+                       can_view_role_management,
+                       can_operate_role_management,
                        joined_at,
                        left_at
-                FROM auth_user_tenants
+                FROM tenant_memberships
                 WHERE user_id = ? AND tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -11018,7 +9636,7 @@ const createMySqlAuthStore = ({
               try {
                 result = await tx.query(
                   `
-                    INSERT INTO auth_user_tenants (
+                    INSERT INTO tenant_memberships (
                       membership_id,
                       user_id,
                       tenant_id,
@@ -11072,7 +9690,7 @@ const createMySqlAuthStore = ({
 
             await tx.query(
               `
-                DELETE FROM auth_tenant_membership_roles
+                DELETE FROM tenant_membership_roles
                 WHERE membership_id = ?
               `,
               [previousMembershipId]
@@ -11081,14 +9699,14 @@ const createMySqlAuthStore = ({
             const nextMembershipId = randomUUID();
             const updateResult = await tx.query(
               `
-                UPDATE auth_user_tenants
+                UPDATE tenant_memberships
                 SET membership_id = ?,
                     tenant_name = ?,
                     status = 'active',
                     can_view_user_management = 0,
                     can_operate_user_management = 0,
-                    can_view_organization_management = 0,
-                    can_operate_organization_management = 0,
+                    can_view_role_management = 0,
+                    can_operate_role_management = 0,
                     joined_at = CURRENT_TIMESTAMP(3),
                     left_at = NULL,
                     updated_at = CURRENT_TIMESTAMP(3)
@@ -11114,7 +9732,7 @@ const createMySqlAuthStore = ({
       }
       const result = await dbClient.query(
         `
-          DELETE FROM auth_user_tenants
+          DELETE FROM tenant_memberships
           WHERE user_id = ? AND tenant_id = ?
         `,
         [normalizedUserId, normalizedTenantId]
@@ -11127,298 +9745,42 @@ const createMySqlAuthStore = ({
       if (!normalizedUserId) {
         return { removed: false };
       }
-      const result = await runTenantMembershipQuery({
-        sqlWithOrgGuard: `
-          DELETE FROM auth_user_domain_access
-          WHERE user_id = ?
-            AND domain = 'tenant'
-            AND NOT EXISTS (
-                SELECT 1
-              FROM auth_user_tenants ut
-              LEFT JOIN orgs o ON o.id = ut.tenant_id
-              WHERE ut.user_id = ?
-                AND ut.status IN ('active', 'enabled')
-                AND o.status IN ('active', 'enabled')
-            )
-        `,
-        sqlWithoutOrgGuard: `
-          DELETE FROM auth_user_domain_access
-          WHERE user_id = ?
-            AND domain = 'tenant'
-            AND NOT EXISTS (
-              SELECT 1
-              FROM auth_user_tenants ut
-              WHERE ut.user_id = ?
-                AND ut.status IN ('active', 'enabled')
-            )
-        `,
-        params: [normalizedUserId, normalizedUserId]
-      });
-      return { removed: Number(result?.affectedRows || 0) > 0 };
-    },
-
-    createSession: async ({
-      sessionId,
-      userId,
-      sessionVersion,
-      entryDomain = 'platform',
-      activeTenantId = null
-    }) => {
-      await dbClient.query(
-        `
-          INSERT INTO auth_sessions (session_id, user_id, session_version, entry_domain, active_tenant_id, status)
-          VALUES (?, ?, ?, ?, ?, 'active')
-        `,
-        [
-          sessionId,
-          String(userId),
-          Number(sessionVersion),
-          String(entryDomain || 'platform').toLowerCase(),
-          activeTenantId ? String(activeTenantId) : null
-        ]
-      );
-    },
-
-    findSessionById: async (sessionId) => {
-      const rows = await dbClient.query(
-        `
-          SELECT session_id, user_id, session_version, entry_domain, active_tenant_id, status, revoked_reason
-          FROM auth_sessions
-          WHERE session_id = ?
-          LIMIT 1
-        `,
-        [sessionId]
-      );
-      return toSessionRecord(rows[0]);
-    },
-
-    updateSessionContext: async ({ sessionId, entryDomain, activeTenantId }) => {
-      await dbClient.query(
-        `
-          UPDATE auth_sessions
-          SET entry_domain = COALESCE(?, entry_domain),
-              active_tenant_id = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE session_id = ?
-        `,
-        [
-          entryDomain === undefined ? null : String(entryDomain || 'platform').toLowerCase(),
-          activeTenantId ? String(activeTenantId) : null,
-          String(sessionId)
-        ]
-      );
-      return true;
-    },
-
-    findDomainAccessByUserId: async (userId) => {
-      const normalizedUserId = String(userId);
-      try {
-        const rows = await dbClient.query(
-          `
-            SELECT domain, status
-            FROM auth_user_domain_access
-            WHERE user_id = ?
-          `,
-          [normalizedUserId]
-        );
-
-        const domainRows = Array.isArray(rows) ? rows : [];
-        const activeDomains = new Set();
-        let hasAnyTenantDomainRecord = false;
-        for (const row of domainRows) {
-          const domain = String(row?.domain || '').trim().toLowerCase();
-          if (!domain) {
-            continue;
-          }
-          if (domain === 'tenant') {
-            hasAnyTenantDomainRecord = true;
-          }
-          const status = row?.status;
-          if (isActiveLikeStatus(status)) {
-            activeDomains.add(domain);
-          }
-        }
-
-        let tenantFromMembership = false;
-        if (!activeDomains.has('tenant') && !hasAnyTenantDomainRecord) {
-          const tenantRows = await runTenantMembershipQuery({
-            sqlWithOrgGuard: `
-              SELECT COUNT(*) AS tenant_count
-              FROM auth_user_tenants ut
-              LEFT JOIN orgs o ON o.id = ut.tenant_id
-              WHERE ut.user_id = ?
-                AND ut.status IN ('active', 'enabled')
-                AND o.status IN ('active', 'enabled')
-            `,
-            sqlWithoutOrgGuard: `
-              SELECT COUNT(*) AS tenant_count
-              FROM auth_user_tenants ut
-              WHERE ut.user_id = ?
-                AND ut.status IN ('active', 'enabled')
-            `,
-            params: [normalizedUserId]
-          });
-          const tenantCount = Number(tenantRows?.[0]?.tenant_count || 0);
-          tenantFromMembership = tenantCount > 0;
-        }
-
-        return {
-          platform: activeDomains.has('platform'),
-          tenant: activeDomains.has('tenant') || tenantFromMembership
-        };
-      } catch (error) {
-        throw error;
-      }
-    },
-
-    ensureDefaultDomainAccessForUser: async (userId) => {
-      const normalizedUserId = String(userId);
-      const result = await dbClient.query(
-        `
-          INSERT IGNORE INTO auth_user_domain_access (user_id, domain, status)
-          VALUES (?, 'platform', 'active')
-        `,
-        [normalizedUserId]
-      );
-
-      return { inserted: Number(result?.affectedRows || 0) > 0 };
-    },
-
-    ensureTenantDomainAccessForUser: async (userId) => {
-      const normalizedUserId = String(userId);
       const tenantCountRows = await runTenantMembershipQuery({
         sqlWithOrgGuard: `
           SELECT COUNT(*) AS tenant_count
-          FROM auth_user_tenants ut
-          LEFT JOIN orgs o ON o.id = ut.tenant_id
+          FROM tenant_memberships ut
+          LEFT JOIN tenants o ON o.id = ut.tenant_id
           WHERE ut.user_id = ?
             AND ut.status IN ('active', 'enabled')
             AND o.status IN ('active', 'enabled')
         `,
         sqlWithoutOrgGuard: `
           SELECT COUNT(*) AS tenant_count
-          FROM auth_user_tenants ut
+          FROM tenant_memberships ut
           WHERE ut.user_id = ?
             AND ut.status IN ('active', 'enabled')
         `,
         params: [normalizedUserId]
       });
       const tenantCount = Number(tenantCountRows?.[0]?.tenant_count || 0);
-      if (tenantCount <= 0) {
-        return { inserted: false };
-      }
-
-      const result = await dbClient.query(
-        `
-          INSERT INTO auth_user_domain_access (user_id, domain, status)
-          VALUES (?, 'tenant', 'active')
-          ON DUPLICATE KEY UPDATE
-            status = CASE
-              WHEN status IN ('active', 'enabled') THEN status
-              ELSE 'active'
-            END,
-            updated_at = CASE
-              WHEN status IN ('active', 'enabled') THEN updated_at
-              ELSE CURRENT_TIMESTAMP(3)
-            END
-        `,
-        [normalizedUserId]
-      );
-      return { inserted: Number(result?.affectedRows || 0) > 0 };
+      return { removed: tenantCount <= 0 };
     },
 
-    findTenantPermissionByUserAndTenantId: async ({ userId, tenantId }) => {
-      const normalizedUserId = String(userId);
-      const normalizedTenantId = String(tenantId || '').trim();
-      if (!normalizedTenantId) {
-        return null;
-      }
+    createSession: repositoryMethods.createSession,
 
-      try {
-        const rows = await runTenantMembershipQuery({
-          sqlWithOrgGuard: `
-            SELECT tenant_id,
-                   tenant_name,
-                   can_view_user_management,
-                   can_operate_user_management,
-                   can_view_organization_management,
-                   can_operate_organization_management
-            FROM auth_user_tenants ut
-            LEFT JOIN orgs o ON o.id = ut.tenant_id
-            WHERE ut.user_id = ?
-              AND ut.tenant_id = ?
-              AND ut.status IN ('active', 'enabled')
-              AND o.status IN ('active', 'enabled')
-            LIMIT 1
-          `,
-          sqlWithoutOrgGuard: `
-            SELECT tenant_id,
-                   tenant_name,
-                   can_view_user_management,
-                   can_operate_user_management,
-                   can_view_organization_management,
-                   can_operate_organization_management
-            FROM auth_user_tenants ut
-            WHERE ut.user_id = ?
-              AND ut.tenant_id = ?
-              AND ut.status IN ('active', 'enabled')
-            LIMIT 1
-          `,
-          params: [normalizedUserId, normalizedTenantId]
-        });
-        const row = rows?.[0];
-        if (!row) {
-          return null;
-        }
-        return {
-          scopeLabel: `组织权限（${String(row.tenant_name || normalizedTenantId)}）`,
-          canViewUserManagement: toBoolean(row.can_view_user_management),
-          canOperateUserManagement: toBoolean(row.can_operate_user_management),
-          canViewRoleManagement: toBoolean(
-            row.can_view_role_management ?? row.can_view_organization_management
-          ),
-          canOperateRoleManagement: toBoolean(
-            row.can_operate_role_management ?? row.can_operate_organization_management
-          )
-        };
-      } catch (error) {
-        throw error;
-      }
-    },
+    findSessionById: repositoryMethods.findSessionById,
 
-    listTenantOptionsByUserId: async (userId) => {
-      const normalizedUserId = String(userId);
-      try {
-        const rows = await runTenantMembershipQuery({
-          sqlWithOrgGuard: `
-            SELECT tenant_id, tenant_name
-            FROM auth_user_tenants ut
-            LEFT JOIN orgs o ON o.id = ut.tenant_id
-            WHERE ut.user_id = ?
-              AND ut.status IN ('active', 'enabled')
-              AND o.status IN ('active', 'enabled')
-            ORDER BY tenant_id ASC
-          `,
-          sqlWithoutOrgGuard: `
-            SELECT tenant_id, tenant_name
-            FROM auth_user_tenants ut
-            WHERE ut.user_id = ?
-              AND ut.status IN ('active', 'enabled')
-            ORDER BY tenant_id ASC
-          `,
-          params: [normalizedUserId]
-        });
+    updateSessionContext: repositoryMethods.updateSessionContext,
 
-        return (Array.isArray(rows) ? rows : [])
-          .map((row) => ({
-            tenantId: String(row.tenant_id || '').trim(),
-            tenantName: row.tenant_name ? String(row.tenant_name) : null
-          }))
-          .filter((row) => row.tenantId.length > 0);
-      } catch (error) {
-        throw error;
-      }
-    },
+    findDomainAccessByUserId: repositoryMethods.findDomainAccessByUserId,
+
+    ensureDefaultDomainAccessForUser: repositoryMethods.ensureDefaultDomainAccessForUser,
+
+    ensureTenantDomainAccessForUser: repositoryMethods.ensureTenantDomainAccessForUser,
+
+    findTenantPermissionByUserAndTenantId: repositoryMethods.findTenantPermissionByUserAndTenantId,
+
+    listTenantOptionsByUserId: repositoryMethods.listTenantOptionsByUserId,
 
     findTenantMembershipByUserAndTenantId: async ({ userId, tenantId }) => {
       const normalizedUserId = String(userId || '').trim();
@@ -11438,8 +9800,8 @@ const createMySqlAuthStore = ({
                  ut.joined_at,
                  ut.left_at,
                  u.phone
-          FROM auth_user_tenants ut
-          LEFT JOIN users u ON u.id = ut.user_id
+          FROM tenant_memberships ut
+          LEFT JOIN iam_users u ON u.id = ut.user_id
           WHERE ut.user_id = ? AND ut.tenant_id = ?
           LIMIT 1
         `,
@@ -11486,8 +9848,8 @@ const createMySqlAuthStore = ({
                  ut.joined_at,
                  ut.left_at,
                  u.phone
-          FROM auth_user_tenants ut
-          LEFT JOIN users u ON u.id = ut.user_id
+          FROM tenant_memberships ut
+          LEFT JOIN iam_users u ON u.id = ut.user_id
           WHERE ut.membership_id = ? AND ut.tenant_id = ?
           LIMIT 1
         `,
@@ -11525,8 +9887,8 @@ const createMySqlAuthStore = ({
       const rows = await dbClient.query(
         `
           SELECT mr.role_id
-          FROM auth_tenant_membership_roles mr
-          JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id
+          FROM tenant_membership_roles mr
+          JOIN tenant_memberships ut ON ut.membership_id = mr.membership_id
           WHERE mr.membership_id = ?
             AND ut.tenant_id = ?
           ORDER BY mr.role_id ASC
@@ -11577,7 +9939,7 @@ const createMySqlAuthStore = ({
                        user_id,
                        tenant_id,
                        status
-                FROM auth_user_tenants
+                FROM tenant_memberships
                 WHERE membership_id = ? AND tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -11611,7 +9973,7 @@ const createMySqlAuthStore = ({
               const roleRows = await tx.query(
                 `
                   SELECT role_id, status, scope, tenant_id
-                  FROM platform_role_catalog
+                  FROM platform_roles
                   WHERE role_id IN (${rolePlaceholders})
                   FOR UPDATE
                 `,
@@ -11662,7 +10024,7 @@ const createMySqlAuthStore = ({
 
             await tx.query(
               `
-                DELETE FROM auth_tenant_membership_roles
+                DELETE FROM tenant_membership_roles
                 WHERE membership_id = ?
               `,
               [normalizedMembershipId]
@@ -11671,7 +10033,7 @@ const createMySqlAuthStore = ({
             for (const roleId of normalizedRoleIds) {
               await tx.query(
                 `
-                  INSERT INTO auth_tenant_membership_roles (
+                  INSERT INTO tenant_membership_roles (
                     membership_id,
                     role_id,
                     created_by_user_id,
@@ -11780,8 +10142,8 @@ const createMySqlAuthStore = ({
                  ut.joined_at,
                  ut.left_at,
                  u.phone
-          FROM auth_user_tenants ut
-          LEFT JOIN users u ON u.id = ut.user_id
+          FROM tenant_memberships ut
+          LEFT JOIN iam_users u ON u.id = ut.user_id
           WHERE ut.tenant_id = ?
           ORDER BY ut.joined_at DESC, ut.membership_id DESC
           LIMIT ? OFFSET ?
@@ -11855,8 +10217,8 @@ const createMySqlAuthStore = ({
                 SELECT ut.membership_id,
                        ut.department_name,
                        u.phone
-                FROM auth_user_tenants ut
-                LEFT JOIN users u ON u.id = ut.user_id
+                FROM tenant_memberships ut
+                LEFT JOIN iam_users u ON u.id = ut.user_id
                 WHERE ut.membership_id = ? AND ut.tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -11892,7 +10254,7 @@ const createMySqlAuthStore = ({
 
             const updateResult = await tx.query(
               `
-                UPDATE auth_user_tenants
+                UPDATE tenant_memberships
                 SET display_name = ?,
                     department_name = CASE
                       WHEN ? = 1 THEN ?
@@ -11925,8 +10287,8 @@ const createMySqlAuthStore = ({
                        ut.joined_at,
                        ut.left_at,
                        u.phone
-                FROM auth_user_tenants ut
-                LEFT JOIN users u ON u.id = ut.user_id
+                FROM tenant_memberships ut
+                LEFT JOIN iam_users u ON u.id = ut.user_id
                 WHERE ut.membership_id = ? AND ut.tenant_id = ?
                 LIMIT 1
               `,
@@ -12015,11 +10377,11 @@ const createMySqlAuthStore = ({
                        status,
                        can_view_user_management,
                        can_operate_user_management,
-                       can_view_organization_management,
-                       can_operate_organization_management,
+                       can_view_role_management,
+                       can_operate_role_management,
                        joined_at,
                        left_at
-                FROM auth_user_tenants
+                FROM tenant_memberships
                 WHERE membership_id = ? AND tenant_id = ?
                 LIMIT 1
                 FOR UPDATE
@@ -12048,7 +10410,7 @@ const createMySqlAuthStore = ({
                 });
                 await tx.query(
                   `
-                    DELETE FROM auth_tenant_membership_roles
+                    DELETE FROM tenant_membership_roles
                     WHERE membership_id = ?
                   `,
                   [normalizedMembershipId]
@@ -12056,13 +10418,13 @@ const createMySqlAuthStore = ({
                 finalMembershipId = randomUUID();
                 await tx.query(
                   `
-                    UPDATE auth_user_tenants
+                    UPDATE tenant_memberships
                     SET membership_id = ?,
                         status = 'active',
                         can_view_user_management = 0,
                         can_operate_user_management = 0,
-                        can_view_organization_management = 0,
-                        can_operate_organization_management = 0,
+                        can_view_role_management = 0,
+                        can_operate_role_management = 0,
                         left_at = NULL,
                         joined_at = CURRENT_TIMESTAMP(3),
                         updated_at = CURRENT_TIMESTAMP(3)
@@ -12080,7 +10442,7 @@ const createMySqlAuthStore = ({
                   });
                   await tx.query(
                     `
-                      DELETE FROM auth_tenant_membership_roles
+                      DELETE FROM tenant_membership_roles
                       WHERE membership_id = ?
                     `,
                     [finalMembershipId]
@@ -12088,12 +10450,12 @@ const createMySqlAuthStore = ({
                 }
                 await tx.query(
                   `
-                    UPDATE auth_user_tenants
+                    UPDATE tenant_memberships
                     SET status = ?,
                         can_view_user_management = CASE WHEN ? = 'left' THEN 0 ELSE can_view_user_management END,
                         can_operate_user_management = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_user_management END,
-                        can_view_organization_management = CASE WHEN ? = 'left' THEN 0 ELSE can_view_organization_management END,
-                        can_operate_organization_management = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_organization_management END,
+                        can_view_role_management = CASE WHEN ? = 'left' THEN 0 ELSE can_view_role_management END,
+                        can_operate_role_management = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_role_management END,
                         left_at = CASE
                           WHEN ? = 'left' THEN CURRENT_TIMESTAMP(3)
                           WHEN ? = 'active' THEN NULL
@@ -12148,7 +10510,7 @@ const createMySqlAuthStore = ({
                 );
                 await tx.query(
                   `
-                    UPDATE refresh_tokens
+                    UPDATE auth_refresh_tokens
                     SET status = 'revoked',
                         updated_at = CURRENT_TIMESTAMP(3)
                     WHERE status = 'active'
@@ -12222,149 +10584,13 @@ const createMySqlAuthStore = ({
         }
       }),
 
-    hasAnyTenantRelationshipByUserId: async (userId) => {
-      const normalizedUserId = String(userId);
-      const rows = await dbClient.query(
-        `
-          SELECT COUNT(*) AS tenant_count
-          FROM auth_user_tenants
-          WHERE user_id = ?
-        `,
-        [normalizedUserId]
-      );
-      return Number(rows?.[0]?.tenant_count || 0) > 0;
-    },
+    hasAnyTenantRelationshipByUserId: repositoryMethods.hasAnyTenantRelationshipByUserId,
 
-    findPlatformPermissionByUserId: async ({ userId }) => {
-      const normalizedUserId = String(userId || '').trim();
-      if (!normalizedUserId) {
-        return null;
-      }
+    findPlatformPermissionByUserId: repositoryMethods.findPlatformPermissionByUserId,
 
-      try {
-        const rows = await dbClient.query(
-          `
-            SELECT status,
-                   can_view_user_management,
-                   can_operate_user_management,
-                   can_view_organization_management,
-                   can_operate_organization_management
-            FROM auth_user_domain_access
-            WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-            LIMIT 1
-          `,
-          [normalizedUserId]
-        );
-        const row = rows?.[0];
-        if (!row) {
-          return null;
-        }
+    hasPlatformPermissionByUserId: repositoryMethods.hasPlatformPermissionByUserId,
 
-        const hasPermissionSnapshot =
-          Object.prototype.hasOwnProperty.call(row, 'can_view_user_management')
-          || Object.prototype.hasOwnProperty.call(row, 'can_operate_user_management')
-          || Object.prototype.hasOwnProperty.call(row, 'can_view_organization_management')
-          || Object.prototype.hasOwnProperty.call(row, 'can_operate_organization_management')
-          || Object.prototype.hasOwnProperty.call(row, 'canViewUserManagement')
-          || Object.prototype.hasOwnProperty.call(row, 'canOperateUserManagement')
-          || Object.prototype.hasOwnProperty.call(row, 'canViewOrganizationManagement')
-          || Object.prototype.hasOwnProperty.call(row, 'canOperateOrganizationManagement');
-        if (!hasPermissionSnapshot) {
-          return null;
-        }
-
-        return {
-          scopeLabel: '平台权限（服务端快照）',
-          canViewUserManagement: toBoolean(
-            row.can_view_user_management ?? row.canViewUserManagement
-          ),
-          canOperateUserManagement: toBoolean(
-            row.can_operate_user_management ?? row.canOperateUserManagement
-          ),
-          canViewOrganizationManagement: toBoolean(row.can_view_organization_management ?? row.canViewOrganizationManagement),
-          canOperateOrganizationManagement: toBoolean(
-            row.can_operate_organization_management ?? row.canOperateOrganizationManagement
-          )
-        };
-      } catch (error) {
-        throw error;
-      }
-    },
-
-    hasPlatformPermissionByUserId: async ({
-      userId,
-      permissionCode
-    } = {}) => {
-      const normalizedUserId = String(userId || '').trim();
-      const normalizedPermissionCode = toPlatformPermissionCodeKey(permissionCode);
-      if (
-        !normalizedUserId
-        || !PLATFORM_ROLE_MANAGEMENT_PERMISSION_CODE_SET.has(normalizedPermissionCode)
-      ) {
-        return {
-          canViewRoleManagement: false,
-          canOperateRoleManagement: false,
-          granted: false
-        };
-      }
-
-      const rows = await dbClient.query(
-        `
-          SELECT MAX(
-                   CASE
-                     WHEN prg.permission_code = ? THEN 1
-                     ELSE 0
-                   END
-                 ) AS can_view_role_management,
-                 MAX(
-                   CASE
-                     WHEN prg.permission_code = ? THEN 1
-                     ELSE 0
-                   END
-                 ) AS can_operate_role_management
-          FROM auth_user_platform_roles upr
-          INNER JOIN platform_role_catalog prc
-            ON prc.role_id = upr.role_id
-           AND prc.scope = 'platform'
-           AND prc.tenant_id = ''
-           AND prc.status IN ('active', 'enabled')
-          LEFT JOIN platform_role_permission_grants prg
-            ON prg.role_id = upr.role_id
-           AND prg.permission_code IN (?, ?)
-          WHERE upr.user_id = ?
-            AND upr.status IN ('active', 'enabled')
-        `,
-        [
-          PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
-          PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
-          PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
-          PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
-          normalizedUserId
-        ]
-      );
-      const row = rows?.[0] || null;
-      const canOperateRoleManagement = toBoolean(row?.can_operate_role_management);
-      const canViewRoleManagement =
-        canOperateRoleManagement || toBoolean(row?.can_view_role_management);
-      const granted =
-        normalizedPermissionCode === PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
-          ? canOperateRoleManagement
-          : canViewRoleManagement;
-      return {
-        canViewRoleManagement,
-        canOperateRoleManagement,
-        granted
-      };
-    },
-
-    syncPlatformPermissionSnapshotByUserId: async ({
-      userId,
-      forceWhenNoRoleFacts = false
-    }) =>
-      syncPlatformPermissionSnapshotByUserId({
-        userId,
-        forceWhenNoRoleFacts
-      }),
+    syncPlatformPermissionSnapshotByUserId: repositoryMethods.syncPlatformPermissionSnapshotByUserId,
 
     replacePlatformRolesAndSyncSnapshot: async ({ userId, roles = [] }) =>
       replacePlatformRolesAndSyncSnapshot({
@@ -12389,196 +10615,25 @@ const createMySqlAuthStore = ({
         })
       ),
 
-    revokeSession: async ({ sessionId, reason }) => {
-      await dbClient.query(
-        `
-          UPDATE auth_sessions
-          SET status = 'revoked',
-              revoked_reason = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE session_id = ? AND status = 'active'
-        `,
-        [reason || null, sessionId]
-      );
+    revokeSession: repositoryMethods.revokeSession,
 
-      await dbClient.query(
-        `
-          UPDATE refresh_tokens
-          SET status = 'revoked',
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE session_id = ? AND status = 'active'
-        `,
-        [sessionId]
-      );
-    },
+    revokeAllUserSessions: repositoryMethods.revokeAllUserSessions,
 
-    revokeAllUserSessions: async ({ userId, reason }) => {
-      await dbClient.query(
-        `
-          UPDATE auth_sessions
-          SET status = 'revoked',
-              revoked_reason = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE user_id = ? AND status = 'active'
-        `,
-        [reason || null, String(userId)]
-      );
+    createRefreshToken: repositoryMethods.createRefreshToken,
 
-      await dbClient.query(
-        `
-          UPDATE refresh_tokens
-          SET status = 'revoked',
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE user_id = ? AND status = 'active'
-        `,
-        [String(userId)]
-      );
-    },
+    findRefreshTokenByHash: repositoryMethods.findRefreshTokenByHash,
 
-    createRefreshToken: async ({ tokenHash, sessionId, userId, expiresAt }) => {
-      await dbClient.query(
-        `
-          INSERT INTO refresh_tokens (token_hash, session_id, user_id, status, expires_at)
-          VALUES (?, ?, ?, 'active', FROM_UNIXTIME(? / 1000.0))
-        `,
-        [tokenHash, sessionId, String(userId), Number(expiresAt)]
-      );
-    },
+    markRefreshTokenStatus: repositoryMethods.markRefreshTokenStatus,
 
-    findRefreshTokenByHash: async (tokenHash) => {
-      const rows = await dbClient.query(
-        `
-          SELECT token_hash,
-                 session_id,
-                 user_id,
-                 status,
-                 rotated_from_token_hash,
-                 rotated_to_token_hash,
-                 CAST(ROUND(UNIX_TIMESTAMP(expires_at) * 1000) AS UNSIGNED) AS expires_at_epoch_ms
-          FROM refresh_tokens
-          WHERE token_hash = ?
-          LIMIT 1
-        `,
-        [tokenHash]
-      );
-      return toRefreshRecord(rows[0]);
-    },
+    linkRefreshRotation: repositoryMethods.linkRefreshRotation,
 
-    markRefreshTokenStatus: async ({ tokenHash, status }) => {
-      await dbClient.query(
-        `
-          UPDATE refresh_tokens
-          SET status = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE token_hash = ?
-        `,
-        [status, tokenHash]
-      );
-    },
+    rotateRefreshToken: repositoryMethods.rotateRefreshToken,
 
-    linkRefreshRotation: async ({ previousTokenHash, nextTokenHash }) => {
-      await dbClient.query(
-        `
-          UPDATE refresh_tokens
-          SET rotated_to_token_hash = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE token_hash = ?
-        `,
-        [nextTokenHash, previousTokenHash]
-      );
+    updateUserPasswordAndBumpSessionVersion:
+      repositoryMethods.updateUserPasswordAndBumpSessionVersion,
 
-      await dbClient.query(
-        `
-          UPDATE refresh_tokens
-          SET rotated_from_token_hash = ?,
-              updated_at = CURRENT_TIMESTAMP(3)
-          WHERE token_hash = ?
-        `,
-        [previousTokenHash, nextTokenHash]
-      );
-    },
-
-    rotateRefreshToken: async ({ previousTokenHash, nextTokenHash, sessionId, userId, expiresAt }) =>
-      dbClient.inTransaction(async (tx) => {
-        const normalizedSessionId = String(sessionId);
-        const normalizedUserId = String(userId);
-        const rows = await tx.query(
-          `
-            SELECT token_hash, status, session_id, user_id
-            FROM refresh_tokens
-            WHERE token_hash = ?
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [previousTokenHash]
-        );
-        const previous = rows[0];
-
-        if (
-          !previous
-          || String(previous.status).toLowerCase() !== 'active'
-          || String(previous.session_id || '') !== normalizedSessionId
-          || String(previous.user_id || '') !== normalizedUserId
-        ) {
-          return { ok: false };
-        }
-
-        const updated = await tx.query(
-          `
-            UPDATE refresh_tokens
-            SET status = 'rotated',
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE token_hash = ? AND status = 'active' AND session_id = ? AND user_id = ?
-          `,
-          [previousTokenHash, normalizedSessionId, normalizedUserId]
-        );
-
-        if (!updated || Number(updated.affectedRows || 0) !== 1) {
-          return { ok: false };
-        }
-
-        await tx.query(
-          `
-            INSERT INTO refresh_tokens (token_hash, session_id, user_id, status, expires_at, rotated_from_token_hash)
-            VALUES (?, ?, ?, 'active', FROM_UNIXTIME(? / 1000.0), ?)
-          `,
-          [nextTokenHash, normalizedSessionId, normalizedUserId, Number(expiresAt), previousTokenHash]
-        );
-
-        await tx.query(
-          `
-            UPDATE refresh_tokens
-            SET rotated_to_token_hash = ?,
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE token_hash = ?
-          `,
-          [nextTokenHash, previousTokenHash]
-        );
-
-        return { ok: true };
-      }),
-
-    updateUserPasswordAndBumpSessionVersion: async ({ userId, passwordHash }) =>
-      dbClient.inTransaction(async (tx) =>
-        bumpSessionVersionAndConvergeSessionsTx({
-          txClient: tx,
-          userId,
-          passwordHash,
-          reason: 'password-changed',
-          revokeRefreshTokens: false,
-          revokeAuthSessions: false
-        })),
-
-    updateUserPasswordAndRevokeSessions: async ({ userId, passwordHash, reason }) =>
-      dbClient.inTransaction(async (tx) =>
-        bumpSessionVersionAndConvergeSessionsTx({
-          txClient: tx,
-          userId,
-          passwordHash,
-          reason: reason || 'password-changed',
-          revokeRefreshTokens: true,
-          revokeAuthSessions: true
-        }))
+    updateUserPasswordAndRevokeSessions:
+      repositoryMethods.updateUserPasswordAndRevokeSessions
   };
 };
 

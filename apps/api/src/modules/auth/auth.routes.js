@@ -41,11 +41,11 @@ const toPlatformPermissionContextResponse = (permissionContext = null) => ({
   can_operate_user_management: Boolean(
     permissionContext?.canOperateUserManagement ?? permissionContext?.can_operate_user_management
   ),
-  can_view_organization_management: Boolean(
-    permissionContext?.canViewOrganizationManagement ?? permissionContext?.can_view_organization_management
+  can_view_tenant_management: Boolean(
+    permissionContext?.canViewTenantManagement ?? permissionContext?.can_view_tenant_management
   ),
-  can_operate_organization_management: Boolean(
-    permissionContext?.canOperateOrganizationManagement ?? permissionContext?.can_operate_organization_management
+  can_operate_tenant_management: Boolean(
+    permissionContext?.canOperateTenantManagement ?? permissionContext?.can_operate_tenant_management
   ),
   can_view_role_management: Boolean(
     permissionContext?.canViewRoleManagement ?? permissionContext?.can_view_role_management

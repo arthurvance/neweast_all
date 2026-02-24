@@ -20,7 +20,7 @@ const readJsonSafely = async (response) => {
   };
 };
 
-const buildIdempotencyKey = (prefix = 'ui-tenant-governance') => {
+const buildIdempotencyKey = (prefix = 'ui-tenant-management') => {
   const randomPart = Math.random().toString(16).slice(2);
   return `${prefix}-${Date.now()}-${randomPart}`;
 };
@@ -101,7 +101,7 @@ export const normalizeRoleIds = (rawRoleIds = []) => {
   return [...deduped];
 };
 
-export const createTenantGovernanceApi = ({ accessToken }) => {
+export const createTenantManagementApi = ({ accessToken }) => {
   const withToken = (options) => requestJson({ ...options, accessToken });
   const withMemberId = (membershipId) =>
     encodeURIComponent(String(membershipId || '').trim());

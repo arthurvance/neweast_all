@@ -69,8 +69,8 @@ const createRoleTemplates = (size) => {
       status: i % 5 === 0 ? 'disabled' : 'active',
       can_view_user_management: i % 2 === 0 ? 1 : 0,
       can_operate_user_management: i % 3 === 0 ? 1 : 0,
-      can_view_organization_management: i % 2 === 1 ? 1 : 0,
-      can_operate_organization_management: i % 4 === 0 ? 1 : 0
+      can_view_tenant_management: i % 2 === 1 ? 1 : 0,
+      can_operate_tenant_management: i % 4 === 0 ? 1 : 0
     });
   }
   return templates;
@@ -95,8 +95,8 @@ const pickRoles = (templates) => {
 const aggregateExpectedPermission = (roles) => {
   let canViewUserManagement = 0;
   let canOperateUserManagement = 0;
-  let canViewOrganizationManagement = 0;
-  let canOperateOrganizationManagement = 0;
+  let canViewTenantManagement = 0;
+  let canOperateTenantManagement = 0;
 
   for (const role of roles) {
     if (!role || !['active', 'enabled'].includes(String(role.status || '').toLowerCase())) {
@@ -104,15 +104,15 @@ const aggregateExpectedPermission = (roles) => {
     }
     canViewUserManagement = canViewUserManagement || Number(role.can_view_user_management ? 1 : 0);
     canOperateUserManagement = canOperateUserManagement || Number(role.can_operate_user_management ? 1 : 0);
-    canViewOrganizationManagement = canViewOrganizationManagement || Number(role.can_view_organization_management ? 1 : 0);
-    canOperateOrganizationManagement = canOperateOrganizationManagement || Number(role.can_operate_organization_management ? 1 : 0);
+    canViewTenantManagement = canViewTenantManagement || Number(role.can_view_tenant_management ? 1 : 0);
+    canOperateTenantManagement = canOperateTenantManagement || Number(role.can_operate_tenant_management ? 1 : 0);
   }
 
   return {
     can_view_user_management: canViewUserManagement,
     can_operate_user_management: canOperateUserManagement,
-    can_view_organization_management: canViewOrganizationManagement,
-    can_operate_organization_management: canOperateOrganizationManagement
+    can_view_tenant_management: canViewTenantManagement,
+    can_operate_tenant_management: canOperateTenantManagement
   };
 };
 
@@ -154,43 +154,36 @@ const executeWithDeadlockRetry = async ({ work, maxRetries = 3, retryDelayMs = 1
 const resetTargetUserData = async ({ dbClient, userId }) => {
   await dbClient.query(
     `
-      INSERT INTO auth_user_domain_access (
+      INSERT INTO platform_users (
         user_id,
-        domain,
+        name,
+        department,
         status,
-        can_view_user_management,
-        can_operate_user_management,
-        can_view_organization_management,
-        can_operate_organization_management
       )
-      VALUES (?, 'platform', 'active', 0, 0, 0, 0)
+      VALUES (?, NULL, NULL, 'active')
       ON DUPLICATE KEY UPDATE
-        status = 'active',
-        can_view_user_management = 0,
-        can_operate_user_management = 0,
-        can_view_organization_management = 0,
-        can_operate_organization_management = 0,
+        status = VALUES(status),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [userId]
   );
-  await dbClient.query('DELETE FROM auth_user_platform_roles WHERE user_id = ?', [userId]);
+  await dbClient.query('DELETE FROM platform_user_roles WHERE user_id = ?', [userId]);
 };
 
 const writeRoleFacts = async ({ dbClient, userId, roles }) => {
   await dbClient.inTransaction(async (tx) => {
-    await tx.query('DELETE FROM auth_user_platform_roles WHERE user_id = ?', [userId]);
+    await tx.query('DELETE FROM platform_user_roles WHERE user_id = ?', [userId]);
     for (const role of roles) {
       await tx.query(
         `
-          INSERT INTO auth_user_platform_roles (
+          INSERT INTO platform_user_roles (
             user_id,
             role_id,
             status,
             can_view_user_management,
             can_operate_user_management,
-            can_view_organization_management,
-            can_operate_organization_management
+            can_view_tenant_management,
+            can_operate_tenant_management
           )
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
@@ -200,8 +193,8 @@ const writeRoleFacts = async ({ dbClient, userId, roles }) => {
           role.status,
           Number(role.can_view_user_management ? 1 : 0),
           Number(role.can_operate_user_management ? 1 : 0),
-          Number(role.can_view_organization_management ? 1 : 0),
-          Number(role.can_operate_organization_management ? 1 : 0)
+          Number(role.can_view_tenant_management ? 1 : 0),
+          Number(role.can_operate_tenant_management ? 1 : 0)
         ]
       );
     }
@@ -211,13 +204,13 @@ const writeRoleFacts = async ({ dbClient, userId, roles }) => {
 const readCurrentSnapshot = async ({ dbClient, userId }) => {
   const rows = await dbClient.query(
     `
-      SELECT can_view_user_management,
-             can_operate_user_management,
-             can_view_organization_management,
-             can_operate_organization_management
-      FROM auth_user_domain_access
-      WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
-      LIMIT 1
+      SELECT COALESCE(MAX(can_view_user_management), 0) AS can_view_user_management,
+             COALESCE(MAX(can_operate_user_management), 0) AS can_operate_user_management,
+             COALESCE(MAX(can_view_tenant_management), 0) AS can_view_tenant_management,
+             COALESCE(MAX(can_operate_tenant_management), 0) AS can_operate_tenant_management
+      FROM platform_user_roles
+      WHERE user_id = ?
+        AND status IN ('active', 'enabled')
     `,
     [userId]
   );
@@ -225,8 +218,8 @@ const readCurrentSnapshot = async ({ dbClient, userId }) => {
   return {
     can_view_user_management: Number(row.can_view_user_management ? 1 : 0),
     can_operate_user_management: Number(row.can_operate_user_management ? 1 : 0),
-    can_view_organization_management: Number(row.can_view_organization_management ? 1 : 0),
-    can_operate_organization_management: Number(row.can_operate_organization_management ? 1 : 0)
+    can_view_tenant_management: Number(row.can_view_tenant_management ? 1 : 0),
+    can_operate_tenant_management: Number(row.can_operate_tenant_management ? 1 : 0)
   };
 };
 
@@ -359,8 +352,8 @@ const run = async () => {
     const consistent =
       expected.can_view_user_management === actual.can_view_user_management
       && expected.can_operate_user_management === actual.can_operate_user_management
-      && expected.can_view_organization_management === actual.can_view_organization_management
-      && expected.can_operate_organization_management === actual.can_operate_organization_management;
+      && expected.can_view_tenant_management === actual.can_view_tenant_management
+      && expected.can_operate_tenant_management === actual.can_operate_tenant_management;
 
     const durationMs = Date.now() - startedAt;
     const result = {

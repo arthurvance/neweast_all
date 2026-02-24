@@ -13,7 +13,7 @@ const createStore = (queryImpl, options = {}) => {
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE id = ?')
       && normalizedSql.includes('LIMIT 1')
       && !normalizedSql.includes('phone')
@@ -58,11 +58,21 @@ const createDeadlockError = (message = 'Deadlock found when trying to get lock')
   return error;
 };
 
-test('findDomainAccessByUserId reads active domain rows from mysql storage', async () => {
+test('findDomainAccessByUserId derives platform and tenant access from platform_users + tenant_memberships', async () => {
+  let platformLookupCount = 0;
+  let tenantCountLookup = 0;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
-      return [{ domain: 'platform' }, { domain: 'tenant' }];
+    if (
+      normalizedSql.includes('FROM platform_users pu')
+      && normalizedSql.includes('INNER JOIN iam_users u')
+    ) {
+      platformLookupCount += 1;
+      return [{ platform_status: 'active', user_status: 'active' }];
+    }
+    if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
+      tenantCountLookup += 1;
+      return [{ tenant_count: 2 }];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
@@ -70,92 +80,39 @@ test('findDomainAccessByUserId reads active domain rows from mysql storage', asy
 
   const access = await store.findDomainAccessByUserId('u-1');
   assert.deepEqual(access, { platform: true, tenant: true });
+  assert.equal(platformLookupCount, 1);
+  assert.equal(tenantCountLookup, 1);
 });
 
-test('findDomainAccessByUserId treats enabled domain rows as accessible', async () => {
+test('findDomainAccessByUserId is fail-closed when platform identity is disabled', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
-      return [
-        { domain: 'platform', status: 'enabled' },
-        { domain: 'tenant', status: 'enabled' }
-      ];
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [{ platform_status: 'disabled', user_status: 'active' }];
     }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const access = await store.findDomainAccessByUserId('u-enabled-domain');
-  assert.deepEqual(access, { platform: true, tenant: true });
-});
-
-test('findDomainAccessByUserId denies platform by default when explicit domain rows missing', async () => {
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
-      return [];
-    }
-    if (normalizedSql.includes('FROM auth_user_tenants')) {
-      return [{ tenant_count: 1 }];
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const access = await store.findDomainAccessByUserId('u-2');
-  assert.deepEqual(access, { platform: false, tenant: true });
-});
-
-test('findDomainAccessByUserId returns no domain access when explicit rows and tenant relations are missing', async () => {
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
-      return [];
-    }
-    if (normalizedSql.includes('FROM auth_user_tenants')) {
+    if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
       return [{ tenant_count: 0 }];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
-  const access = await store.findDomainAccessByUserId('u-2b');
+  const access = await store.findDomainAccessByUserId('u-2');
   assert.deepEqual(access, { platform: false, tenant: false });
 });
 
-test('findDomainAccessByUserId keeps tenant domain accessible when only platform row exists but tenant memberships are active', async () => {
-  let tenantCountSql = '';
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
-      return [{ domain: 'platform', status: 'active' }];
-    }
-    if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
-      tenantCountSql = normalizedSql;
-      return [{ tenant_count: 2 }];
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const access = await store.findDomainAccessByUserId('u-2c');
-  assert.deepEqual(access, { platform: true, tenant: true });
-  assert.doesNotMatch(tenantCountSql, /o\.id IS NULL/i);
-});
-
-test('findDomainAccessByUserId falls back to legacy tenant query when orgs table is missing', async () => {
+test('findDomainAccessByUserId falls back to legacy tenant query when tenants table is missing', async () => {
   let orgAwareCountQueryAttempts = 0;
   let legacyCountQueryAttempts = 0;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
+    if (normalizedSql.includes('FROM platform_users pu')) {
       return [];
     }
     if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
-      if (normalizedSql.includes('LEFT JOIN orgs')) {
-        assert.doesNotMatch(normalizedSql, /o\.id IS NULL/i);
+      if (normalizedSql.includes('LEFT JOIN tenants')) {
         orgAwareCountQueryAttempts += 1;
-        const error = new Error("Table 'neweast.orgs' doesn't exist");
+        const error = new Error("Table 'neweast.tenants' doesn't exist");
         error.code = 'ER_NO_SUCH_TABLE';
         error.errno = 1146;
         throw error;
@@ -175,12 +132,12 @@ test('findDomainAccessByUserId falls back to legacy tenant query when orgs table
   assert.equal(legacyCountQueryAttempts, 2);
 });
 
-test('ensureDefaultDomainAccessForUser inserts platform domain access when user has no domain rows', async () => {
+test('ensureDefaultDomainAccessForUser inserts platform_users identity row when missing', async () => {
   let insertCalled = false;
   let insertStatement = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT IGNORE INTO platform_users')) {
       insertCalled = true;
       insertStatement = normalizedSql;
       return { affectedRows: 1 };
@@ -191,18 +148,15 @@ test('ensureDefaultDomainAccessForUser inserts platform domain access when user 
 
   const result = await store.ensureDefaultDomainAccessForUser('u-new');
   assert.equal(insertCalled, true);
-  assert.equal(/INSERT\s+IGNORE\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
-  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), false);
-  assert.equal(/VALUES\s*\(\?,\s*'platform',\s*'active'\)/i.test(insertStatement), true);
+  assert.equal(/INSERT\s+IGNORE\s+INTO\s+platform_users/i.test(insertStatement), true);
+  assert.equal(/VALUES\s*\(\?,\s*NULL,\s*NULL,\s*'active'\)/i.test(insertStatement), true);
   assert.deepEqual(result, { inserted: true });
 });
 
-test('ensureDefaultDomainAccessForUser returns inserted=false when platform domain is already active', async () => {
-  let upsertCalled = false;
+test('ensureDefaultDomainAccessForUser returns inserted=false when platform identity already exists', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
-      upsertCalled = true;
+    if (normalizedSql.includes('INSERT IGNORE INTO platform_users')) {
       return { affectedRows: 0 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -210,65 +164,24 @@ test('ensureDefaultDomainAccessForUser returns inserted=false when platform doma
   });
 
   const result = await store.ensureDefaultDomainAccessForUser('u-existing');
-  assert.equal(upsertCalled, true);
   assert.deepEqual(result, { inserted: false });
 });
 
-test('ensureDefaultDomainAccessForUser does not re-enable disabled platform domain row', async () => {
-  let insertStatement = '';
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
-      insertStatement = normalizedSql;
-      // Existing disabled row keeps affectedRows=0 under INSERT IGNORE.
-      return { affectedRows: 0 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const result = await store.ensureDefaultDomainAccessForUser('u-race');
-  assert.equal(/INSERT\s+IGNORE\s+INTO\s+auth_user_domain_access/i.test(insertStatement), true);
-  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(insertStatement), false);
-  assert.deepEqual(result, { inserted: false });
-});
-
-test('ensureDefaultDomainAccessForUser insert targets platform domain only', async () => {
-  let upsertSql = '';
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT IGNORE INTO auth_user_domain_access')) {
-      upsertSql = normalizedSql;
-      return { affectedRows: 1 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const result = await store.ensureDefaultDomainAccessForUser('u-platform-only-check');
-  assert.equal(/VALUES\s*\(\?,\s*'platform',\s*'active'\)/i.test(upsertSql), true);
-  assert.deepEqual(result, { inserted: true });
-});
-
-test('ensureTenantDomainAccessForUser re-enables disabled tenant domain row when active memberships exist', async () => {
-  let upsertSql = '';
+test('ensureTenantDomainAccessForUser derives from active memberships without persistence side effects', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
       return [{ tenant_count: 1 }];
-    }
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
-      upsertSql = normalizedSql;
-      return { affectedRows: 2 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
   const result = await store.ensureTenantDomainAccessForUser('u-tenant-reactivate');
-  assert.equal(/VALUES\s*\(\?,\s*'tenant',\s*'active'\)/i.test(upsertSql), true);
-  assert.equal(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(upsertSql), true);
-  assert.deepEqual(result, { inserted: true });
+  assert.deepEqual(result, {
+    inserted: false,
+    has_active_tenant_membership: true
+  });
 });
 
 test('createUserByPhone inserts new user and returns normalized record', async () => {
@@ -278,7 +191,7 @@ test('createUserByPhone inserts new user and returns normalized record', async (
   let insertedStatus = '';
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO users')) {
+    if (normalizedSql.includes('INSERT INTO iam_users')) {
       insertedUserId = String(params?.[0] || '');
       insertedPhone = String(params?.[1] || '');
       insertedPasswordHash = String(params?.[2] || '');
@@ -323,13 +236,13 @@ test('createUserByPhone inserts new user and returns normalized record', async (
 });
 
 test('createUserByPhone returns null on duplicate phone insert race', async () => {
-  const duplicateError = new Error('Duplicate entry for users.phone');
+  const duplicateError = new Error('Duplicate entry for iam_users.phone');
   duplicateError.code = 'ER_DUP_ENTRY';
   duplicateError.errno = 1062;
 
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO users')) {
+    if (normalizedSql.includes('INSERT INTO iam_users')) {
       throw duplicateError;
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -360,7 +273,7 @@ test('deleteUserById executes delete sequence inside a single transaction', asyn
           query: async (sql) => {
             const statement = String(sql).replace(/\s+/g, ' ').trim();
             txStatements.push(statement);
-            if (statement.includes('DELETE FROM users')) {
+            if (statement.includes('DELETE FROM iam_users')) {
               return { affectedRows: 1 };
             }
             return { affectedRows: 0 };
@@ -375,12 +288,12 @@ test('deleteUserById executes delete sequence inside a single transaction', asyn
   assert.equal(inTransactionCallCount, 1);
   assert.equal(outsideQueryCallCount, 0);
   assert.equal(txStatements.length, 6);
-  assert.equal(txStatements[0].includes('DELETE FROM refresh_tokens'), true);
+  assert.equal(txStatements[0].includes('DELETE FROM auth_refresh_tokens'), true);
   assert.equal(txStatements[1].includes('DELETE FROM auth_sessions'), true);
-  assert.equal(txStatements[2].includes('DELETE FROM auth_user_platform_roles'), true);
-  assert.equal(txStatements[3].includes('DELETE FROM auth_user_domain_access'), true);
-  assert.equal(txStatements[4].includes('DELETE FROM auth_user_tenants'), true);
-  assert.equal(txStatements[5].includes('DELETE FROM users'), true);
+  assert.equal(txStatements[2].includes('DELETE FROM platform_user_roles'), true);
+  assert.equal(txStatements[3].includes('DELETE FROM platform_users'), true);
+  assert.equal(txStatements[4].includes('DELETE FROM tenant_memberships'), true);
+  assert.equal(txStatements[5].includes('DELETE FROM iam_users'), true);
 });
 
 test('deleteUserById returns deleted=false when deadlock retries are exhausted', async () => {
@@ -425,11 +338,11 @@ test('createTenantMembershipForUser inserts tenant relationship and returns crea
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
     ) {
       return [];
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+    if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
       insertSql = normalizedSql;
       return { affectedRows: 1 };
     }
@@ -442,7 +355,7 @@ test('createTenantMembershipForUser inserts tenant relationship and returns crea
     tenantId: 'tenant-1',
     tenantName: 'Tenant 1'
   });
-  assert.equal(/INSERT INTO auth_user_tenants/i.test(insertSql), true);
+  assert.equal(/INSERT INTO tenant_memberships/i.test(insertSql), true);
   assert.deepEqual(result, { created: true });
 });
 
@@ -452,11 +365,11 @@ test('createTenantMembershipForUser normalizes blank tenant name to null', async
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
     ) {
       return [];
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+    if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
       insertedTenantName = params?.[3];
       return { affectedRows: 1 };
     }
@@ -474,7 +387,7 @@ test('createTenantMembershipForUser normalizes blank tenant name to null', async
 });
 
 test('createTenantMembershipForUser returns created=false on duplicate relationship', async () => {
-  const duplicateError = new Error('Duplicate entry for auth_user_tenants');
+  const duplicateError = new Error('Duplicate entry for tenant_memberships');
   duplicateError.code = 'ER_DUP_ENTRY';
   duplicateError.errno = 1062;
   let legacyStatusLookupCount = 0;
@@ -482,16 +395,16 @@ test('createTenantMembershipForUser returns created=false on duplicate relations
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
     ) {
       return [];
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+    if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
       throw duplicateError;
     }
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
     ) {
       legacyStatusLookupCount += 1;
       return [{ status: 'active' }];
@@ -515,7 +428,7 @@ test('createTenantMembershipForUser fails closed when lifecycle columns are miss
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       lifecycleSelectAttempts += 1;
@@ -526,7 +439,7 @@ test('createTenantMembershipForUser fails closed when lifecycle columns are miss
     }
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
     ) {
       legacyStatusLookupCount += 1;
@@ -557,7 +470,7 @@ test('createTenantMembershipForUser fails closed when existing membership status
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [
@@ -569,8 +482,8 @@ test('createTenantMembershipForUser fails closed when existing membership status
           status: '',
           can_view_user_management: 0,
           can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0,
+          can_view_tenant_management: 0,
+          can_operate_tenant_management: 0,
           joined_at: null,
           left_at: null
         }
@@ -595,8 +508,8 @@ test('findTenantMembershipByUserAndTenantId does not coerce blank status to acti
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
-      normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u')
+      normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u')
     ) {
       return [
         {
@@ -628,8 +541,8 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
-      normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
     ) {
       lookupSql = normalizedSql;
@@ -658,7 +571,7 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
   });
 
   assert.ok(membership);
-  assert.match(lookupSql, /LEFT JOIN users u ON u\.id = ut\.user_id/i);
+  assert.match(lookupSql, /LEFT JOIN iam_users u ON u\.id = ut\.user_id/i);
   assert.equal(membership.membership_id, 'membership-profile-read-1');
   assert.equal(membership.user_id, 'tenant-user-profile-read-1');
   assert.equal(membership.tenant_id, 'tenant-profile-read-1');
@@ -671,8 +584,8 @@ test('findTenantMembershipByMembershipIdAndTenantId keeps raw profile fields wit
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
-      normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
     ) {
       return [
@@ -709,8 +622,8 @@ test('findTenantMembershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
-      normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
     ) {
       lookupSql = normalizedSql;
@@ -739,18 +652,18 @@ test('findTenantMembershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row
   });
 
   assert.ok(membership);
-  assert.match(lookupSql, /LEFT JOIN users u ON u\.id = ut\.user_id/i);
+  assert.match(lookupSql, /LEFT JOIN iam_users u ON u\.id = ut\.user_id/i);
   assert.equal(membership.membership_id, 'membership-profile-read-missing-user');
   assert.equal(membership.phone, '');
 });
 
-test('listTenantMembersByTenantId uses LEFT JOIN users and preserves rows with missing user profile', async () => {
+test('listTenantMembersByTenantId uses LEFT JOIN iam_users and preserves rows with missing user profile', async () => {
   let listSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
-      normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.tenant_id = ?')
       && normalizedSql.includes('ORDER BY ut.joined_at DESC')
     ) {
@@ -781,7 +694,7 @@ test('listTenantMembersByTenantId uses LEFT JOIN users and preserves rows with m
   });
 
   assert.equal(members.length, 1);
-  assert.match(listSql, /LEFT JOIN users u ON u\.id = ut\.user_id/i);
+  assert.match(listSql, /LEFT JOIN iam_users u ON u\.id = ut\.user_id/i);
   assert.equal(members[0].membership_id, 'membership-list-missing-user');
   assert.equal(members[0].phone, '');
 });
@@ -790,7 +703,7 @@ test('createTenantMembershipForUser returns created=false when user does not exi
   let insertCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+    if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
       insertCalled = true;
       return { affectedRows: 1 };
     }
@@ -806,33 +719,29 @@ test('createTenantMembershipForUser returns created=false when user does not exi
   assert.deepEqual(result, { created: false });
 });
 
-test('removeTenantDomainAccessForUser removes tenant domain only when active memberships are absent', async () => {
-  let deleteSql = '';
-  let deleteParams = [];
+test('removeTenantDomainAccessForUser returns removed=true when active memberships are absent', async () => {
+  let countSql = '';
+  let countParams = [];
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('DELETE FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'tenant'")
-    ) {
-      deleteSql = normalizedSql;
-      deleteParams = params;
-      return { affectedRows: 1 };
+    if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
+      countSql = normalizedSql;
+      countParams = params;
+      return [{ tenant_count: 0 }];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
   const result = await store.removeTenantDomainAccessForUser('u-tenant-domain-cleanup');
-  assert.equal(/NOT EXISTS/i.test(deleteSql), true);
-  assert.doesNotMatch(deleteSql, /o\.id IS NULL/i);
-  assert.deepEqual(deleteParams, ['u-tenant-domain-cleanup', 'u-tenant-domain-cleanup']);
+  assert.match(countSql, /FROM tenant_memberships/i);
+  assert.deepEqual(countParams, ['u-tenant-domain-cleanup']);
   assert.deepEqual(result, { removed: true });
 });
 
-test('findDomainAccessByUserId surfaces schema errors for missing domain access table', async () => {
+test('findDomainAccessByUserId surfaces schema errors from platform identity lookup', async () => {
   const store = createStore(async (sql) => {
-    if (String(sql).includes('FROM auth_user_domain_access')) {
+    if (String(sql).includes('FROM platform_users')) {
       const error = new Error('Table not found');
       error.code = 'ER_NO_SUCH_TABLE';
       throw error;
@@ -850,7 +759,7 @@ test('listTenantOptionsByUserId returns active tenant options from mysql storage
   let listSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_tenants')) {
+    if (normalizedSql.includes('FROM tenant_memberships')) {
       listSql = normalizedSql;
       return [
         { tenant_id: 'tenant-a', tenant_name: 'Tenant A' },
@@ -866,24 +775,24 @@ test('listTenantOptionsByUserId returns active tenant options from mysql storage
     { tenantId: 'tenant-a', tenantName: 'Tenant A' },
     { tenantId: 'tenant-b', tenantName: null }
   ]);
-  assert.match(listSql, /LEFT JOIN orgs/i);
+  assert.match(listSql, /LEFT JOIN tenants/i);
   assert.match(listSql, /o\.status IN \('active', 'enabled'\)/i);
   assert.doesNotMatch(listSql, /o\.id IS NULL/i);
 });
 
-test('listTenantOptionsByUserId falls back to legacy query when orgs table is missing', async () => {
+test('listTenantOptionsByUserId falls back to legacy query when tenants table is missing', async () => {
   let orgAwareAttempts = 0;
   let legacyAttempts = 0;
   let lastSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (!normalizedSql.includes('FROM auth_user_tenants')) {
+    if (!normalizedSql.includes('FROM tenant_memberships')) {
       assert.fail(`unexpected query: ${normalizedSql}`);
       return [];
     }
-    if (normalizedSql.includes('LEFT JOIN orgs')) {
+    if (normalizedSql.includes('LEFT JOIN tenants')) {
       orgAwareAttempts += 1;
-      const error = new Error("Table 'neweast.orgs' doesn't exist");
+      const error = new Error("Table 'neweast.tenants' doesn't exist");
       error.code = 'ER_NO_SUCH_TABLE';
       error.errno = 1146;
       throw error;
@@ -897,7 +806,7 @@ test('listTenantOptionsByUserId falls back to legacy query when orgs table is mi
   assert.deepEqual(options, [{ tenantId: 'tenant-legacy', tenantName: 'Legacy Tenant' }]);
   assert.equal(orgAwareAttempts, 1);
   assert.equal(legacyAttempts, 1);
-  assert.doesNotMatch(lastSql, /LEFT JOIN orgs/i);
+  assert.doesNotMatch(lastSql, /LEFT JOIN tenants/i);
 });
 
 test('hasAnyTenantRelationshipByUserId returns true when tenant relationships exist regardless of status', async () => {
@@ -948,8 +857,8 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
           tenant_name: 'Tenant Z',
           can_view_user_management: 1,
           can_operate_user_management: 0,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 1
+          can_view_role_management: 1,
+          can_operate_role_management: 1
         }
       ];
     }
@@ -965,19 +874,19 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
     scopeLabel: '组织权限（Tenant Z）',
     canViewUserManagement: true,
     canOperateUserManagement: false,
-    canViewOrganizationManagement: true,
-    canOperateOrganizationManagement: true
+    canViewRoleManagement: true,
+    canOperateRoleManagement: true
   });
-  assert.match(permissionSql, /LEFT JOIN orgs/i);
+  assert.match(permissionSql, /LEFT JOIN tenants/i);
   assert.match(permissionSql, /o\.status IN \('active', 'enabled'\)/i);
   assert.doesNotMatch(permissionSql, /o\.id IS NULL/i);
 });
 
-test('findPlatformPermissionByUserId is fail-closed without explicit platform permission snapshot', async () => {
+test('findPlatformPermissionByUserId is fail-closed when platform identity is unavailable', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
-      return [{ status: 'active', domain: 'platform' }];
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
@@ -987,17 +896,22 @@ test('findPlatformPermissionByUserId is fail-closed without explicit platform pe
   assert.equal(permission, null);
 });
 
-test('findPlatformPermissionByUserId reads explicit platform permission snapshot columns when available', async () => {
+test('findPlatformPermissionByUserId resolves effective permission snapshot from active role grants', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_domain_access')) {
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [{ platform_status: 'active', user_status: 'active' }];
+    }
+    if (
+      normalizedSql.includes('FROM platform_user_roles upr')
+      && normalizedSql.includes('LEFT JOIN platform_role_permission_grants prg')
+    ) {
       return [
         {
-          status: 'enabled',
-          can_view_user_management: 1,
-          can_operate_user_management: 0,
-          can_view_organization_management: '1',
-          can_operate_organization_management: false
+          permission_code: 'platform.user_management.view'
+        },
+        {
+          permission_code: 'platform.tenant_management.operate'
         }
       ];
     }
@@ -1007,11 +921,13 @@ test('findPlatformPermissionByUserId reads explicit platform permission snapshot
 
   const permission = await store.findPlatformPermissionByUserId({ userId: 'u-platform-2' });
   assert.deepEqual(permission, {
-    scopeLabel: '平台权限（服务端快照）',
+    scopeLabel: '平台权限（角色并集）',
     canViewUserManagement: true,
     canOperateUserManagement: false,
-    canViewOrganizationManagement: true,
-    canOperateOrganizationManagement: false
+    canViewTenantManagement: true,
+    canOperateTenantManagement: true,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   });
 });
 
@@ -1074,25 +990,28 @@ test('hasPlatformPermissionByUserId is fail-closed for unsupported permission co
     permissionCode: 'platform.user_management.view'
   });
   assert.deepEqual(result, {
-    canViewSystemConfig: false,
-    canOperateSystemConfig: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false,
     granted: false
   });
 });
 
-test('hasPlatformPermissionByUserId resolves system_config.view from active role grants', async () => {
+test('hasPlatformPermissionByUserId resolves role_management.view from active role grants', async () => {
   let permissionSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [{ platform_status: 'active', user_status: 'active' }];
+    }
     if (
-      normalizedSql.includes('FROM auth_user_platform_roles upr')
+      normalizedSql.includes('FROM platform_user_roles upr')
       && normalizedSql.includes('LEFT JOIN platform_role_permission_grants prg')
     ) {
       permissionSql = normalizedSql;
       return [
         {
-          can_view_system_config: 1,
-          can_operate_system_config: 0
+          can_view_role_management: 1,
+          can_operate_role_management: 0
         }
       ];
     }
@@ -1101,29 +1020,32 @@ test('hasPlatformPermissionByUserId resolves system_config.view from active role
   });
 
   const result = await store.hasPlatformPermissionByUserId({
-    userId: 'u-platform-system-config-view',
+    userId: 'u-platform-role-management-view',
     permissionCode: 'platform.role_management.view'
   });
   assert.deepEqual(result, {
-    canViewSystemConfig: true,
-    canOperateSystemConfig: false,
+    canViewRoleManagement: true,
+    canOperateRoleManagement: false,
     granted: true
   });
-  assert.match(permissionSql, /INNER JOIN platform_role_catalog prc/i);
+  assert.match(permissionSql, /INNER JOIN platform_roles prc/i);
   assert.match(permissionSql, /prc\.scope = 'platform'/i);
   assert.match(permissionSql, /prc\.tenant_id = ''/i);
   assert.match(permissionSql, /prc\.status IN \('active', 'enabled'\)/i);
   assert.match(permissionSql, /upr\.status IN \('active', 'enabled'\)/i);
 });
 
-test('hasPlatformPermissionByUserId treats system_config.operate as granting view+operate', async () => {
+test('hasPlatformPermissionByUserId treats role_management.operate as granting view+operate', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('FROM auth_user_platform_roles upr')) {
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [{ platform_status: 'active', user_status: 'active' }];
+    }
+    if (normalizedSql.includes('FROM platform_user_roles upr')) {
       return [
         {
-          can_view_system_config: 0,
-          can_operate_system_config: 1
+          can_view_role_management: 0,
+          can_operate_role_management: 1
         }
       ];
     }
@@ -1132,135 +1054,69 @@ test('hasPlatformPermissionByUserId treats system_config.operate as granting vie
   });
 
   const viewResult = await store.hasPlatformPermissionByUserId({
-    userId: 'u-platform-system-config-operate',
+    userId: 'u-platform-role-management-operate',
     permissionCode: 'platform.role_management.view'
   });
   assert.deepEqual(viewResult, {
-    canViewSystemConfig: true,
-    canOperateSystemConfig: true,
+    canViewRoleManagement: true,
+    canOperateRoleManagement: true,
     granted: true
   });
 
   const operateResult = await store.hasPlatformPermissionByUserId({
-    userId: 'u-platform-system-config-operate',
+    userId: 'u-platform-role-management-operate',
     permissionCode: 'platform.role_management.operate'
   });
   assert.deepEqual(operateResult, {
-    canViewSystemConfig: true,
-    canOperateSystemConfig: true,
+    canViewRoleManagement: true,
+    canOperateRoleManagement: true,
     granted: true
   });
 });
 
-test('syncPlatformPermissionSnapshotByUserId recalculates platform snapshot from active role facts', async () => {
-  let updateParams = null;
-  const store = createStore(async (sql, params) => {
+test('syncPlatformPermissionSnapshotByUserId returns derived snapshot for active platform identity', async () => {
+  const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [{ platform_status: 'active', user_status: 'active' }];
+    }
     if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
+      normalizedSql.includes('FROM platform_user_roles upr')
+      && normalizedSql.includes('LEFT JOIN platform_role_permission_grants prg')
     ) {
       return [
-        {
-          can_view_user_management: 0,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:00:00.000Z'
-        }
+        { permission_code: 'platform.user_management.view' },
+        { permission_code: 'platform.tenant_management.operate' }
       ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      return [{ role_count: 2, latest_role_updated_at: '2026-02-14T00:00:02.000Z' }];
-    }
-    if (normalizedSql.includes('SELECT role_id')) {
-      return [
-        {
-          role_id: 'platform-view',
-          status: 'active',
-          can_view_user_management: 1,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
-        },
-        {
-          role_id: 'platform-disabled',
-          status: 'disabled',
-          can_view_user_management: 1,
-          can_operate_user_management: 1,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 1
-        }
-      ];
-    }
-    if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-      updateParams = params;
-      return { affectedRows: 1 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
   const result = await store.syncPlatformPermissionSnapshotByUserId({
-    userId: 'u-sync-1'
+    userId: 'u-sync-derived'
   });
-  assert.equal(result.synced, true);
-  assert.deepEqual(result.permission, {
-    scopeLabel: '平台权限（角色并集）',
-    canViewUserManagement: true,
-    canOperateUserManagement: false,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false
+
+  assert.deepEqual(result, {
+    synced: false,
+    reason: 'up-to-date',
+    permission: {
+      scopeLabel: '平台权限（角色并集）',
+      canViewUserManagement: true,
+      canOperateUserManagement: false,
+      canViewTenantManagement: true,
+      canOperateTenantManagement: true,
+      canViewRoleManagement: false,
+      canOperateRoleManagement: false
+    }
   });
-  assert.deepEqual(updateParams, [
-    1,
-    0,
-    0,
-    0,
-    'u-sync-1',
-    1,
-    0,
-    0,
-    0,
-    'u-sync-1',
-    2,
-    'u-sync-1',
-    '2026-02-14T00:00:02.000Z',
-    null,
-    'u-sync-1',
-    null
-  ]);
 });
 
-test('syncPlatformPermissionSnapshotByUserId clears snapshot when role facts are empty in force mode', async () => {
-  let zeroUpdateParams = null;
-  const store = createStore(async (sql, params) => {
+test('syncPlatformPermissionSnapshotByUserId returns already-empty in force mode when platform identity is missing', async () => {
+  const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
-    ) {
-      return [
-        {
-          can_view_user_management: 1,
-          can_operate_user_management: 1,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:00:03.000Z'
-        }
-      ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      return [{ role_count: 0, latest_role_updated_at: null }];
-    }
-    if (
-      normalizedSql.includes('UPDATE auth_user_domain_access')
-      && normalizedSql.includes('SET can_view_user_management = 0')
-    ) {
-      zeroUpdateParams = params;
-      return { affectedRows: 1 };
+    if (normalizedSql.includes('FROM platform_users pu')) {
+      return [];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
@@ -1270,304 +1126,42 @@ test('syncPlatformPermissionSnapshotByUserId clears snapshot when role facts are
     userId: 'u-sync-empty',
     forceWhenNoRoleFacts: true
   });
-  assert.equal(result.synced, true);
-  assert.deepEqual(result.permission, {
-    scopeLabel: '平台权限（角色并集）',
-    canViewUserManagement: false,
-    canOperateUserManagement: false,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false
+
+  assert.deepEqual(result, {
+    synced: false,
+    reason: 'already-empty',
+    permission: {
+      scopeLabel: '平台权限（角色并集）',
+      canViewUserManagement: false,
+      canOperateUserManagement: false,
+      canViewTenantManagement: false,
+      canOperateTenantManagement: false,
+      canViewRoleManagement: false,
+      canOperateRoleManagement: false
+    }
   });
-  assert.deepEqual(zeroUpdateParams, ['u-sync-empty', 'u-sync-empty']);
 });
 
-test('syncPlatformPermissionSnapshotByUserId skips role-row loading when snapshot is already up-to-date', async () => {
-  let roleRowQueryCount = 0;
-  let updateQueryCount = 0;
+test('syncPlatformPermissionSnapshotByUserId returns no-role-facts when platform identity is missing and force mode is off', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
-    ) {
-      return [
-        {
-          can_view_user_management: 1,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:01:00.000Z'
-        }
-      ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      return [{ role_count: 1, latest_role_updated_at: '2026-02-14T00:00:10.000Z' }];
-    }
-    if (normalizedSql.includes('SELECT role_id')) {
-      roleRowQueryCount += 1;
+    if (normalizedSql.includes('FROM platform_users pu')) {
       return [];
     }
-    if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-      updateQueryCount += 1;
-      return { affectedRows: 0 };
-    }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
   });
 
   const result = await store.syncPlatformPermissionSnapshotByUserId({
-    userId: 'u-sync-up-to-date'
-  });
-  assert.equal(result.synced, false);
-  assert.equal(result.reason, 'up-to-date');
-  assert.deepEqual(result.permission, {
-    scopeLabel: '平台权限（角色并集）',
-    canViewUserManagement: true,
-    canOperateUserManagement: false,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false
-  });
-  assert.equal(roleRowQueryCount, 0);
-  assert.equal(updateQueryCount, 0);
-});
-
-test('syncPlatformPermissionSnapshotByUserId does not short-circuit when snapshot timestamp equals latest role fact timestamp', async () => {
-  let roleRowQueryCount = 0;
-  let updateQueryCount = 0;
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
-    ) {
-      return [
-        {
-          can_view_user_management: 1,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:00:10.000Z'
-        }
-      ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      return [
-        {
-          role_count: 1,
-          latest_role_updated_at: '2026-02-14T00:00:10.000Z',
-          latest_role_updated_at_key: '2026-02-14 00:00:10.000000'
-        }
-      ];
-    }
-    if (normalizedSql.includes('SELECT role_id')) {
-      roleRowQueryCount += 1;
-      return [
-        {
-          role_id: 'role-platform-admin',
-          status: 'active',
-          can_view_user_management: 1,
-          can_operate_user_management: 1,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
-        }
-      ];
-    }
-    if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-      updateQueryCount += 1;
-      return { affectedRows: 1 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
+    userId: 'u-sync-no-facts',
+    forceWhenNoRoleFacts: false
   });
 
-  const result = await store.syncPlatformPermissionSnapshotByUserId({
-    userId: 'u-sync-equal-timestamp'
+  assert.deepEqual(result, {
+    synced: false,
+    reason: 'no-role-facts',
+    permission: null
   });
-
-  assert.equal(result.synced, true);
-  assert.equal(result.reason, 'ok');
-  assert.deepEqual(result.permission, {
-    scopeLabel: '平台权限（角色并集）',
-    canViewUserManagement: true,
-    canOperateUserManagement: true,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false
-  });
-  assert.equal(roleRowQueryCount, 1);
-  assert.equal(updateQueryCount, 1);
-});
-
-test('syncPlatformPermissionSnapshotByUserId aborts zeroing when role facts change concurrently', async () => {
-  let summaryCallCount = 0;
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
-    ) {
-      return [
-        {
-          can_view_user_management: 1,
-          can_operate_user_management: 1,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:00:03.000Z'
-        }
-      ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      summaryCallCount += 1;
-      if (summaryCallCount === 1) {
-        return [{ role_count: 0, latest_role_updated_at: null }];
-      }
-      return [{ role_count: 1, latest_role_updated_at: '2026-02-14T00:00:04.000Z' }];
-    }
-    if (
-      normalizedSql.includes('UPDATE auth_user_domain_access')
-      && normalizedSql.includes('SET can_view_user_management = 0')
-    ) {
-      return { affectedRows: 0 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const result = await store.syncPlatformPermissionSnapshotByUserId({
-    userId: 'u-sync-concurrent-zero',
-    forceWhenNoRoleFacts: true
-  });
-
-  assert.equal(result.synced, false);
-  assert.equal(result.reason, 'concurrent-role-facts-update');
-  assert.equal(result.permission, null);
-  assert.equal(summaryCallCount, 2);
-});
-
-test('syncPlatformPermissionSnapshotByUserId aborts stale overwrite when role facts change concurrently', async () => {
-  let summaryCallCount = 0;
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
-    ) {
-      return [
-        {
-          can_view_user_management: 0,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:00:00.000Z'
-        }
-      ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      summaryCallCount += 1;
-      if (summaryCallCount === 1) {
-        return [{ role_count: 1, latest_role_updated_at: '2026-02-14T00:00:02.000Z' }];
-      }
-      return [{ role_count: 2, latest_role_updated_at: '2026-02-14T00:00:03.000Z' }];
-    }
-    if (normalizedSql.includes('SELECT role_id')) {
-      return [
-        {
-          role_id: 'platform-view',
-          status: 'active',
-          can_view_user_management: 1,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
-        }
-      ];
-    }
-    if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-      return { affectedRows: 0 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const result = await store.syncPlatformPermissionSnapshotByUserId({
-    userId: 'u-sync-concurrent-update'
-  });
-
-  assert.equal(result.synced, false);
-  assert.equal(result.reason, 'concurrent-role-facts-update');
-  assert.equal(result.permission, null);
-  assert.equal(summaryCallCount, 2);
-});
-
-test('syncPlatformPermissionSnapshotByUserId detects concurrent role fact change when count and latest timestamp stay the same', async () => {
-  let summaryCallCount = 0;
-  const store = createStore(async (sql) => {
-    const normalizedSql = String(sql);
-    if (
-      normalizedSql.includes('FROM auth_user_domain_access')
-      && normalizedSql.includes("domain = 'platform'")
-      && normalizedSql.includes('LIMIT 1')
-    ) {
-      return [
-        {
-          can_view_user_management: 0,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0,
-          updated_at: '2026-02-14T00:00:00.000Z'
-        }
-      ];
-    }
-    if (normalizedSql.includes('COUNT(*) AS role_count')) {
-      summaryCallCount += 1;
-      if (summaryCallCount === 1) {
-        return [
-          {
-            role_count: 2,
-            latest_role_updated_at: '2026-02-14T00:00:03.000Z',
-            latest_role_updated_at_key: '2026-02-14 00:00:03.000000',
-            role_facts_checksum: '100'
-          }
-        ];
-      }
-      return [
-        {
-          role_count: 2,
-          latest_role_updated_at: '2026-02-14T00:00:03.000Z',
-          latest_role_updated_at_key: '2026-02-14 00:00:03.000000',
-          role_facts_checksum: '101'
-        }
-      ];
-    }
-    if (normalizedSql.includes('SELECT role_id')) {
-      return [
-        {
-          role_id: 'platform-view',
-          status: 'active',
-          can_view_user_management: 1,
-          can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
-        }
-      ];
-    }
-    if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-      return { affectedRows: 0 };
-    }
-    assert.fail(`unexpected query: ${normalizedSql}`);
-    return [];
-  });
-
-  const result = await store.syncPlatformPermissionSnapshotByUserId({
-    userId: 'u-sync-concurrent-checksum'
-  });
-
-  assert.equal(result.synced, false);
-  assert.equal(result.reason, 'concurrent-role-facts-update');
-  assert.equal(result.permission, null);
-  assert.equal(summaryCallCount, 2);
 });
 
 test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomically', async () => {
@@ -1578,25 +1172,25 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
 
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_platform_roles')
+      && normalizedSql.includes('FROM platform_user_roles')
     ) {
       return [
         {
           status: 'active',
           can_view_user_management: 1,
           can_operate_user_management: 1,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 0
+          can_view_tenant_management: 1,
+          can_operate_tenant_management: 0
         }
       ];
     }
-    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+    if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+    if (normalizedSql.includes('INSERT INTO platform_users')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
       return { affectedRows: 1 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -1612,8 +1206,8 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       },
       {
@@ -1622,8 +1216,8 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
         permission: {
           canViewUserManagement: false,
           canOperateUserManagement: true,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: true,
+          canOperateTenantManagement: false
         }
       },
       {
@@ -1632,8 +1226,8 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
         permission: {
           canViewUserManagement: false,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: true
+          canViewTenantManagement: false,
+          canOperateTenantManagement: true
         }
       }
     ]
@@ -1643,35 +1237,31 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
     scopeLabel: '平台权限（角色并集）',
     canViewUserManagement: true,
     canOperateUserManagement: true,
-    canViewOrganizationManagement: true,
-    canOperateOrganizationManagement: false
+    canViewTenantManagement: true,
+    canOperateTenantManagement: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   });
   assert.equal(
     statements.some((statement) =>
-      statement.includes('DELETE FROM auth_user_platform_roles')
+      statement.includes('DELETE FROM platform_user_roles')
     ),
     true
   );
   assert.equal(
     statements.some((statement) =>
-      statement.includes('INSERT INTO auth_user_platform_roles')
+      statement.includes('INSERT INTO platform_user_roles')
     ),
     true
   );
   assert.equal(
     statements.some((statement) =>
-      statement.includes('INSERT INTO auth_user_domain_access')
+      statement.includes('INSERT INTO platform_users')
     ),
     true
   );
-  const upsertDomainStatement = statements.find((statement) =>
-    statement.includes('INSERT INTO auth_user_domain_access')
-  );
-  assert.ok(upsertDomainStatement);
-  assert.equal(/status\s*=\s*VALUES\(status\)/i.test(upsertDomainStatement), false);
-  assert.equal(/updated_at\s*=\s*CURRENT_TIMESTAMP\(3\)/i.test(upsertDomainStatement), true);
   const insertRoleStatement = statements.find((statement) =>
-    statement.includes('INSERT INTO auth_user_platform_roles')
+    statement.includes('INSERT INTO platform_user_roles')
   );
   assert.ok(insertRoleStatement);
   assert.equal(/ON DUPLICATE KEY UPDATE/i.test(insertRoleStatement), false);
@@ -1684,26 +1274,26 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
 
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_platform_roles')
+      && normalizedSql.includes('FROM platform_user_roles')
     ) {
       return [
         {
           status: 'active',
           can_view_user_management: 1,
           can_operate_user_management: 0,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 0
+          can_view_tenant_management: 1,
+          can_operate_tenant_management: 0
         }
       ];
     }
-    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+    if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+    if (normalizedSql.includes('INSERT INTO platform_users')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
       roleInsertParamsList.push(params);
-      return { affectedRows: 1 };
-    }
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
       return { affectedRows: 1 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -1714,23 +1304,23 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
     userId: 'u-sync-duplicate-role',
     roles: [
       {
-        roleId: 'platform-user-management',
+        roleId: 'platform-role-admin',
         status: 'active',
         permission: {
           canViewUserManagement: false,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       },
       {
-        roleId: 'Platform-Member-Admin',
+        roleId: 'Platform-Role-Admin',
         status: 'active',
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: true,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: true,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -1739,7 +1329,7 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
   assert.equal(roleInsertParamsList.length, 1);
   assert.deepEqual(roleInsertParamsList[0], [
     'u-sync-duplicate-role',
-    'Platform-Member-Admin',
+    'Platform-Role-Admin',
     'active',
     1,
     0,
@@ -1755,15 +1345,15 @@ test('replacePlatformRolesAndSyncSnapshot locks target user row before mutating 
       const normalizedSql = String(sql);
       if (
         normalizedSql.includes('SELECT status')
-        && normalizedSql.includes('FROM auth_user_platform_roles')
+        && normalizedSql.includes('FROM platform_user_roles')
       ) {
         return [];
       }
-      if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
-        return { affectedRows: 1 };
-      }
-      if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
+      if (normalizedSql.includes('INSERT INTO platform_users')) {
         return { affectedRows: 0 };
+      }
+      if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
+        return { affectedRows: 1 };
       }
       assert.fail(`unexpected query: ${normalizedSql}`);
       return [];
@@ -1792,14 +1382,14 @@ test('replacePlatformRolesAndSyncSnapshot with empty roles does not create new p
 
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_platform_roles')
+      && normalizedSql.includes('FROM platform_user_roles')
     ) {
       return [];
     }
-    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
-      return { affectedRows: 1 };
+    if (normalizedSql.includes('INSERT INTO platform_users')) {
+      return { affectedRows: 0 };
     }
-    if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
+    if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
       return { affectedRows: 1 };
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -1815,26 +1405,17 @@ test('replacePlatformRolesAndSyncSnapshot with empty roles does not create new p
     scopeLabel: '平台权限（角色并集）',
     canViewUserManagement: false,
     canOperateUserManagement: false,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false
+    canViewTenantManagement: false,
+    canOperateTenantManagement: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   });
   assert.equal(
     statements.some((statement) =>
-      statement.includes('INSERT INTO auth_user_domain_access')
-    ),
-    false
-  );
-  assert.equal(
-    statements.some((statement) =>
-      statement.includes('UPDATE auth_user_domain_access')
+      statement.includes('INSERT INTO platform_users')
     ),
     true
   );
-  const updateStatement = statements.find((statement) =>
-    statement.includes('UPDATE auth_user_domain_access')
-  );
-  assert.ok(updateStatement);
-  assert.equal(/can_view_user_management\s*<>\s*\?/i.test(updateStatement), true);
 });
 
 test('replacePlatformRolesAndSyncSnapshot rejects unknown user id without mutating role facts', async () => {
@@ -1842,19 +1423,15 @@ test('replacePlatformRolesAndSyncSnapshot rejects unknown user id without mutati
   const store = createStore(
     async (sql) => {
       const normalizedSql = String(sql);
-      if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+      if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
         writeCount += 1;
         return { affectedRows: 1 };
       }
-      if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+      if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
         writeCount += 1;
         return { affectedRows: 1 };
       }
-      if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
-        writeCount += 1;
-        return { affectedRows: 1 };
-      }
-      if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
+      if (normalizedSql.includes('INSERT INTO platform_users')) {
         writeCount += 1;
         return { affectedRows: 1 };
       }
@@ -1873,8 +1450,8 @@ test('replacePlatformRolesAndSyncSnapshot rejects unknown user id without mutati
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -1897,35 +1474,35 @@ test('replacePlatformRolesAndSyncSnapshot bumps session version and converges se
 
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_platform_roles')
+      && normalizedSql.includes('FROM platform_user_roles')
     ) {
       return [
         {
           status: 'disabled',
           can_view_user_management: 0,
           can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
+          can_view_tenant_management: 0,
+          can_operate_tenant_management: 0
         }
       ];
     }
-    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+    if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+    if (normalizedSql.includes('INSERT INTO platform_users')) {
+      return { affectedRows: 0 };
+    }
+    if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
-      return { affectedRows: 1 };
-    }
-    if (normalizedSql.includes('UPDATE users') && normalizedSql.includes('session_version = session_version + 1')) {
+    if (normalizedSql.includes('UPDATE iam_users') && normalizedSql.includes('session_version = session_version + 1')) {
       sessionVersion += 1;
       return { affectedRows: 1 };
     }
     if (normalizedSql.includes('UPDATE auth_sessions')) {
       return { affectedRows: 2 };
     }
-    if (normalizedSql.includes('UPDATE refresh_tokens')) {
+    if (normalizedSql.includes('UPDATE auth_refresh_tokens')) {
       return { affectedRows: 2 };
     }
     if (normalizedSql.includes('SELECT id, phone, password_hash, status, session_version')) {
@@ -1952,8 +1529,8 @@ test('replacePlatformRolesAndSyncSnapshot bumps session version and converges se
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -1962,7 +1539,7 @@ test('replacePlatformRolesAndSyncSnapshot bumps session version and converges se
   assert.equal(result.synced, true);
   assert.equal(
     statements.some((statement) =>
-      statement.includes('UPDATE users')
+      statement.includes('UPDATE iam_users')
       && statement.includes('session_version = session_version + 1')
     ),
     true
@@ -1972,7 +1549,7 @@ test('replacePlatformRolesAndSyncSnapshot bumps session version and converges se
     true
   );
   assert.equal(
-    statements.some((statement) => statement.includes('UPDATE refresh_tokens')),
+    statements.some((statement) => statement.includes('UPDATE auth_refresh_tokens')),
     true
   );
 });
@@ -1985,28 +1562,28 @@ test('replacePlatformRolesAndSyncSnapshot does not bump session version when eff
 
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_platform_roles')
+      && normalizedSql.includes('FROM platform_user_roles')
     ) {
       return [
         {
           status: 'active',
           can_view_user_management: 1,
           can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
+          can_view_tenant_management: 0,
+          can_operate_tenant_management: 0
         }
       ];
     }
-    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+    if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
+    if (normalizedSql.includes('INSERT INTO platform_users')) {
+      return { affectedRows: 0 };
+    }
+    if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
-      return { affectedRows: 1 };
-    }
-    if (normalizedSql.includes('UPDATE users') && normalizedSql.includes('session_version = session_version + 1')) {
+    if (normalizedSql.includes('UPDATE iam_users') && normalizedSql.includes('session_version = session_version + 1')) {
       assert.fail('session_version should not be bumped when effective permission is unchanged');
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -2022,8 +1599,8 @@ test('replacePlatformRolesAndSyncSnapshot does not bump session version when eff
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -2032,7 +1609,7 @@ test('replacePlatformRolesAndSyncSnapshot does not bump session version when eff
   assert.equal(result.synced, true);
   assert.equal(
     statements.some((statement) =>
-      statement.includes('UPDATE users')
+      statement.includes('UPDATE iam_users')
       && statement.includes('session_version = session_version + 1')
     ),
     false
@@ -2045,28 +1622,28 @@ test('replacePlatformRolesAndSyncSnapshot reports synced=true when snapshot writ
 
     if (
       normalizedSql.includes('SELECT status')
-      && normalizedSql.includes('FROM auth_user_platform_roles')
+      && normalizedSql.includes('FROM platform_user_roles')
     ) {
       return [
         {
           status: 'active',
           can_view_user_management: 1,
           can_operate_user_management: 0,
-          can_view_organization_management: 0,
-          can_operate_organization_management: 0
+          can_view_tenant_management: 0,
+          can_operate_tenant_management: 0
         }
       ];
     }
-    if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+    if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
-      return { affectedRows: 1 };
-    }
-    if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+    if (normalizedSql.includes('INSERT INTO platform_users')) {
       return { affectedRows: 0 };
     }
-    if (normalizedSql.includes('UPDATE users') && normalizedSql.includes('session_version = session_version + 1')) {
+    if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
+      return { affectedRows: 1 };
+    }
+    if (normalizedSql.includes('UPDATE iam_users') && normalizedSql.includes('session_version = session_version + 1')) {
       assert.fail('session_version should not be bumped when effective permission is unchanged');
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -2082,8 +1659,8 @@ test('replacePlatformRolesAndSyncSnapshot reports synced=true when snapshot writ
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -2146,48 +1723,27 @@ test('replacePlatformRolesAndSyncSnapshot rejects blank platform role status', a
 });
 
 test('syncPlatformPermissionSnapshotByUserId retries deadlock with backoff+jitter and records recovery metrics', async () => {
-  let snapshotSelectAttempts = 0;
+  let platformLookupAttempts = 0;
   const retryDelays = [];
   const deadlockMetrics = [];
   const store = createStore(
     async (sql) => {
       const normalizedSql = String(sql);
       if (
-        normalizedSql.includes('FROM auth_user_domain_access')
-        && normalizedSql.includes("domain = 'platform'")
-        && normalizedSql.includes('LIMIT 1')
+        normalizedSql.includes('FROM platform_users pu')
+        && normalizedSql.includes('INNER JOIN iam_users u')
       ) {
-        snapshotSelectAttempts += 1;
-        if (snapshotSelectAttempts === 1) {
+        platformLookupAttempts += 1;
+        if (platformLookupAttempts === 1) {
           throw createDeadlockError();
         }
-        return [
-          {
-            can_view_user_management: 0,
-            can_operate_user_management: 0,
-            can_view_organization_management: 0,
-            can_operate_organization_management: 0,
-            updated_at: '2026-02-14T00:00:00.000Z'
-          }
-        ];
+        return [{ platform_status: 'active', user_status: 'active' }];
       }
-      if (normalizedSql.includes('COUNT(*) AS role_count')) {
-        return [{ role_count: 1, latest_role_updated_at: '2026-02-14T00:00:03.000Z' }];
-      }
-      if (normalizedSql.includes('SELECT role_id')) {
-        return [
-          {
-            role_id: 'platform-view',
-            status: 'active',
-            can_view_user_management: 1,
-            can_operate_user_management: 0,
-            can_view_organization_management: 0,
-            can_operate_organization_management: 0
-          }
-        ];
-      }
-      if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-        return { affectedRows: 1 };
+      if (
+        normalizedSql.includes('FROM platform_user_roles upr')
+        && normalizedSql.includes('LEFT JOIN platform_role_permission_grants prg')
+      ) {
+        return [{ permission_code: 'platform.user_management.view' }];
       }
       assert.fail(`unexpected query: ${normalizedSql}`);
       return [];
@@ -2213,9 +1769,9 @@ test('syncPlatformPermissionSnapshotByUserId retries deadlock with backoff+jitte
     userId: 'u-sync-deadlock-recover'
   });
 
-  assert.equal(result.synced, true);
-  assert.equal(result.reason, 'ok');
-  assert.equal(snapshotSelectAttempts, 2);
+  assert.equal(result.synced, false);
+  assert.equal(result.reason, 'up-to-date');
+  assert.equal(platformLookupAttempts, 2);
   assert.deepEqual(retryDelays, [10]);
   assert.ok(
     deadlockMetrics.some(
@@ -2245,48 +1801,27 @@ test('syncPlatformPermissionSnapshotByUserId retries deadlock with backoff+jitte
 });
 
 test('syncPlatformPermissionSnapshotByUserId normalizes invalid random() output when computing retry delay', async () => {
-  let snapshotSelectAttempts = 0;
+  let platformLookupAttempts = 0;
   const retryDelays = [];
   const deadlockMetrics = [];
   const store = createStore(
     async (sql) => {
       const normalizedSql = String(sql);
       if (
-        normalizedSql.includes('FROM auth_user_domain_access')
-        && normalizedSql.includes("domain = 'platform'")
-        && normalizedSql.includes('LIMIT 1')
+        normalizedSql.includes('FROM platform_users pu')
+        && normalizedSql.includes('INNER JOIN iam_users u')
       ) {
-        snapshotSelectAttempts += 1;
-        if (snapshotSelectAttempts === 1) {
+        platformLookupAttempts += 1;
+        if (platformLookupAttempts === 1) {
           throw createDeadlockError();
         }
-        return [
-          {
-            can_view_user_management: 0,
-            can_operate_user_management: 0,
-            can_view_organization_management: 0,
-            can_operate_organization_management: 0,
-            updated_at: '2026-02-14T00:00:00.000Z'
-          }
-        ];
+        return [{ platform_status: 'active', user_status: 'active' }];
       }
-      if (normalizedSql.includes('COUNT(*) AS role_count')) {
-        return [{ role_count: 1, latest_role_updated_at: '2026-02-14T00:00:03.000Z' }];
-      }
-      if (normalizedSql.includes('SELECT role_id')) {
-        return [
-          {
-            role_id: 'platform-view',
-            status: 'active',
-            can_view_user_management: 1,
-            can_operate_user_management: 0,
-            can_view_organization_management: 0,
-            can_operate_organization_management: 0
-          }
-        ];
-      }
-      if (normalizedSql.includes('UPDATE auth_user_domain_access')) {
-        return { affectedRows: 1 };
+      if (
+        normalizedSql.includes('FROM platform_user_roles upr')
+        && normalizedSql.includes('LEFT JOIN platform_role_permission_grants prg')
+      ) {
+        return [{ permission_code: 'platform.user_management.view' }];
       }
       assert.fail(`unexpected query: ${normalizedSql}`);
       return [];
@@ -2312,9 +1847,9 @@ test('syncPlatformPermissionSnapshotByUserId normalizes invalid random() output 
     userId: 'u-sync-deadlock-invalid-random'
   });
 
-  assert.equal(result.synced, true);
-  assert.equal(result.reason, 'ok');
-  assert.equal(snapshotSelectAttempts, 2);
+  assert.equal(result.synced, false);
+  assert.equal(result.reason, 'up-to-date');
+  assert.equal(platformLookupAttempts, 2);
   assert.deepEqual(retryDelays, [10]);
   assert.ok(
     deadlockMetrics.some(
@@ -2334,9 +1869,8 @@ test('syncPlatformPermissionSnapshotByUserId returns db-deadlock after retry exh
     async (sql) => {
       const normalizedSql = String(sql);
       if (
-        normalizedSql.includes('FROM auth_user_domain_access')
-        && normalizedSql.includes("domain = 'platform'")
-        && normalizedSql.includes('LIMIT 1')
+        normalizedSql.includes('FROM platform_users pu')
+        && normalizedSql.includes('INNER JOIN iam_users u')
       ) {
         snapshotSelectAttempts += 1;
         throw createDeadlockError();
@@ -2400,29 +1934,29 @@ test('replacePlatformRolesAndSyncSnapshot retries deadlock with backoff+jitter a
       const normalizedSql = String(sql);
       if (
         normalizedSql.includes('SELECT status')
-        && normalizedSql.includes('FROM auth_user_platform_roles')
+        && normalizedSql.includes('FROM platform_user_roles')
       ) {
         return [
           {
             status: 'active',
             can_view_user_management: 1,
             can_operate_user_management: 0,
-            can_view_organization_management: 0,
-            can_operate_organization_management: 0
+            can_view_tenant_management: 0,
+            can_operate_tenant_management: 0
           }
         ];
       }
-      if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+      if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
         deleteAttempts += 1;
         if (deleteAttempts === 1) {
           throw createDeadlockError();
         }
         return { affectedRows: 1 };
       }
-      if (normalizedSql.includes('INSERT INTO auth_user_platform_roles')) {
-        return { affectedRows: 1 };
+      if (normalizedSql.includes('INSERT INTO platform_users')) {
+        return { affectedRows: 0 };
       }
-      if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
+      if (normalizedSql.includes('INSERT INTO platform_user_roles')) {
         return { affectedRows: 1 };
       }
       assert.fail(`unexpected query: ${normalizedSql}`);
@@ -2454,8 +1988,8 @@ test('replacePlatformRolesAndSyncSnapshot retries deadlock with backoff+jitter a
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -2493,21 +2027,24 @@ test('replacePlatformRolesAndSyncSnapshot returns db-deadlock after retry exhaus
       const normalizedSql = String(sql);
       if (
         normalizedSql.includes('SELECT status')
-        && normalizedSql.includes('FROM auth_user_platform_roles')
+        && normalizedSql.includes('FROM platform_user_roles')
       ) {
         return [
           {
             status: 'active',
             can_view_user_management: 1,
             can_operate_user_management: 0,
-            can_view_organization_management: 0,
-            can_operate_organization_management: 0
+            can_view_tenant_management: 0,
+            can_operate_tenant_management: 0
           }
         ];
       }
-      if (normalizedSql.includes('DELETE FROM auth_user_platform_roles')) {
+      if (normalizedSql.includes('DELETE FROM platform_user_roles')) {
         deleteAttempts += 1;
         throw createDeadlockError();
+      }
+      if (normalizedSql.includes('INSERT INTO platform_users')) {
+        return { affectedRows: 0 };
       }
       assert.fail(`unexpected query: ${normalizedSql}`);
       return [];
@@ -2538,8 +2075,8 @@ test('replacePlatformRolesAndSyncSnapshot returns db-deadlock after retry exhaus
         permission: {
           canViewUserManagement: true,
           canOperateUserManagement: false,
-          canViewOrganizationManagement: false,
-          canOperateOrganizationManagement: false
+          canViewTenantManagement: false,
+          canOperateTenantManagement: false
         }
       }
     ]
@@ -2617,12 +2154,12 @@ test('rotateRefreshToken updates previous token with session_id/user_id ownershi
         }
       ];
     }
-    if (normalizedSql.includes('UPDATE refresh_tokens') && normalizedSql.includes('SET status = \'rotated\'')) {
+    if (normalizedSql.includes('UPDATE auth_refresh_tokens') && normalizedSql.includes('SET status = \'rotated\'')) {
       updateSql = normalizedSql;
       updateParams = params;
       return { affectedRows: 1 };
     }
-    if (normalizedSql.includes('INSERT INTO refresh_tokens')) {
+    if (normalizedSql.includes('INSERT INTO auth_refresh_tokens')) {
       return { affectedRows: 1 };
     }
     if (normalizedSql.includes('SET rotated_to_token_hash')) {
@@ -2671,21 +2208,18 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
             const normalizedSql = String(sql);
             txStatements.push(normalizedSql);
             txParams.push(params);
-            if (normalizedSql.includes('INSERT INTO orgs')) {
+            if (normalizedSql.includes('INSERT INTO tenants')) {
               txState.orgId = String(params[0] || '').trim();
               txState.orgName = String(params[1] || '').trim();
               txState.ownerUserId = String(params[2] || '').trim();
               return { affectedRows: 1 };
             }
-            if (normalizedSql.includes('INSERT INTO memberships')) {
-              return { affectedRows: 1 };
-            }
-            if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+            if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
               txState.membershipId = String(params[0] || '').trim() || txState.membershipId;
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM auth_user_tenants')
+              normalizedSql.includes('FROM tenant_memberships')
               && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
             ) {
               return [{
@@ -2696,14 +2230,14 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
                 tenant_name: txState.orgName,
                 can_view_user_management: 0,
                 can_operate_user_management: 0,
-                can_view_organization_management: 0,
-                can_operate_organization_management: 0,
+                can_view_tenant_management: 0,
+                can_operate_tenant_management: 0,
                 joined_at: '2026-01-01T00:00:00.000Z',
                 left_at: null
               }];
             }
             if (
-              normalizedSql.includes('FROM auth_user_tenants')
+              normalizedSql.includes('FROM tenant_memberships')
               && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
             ) {
               return [{
@@ -2713,15 +2247,15 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
                 status: 'active',
                 can_view_user_management: 0,
                 can_operate_user_management: 0,
-                can_view_organization_management: 0,
-                can_operate_organization_management: 0
+                can_view_tenant_management: 0,
+                can_operate_tenant_management: 0
               }];
             }
             if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM platform_role_catalog')
+              normalizedSql.includes('FROM platform_roles')
               && normalizedSql.includes('WHERE role_id = ?')
             ) {
               const requestedRoleId = String(params[0] || '').trim();
@@ -2736,7 +2270,7 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
                 scope: 'tenant'
               }];
             }
-            if (normalizedSql.includes('INSERT INTO platform_role_catalog')) {
+            if (normalizedSql.includes('INSERT INTO platform_roles')) {
               txState.takeoverRoleId = String(params[0] || '').trim();
               return { affectedRows: 1 };
             }
@@ -2761,7 +2295,7 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM auth_tenant_membership_roles')
+              normalizedSql.includes('FROM tenant_membership_roles')
               && normalizedSql.includes('WHERE membership_id = ?')
             ) {
               const membershipId = String(params[0] || '').trim();
@@ -2769,19 +2303,19 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
                 role_id: roleId
               }));
             }
-            if (normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')) {
+            if (normalizedSql.includes('DELETE FROM tenant_membership_roles')) {
               const membershipId = String(params[0] || '').trim();
               txState.roleIdsByMembershipId.set(membershipId, []);
               return { affectedRows: 1 };
             }
-            if (normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')) {
+            if (normalizedSql.includes('INSERT INTO tenant_membership_roles')) {
               const membershipId = String(params[0] || '').trim();
               const roleId = String(params[1] || '').trim();
               txState.roleIdsByMembershipId.set(membershipId, [roleId]);
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM platform_role_catalog')
+              normalizedSql.includes('FROM platform_roles')
               && normalizedSql.includes('WHERE role_id IN')
             ) {
               return params.map((roleId) => ({
@@ -2808,7 +2342,7 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
               return rows;
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes('SET can_view_user_management = ?')
             ) {
               return { affectedRows: 1 };
@@ -2820,7 +2354,7 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
               return { affectedRows: 0 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes('SET status = \'revoked\'')
             ) {
               return { affectedRows: 0 };
@@ -2841,11 +2375,9 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
 
   assert.equal(inTransactionCalls, 1);
   assert.ok(txStatements.length > 2);
-  assert.match(txStatements[0], /INSERT\s+INTO\s+orgs/i);
-  assert.match(txStatements[1], /INSERT\s+INTO\s+memberships/i);
+  assert.match(txStatements[0], /INSERT\s+INTO\s+tenants/i);
   assert.equal(txParams[0][1], '组织事务测试 A');
   assert.equal(txParams[0][2], 'u-owner-1');
-  assert.equal(txParams[1][1], 'u-owner-1');
   assert.equal(result.owner_user_id, 'u-owner-1');
   assert.equal(typeof result.org_id, 'string');
   assert.ok(result.org_id.length > 0);
@@ -2876,21 +2408,18 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
         return runner({
           query: async (sql, params = []) => {
             const normalizedSql = String(sql);
-            if (normalizedSql.includes('INSERT INTO orgs')) {
+            if (normalizedSql.includes('INSERT INTO tenants')) {
               txState.orgId = String(params[0] || '').trim();
               txState.orgName = String(params[1] || '').trim();
               txState.ownerUserId = String(params[2] || '').trim();
               return { affectedRows: 1 };
             }
-            if (normalizedSql.includes('INSERT INTO memberships')) {
-              return { affectedRows: 1 };
-            }
-            if (normalizedSql.includes('INSERT INTO auth_user_tenants')) {
+            if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
               txState.membershipId = String(params[0] || '').trim() || txState.membershipId;
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM auth_user_tenants')
+              normalizedSql.includes('FROM tenant_memberships')
               && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
             ) {
               return [{
@@ -2901,14 +2430,14 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
                 tenant_name: txState.orgName,
                 can_view_user_management: 0,
                 can_operate_user_management: 0,
-                can_view_organization_management: 0,
-                can_operate_organization_management: 0,
+                can_view_tenant_management: 0,
+                can_operate_tenant_management: 0,
                 joined_at: '2026-01-01T00:00:00.000Z',
                 left_at: null
               }];
             }
             if (
-              normalizedSql.includes('FROM auth_user_tenants')
+              normalizedSql.includes('FROM tenant_memberships')
               && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
             ) {
               return [{
@@ -2918,15 +2447,15 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
                 status: 'active',
                 can_view_user_management: 0,
                 can_operate_user_management: 0,
-                can_view_organization_management: 0,
-                can_operate_organization_management: 0
+                can_view_tenant_management: 0,
+                can_operate_tenant_management: 0
               }];
             }
             if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM platform_role_catalog')
+              normalizedSql.includes('FROM platform_roles')
               && normalizedSql.includes('WHERE role_id = ?')
             ) {
               const requestedRoleId = String(params[0] || '').trim();
@@ -2941,7 +2470,7 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
                 scope: 'tenant'
               }];
             }
-            if (normalizedSql.includes('INSERT INTO platform_role_catalog')) {
+            if (normalizedSql.includes('INSERT INTO platform_roles')) {
               txState.takeoverRoleId = String(params[0] || '').trim();
               return { affectedRows: 1 };
             }
@@ -2966,7 +2495,7 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM auth_tenant_membership_roles')
+              normalizedSql.includes('FROM tenant_membership_roles')
               && normalizedSql.includes('WHERE membership_id = ?')
             ) {
               const membershipId = String(params[0] || '').trim();
@@ -2974,19 +2503,19 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
                 role_id: roleId
               }));
             }
-            if (normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')) {
+            if (normalizedSql.includes('DELETE FROM tenant_membership_roles')) {
               const membershipId = String(params[0] || '').trim();
               txState.roleIdsByMembershipId.set(membershipId, []);
               return { affectedRows: 1 };
             }
-            if (normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')) {
+            if (normalizedSql.includes('INSERT INTO tenant_membership_roles')) {
               const membershipId = String(params[0] || '').trim();
               const roleId = String(params[1] || '').trim();
               txState.roleIdsByMembershipId.set(membershipId, [roleId]);
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('FROM platform_role_catalog')
+              normalizedSql.includes('FROM platform_roles')
               && normalizedSql.includes('WHERE role_id IN')
             ) {
               return params.map((roleId) => ({
@@ -3013,7 +2542,7 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
               return rows;
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes('SET can_view_user_management = ?')
             ) {
               return { affectedRows: 1 };
@@ -3025,7 +2554,7 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
               return { affectedRows: 0 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes('SET status = \'revoked\'')
             ) {
               return { affectedRows: 0 };
@@ -3122,7 +2651,7 @@ test('createOrganizationWithOwner throws deadlock error after retry exhaustion',
   );
 });
 
-test('createOrganizationWithOwner surfaces transaction failure when membership insert fails mid-transaction', async () => {
+test('createOrganizationWithOwner surfaces transaction failure when tenant membership upsert fails mid-transaction', async () => {
   let rollbackTriggered = false;
   const store = createMySqlAuthStore({
     dbClient: {
@@ -3134,10 +2663,10 @@ test('createOrganizationWithOwner surfaces transaction failure when membership i
           return await runner({
             query: async (sql) => {
               const normalizedSql = String(sql);
-              if (normalizedSql.includes('INSERT INTO orgs')) {
+              if (normalizedSql.includes('INSERT INTO tenants')) {
                 return { affectedRows: 1 };
               }
-              if (normalizedSql.includes('INSERT INTO memberships')) {
+              if (normalizedSql.includes('INSERT INTO tenant_memberships')) {
                 throw new Error('membership-write-failed');
               }
               assert.fail(`unexpected tx query: ${normalizedSql}`);
@@ -3174,7 +2703,7 @@ test('createOrganizationWithOwner rejects when transaction writes are not applie
         runner({
           query: async (sql) => {
             const normalizedSql = String(sql);
-            if (normalizedSql.includes('INSERT INTO orgs')) {
+            if (normalizedSql.includes('INSERT INTO tenants')) {
               return { affectedRows: 0 };
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
@@ -3202,7 +2731,7 @@ test('findOrganizationById returns normalized org projection when org exists', a
     dbClient: {
       query: async (sql, params = []) => {
         const normalizedSql = String(sql);
-        if (normalizedSql.includes('FROM orgs') && normalizedSql.includes('WHERE BINARY id = ?')) {
+        if (normalizedSql.includes('FROM tenants') && normalizedSql.includes('WHERE BINARY id = ?')) {
           selectSql = normalizedSql;
           selectParams = params;
           return [{
@@ -3242,7 +2771,7 @@ test('findOrganizationById returns null when target org does not exist', async (
     dbClient: {
       query: async (sql) => {
         const normalizedSql = String(sql);
-        if (normalizedSql.includes('FROM orgs') && normalizedSql.includes('WHERE BINARY id = ?')) {
+        if (normalizedSql.includes('FROM tenants') && normalizedSql.includes('WHERE BINARY id = ?')) {
           return [];
         }
         assert.fail(`unexpected query: ${normalizedSql}`);
@@ -3350,7 +2879,7 @@ test('releaseOwnerTransferLock uses mysql RELEASE_LOCK and returns release state
   assert.match(queryHistory[0].params[0], /^neweast:owner-transfer:[0-9a-f]{40}$/);
 });
 
-test('updateOrganizationStatus cascades soft-delete state to memberships, tenant roles, role bindings, and tenant sessions', async () => {
+test('updateOrganizationStatus cascades soft-delete state to tenant memberships, tenant roles, role bindings, and tenant sessions', async () => {
   let inTransactionCalls = 0;
   const revokeTenantSessionParams = [];
   const revokeTenantRefreshParams = [];
@@ -3358,7 +2887,6 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
   const disableTenantRolesParams = [];
   const orgSelectSql = [];
   const orgUpdateSql = [];
-  let updateMembershipCalled = false;
   let updateTenantMembershipCalled = false;
   let disableTenantRolesCalled = false;
   let deleteTenantRoleBindingsCalled = false;
@@ -3374,32 +2902,18 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id, status, owner_user_id')
-              && normalizedSql.includes('FROM orgs')
+              && normalizedSql.includes('FROM tenants')
             ) {
               orgSelectSql.push(normalizedSql);
               return [{ id: 'org-status-1', status: 'active', owner_user_id: 'u-owner' }];
             }
-            if (normalizedSql.includes('UPDATE orgs')) {
+            if (normalizedSql.includes('UPDATE tenants')) {
               orgUpdateSql.push(normalizedSql);
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('SELECT DISTINCT user_id')
-              && normalizedSql.includes('FROM memberships')
-            ) {
-              return [{ user_id: 'u-owner' }, { user_id: 'u-member' }];
-            }
-            if (
-              normalizedSql.includes('UPDATE memberships')
-              && normalizedSql.includes("SET status = 'disabled'")
-              && normalizedSql.includes('WHERE org_id = ?')
-            ) {
-              updateMembershipCalled = true;
-              return { affectedRows: 2 };
-            }
-            if (
               normalizedSql.includes('SELECT membership_id, user_id, status')
-              && normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('FROM tenant_memberships')
               && normalizedSql.includes('WHERE tenant_id = ?')
             ) {
               return [
@@ -3416,7 +2930,7 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
               ];
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE tenant_id = ?')
             ) {
@@ -3424,7 +2938,7 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
               return { affectedRows: 2 };
             }
             if (
-              normalizedSql.includes('UPDATE platform_role_catalog')
+              normalizedSql.includes('UPDATE platform_roles')
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('updated_by_user_id = ?')
               && normalizedSql.includes("scope = 'tenant'")
@@ -3436,8 +2950,8 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
             }
             if (
               normalizedSql.includes('DELETE amr')
-              && normalizedSql.includes('FROM auth_tenant_membership_roles')
-              && normalizedSql.includes('INNER JOIN auth_user_tenants')
+              && normalizedSql.includes('FROM tenant_membership_roles')
+              && normalizedSql.includes('INNER JOIN tenant_memberships')
               && normalizedSql.includes('ut.tenant_id = ?')
             ) {
               deleteTenantRoleBindingsCalled = true;
@@ -3453,7 +2967,7 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
               return { affectedRows: params?.[1] === 'u-owner' ? 2 : 1 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes("entry_domain = 'tenant'")
               && normalizedSql.includes('active_tenant_id = ?')
@@ -3462,14 +2976,14 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
               return { affectedRows: params?.[0] === 'u-owner' ? 2 : 1 };
             }
             if (
-              normalizedSql.includes('DELETE FROM auth_user_domain_access')
-              && normalizedSql.includes("domain = 'tenant'")
-              && normalizedSql.includes('NOT EXISTS')
+              normalizedSql.includes('COUNT(*) AS tenant_count')
+              && normalizedSql.includes('FROM tenant_memberships ut')
+              && normalizedSql.includes('LEFT JOIN tenants o')
             ) {
               removeTenantDomainParams.push(params);
-              return { affectedRows: params?.[0] === 'u-member' ? 1 : 0 };
+              return [{ tenant_count: params?.[0] === 'u-member' ? 0 : 1 }];
             }
-            if (normalizedSql.includes('UPDATE users')) {
+            if (normalizedSql.includes('UPDATE iam_users')) {
               assert.fail(`unexpected session version update query: ${normalizedSql}`);
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
@@ -3498,7 +3012,6 @@ test('updateOrganizationStatus cascades soft-delete state to memberships, tenant
     revoked_refresh_token_count: 3,
     audit_recorded: false
   });
-  assert.equal(updateMembershipCalled, true);
   assert.equal(updateTenantMembershipCalled, true);
   assert.equal(disableTenantRolesCalled, true);
   assert.deepEqual(disableTenantRolesParams, [['u-operator', 'org-status-1']]);
@@ -3544,28 +3057,16 @@ test('updateOrganizationStatus does not count owner-only revocation target as af
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id, status, owner_user_id')
-              && normalizedSql.includes('FROM orgs')
+              && normalizedSql.includes('FROM tenants')
             ) {
               return [{ id: 'org-status-owner-count', status: 'active', owner_user_id: 'u-owner' }];
             }
-            if (normalizedSql.includes('UPDATE orgs')) {
-              return { affectedRows: 1 };
-            }
-            if (
-              normalizedSql.includes('SELECT DISTINCT user_id')
-              && normalizedSql.includes('FROM memberships')
-            ) {
-              return [{ user_id: 'u-member' }];
-            }
-            if (
-              normalizedSql.includes('UPDATE memberships')
-              && normalizedSql.includes("SET status = 'disabled'")
-            ) {
+            if (normalizedSql.includes('UPDATE tenants')) {
               return { affectedRows: 1 };
             }
             if (
               normalizedSql.includes('SELECT membership_id, user_id, status')
-              && normalizedSql.includes('FROM auth_user_tenants')
+              && normalizedSql.includes('FROM tenant_memberships')
             ) {
               return [
                 {
@@ -3576,20 +3077,20 @@ test('updateOrganizationStatus does not count owner-only revocation target as af
               ];
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('UPDATE platform_role_catalog')
+              normalizedSql.includes('UPDATE platform_roles')
               && normalizedSql.includes('updated_by_user_id = ?')
             ) {
               return { affectedRows: 0 };
             }
             if (
               normalizedSql.includes('DELETE amr')
-              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('FROM tenant_membership_roles')
             ) {
               return { affectedRows: 0 };
             }
@@ -3601,17 +3102,18 @@ test('updateOrganizationStatus does not count owner-only revocation target as af
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes('active_tenant_id = ?')
             ) {
               revokeTenantRefreshUsers.push(params?.[0]);
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('DELETE FROM auth_user_domain_access')
-              && normalizedSql.includes("domain = 'tenant'")
+              normalizedSql.includes('COUNT(*) AS tenant_count')
+              && normalizedSql.includes('FROM tenant_memberships ut')
+              && normalizedSql.includes('LEFT JOIN tenants o')
             ) {
-              return { affectedRows: 0 };
+              return [{ tenant_count: 0 }];
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
             return [];
@@ -3643,7 +3145,6 @@ test('updateOrganizationStatus does not count owner-only revocation target as af
 
 test('updateOrganizationStatus treats same-status change as no-op without session convergence', async () => {
   let updateOrgCalled = false;
-  let readMembershipCalled = false;
   let readTenantMembershipCalled = false;
   let disableTenantRolesCalled = false;
   let removeTenantDomainCalled = false;
@@ -3659,36 +3160,32 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id, status, owner_user_id')
-              && normalizedSql.includes('FROM orgs')
+              && normalizedSql.includes('FROM tenants')
             ) {
               return [{ id: 'org-status-noop', status: 'disabled', owner_user_id: 'u-owner' }];
             }
-            if (normalizedSql.includes('UPDATE orgs')) {
+            if (normalizedSql.includes('UPDATE tenants')) {
               updateOrgCalled = true;
               return { affectedRows: 1 };
             }
-            if (normalizedSql.includes('FROM memberships')) {
-              readMembershipCalled = true;
-              return [];
-            }
-            if (normalizedSql.includes('FROM auth_user_tenants')) {
+            if (normalizedSql.includes('FROM tenant_memberships')) {
               readTenantMembershipCalled = true;
               return [];
             }
             if (
-              normalizedSql.includes('UPDATE platform_role_catalog')
+              normalizedSql.includes('UPDATE platform_roles')
               || normalizedSql.includes('DELETE amr')
             ) {
               disableTenantRolesCalled = true;
               return [];
             }
-            if (normalizedSql.includes('DELETE FROM auth_user_domain_access')) {
+            if (normalizedSql.includes('COUNT(*) AS tenant_count')) {
               removeTenantDomainCalled = true;
               return [];
             }
             if (
               normalizedSql.includes('UPDATE auth_sessions')
-              || normalizedSql.includes('UPDATE refresh_tokens')
+              || normalizedSql.includes('UPDATE auth_refresh_tokens')
             ) {
               convergeSessionCalled = true;
               return [];
@@ -3718,7 +3215,6 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
     audit_recorded: false
   });
   assert.equal(updateOrgCalled, false);
-  assert.equal(readMembershipCalled, false);
   assert.equal(readTenantMembershipCalled, false);
   assert.equal(disableTenantRolesCalled, false);
   assert.equal(removeTenantDomainCalled, false);
@@ -3738,7 +3234,7 @@ test('updateOrganizationStatus returns null when target org does not exist', asy
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id, status, owner_user_id')
-              && normalizedSql.includes('FROM orgs')
+              && normalizedSql.includes('FROM tenants')
             ) {
               return [];
             }
@@ -3774,7 +3270,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id, status, owner_user_id')
-      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('FROM tenants')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -3786,7 +3282,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     }
     if (
       normalizedSql.includes('SELECT id, status')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -3797,14 +3293,14 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     }
     if (
       normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
     if (
-      normalizedSql.includes('INSERT INTO platform_role_catalog')
+      normalizedSql.includes('INSERT INTO platform_roles')
       && normalizedSql.includes('code_normalized')
     ) {
       roleCatalogInsertCalled = true;
@@ -3827,7 +3323,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -3843,7 +3339,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       }];
     }
     if (
-      normalizedSql.includes('INSERT INTO auth_user_tenants')
+      normalizedSql.includes('INSERT INTO tenant_memberships')
       && normalizedSql.includes("VALUES (?, ?, ?, ?, 'active'")
     ) {
       membershipInsertCalled = true;
@@ -3859,7 +3355,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('UPDATE orgs')
+      normalizedSql.includes('UPDATE tenants')
       && normalizedSql.includes('SET owner_user_id = ?')
       && normalizedSql.includes('WHERE BINARY id = ?')
     ) {
@@ -3868,20 +3364,20 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     }
     if (
       normalizedSql.includes('SELECT role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
     if (
-      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      normalizedSql.includes('DELETE FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
     ) {
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      normalizedSql.includes('INSERT INTO tenant_membership_roles')
       && normalizedSql.includes('VALUES (?, ?, ?, ?)')
     ) {
       roleBindingInsertCount += 1;
@@ -3889,7 +3385,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
       && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
@@ -3901,13 +3397,13 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
         status: 'active',
         can_view_user_management: 0,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0
+        can_view_role_management: 0,
+        can_operate_role_management: 0
       }];
     }
     if (
       normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id IN')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -3936,7 +3432,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       ];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -3950,7 +3446,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('UPDATE refresh_tokens')
+      normalizedSql.includes('UPDATE auth_refresh_tokens')
       && normalizedSql.includes('session_id IN')
       && normalizedSql.includes('entry_domain = \'tenant\'')
     ) {
@@ -3989,7 +3485,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
   assert.equal(roleCatalogInsertCalled, true);
   assert.equal(roleGrantInsertCount, 2);
   assert.equal(membershipInsertCalled, true);
-  assert.equal(tenantDomainAccessUpsertCalled, true);
+  assert.equal(tenantDomainAccessUpsertCalled, false);
   assert.equal(ownerSwitchCalled, true);
   assert.equal(roleBindingInsertCount, 1);
   assert.equal(snapshotSyncCalled, true);
@@ -4004,7 +3500,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id, status, owner_user_id')
-      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('FROM tenants')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4016,7 +3512,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     }
     if (
       normalizedSql.includes('SELECT id, status')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4027,7 +3523,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     }
     if (
       normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4052,7 +3548,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4066,8 +3562,8 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
           tenant_name: '历史组织',
           can_view_user_management: 1,
           can_operate_user_management: 0,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 0,
+          can_view_role_management: 1,
+          can_operate_role_management: 0,
           joined_at: '2025-01-01T00:00:00.000Z',
           left_at: '2025-01-31T00:00:00.000Z'
         }];
@@ -4080,8 +3576,8 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
         tenant_name: '历史组织',
         can_view_user_management: 0,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0,
+        can_view_role_management: 0,
+        can_operate_role_management: 0,
         joined_at: '2026-02-20T00:00:00.000Z',
         left_at: null
       }];
@@ -4094,13 +3590,13 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      normalizedSql.includes('DELETE FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
     ) {
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET membership_id = ?')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
     ) {
@@ -4115,7 +3611,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('UPDATE orgs')
+      normalizedSql.includes('UPDATE tenants')
       && normalizedSql.includes('SET owner_user_id = ?')
       && normalizedSql.includes('WHERE BINARY id = ?')
     ) {
@@ -4123,21 +3619,21 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     }
     if (
       normalizedSql.includes('SELECT role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
     if (
-      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      normalizedSql.includes('INSERT INTO tenant_membership_roles')
       && normalizedSql.includes('VALUES (?, ?, ?, ?)')
     ) {
       return { affectedRows: 1 };
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
       && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
@@ -4149,13 +3645,13 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
         status: 'active',
         can_view_user_management: 0,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0
+        can_view_role_management: 0,
+        can_operate_role_management: 0
       }];
     }
     if (
       normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id IN')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4184,7 +3680,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       ];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -4197,7 +3693,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('UPDATE refresh_tokens')
+      normalizedSql.includes('UPDATE auth_refresh_tokens')
       && normalizedSql.includes('session_id IN')
       && normalizedSql.includes('entry_domain = \'tenant\'')
     ) {
@@ -4245,7 +3741,7 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id, status, owner_user_id')
-      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('FROM tenants')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4257,7 +3753,7 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
     }
     if (
       normalizedSql.includes('SELECT id, status')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4268,7 +3764,7 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
     }
     if (
       normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4312,7 +3808,7 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
 test('executeOwnerTransferTakeover rejects duplicate takeover role insert when role id cannot be resolved', async () => {
   let roleLookupCount = 0;
   const duplicateRoleInsertError = new Error(
-    'Duplicate entry for platform_role_catalog'
+    'Duplicate entry for platform_roles'
   );
   duplicateRoleInsertError.code = 'ER_DUP_ENTRY';
   duplicateRoleInsertError.errno = 1062;
@@ -4321,7 +3817,7 @@ test('executeOwnerTransferTakeover rejects duplicate takeover role insert when r
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id, status, owner_user_id')
-      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('FROM tenants')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4333,7 +3829,7 @@ test('executeOwnerTransferTakeover rejects duplicate takeover role insert when r
     }
     if (
       normalizedSql.includes('SELECT id, status')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4344,7 +3840,7 @@ test('executeOwnerTransferTakeover rejects duplicate takeover role insert when r
     }
     if (
       normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4352,7 +3848,7 @@ test('executeOwnerTransferTakeover rejects duplicate takeover role insert when r
       return [];
     }
     if (
-      normalizedSql.includes('INSERT INTO platform_role_catalog')
+      normalizedSql.includes('INSERT INTO platform_roles')
       && normalizedSql.includes('code_normalized')
     ) {
       throw duplicateRoleInsertError;
@@ -4394,7 +3890,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
   let roleBindingInsertCount = 0;
   let snapshotSyncCalled = false;
   const duplicateMembershipInsertError = new Error(
-    'Duplicate entry for auth_user_tenants'
+    'Duplicate entry for tenant_memberships'
   );
   duplicateMembershipInsertError.code = 'ER_DUP_ENTRY';
   duplicateMembershipInsertError.errno = 1062;
@@ -4403,7 +3899,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id, status, owner_user_id')
-      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('FROM tenants')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4415,7 +3911,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     }
     if (
       normalizedSql.includes('SELECT id, status')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4426,14 +3922,14 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     }
     if (
       normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
     if (
-      normalizedSql.includes('INSERT INTO platform_role_catalog')
+      normalizedSql.includes('INSERT INTO platform_roles')
       && normalizedSql.includes('code_normalized')
     ) {
       return { affectedRows: 1 };
@@ -4454,7 +3950,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4470,7 +3966,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       }];
     }
     if (
-      normalizedSql.includes('INSERT INTO auth_user_tenants')
+      normalizedSql.includes('INSERT INTO tenant_memberships')
       && normalizedSql.includes("VALUES (?, ?, ?, ?, 'active'")
     ) {
       membershipInsertAttemptCount += 1;
@@ -4485,7 +3981,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('UPDATE orgs')
+      normalizedSql.includes('UPDATE tenants')
       && normalizedSql.includes('SET owner_user_id = ?')
       && normalizedSql.includes('WHERE BINARY id = ?')
     ) {
@@ -4494,20 +3990,20 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     }
     if (
       normalizedSql.includes('SELECT role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
     if (
-      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      normalizedSql.includes('DELETE FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
     ) {
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      normalizedSql.includes('INSERT INTO tenant_membership_roles')
       && normalizedSql.includes('VALUES (?, ?, ?, ?)')
     ) {
       roleBindingInsertCount += 1;
@@ -4515,7 +4011,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
       && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
@@ -4527,13 +4023,13 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
         status: 'active',
         can_view_user_management: 0,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0
+        can_view_tenant_management: 0,
+        can_operate_tenant_management: 0
       }];
     }
     if (
       normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id IN')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4562,7 +4058,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       ];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -4576,7 +4072,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('UPDATE refresh_tokens')
+      normalizedSql.includes('UPDATE auth_refresh_tokens')
       && normalizedSql.includes('session_id IN')
       && normalizedSql.includes('entry_domain = \'tenant\'')
     ) {
@@ -4625,7 +4121,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT id, status, owner_user_id')
-      && normalizedSql.includes('FROM orgs')
+      && normalizedSql.includes('FROM tenants')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4637,7 +4133,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
     }
     if (
       normalizedSql.includes('SELECT id, status')
-      && normalizedSql.includes('FROM users')
+      && normalizedSql.includes('FROM iam_users')
       && normalizedSql.includes('WHERE BINARY id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4648,7 +4144,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
     }
     if (
       normalizedSql.includes('SELECT role_id, tenant_id, code, status, scope')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4678,7 +4174,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4699,7 +4195,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('UPDATE orgs')
+      normalizedSql.includes('UPDATE tenants')
       && normalizedSql.includes('SET owner_user_id = ?')
       && normalizedSql.includes('WHERE BINARY id = ?')
     ) {
@@ -4707,27 +4203,27 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
     }
     if (
       normalizedSql.includes('SELECT role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
     if (
-      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      normalizedSql.includes('DELETE FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
     ) {
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('INSERT INTO auth_tenant_membership_roles')
+      normalizedSql.includes('INSERT INTO tenant_membership_roles')
       && normalizedSql.includes('VALUES (?, ?, ?, ?)')
     ) {
       return { affectedRows: 1 };
     }
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
       && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
@@ -4739,13 +4235,13 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
         status: 'active',
         can_view_user_management: 0,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0
+        can_view_tenant_management: 0,
+        can_operate_tenant_management: 0
       }];
     }
     if (
       normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('WHERE role_id IN')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -4768,7 +4264,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       }];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -4781,7 +4277,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       return { affectedRows: 0 };
     }
     if (
-      normalizedSql.includes('UPDATE refresh_tokens')
+      normalizedSql.includes('UPDATE auth_refresh_tokens')
       && normalizedSql.includes('session_id IN')
       && normalizedSql.includes('entry_domain = \'tenant\'')
     ) {
@@ -4817,7 +4313,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       return true;
     }
   );
-  assert.equal(tenantDomainAccessUpsertCalled, true);
+  assert.equal(tenantDomainAccessUpsertCalled, false);
 });
 
 test('updatePlatformUserStatus updates platform domain status and converges platform sessions only', async () => {
@@ -4837,7 +4333,7 @@ test('updatePlatformUserStatus updates platform domain status and converges plat
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT u.id AS user_id')
-              && normalizedSql.includes('LEFT JOIN auth_user_domain_access')
+              && normalizedSql.includes('INNER JOIN platform_users pu')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [{
@@ -4846,9 +4342,8 @@ test('updatePlatformUserStatus updates platform domain status and converges plat
               }];
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_domain_access')
+              normalizedSql.includes('UPDATE platform_users')
               && normalizedSql.includes('SET status = ?')
-              && normalizedSql.includes("domain = 'platform'")
             ) {
               updatePlatformDomainCalled = true;
               return { affectedRows: 1 };
@@ -4862,7 +4357,7 @@ test('updatePlatformUserStatus updates platform domain status and converges plat
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes('session_id IN')
               && normalizedSql.includes('FROM auth_sessions')
@@ -4913,7 +4408,7 @@ test('updatePlatformUserStatus treats same-status change as no-op without sessio
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT u.id AS user_id')
-              && normalizedSql.includes('LEFT JOIN auth_user_domain_access')
+              && normalizedSql.includes('INNER JOIN platform_users pu')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [{
@@ -4922,16 +4417,15 @@ test('updatePlatformUserStatus treats same-status change as no-op without sessio
               }];
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_domain_access')
+              normalizedSql.includes('UPDATE platform_users')
               && normalizedSql.includes('SET status = ?')
-              && normalizedSql.includes("domain = 'platform'")
             ) {
               updateStatusCalled = true;
               return { affectedRows: 1 };
             }
             if (
               normalizedSql.includes('UPDATE auth_sessions')
-              || normalizedSql.includes('UPDATE refresh_tokens')
+              || normalizedSql.includes('UPDATE auth_refresh_tokens')
             ) {
               updateUserCalled = true;
               return [];
@@ -4972,7 +4466,7 @@ test('updatePlatformUserStatus returns null when target user does not exist', as
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT u.id AS user_id')
-              && normalizedSql.includes('LEFT JOIN auth_user_domain_access')
+              && normalizedSql.includes('INNER JOIN platform_users pu')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [];
@@ -4998,9 +4492,9 @@ test('updatePlatformUserStatus returns null when target user does not exist', as
 test('softDeleteUser cascades disabled status and revokes global sessions/refresh tokens in one transaction', async () => {
   let inTransactionCalls = 0;
   let updateUserCalled = false;
-  let updateMembershipsCalled = false;
   let updateTenantMembershipCalled = false;
   let updatePlatformRolesCalled = false;
+  let updatePlatformUsersCalled = false;
   let deleteTenantRoleBindingsCalled = false;
   const revokedSessionParams = [];
   const revokedRefreshParams = [];
@@ -5016,28 +4510,20 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id AS user_id, status')
-              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FROM iam_users')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [{ user_id: 'platform-soft-delete-user-1', status: 'active' }];
             }
             if (
-              normalizedSql.includes('UPDATE users')
+              normalizedSql.includes('UPDATE iam_users')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               updateUserCalled = true;
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('UPDATE memberships')
-              && normalizedSql.includes("SET status = 'disabled'")
-              && normalizedSql.includes('WHERE user_id = ?')
-            ) {
-              updateMembershipsCalled = true;
-              return { affectedRows: 2 };
-            }
-            if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
@@ -5045,7 +4531,7 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
               return { affectedRows: 2 };
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_platform_roles')
+              normalizedSql.includes('UPDATE platform_user_roles')
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
@@ -5053,9 +4539,17 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
               return { affectedRows: 1 };
             }
             if (
+              normalizedSql.includes('UPDATE platform_users')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updatePlatformUsersCalled = true;
+              return { affectedRows: 1 };
+            }
+            if (
               normalizedSql.includes('DELETE amr')
-              && normalizedSql.includes('FROM auth_tenant_membership_roles')
-              && normalizedSql.includes('INNER JOIN auth_user_tenants')
+              && normalizedSql.includes('FROM tenant_membership_roles')
+              && normalizedSql.includes('INNER JOIN tenant_memberships')
               && normalizedSql.includes('ut.user_id = ?')
             ) {
               deleteTenantRoleBindingsCalled = true;
@@ -5070,18 +4564,12 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
               return { affectedRows: 4 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
               revokedRefreshParams.push(params);
               return { affectedRows: 5 };
-            }
-            if (
-              normalizedSql.includes('DELETE FROM auth_user_domain_access')
-              && normalizedSql.includes('WHERE user_id = ?')
-            ) {
-              return { affectedRows: 2 };
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
             return [];
@@ -5098,9 +4586,9 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
 
   assert.equal(inTransactionCalls, 1);
   assert.equal(updateUserCalled, true);
-  assert.equal(updateMembershipsCalled, true);
   assert.equal(updateTenantMembershipCalled, true);
   assert.equal(updatePlatformRolesCalled, true);
+  assert.equal(updatePlatformUsersCalled, true);
   assert.equal(deleteTenantRoleBindingsCalled, true);
   assert.equal(revokedSessionParams.length, 1);
   assert.equal(revokedSessionParams[0]?.[0], 'user-soft-deleted');
@@ -5119,13 +4607,12 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
 
 test('softDeleteUser treats disabled user as idempotent no-op while still enforcing cleanup checks', async () => {
   let updateUsersCalled = false;
-  let updateMembershipsCalled = false;
   let updateTenantMembershipCalled = false;
   let updatePlatformRolesCalled = false;
+  let updatePlatformUsersCalled = false;
   let deleteTenantRoleBindingsCalled = false;
   let revokeSessionsCalled = false;
   let revokeRefreshTokensCalled = false;
-  let deleteDomainAccessCalled = false;
   const store = createMySqlAuthStore({
     dbClient: {
       query: async (sql) => {
@@ -5137,29 +4624,20 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id AS user_id, status')
-              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FROM iam_users')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [{ user_id: 'platform-soft-delete-noop-user', status: 'disabled' }];
             }
             if (
-              normalizedSql.includes('UPDATE users')
+              normalizedSql.includes('UPDATE iam_users')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               updateUsersCalled = true;
               return { affectedRows: 0 };
             }
             if (
-              normalizedSql.includes('UPDATE memberships')
-              && normalizedSql.includes("SET status = 'disabled'")
-              && normalizedSql.includes('WHERE user_id = ?')
-            ) {
-              updateMembershipsCalled = true;
-              assert.equal(params[0], 'platform-soft-delete-noop-user');
-              return { affectedRows: 0 };
-            }
-            if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
@@ -5168,7 +4646,7 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
               return { affectedRows: 0 };
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_platform_roles')
+              normalizedSql.includes('UPDATE platform_user_roles')
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
@@ -5177,9 +4655,18 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
               return { affectedRows: 0 };
             }
             if (
+              normalizedSql.includes('UPDATE platform_users')
+              && normalizedSql.includes("SET status = 'disabled'")
+              && normalizedSql.includes('WHERE user_id = ?')
+            ) {
+              updatePlatformUsersCalled = true;
+              assert.equal(params[0], 'platform-soft-delete-noop-user');
+              return { affectedRows: 0 };
+            }
+            if (
               normalizedSql.includes('DELETE amr')
-              && normalizedSql.includes('FROM auth_tenant_membership_roles')
-              && normalizedSql.includes('INNER JOIN auth_user_tenants')
+              && normalizedSql.includes('FROM tenant_membership_roles')
+              && normalizedSql.includes('INNER JOIN tenant_memberships')
               && normalizedSql.includes('ut.user_id = ?')
             ) {
               deleteTenantRoleBindingsCalled = true;
@@ -5197,19 +4684,11 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
               return { affectedRows: 0 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
               revokeRefreshTokensCalled = true;
-              assert.equal(params[0], 'platform-soft-delete-noop-user');
-              return { affectedRows: 0 };
-            }
-            if (
-              normalizedSql.includes('DELETE FROM auth_user_domain_access')
-              && normalizedSql.includes('WHERE user_id = ?')
-            ) {
-              deleteDomainAccessCalled = true;
               assert.equal(params[0], 'platform-soft-delete-noop-user');
               return { affectedRows: 0 };
             }
@@ -5226,13 +4705,12 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
   });
 
   assert.equal(updateUsersCalled, false);
-  assert.equal(updateMembershipsCalled, true);
   assert.equal(updateTenantMembershipCalled, true);
   assert.equal(updatePlatformRolesCalled, true);
+  assert.equal(updatePlatformUsersCalled, true);
   assert.equal(deleteTenantRoleBindingsCalled, true);
   assert.equal(revokeSessionsCalled, true);
   assert.equal(revokeRefreshTokensCalled, true);
-  assert.equal(deleteDomainAccessCalled, true);
   assert.deepEqual(result, {
     user_id: 'platform-soft-delete-noop-user',
     previous_status: 'disabled',
@@ -5258,39 +4736,39 @@ test('softDeleteUser revokes stale active sessions and refresh tokens even when 
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id AS user_id, status')
-              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FROM iam_users')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [{ user_id: 'platform-soft-delete-disabled-stale', status: 'disabled' }];
             }
             if (
-              normalizedSql.includes('UPDATE users')
+              normalizedSql.includes('UPDATE iam_users')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               updateUsersCalled = true;
               return { affectedRows: 0 };
             }
             if (
-              normalizedSql.includes('UPDATE memberships')
+              normalizedSql.includes('UPDATE tenant_memberships')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_tenants')
+              normalizedSql.includes('UPDATE platform_user_roles')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               return { affectedRows: 1 };
             }
             if (
-              normalizedSql.includes('UPDATE auth_user_platform_roles')
+              normalizedSql.includes('UPDATE platform_users')
               && normalizedSql.includes("SET status = 'disabled'")
             ) {
               return { affectedRows: 1 };
             }
             if (
               normalizedSql.includes('DELETE amr')
-              && normalizedSql.includes('FROM auth_tenant_membership_roles')
+              && normalizedSql.includes('FROM tenant_membership_roles')
             ) {
               return { affectedRows: 1 };
             }
@@ -5305,19 +4783,13 @@ test('softDeleteUser revokes stale active sessions and refresh tokens even when 
               return { affectedRows: 2 };
             }
             if (
-              normalizedSql.includes('UPDATE refresh_tokens')
+              normalizedSql.includes('UPDATE auth_refresh_tokens')
               && normalizedSql.includes("SET status = 'revoked'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
               revokeRefreshTokensCalled = true;
               assert.equal(params[0], 'platform-soft-delete-disabled-stale');
               return { affectedRows: 3 };
-            }
-            if (
-              normalizedSql.includes('DELETE FROM auth_user_domain_access')
-              && normalizedSql.includes('WHERE user_id = ?')
-            ) {
-              return { affectedRows: 2 };
             }
             assert.fail(`unexpected tx query: ${normalizedSql}`);
             return [];
@@ -5357,7 +4829,7 @@ test('softDeleteUser returns null when target user does not exist', async () => 
             const normalizedSql = String(sql);
             if (
               normalizedSql.includes('SELECT id AS user_id, status')
-              && normalizedSql.includes('FROM users')
+              && normalizedSql.includes('FROM iam_users')
               && normalizedSql.includes('FOR UPDATE')
             ) {
               return [];
@@ -5386,7 +4858,7 @@ test('updateTenantMembershipStatus fails closed when lifecycle columns are missi
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5398,7 +4870,7 @@ test('updateTenantMembershipStatus fails closed when lifecycle columns are missi
     }
     if (
       normalizedSql.includes('SELECT user_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
     ) {
       legacySelectAttempts += 1;
@@ -5454,7 +4926,7 @@ test('updateTenantMembershipStatus does not execute legacy left-to-active reacti
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5466,14 +4938,14 @@ test('updateTenantMembershipStatus does not execute legacy left-to-active reacti
     }
     if (
       normalizedSql.includes('SELECT user_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
     ) {
       legacySelectAttempts += 1;
       return [];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       lifecycleUpdateAttempts += 1;
@@ -5508,7 +4980,7 @@ test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeate
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5520,7 +4992,7 @@ test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeate
     }
     if (
       normalizedSql.includes('SELECT user_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('WHERE user_id = ? AND tenant_id = ?')
     ) {
       legacySelectAttempts += 1;
@@ -5566,7 +5038,7 @@ test('updateTenantMembershipStatus fails closed when membership history table is
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5578,8 +5050,8 @@ test('updateTenantMembershipStatus fails closed when membership history table is
         status: 'left',
         can_view_user_management: 1,
         can_operate_user_management: 1,
-        can_view_organization_management: 1,
-        can_operate_organization_management: 0,
+        can_view_role_management: 1,
+        can_operate_role_management: 0,
         joined_at: '2026-02-01T00:00:00.000Z',
         left_at: '2026-02-10T00:00:00.000Z'
       }];
@@ -5625,7 +5097,7 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5638,15 +5110,15 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
         status: membershipLookupCount === 1 ? 'disabled' : 'active',
         can_view_user_management: 1,
         can_operate_user_management: 0,
-        can_view_organization_management: 1,
-        can_operate_organization_management: 0,
+        can_view_role_management: 1,
+        can_operate_role_management: 0,
         joined_at: '2026-02-01T00:00:00.000Z',
         left_at: null
       }];
     }
     if (
       normalizedSql.includes('SELECT role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles')
+      && normalizedSql.includes('FROM tenant_membership_roles')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       roleBindingLookupCount += 1;
@@ -5654,7 +5126,7 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     }
     if (
       normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       roleCatalogLookupCount += 1;
@@ -5683,7 +5155,7 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
       ];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET status = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5693,7 +5165,7 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     }
     if (
       normalizedSql.includes('SELECT COUNT(*) AS tenant_count')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('FROM tenant_memberships ut')
     ) {
       return [{ tenant_count: 1 }];
     }
@@ -5725,8 +5197,8 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
   });
   assert.match(updateSql, /can_view_user_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
   assert.match(updateSql, /can_operate_user_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
-  assert.match(updateSql, /can_view_organization_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
-  assert.match(updateSql, /can_operate_organization_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_view_role_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_operate_role_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
   assert.equal(updateParams.length, 9);
   assert.deepEqual(
     updateParams.slice(0, 7),
@@ -5748,7 +5220,7 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5762,8 +5234,8 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
           status: 'left',
           can_view_user_management: 1,
           can_operate_user_management: 1,
-          can_view_organization_management: 1,
-          can_operate_organization_management: 1,
+          can_view_role_management: 1,
+          can_operate_role_management: 1,
           joined_at: '2026-02-01T00:00:00.000Z',
           left_at: '2026-02-10T00:00:00.000Z'
         }];
@@ -5776,8 +5248,8 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
         status: 'active',
         can_view_user_management: 0,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0,
+        can_view_role_management: 0,
+        can_operate_role_management: 0,
         joined_at: '2026-02-11T00:00:00.000Z',
         left_at: null
       }];
@@ -5786,7 +5258,7 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('DELETE FROM auth_tenant_membership_roles')
+      normalizedSql.includes('DELETE FROM tenant_membership_roles')
       && normalizedSql.includes('WHERE membership_id = ?')
     ) {
       deleteMembershipRoleBindingCount += 1;
@@ -5794,7 +5266,7 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
       return { affectedRows: 1 };
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET membership_id = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5805,7 +5277,7 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
     }
     if (
       normalizedSql.includes('SELECT COUNT(*) AS tenant_count')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
+      && normalizedSql.includes('FROM tenant_memberships ut')
     ) {
       return [{ tenant_count: 1 }];
     }
@@ -5832,8 +5304,8 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
   assert.notEqual(result.membership_id, 'membership-reactivate-left');
   assert.match(updateSql, /can_view_user_management\s*=\s*0/i);
   assert.match(updateSql, /can_operate_user_management\s*=\s*0/i);
-  assert.match(updateSql, /can_view_organization_management\s*=\s*0/i);
-  assert.match(updateSql, /can_operate_organization_management\s*=\s*0/i);
+  assert.match(updateSql, /can_view_role_management\s*=\s*0/i);
+  assert.match(updateSql, /can_operate_role_management\s*=\s*0/i);
   assert.equal(updateParams.length, 3);
   assert.equal(deleteMembershipRoleBindingCount, 1);
   assert.equal(membershipLookupCount, 2);
@@ -5845,7 +5317,7 @@ test('updateTenantMembershipStatus writes tenant audit event when auditContext i
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5857,8 +5329,8 @@ test('updateTenantMembershipStatus writes tenant audit event when auditContext i
         status: 'active',
         can_view_user_management: 1,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0,
+        can_view_role_management: 0,
+        can_operate_role_management: 0,
         joined_at: '2026-02-20T00:00:00.000Z',
         left_at: null
       }];
@@ -5918,7 +5390,7 @@ test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_F
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -5930,8 +5402,8 @@ test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_F
         status: 'active',
         can_view_user_management: 1,
         can_operate_user_management: 0,
-        can_view_organization_management: 0,
-        can_operate_organization_management: 0,
+        can_view_role_management: 0,
+        can_operate_role_management: 0,
         joined_at: '2026-02-20T00:00:00.000Z',
         left_at: null
       }];
@@ -5970,8 +5442,8 @@ test('updateTenantMembershipProfile updates profile fields and returns normalize
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT ut.membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -5983,7 +5455,7 @@ test('updateTenantMembershipProfile updates profile fields and returns normalize
       ];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET display_name = ?')
       && normalizedSql.includes('department_name = CASE')
     ) {
@@ -5993,7 +5465,7 @@ test('updateTenantMembershipProfile updates profile fields and returns normalize
     }
     if (
       normalizedSql.includes('SELECT ut.membership_id')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
     ) {
       return [
@@ -6024,7 +5496,7 @@ test('updateTenantMembershipProfile updates profile fields and returns normalize
     operatorUserId: 'tenant-operator-profile-update'
   });
 
-  assert.equal(/UPDATE auth_user_tenants/i.test(updateSql), true);
+  assert.equal(/UPDATE tenant_memberships/i.test(updateSql), true);
   assert.equal(updateParams[0], '成员乙');
   assert.equal(updateParams[1], 1);
   assert.equal(updateParams[2], null);
@@ -6042,8 +5514,8 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT ut.membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -6053,7 +5525,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
       }];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET display_name = ?')
       && normalizedSql.includes('department_name = CASE')
     ) {
@@ -6082,8 +5554,8 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT ut.membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -6093,7 +5565,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
       }];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET display_name = ?')
       && normalizedSql.includes('department_name = CASE')
     ) {
@@ -6122,8 +5594,8 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT ut.membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -6134,7 +5606,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
       }];
     }
     if (
-      normalizedSql.includes('UPDATE auth_user_tenants')
+      normalizedSql.includes('UPDATE tenant_memberships')
       && normalizedSql.includes('SET display_name = ?')
       && normalizedSql.includes('department_name = CASE')
     ) {
@@ -6164,14 +5636,14 @@ test('updateTenantMembershipProfile returns null when target membership does not
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT ut.membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants ut')
-      && normalizedSql.includes('LEFT JOIN users u ON u.id = ut.user_id')
+      && normalizedSql.includes('FROM tenant_memberships ut')
+      && normalizedSql.includes('LEFT JOIN iam_users u ON u.id = ut.user_id')
       && normalizedSql.includes('WHERE ut.membership_id = ? AND ut.tenant_id = ?')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [];
     }
-    if (normalizedSql.includes('UPDATE auth_user_tenants')) {
+    if (normalizedSql.includes('UPDATE tenant_memberships')) {
       updateCalled = true;
       return { affectedRows: 1 };
     }
@@ -6214,7 +5686,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects non-active memb
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -6251,7 +5723,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects disabled role b
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -6264,7 +5736,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects disabled role b
     }
     if (
       normalizedSql.includes('SELECT role_id, status, scope, tenant_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
@@ -6301,7 +5773,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects malformed affec
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT membership_id')
-      && normalizedSql.includes('FROM auth_user_tenants')
+      && normalizedSql.includes('FROM tenant_memberships')
       && normalizedSql.includes('FOR UPDATE')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
@@ -6338,7 +5810,7 @@ test('replaceTenantRolePermissionGrantsAndSyncSnapshots rejects malformed affect
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT role_id')
-      && normalizedSql.includes('FROM platform_role_catalog')
+      && normalizedSql.includes('FROM platform_roles')
       && normalizedSql.includes("scope = 'tenant'")
       && normalizedSql.includes('FOR UPDATE')
     ) {
@@ -6346,8 +5818,8 @@ test('replaceTenantRolePermissionGrantsAndSyncSnapshots rejects malformed affect
     }
     if (
       normalizedSql.includes('SELECT ut.membership_id, ut.user_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles mr')
-      && normalizedSql.includes('JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id')
+      && normalizedSql.includes('FROM tenant_membership_roles mr')
+      && normalizedSql.includes('JOIN tenant_memberships ut ON ut.membership_id = mr.membership_id')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
@@ -6446,7 +5918,7 @@ test('listPlatformRolePermissionGrantsByRoleIds rejects unexpected role rows fro
         },
         {
           role_id: 'platform_role_permission_batch_unexpected',
-          permission_code: 'platform.organization_management.view'
+          permission_code: 'platform.tenant_management.view'
         }
       ];
     }
@@ -6720,8 +6192,8 @@ test('listTenantMembershipRoleBindings rejects role ids with surrounding whitesp
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT mr.role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles mr')
-      && normalizedSql.includes('JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id')
+      && normalizedSql.includes('FROM tenant_membership_roles mr')
+      && normalizedSql.includes('JOIN tenant_memberships ut ON ut.membership_id = mr.membership_id')
     ) {
       return [
         { role_id: ' tenant_role_binding_whitespace' }
@@ -6749,8 +6221,8 @@ test('listTenantMembershipRoleBindings rejects role ids with uppercase role_id f
     const normalizedSql = String(sql);
     if (
       normalizedSql.includes('SELECT mr.role_id')
-      && normalizedSql.includes('FROM auth_tenant_membership_roles mr')
-      && normalizedSql.includes('JOIN auth_user_tenants ut ON ut.membership_id = mr.membership_id')
+      && normalizedSql.includes('FROM tenant_membership_roles mr')
+      && normalizedSql.includes('JOIN tenant_memberships ut ON ut.membership_id = mr.membership_id')
     ) {
       return [
         { role_id: 'TENANT_ROLE_BINDING_CASE_TARGET' }

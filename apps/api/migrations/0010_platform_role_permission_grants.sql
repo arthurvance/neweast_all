@@ -8,12 +8,12 @@ CREATE TABLE IF NOT EXISTS platform_role_permission_grants (
   PRIMARY KEY (role_id, permission_code),
   KEY idx_platform_role_permission_grants_permission_code (permission_code),
   CONSTRAINT fk_platform_role_permission_grants_role_id
-    FOREIGN KEY (role_id) REFERENCES platform_role_catalog (role_id)
+    FOREIGN KEY (role_id) REFERENCES platform_roles (role_id)
     ON DELETE CASCADE,
   CONSTRAINT fk_platform_role_permission_grants_created_by_user
-    FOREIGN KEY (created_by_user_id) REFERENCES users (id),
+    FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id),
   CONSTRAINT fk_platform_role_permission_grants_updated_by_user
-    FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+    FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT INTO platform_role_permission_grants (
@@ -25,7 +25,7 @@ INSERT INTO platform_role_permission_grants (
 VALUES
   ('sys_admin', 'platform.user_management.view', NULL, NULL),
   ('sys_admin', 'platform.user_management.operate', NULL, NULL),
-  ('sys_admin', 'platform.organization_management.view', NULL, NULL),
-  ('sys_admin', 'platform.organization_management.operate', NULL, NULL)
+  ('sys_admin', 'platform.tenant_management.view', NULL, NULL),
+  ('sys_admin', 'platform.tenant_management.operate', NULL, NULL)
 ON DUPLICATE KEY UPDATE
   updated_at = CURRENT_TIMESTAMP(3);

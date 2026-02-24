@@ -3,17 +3,43 @@ import {
   SettingOutlined,
   TeamOutlined
 } from '@ant-design/icons';
-import TenantRoleManagementPage from '../tenant-settings/TenantRoleManagementPage';
-import TenantUserManagementPage from '../tenant-settings/TenantUserManagementPage';
+import { lazy } from 'react';
+import {
+  TENANT_PERMISSION_CODE_BY_GROUP_ACTION
+} from '../auth/generated-permission-catalog';
 
 const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ROLE_MENU_KEY = 'settings/roles';
+const TenantRoleManagementPage = lazy(() => import('./pages/TenantRoleManagementPage'));
+const TenantUserManagementPage = lazy(() => import('./pages/TenantUserManagementPage'));
 
-const USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.user_management.view';
-const USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.user_management.operate';
-const ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
-const ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
+const readTenantPermissionCode = ({ groupKey, actionKey }) => {
+  const code = TENANT_PERMISSION_CODE_BY_GROUP_ACTION?.[groupKey]?.[actionKey];
+  if (!code) {
+    throw new Error(
+      `missing generated tenant permission code for ${String(groupKey)}.${String(actionKey)}`
+    );
+  }
+  return code;
+};
+
+const USER_MANAGEMENT_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'user_management',
+  actionKey: 'view'
+});
+const USER_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'user_management',
+  actionKey: 'operate'
+});
+const ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'role_management',
+  actionKey: 'view'
+});
+const ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'role_management',
+  actionKey: 'operate'
+});
 
 const TENANT_MENU_ORDER = Object.freeze([
   USER_MENU_KEY,

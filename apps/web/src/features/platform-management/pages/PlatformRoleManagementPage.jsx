@@ -15,17 +15,17 @@ import {
   Tree,
   message
 } from 'antd';
-import CustomCardTable from '../../components/CustomCardTable';
-import CustomFilter from '../../components/CustomFilter';
-import CustomForm from '../../components/CustomForm';
+import CustomCardTable from '../../../components/CustomCardTable';
+import CustomFilter from '../../../components/CustomFilter';
+import CustomForm from '../../../components/CustomForm';
 import {
-  createPlatformSettingsApi,
+  createPlatformManagementApi,
   toProblemMessage
-} from '../../api/platform-settings.mjs';
+} from '../../../api/platform-management.mjs';
 import {
   formatDateTimeMinute,
   toDateTimeMinuteEpoch
-} from '../../utils/date-time.mjs';
+} from '../../../utils/date-time.mjs';
 
 const ROLE_STATUS_SELECT_OPTIONS = [
   { label: '全部', value: '' },
@@ -43,7 +43,7 @@ const SETTINGS_TREE_ROOT_KEY = 'settings';
 const PLATFORM_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
   user_management: '用户管理',
   role_management: '角色管理',
-  organization_management: '组织管理'
+  tenant_management: '组织管理'
 });
 const PLATFORM_PERMISSION_ACTION_LABEL_MAP = Object.freeze({
   view: '查看',
@@ -54,8 +54,8 @@ const PLATFORM_PERMISSION_LABEL_KEY_MAP = Object.freeze({
   'permission.platform.user_management.operate': '操作用户管理',
   'permission.platform.role_management.view': '查看角色管理',
   'permission.platform.role_management.operate': '操作角色管理',
-  'permission.platform.organization_management.view': '查看组织管理',
-  'permission.platform.organization_management.operate': '操作组织管理'
+  'permission.platform.tenant_management.view': '查看组织管理',
+  'permission.platform.tenant_management.operate': '操作组织管理'
 });
 
 const toPermissionCodeParts = (permissionCode) => {
@@ -244,7 +244,7 @@ const isSysAdminRole = (roleId) =>
 
 export default function PlatformRoleManagementPage({ accessToken }) {
   const api = useMemo(
-    () => createPlatformSettingsApi({ accessToken }),
+    () => createPlatformManagementApi({ accessToken }),
     [accessToken]
   );
   const [messageApi, messageContextHolder] = message.useMessage();
@@ -818,14 +818,14 @@ export default function PlatformRoleManagementPage({ accessToken }) {
 
   if (!accessToken) {
     return (
-      <section data-testid="platform-governance-no-session" style={{ marginTop: 12 }}>
+      <section data-testid="platform-management-no-session" style={{ marginTop: 12 }}>
         <Alert type="warning" message="当前会话缺失 access_token，无法加载平台治理工作台。" showIcon />
       </section>
     );
   }
 
   return (
-    <section data-testid="platform-governance-workbench" style={{ display: 'grid', gap: 12 }}>
+    <section data-testid="platform-management-workbench" style={{ display: 'grid', gap: 12 }}>
       {messageContextHolder}
       <section data-testid="platform-roles-module" style={{ display: 'grid', gap: 12 }}>
         <CustomFilter

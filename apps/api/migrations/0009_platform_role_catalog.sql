@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS platform_role_catalog (
+CREATE TABLE IF NOT EXISTS platform_roles (
   role_id VARCHAR(64) NOT NULL,
   code VARCHAR(64) NOT NULL,
   code_normalized VARCHAR(64) NOT NULL,
@@ -11,14 +11,14 @@ CREATE TABLE IF NOT EXISTS platform_role_catalog (
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (role_id),
-  UNIQUE KEY uk_platform_role_catalog_code_normalized (code_normalized),
-  KEY idx_platform_role_catalog_scope_status (scope, status),
-  KEY idx_platform_role_catalog_system (is_system),
-  CONSTRAINT fk_platform_role_catalog_created_by_user FOREIGN KEY (created_by_user_id) REFERENCES users (id),
-  CONSTRAINT fk_platform_role_catalog_updated_by_user FOREIGN KEY (updated_by_user_id) REFERENCES users (id)
+  UNIQUE KEY uk_platform_roles_code_normalized (code_normalized),
+  KEY idx_platform_roles_scope_status (scope, status),
+  KEY idx_platform_roles_system (is_system),
+  CONSTRAINT fk_platform_roles_created_by_user FOREIGN KEY (created_by_user_id) REFERENCES iam_users (id),
+  CONSTRAINT fk_platform_roles_updated_by_user FOREIGN KEY (updated_by_user_id) REFERENCES iam_users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO platform_role_catalog (
+INSERT INTO platform_roles (
   role_id,
   code,
   code_normalized,

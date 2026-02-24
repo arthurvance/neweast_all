@@ -1,2 +1,1 @@
-DROP TABLE IF EXISTS memberships;
-DROP TABLE IF EXISTS orgs;
+DROP TABLE IF EXISTS tenants;

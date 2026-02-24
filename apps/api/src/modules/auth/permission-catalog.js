@@ -10,8 +10,8 @@ const TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.o
 
 const PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.user_management.view';
 const PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.user_management.operate';
-const PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.organization_management.view';
-const PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.organization_management.operate';
+const PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.tenant_management.view';
+const PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.tenant_management.operate';
 const PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.role_management.view';
 const PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.role_management.operate';
 
@@ -67,14 +67,14 @@ const hasPermissionCodeGrant = ({ permissionContext = null, permissionCode }) =>
     case PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_operate_user_management')
         || readBooleanPermissionField(permissionContext, 'canOperateUserManagement');
-    case PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE:
-      return readBooleanPermissionField(permissionContext, 'can_view_organization_management')
-        || readBooleanPermissionField(permissionContext, 'canViewOrganizationManagement')
-        || readBooleanPermissionField(permissionContext, 'can_operate_organization_management')
-        || readBooleanPermissionField(permissionContext, 'canOperateOrganizationManagement');
-    case PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE:
-      return readBooleanPermissionField(permissionContext, 'can_operate_organization_management')
-        || readBooleanPermissionField(permissionContext, 'canOperateOrganizationManagement');
+    case PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_tenant_management')
+        || readBooleanPermissionField(permissionContext, 'canViewTenantManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_tenant_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateTenantManagement');
+    case PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_tenant_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateTenantManagement');
     case PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_view_role_management')
         || readBooleanPermissionField(permissionContext, 'canViewRoleManagement')
@@ -247,21 +247,21 @@ const ROUTE_PERMISSION_DEFINITIONS = Object.freeze([
     order: 120
   }),
   createPermissionDefinition({
-    code: PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE,
+    code: PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE,
     scopes: [PERMISSION_SCOPE_PLATFORM],
     contextKey: 'platform',
-    groupKey: 'organization_management',
+    groupKey: 'tenant_management',
     actionKey: 'view',
-    labelKey: 'permission.platform.organization_management.view',
+    labelKey: 'permission.platform.tenant_management.view',
     order: 210
   }),
   createPermissionDefinition({
-    code: PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    code: PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE,
     scopes: [PERMISSION_SCOPE_PLATFORM],
     contextKey: 'platform',
-    groupKey: 'organization_management',
+    groupKey: 'tenant_management',
     actionKey: 'operate',
-    labelKey: 'permission.platform.organization_management.operate',
+    labelKey: 'permission.platform.tenant_management.operate',
     order: 220
   }),
   createPermissionDefinition({
@@ -349,8 +349,8 @@ const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
   const snapshot = {
     canViewUserManagement: false,
     canOperateUserManagement: false,
-    canViewOrganizationManagement: false,
-    canOperateOrganizationManagement: false,
+    canViewTenantManagement: false,
+    canOperateTenantManagement: false,
     canViewRoleManagement: false,
     canOperateRoleManagement: false
   };
@@ -363,12 +363,12 @@ const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
         snapshot.canViewUserManagement = true;
         snapshot.canOperateUserManagement = true;
         break;
-      case PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE:
-        snapshot.canViewOrganizationManagement = true;
+      case PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewTenantManagement = true;
         break;
-      case PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE:
-        snapshot.canViewOrganizationManagement = true;
-        snapshot.canOperateOrganizationManagement = true;
+      case PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewTenantManagement = true;
+        snapshot.canOperateTenantManagement = true;
         break;
       case PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
         snapshot.canViewRoleManagement = true;
@@ -516,8 +516,8 @@ module.exports = {
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
-  PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE,
-  PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_TENANT_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   KNOWN_PLATFORM_PERMISSION_CODES,
