@@ -1184,6 +1184,61 @@ const createPlatformGovernanceApiServer = async () => {
       return;
     }
 
+    if (userDetailMatch && method === 'PATCH') {
+      const userId = decodeURIComponent(userDetailMatch[1] || '');
+      const target = users.get(userId);
+      if (!target || target.deleted) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标平台用户不存在或无 platform 域访问',
+          errorCode: 'USR-404-USER-NOT-FOUND'
+        });
+        return;
+      }
+      const name = String(body.name || '').trim();
+      const department = String(body.department || '').trim() || null;
+      const hasRoleIds = Object.prototype.hasOwnProperty.call(body, 'role_ids');
+      const requestedRoleIds = hasRoleIds
+        ? [...new Set(
+          (Array.isArray(body.role_ids) ? body.role_ids : [])
+            .map((roleId) => String(roleId || '').trim().toLowerCase())
+            .filter(Boolean)
+        )]
+        : [];
+      const hasInvalidRoleId = hasRoleIds
+        && requestedRoleIds.some((roleId) => {
+          const roleRecord = roles.get(roleId);
+          return !roleRecord || roleRecord.status !== 'active';
+        });
+      if (
+        !name
+        || hasInvalidRoleId
+      ) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'USR-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      users.set(userId, {
+        ...target,
+        name,
+        department,
+        role_ids: hasRoleIds ? requestedRoleIds : target.role_ids
+      });
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...toUserReadModel(users.get(userId)),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
     if (userDetailMatch && method === 'DELETE') {
       const userId = decodeURIComponent(userDetailMatch[1] || '');
       const target = users.get(userId);
@@ -3821,6 +3876,53 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await evaluate(
     cdp,
     sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-edit-platform-user-1"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-user-edit-user-id"]'))`,
+    5000,
+    'platform user edit modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const nameInput = document.querySelector('[data-testid="platform-user-edit-name"]');
+      const departmentInput = document.querySelector('[data-testid="platform-user-edit-department"]');
+      setter.call(nameInput, '平台管理员甲（已编辑）');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(departmentInput, '平台治理中台');
+      departmentInput.dispatchEvent(new Event('input', { bubbles: true }));
+      departmentInput.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-user-edit-confirm"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/platform/users/platform-user-1' && request.method === 'PATCH',
+    8000,
+    'platform user edit request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => !document.querySelector('[data-testid="platform-user-edit-user-id"]'))()`,
+    5000,
+    'platform user edit modal should close after successful submit'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
     `(() => { document.querySelector('[data-testid="platform-user-status-platform-user-1"]').click(); return true; })()`
   );
   await waitForRequest(
@@ -3840,10 +3942,16 @@ test('chrome regression validates platform governance workbench with modal/drawe
     sessionId,
     `(() => {
       const drawer = document.querySelector('[data-testid="platform-user-detail-drawer"]');
-      return Boolean(drawer) && String(drawer.textContent || '').includes('request_id');
+      const content = String(drawer?.textContent || '');
+      return (
+        Boolean(drawer)
+        && content.includes('手机号')
+        && !content.includes('request_id')
+        && !content.includes('latest_action')
+      );
     })()`,
     5000,
-    'platform user detail drawer should show request_id trace'
+    'platform user detail drawer should hide request_id/latest_action fields'
   );
 
   await evaluate(
@@ -3926,7 +4034,101 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await evaluate(
     cdp,
     sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-edit-platform_member_admin"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const modalTitle = String(document.querySelector('.ant-modal-title')?.textContent || '');
+      return modalTitle.includes('编辑');
+    })()`,
+    5000,
+    'platform role edit modal title should be 编辑'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-role-edit-permission-tree"]'))`,
+    5000,
+    'platform role edit permission tree should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const code = document.querySelector('[data-testid="platform-role-edit-code"]');
+      setter.call(code, 'SYS_ADMIN');
+      code.dispatchEvent(new Event('input', { bubbles: true }));
+      code.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-edit-confirm"]').click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => String(document.body.textContent || '').includes('角色编码需在组织内唯一'))()`,
+    5000,
+    'duplicate role code should be blocked by uniqueness validation'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const code = document.querySelector('[data-testid="platform-role-edit-code"]');
+      const name = document.querySelector('[data-testid="platform-role-edit-name"]');
+      setter.call(code, 'PLATFORM_MEMBER_ADMIN_V2');
+      code.dispatchEvent(new Event('input', { bubbles: true }));
+      code.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(name, '平台成员治理-已编辑');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      name.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  const editRoleRequestBaseline = api.requests.length;
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-edit-confirm"]').click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request, index) =>
+      index >= editRoleRequestBaseline
+      && request.path === '/platform/roles/platform_member_admin'
+      && request.method === 'PATCH',
+    8000,
+    'platform role edit request should reach API stub'
+  );
+  await waitForRequest(
+    api.requests,
+    (request, index) =>
+      index >= editRoleRequestBaseline
+      && request.method === 'PUT'
+      && request.path.includes('/platform/roles/platform_member_admin/permissions'),
+    8000,
+    'platform role edit permission save request should reach API stub'
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
     `(() => { document.querySelector('[data-row-key="platform_member_admin"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => String(document.querySelector('.ant-drawer-title')?.textContent || '').includes('角色ID：platform_member_admin'))()`,
+    5000,
+    'platform role detail drawer title should include role id'
   );
   await waitForCondition(
     cdp,
@@ -3935,18 +4137,52 @@ test('chrome regression validates platform governance workbench with modal/drawe
     5000,
     'platform role permission tree should be visible in drawer'
   );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-role-detail-edit"]')) && Boolean(document.querySelector('[data-testid="platform-role-detail-status-toggle"]'))`,
+    5000,
+    'platform role detail drawer should show edit and status toggle actions'
+  );
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="platform-role-permission-save"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="platform-role-detail-edit"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => String(document.querySelector('.ant-modal-title')?.textContent || '').includes('编辑'))()`,
+    5000,
+    'role edit modal should be opened from drawer edit action'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-edit-cancel"]')?.click(); return true; })()`
+  );
+  const roleDrawerStatusToggleRequestBaseline = api.requests.length;
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="platform-role-detail-status-toggle"]')?.click(); return true; })()`
   );
   await waitForRequest(
     api.requests,
-    (request) =>
-      request.method === 'PUT'
-      && request.path.includes('/platform/roles/platform_member_admin/permissions'),
+    (request, index) =>
+      index >= roleDrawerStatusToggleRequestBaseline
+      && request.method === 'PATCH'
+      && request.path === '/platform/roles/platform_member_admin',
     8000,
-    'platform role permission save request should reach API stub'
+    'platform role status toggle request should reach API stub from drawer'
+  );
+  const roleStatusToggleRequestFromDrawer = api.requests
+    .slice(roleDrawerStatusToggleRequestBaseline)
+    .find((request) => request.method === 'PATCH' && request.path === '/platform/roles/platform_member_admin');
+  assert.equal(
+    roleStatusToggleRequestFromDrawer?.body?.status,
+    'disabled',
+    'drawer status toggle should submit disabled as target status for active role'
   );
 
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
@@ -3965,6 +4201,12 @@ test('chrome regression validates platform governance workbench with modal/drawe
   );
   assert.equal(createUserRequest?.body?.phone, '13800000013');
   assert.equal(createUserRequest?.body?.name, '平台新用户');
+
+  const updateUserRequest = api.requests.find(
+    (request) => request.path === '/platform/users/platform-user-1' && request.method === 'PATCH'
+  );
+  assert.equal(updateUserRequest?.body?.name, '平台管理员甲（已编辑）');
+  assert.equal(updateUserRequest?.body?.department, '平台治理中台');
 
   const updateStatusRequest = api.requests.find(
     (request) => request.path === '/platform/users/status' && request.method === 'POST'
@@ -4192,9 +4434,46 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-member-detail-membership-tenant-101-admin"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-member-user-id-tenant-user-admin"]'))`,
     12000,
     'tenant member table should load initial records'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-member-user-id-tenant-user-admin"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="tenant-member-detail-drawer"]');
+      const title = String(document.querySelector('.ant-drawer-title')?.textContent || '');
+      const text = String(drawer?.textContent || '');
+      return (
+        Boolean(drawer)
+        && title.includes('用户ID:tenant-user-admin')
+        && text.includes('手机号')
+        && text.includes('组织管理员')
+      );
+    })()`,
+    8000,
+    'tenant member row click should open detail drawer'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-detail-edit"]')) && Boolean(document.querySelector('[data-testid="tenant-member-detail-status"]'))`,
+    8000,
+    'tenant member detail drawer should show edit and status actions'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
+      return true;
+    })()`
   );
   await waitForRequest(
     api.requests,
@@ -4237,7 +4516,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-member-detail-membership-tenant-101-extra-9"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-member-user-id-tenant-user-extra-9"]'))`,
     8000,
     'tenant member second page should render paged records'
   );
@@ -4282,9 +4561,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="tenant-member-filter-keyword"]');
+      const input = document.querySelector('[data-testid="tenant-member-filter-name"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(input, 'tenant-101-member');
+      setter.call(input, '成员乙');
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
@@ -4302,7 +4581,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-member-detail-membership-tenant-101-member"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-member-user-id-tenant-user-02"]'))`,
     8000,
     'member filter should keep target member visible'
   );
@@ -4310,7 +4589,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="tenant-member-filter-keyword"]');
+      const input = document.querySelector('[data-testid="tenant-member-filter-name"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       setter.call(input, '');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4344,11 +4623,15 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="tenant-member-create-phone"]');
+      const phoneInput = document.querySelector('[data-testid="tenant-member-create-phone"]');
+      const nameInput = document.querySelector('[data-testid="tenant-member-create-display-name"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(input, '13800000029');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(phoneInput, '13800000029');
+      phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+      phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nameInput, '新建成员甲');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
     })()`
   );
@@ -4379,8 +4662,14 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     sessionId,
     `(() => {
       const drawer = document.querySelector('[data-testid="tenant-member-detail-drawer"]');
+      const title = String(document.querySelector('.ant-drawer-title')?.textContent || '');
       const text = String(drawer?.textContent || '');
-      return Boolean(drawer) && text.includes('membership-tenant-101-3');
+      return (
+        Boolean(drawer)
+        && title.includes('用户ID:tenant-user-3')
+        && text.includes('新建成员甲')
+        && text.includes('13800000029')
+      );
     })()`,
     12000,
     'newly created tenant member detail should be visible in drawer'
@@ -4394,6 +4683,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     })()`
   );
 
+  const tenantMemberStatusToggleRequestBaseline = api.requests.length;
   await evaluate(
     cdp,
     sessionId,
@@ -4402,36 +4692,45 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-member-status-reason"]'))`,
+    `!Boolean(document.querySelector('[data-testid="tenant-member-status-reason"]'))`,
     8000,
-    'tenant member status modal should be visible'
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => {
-      const input = document.querySelector('[data-testid="tenant-member-status-reason"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      setter.call(input, 'manual-governance');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-member-status-confirm"]').click(); return true; })()`
+    'tenant member status modal should not be visible'
   );
   await waitForRequest(
     api.requests,
-    (request) =>
-      request.method === 'PATCH'
+    (request, index) =>
+      index >= tenantMemberStatusToggleRequestBaseline
+      && request.method === 'PATCH'
       && request.path.includes('/tenant/members/membership-tenant-101-admin/status'),
     8000,
     'tenant member status patch should reach API stub'
   );
-
+  const tenantMemberStatusToggleRequest = api.requests
+    .slice(tenantMemberStatusToggleRequestBaseline)
+    .find(
+      (request) =>
+        request.method === 'PATCH'
+        && request.path.includes('/tenant/members/membership-tenant-101-admin/status')
+    );
+  assert.equal(
+    tenantMemberStatusToggleRequest?.body?.status,
+    'disabled',
+    'tenant member status toggle should submit disabled for active member'
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(tenantMemberStatusToggleRequest?.body || {}, 'reason'),
+    false,
+    'tenant member status toggle should not include reason'
+  );
+  await waitForRequest(
+    api.responses,
+    (response) =>
+      response.method === 'PATCH'
+      && response.path.includes('/tenant/members/membership-tenant-101-admin/status')
+      && response.status === 200,
+    8000,
+    'tenant member status patch should return success'
+  );
   await evaluate(
     cdp,
     sessionId,
@@ -4504,25 +4803,27 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-member-roles-membership-tenant-101-admin"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="tenant-member-profile-membership-tenant-101-admin"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-member-roles-input"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-member-profile-role-ids"]'))`,
     8000,
-    'tenant member role assignment modal should be visible'
+    'tenant member edit modal should be visible for role update'
   );
   await evaluate(
     cdp,
     sessionId,
     `(() => {
-      const input = document.querySelector('[data-testid="tenant-member-roles-input"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(input, 'tenant_member_admin,tenant_billing_admin');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      const select = document.querySelector('[data-testid="tenant-member-profile-role-ids"]');
+      const trigger = select?.querySelector('.ant-select-selector') || select;
+      trigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      const targetOption = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('组织账单治理'));
+      targetOption?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      targetOption?.click();
+      return Boolean(targetOption);
     })()`
   );
   const tenantOptionsRefreshCountBeforeRoleAssignment = api.requests.filter(
@@ -4531,7 +4832,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-member-roles-confirm"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="tenant-member-profile-confirm"]').click(); return true; })()`
   );
   await waitForRequest(
     api.requests,
@@ -4539,7 +4840,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       request.method === 'PUT'
       && request.path.includes('/tenant/members/membership-tenant-101-admin/roles'),
     8000,
-    'tenant member roles replace request should reach API stub'
+    'tenant member edit should submit role replacement request'
   );
   await waitForRequest(
     api.responses,
@@ -4589,12 +4890,257 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
+    `(() => {
+      const codeInput = document.querySelector('[data-testid="tenant-role-filter-code"]');
+      const nameInput = document.querySelector('[data-testid="tenant-role-filter-name"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(codeInput, 'TENANT_MEMBER_ADMIN');
+      codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nameInput, '');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-roles-module"] button[type="submit"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const hasMemberAdmin = Boolean(document.querySelector('[data-row-key="tenant_member_admin"]'));
+      const hasBillingAdmin = Boolean(document.querySelector('[data-row-key="tenant_billing_admin"]'));
+      return hasMemberAdmin && !hasBillingAdmin;
+    })()`,
+    8000,
+    'tenant role code exact filter should keep only matched code'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const codeInput = document.querySelector('[data-testid="tenant-role-filter-code"]');
+      const nameInput = document.querySelector('[data-testid="tenant-role-filter-name"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(codeInput, '');
+      codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nameInput, '账单');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-roles-module"] button[type="submit"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const hasMemberAdmin = Boolean(document.querySelector('[data-row-key="tenant_member_admin"]'));
+      const hasBillingAdmin = Boolean(document.querySelector('[data-row-key="tenant_billing_admin"]'));
+      return !hasMemberAdmin && hasBillingAdmin;
+    })()`,
+    8000,
+    'tenant role name fuzzy filter should keep matched rows'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const codeInput = document.querySelector('[data-testid="tenant-role-filter-code"]');
+      const nameInput = document.querySelector('[data-testid="tenant-role-filter-name"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter.call(codeInput, '');
+      codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nameInput, '');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-roles-module"] button[type="submit"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => Boolean(document.querySelector('[data-testid="tenant-role-edit-tenant_billing_admin"]')))()`,
+    8000,
+    'tenant role filters reset should recover full role list'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => !document.querySelector('[data-testid="tenant-role-delete-tenant_member_admin"]'))()`,
+    8000,
+    'active tenant role should not show delete action'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-status-tenant_billing_admin"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'PATCH'
+      && request.path.includes('/tenant/roles/tenant_billing_admin')
+      && request.body?.status === 'disabled',
+    8000,
+    'tenant role status update should allow disabling non-system roles'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-role-filter-status"]');
+      const trigger = select?.querySelector('.ant-select-selector') || select;
+      trigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('禁用'));
+      option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      option?.click();
+      document.querySelector('[data-testid="tenant-roles-module"] button[type="submit"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const hasMemberAdmin = Boolean(document.querySelector('[data-row-key="tenant_member_admin"]'));
+      const hasBillingAdmin = Boolean(document.querySelector('[data-row-key="tenant_billing_admin"]'));
+      return !hasMemberAdmin && hasBillingAdmin;
+    })()`,
+    8000,
+    'tenant role status filter should keep only disabled roles'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => Boolean(document.querySelector('[data-testid="tenant-role-delete-tenant_billing_admin"]')))()`,
+    8000,
+    'disabled tenant role should show delete action'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const select = document.querySelector('[data-testid="tenant-role-filter-status"]');
+      const trigger = select?.querySelector('.ant-select-selector') || select;
+      trigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('全部'));
+      option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      option?.click();
+      document.querySelector('[data-testid="tenant-roles-module"] button[type="submit"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => Boolean(document.querySelector('[data-testid="tenant-role-edit-tenant_owner"]')))()`,
+    8000,
+    'tenant role status filter reset should recover protected role row'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const row = document.querySelector('[data-row-key="tenant_member_admin"]');
+      row?.focus();
+      row?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-role-detail-drawer"]'))`,
+    8000,
+    'tenant role row keyboard enter should open detail drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => !document.querySelector('[data-testid="tenant-role-detail-drawer"]'))()`,
+    8000,
+    'tenant role detail drawer should close after keyboard-open check'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-edit-tenant_owner"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const modal = document.querySelector('[data-testid="tenant-role-edit-name"]');
+      const drawer = document.querySelector('[data-testid="tenant-role-detail-drawer"]');
+      return Boolean(modal) && !drawer;
+    })()`,
+    8000,
+    'tenant role edit action should open modal without triggering row drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-modal .ant-modal-close')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => !document.querySelector('[data-testid="tenant-role-edit-name"]'))()`,
+    8000,
+    'tenant role edit modal should close after cancel'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-role-delete-tenant_billing_admin"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const popconfirm = document.querySelector('.ant-popover .ant-popconfirm');
+      const drawer = document.querySelector('[data-testid="tenant-role-detail-drawer"]');
+      return Boolean(popconfirm) && !drawer;
+    })()`,
+    8000,
+    'tenant role delete action should open confirm without triggering row drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const cancel = document.querySelector('.ant-popconfirm-buttons .ant-btn-default');
+      cancel?.click();
+      return true;
+    })()`
+  );
+
+  await evaluate(
+    cdp,
+    sessionId,
     `(() => { document.querySelector('[data-testid="tenant-role-create-open"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-role-edit-role-id"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-role-edit-code"]'))`,
     8000,
     'tenant role create modal should be visible'
   );
@@ -4603,12 +5149,8 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     sessionId,
     `(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      const roleId = document.querySelector('[data-testid="tenant-role-edit-role-id"]');
       const code = document.querySelector('[data-testid="tenant-role-edit-code"]');
       const name = document.querySelector('[data-testid="tenant-role-edit-name"]');
-      setter.call(roleId, 'tenant_ops_auditor');
-      roleId.dispatchEvent(new Event('input', { bubbles: true }));
-      roleId.dispatchEvent(new Event('change', { bubbles: true }));
       setter.call(code, 'TENANT_OPS_AUDITOR');
       code.dispatchEvent(new Event('input', { bubbles: true }));
       code.dispatchEvent(new Event('change', { bubbles: true }));
@@ -4681,7 +5223,14 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-role-detail-tenant_member_admin"]').click(); return true; })()`
+    `(() => {
+      const row = document.querySelector('[data-row-key="tenant_member_admin"]');
+      if (!row) {
+        return false;
+      }
+      row.click();
+      return true;
+    })()`
   );
   await waitForCondition(
     cdp,
@@ -4690,18 +5239,12 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     8000,
     'tenant role permission tree should be visible in drawer'
   );
-  await evaluate(
+  await waitForCondition(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-role-permission-save"]').click(); return true; })()`
-  );
-  await waitForRequest(
-    api.requests,
-    (request) =>
-      request.method === 'PUT'
-      && request.path.includes('/tenant/roles/tenant_member_admin/permissions'),
+    `(() => !document.querySelector('[data-testid="tenant-role-permission-save"]'))()`,
     8000,
-    'tenant role permission save request should reach API stub'
+    'tenant role detail drawer should hide permission save action'
   );
 
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
@@ -4721,6 +5264,13 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     (request) => request.path === '/tenant/members' && request.method === 'POST'
   );
   assert.equal(createMemberRequest?.body?.phone, '13800000029');
+  const createMemberProfileRequest = api.requests.find(
+    (request) =>
+      request.method === 'PATCH'
+      && request.path.includes('/tenant/members/membership-tenant-101-3/profile')
+  );
+  assert.equal(createMemberProfileRequest?.body?.display_name, '新建成员甲');
+  assert.equal(createMemberProfileRequest?.body?.department_name, null);
 
   const replaceRolesRequest = api.requests.find(
     (request) =>

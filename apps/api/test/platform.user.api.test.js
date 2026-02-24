@@ -76,10 +76,15 @@ const createHarness = ({
         name: '默认用户',
         department: '默认部门',
         status: 'active',
-        created_at: '2026-01-01T00:00:00.000Z',
-        roles: []
+          created_at: '2026-01-01T00:00:00.000Z',
+          roles: []
       }
       : null,
+  updateUserPhone = async ({ userId, phone }) => ({
+    reason: 'ok',
+    user_id: userId,
+    phone
+  }),
   upsertPlatformUserProfile = async ({ userId, name, department }) => ({
     user_id: userId,
     name,
@@ -119,6 +124,7 @@ const createHarness = ({
   const softDeleteCalls = [];
   const listCalls = [];
   const getCalls = [];
+  const updatePhoneCalls = [];
   const upsertProfileCalls = [];
   const listRoleCatalogCalls = [];
   const listRoleGrantCalls = [];
@@ -155,6 +161,10 @@ const createHarness = ({
         getPlatformUserById: async (payload) => {
           getCalls.push(payload);
           return getPlatformUserById(payload);
+        },
+        updateUserPhone: async (payload) => {
+          updatePhoneCalls.push(payload);
+          return updateUserPhone(payload);
         },
         upsertPlatformUserProfile: async (payload) => {
           upsertProfileCalls.push(payload);
@@ -194,6 +204,7 @@ const createHarness = ({
     softDeleteCalls,
     listCalls,
     getCalls,
+    updatePhoneCalls,
     upsertProfileCalls,
     listRoleCatalogCalls,
     listRoleGrantCalls,
@@ -437,6 +448,304 @@ test('GET /platform/users/:user_id returns USR-404-USER-NOT-FOUND when target is
   assert.equal(payload.error_code, 'USR-404-USER-NOT-FOUND');
   assert.equal(payload.detail, '目标平台用户不存在或无 platform 域访问');
   assert.equal(payload.request_id, 'req-platform-user-get-not-found');
+});
+
+test('PATCH /platform/users/:user_id updates platform user profile and roles', async () => {
+  const userState = {
+    user_id: 'platform-user-default',
+    phone: '13800000040',
+    name: '默认用户',
+    department: '默认部门',
+    status: 'active',
+    created_at: '2026-01-01T00:00:00.000Z',
+    roles: [
+      {
+        role_id: 'role_user',
+        code: 'ROLE_USER',
+        name: '平台用户',
+        status: 'active'
+      }
+    ]
+  };
+  const harness = createHarness({
+    getPlatformUserById: async ({ userId }) =>
+      String(userId || '').trim() === userState.user_id
+        ? { ...userState }
+        : null,
+    upsertPlatformUserProfile: async ({ userId, name, department }) => {
+      if (String(userId || '').trim() !== userState.user_id) {
+        throw new Error('unexpected userId');
+      }
+      userState.name = String(name || '').trim();
+      userState.department = department;
+      return {
+        user_id: userState.user_id,
+        name: userState.name,
+        department: userState.department
+      };
+    },
+    replacePlatformRolesAndSyncSnapshot: async ({ userId, roles = [] }) => {
+      if (String(userId || '').trim() !== userState.user_id) {
+        return { reason: 'invalid-user-id' };
+      }
+      userState.roles = roles.map((role) => ({
+        role_id: String(role.role_id || '').trim().toLowerCase(),
+        code: String(role.role_id || '').trim().toUpperCase(),
+        name: String(role.role_id || '').trim(),
+        status: 'active'
+      }));
+      return {
+        synced: true,
+        reason: 'ok',
+        permission: {
+          canViewMemberAdmin: true,
+          canOperateMemberAdmin: true,
+          canViewBilling: false,
+          canOperateBilling: false
+        }
+      };
+    }
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      name: '更新后用户',
+      department: '更新后部门',
+      role_ids: ['sys_admin']
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.user_id, 'platform-user-default');
+  assert.equal(payload.phone, '13800000040');
+  assert.equal(payload.name, '更新后用户');
+  assert.equal(payload.department, '更新后部门');
+  assert.equal(payload.status, 'active');
+  assert.equal(payload.request_id, 'req-platform-user-update');
+  assert.equal(Array.isArray(payload.roles), true);
+  assert.equal(payload.roles.length, 1);
+  assert.equal(payload.roles[0].role_id, 'sys_admin');
+  assert.equal(harness.replaceRoleFactCalls.length, 1);
+  assert.equal(harness.updatePhoneCalls.length, 0);
+  assert.equal(harness.upsertProfileCalls.length, 1);
+  assert.equal(harness.upsertProfileCalls[0].name, '更新后用户');
+});
+
+test('PATCH /platform/users/:user_id updates profile without role sync when role_ids is omitted', async () => {
+  const userState = {
+    user_id: 'platform-user-default',
+    phone: '13800000040',
+    name: '默认用户',
+    department: '默认部门',
+    status: 'active',
+    created_at: '2026-01-01T00:00:00.000Z',
+    roles: [
+      {
+        role_id: 'sys_admin',
+        code: 'SYS_ADMIN',
+        name: '系统管理员',
+        status: 'active'
+      }
+    ]
+  };
+  const harness = createHarness({
+    getPlatformUserById: async ({ userId }) =>
+      String(userId || '').trim() === userState.user_id
+        ? { ...userState }
+        : null,
+    upsertPlatformUserProfile: async ({ userId, name, department }) => {
+      if (String(userId || '').trim() !== userState.user_id) {
+        throw new Error('unexpected userId');
+      }
+      userState.name = String(name || '').trim();
+      userState.department = department;
+      return {
+        user_id: userState.user_id,
+        name: userState.name,
+        department: userState.department
+      };
+    },
+    replacePlatformRolesAndSyncSnapshot: async () => {
+      throw new Error('replacePlatformRolesAndSyncSnapshot should not be called');
+    }
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-profile-only',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      name: '更新后用户',
+      department: '更新后部门'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.user_id, 'platform-user-default');
+  assert.equal(payload.name, '更新后用户');
+  assert.equal(payload.department, '更新后部门');
+  assert.equal(payload.request_id, 'req-platform-user-update-profile-only');
+  assert.equal(Array.isArray(payload.roles), true);
+  assert.equal(payload.roles.length, 1);
+  assert.equal(payload.roles[0].role_id, 'sys_admin');
+  assert.equal(harness.replaceRoleFactCalls.length, 0);
+  assert.equal(harness.listRoleCatalogCalls.length, 0);
+  assert.equal(harness.listRoleGrantCalls.length, 0);
+  assert.equal(harness.upsertProfileCalls.length, 1);
+});
+
+test('PATCH /platform/users/:user_id rejects phone field in payload', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-phone-rejected',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      phone: '13800000042',
+      name: '更新后用户',
+      department: '平台治理'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-400-INVALID-PAYLOAD');
+  assert.equal(payload.request_id, 'req-platform-user-update-phone-rejected');
+  assert.equal(harness.updatePhoneCalls.length, 0);
+});
+
+test('PATCH /platform/users/:user_id rejects invalid payload with USER problem details', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-invalid-payload',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      name: '更新用户',
+      invalid_field: true
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 400);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'USR-400-INVALID-PAYLOAD');
+  assert.equal(payload.request_id, 'req-platform-user-update-invalid-payload');
+  assert.equal(harness.updatePhoneCalls.length, 0);
+});
+
+test('PATCH /platform/users/:user_id replays first success response for same Idempotency-Key and payload', async () => {
+  const harness = createHarness({
+    getPlatformUserById: async ({ userId }) => ({
+      user_id: String(userId || '').trim(),
+      phone: '13800000040',
+      name: '默认用户',
+      department: '默认部门',
+      status: 'active',
+      created_at: '2026-01-01T00:00:00.000Z',
+      roles: []
+    })
+  });
+  const requestBody = {
+    name: '默认用户',
+    department: '默认部门',
+    role_ids: []
+  };
+
+  const first = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-idem-replay-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-update-replay-001'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-idem-replay-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-update-replay-001'
+    },
+    body: requestBody,
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstPayload = JSON.parse(first.body);
+  const secondPayload = JSON.parse(second.body);
+  assert.equal(secondPayload.user_id, firstPayload.user_id);
+  assert.equal(secondPayload.phone, firstPayload.phone);
+  assert.equal(secondPayload.request_id, 'req-platform-user-update-idem-replay-2');
+  assert.equal(harness.updatePhoneCalls.length, 0);
+});
+
+test('PATCH /platform/users/:user_id rejects same Idempotency-Key with different payloads', async () => {
+  const harness = createHarness();
+
+  const first = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-idem-conflict-1',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-update-conflict-001'
+    },
+    body: {
+      name: '默认用户',
+      department: '默认部门',
+      role_ids: []
+    },
+    handlers: harness.handlers
+  });
+  const second = await dispatchApiRoute({
+    pathname: '/platform/users/platform-user-default',
+    method: 'PATCH',
+    requestId: 'req-platform-user-update-idem-conflict-2',
+    headers: {
+      authorization: 'Bearer fake-access-token',
+      'idempotency-key': 'idem-platform-user-update-conflict-001'
+    },
+    body: {
+      name: '默认用户-冲突',
+      department: '默认部门',
+      role_ids: []
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 409);
+  const payload = JSON.parse(second.body);
+  assert.equal(payload.error_code, 'AUTH-409-IDEMPOTENCY-CONFLICT');
+  assert.equal(payload.request_id, 'req-platform-user-update-idem-conflict-2');
 });
 
 test('createPlatformUser maps non-auth operator authorization failures to USR-503-DEPENDENCY-UNAVAILABLE', async () => {

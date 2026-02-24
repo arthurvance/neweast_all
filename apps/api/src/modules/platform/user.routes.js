@@ -47,11 +47,12 @@ const createPlatformUserHandlers = (platformUserService) => {
     || typeof platformUserService.listUsers !== 'function'
     || typeof platformUserService.getUser !== 'function'
     || typeof platformUserService.createUser !== 'function'
+    || typeof platformUserService.updateUser !== 'function'
     || typeof platformUserService.updateUserStatus !== 'function'
     || typeof platformUserService.softDeleteUser !== 'function'
   ) {
     throw new TypeError(
-      'createPlatformUserHandlers requires a platformUserService with listUsers, getUser, createUser, updateUserStatus, and softDeleteUser'
+      'createPlatformUserHandlers requires a platformUserService with listUsers, getUser, createUser, updateUser, updateUserStatus, and softDeleteUser'
     );
   }
 
@@ -102,6 +103,26 @@ const createPlatformUserHandlers = (platformUserService) => {
           expectedPermissionCode: PLATFORM_USER_OPERATE_PERMISSION_CODE
         }),
         payload: body || {},
+        authorizationContext
+      }),
+    updateUser: async ({
+      requestId,
+      authorization,
+      params,
+      body,
+      traceparent = null,
+      authorizationContext = null
+    }) =>
+      platformUserService.updateUser({
+        requestId,
+        accessToken: resolveAccessToken({
+          authorization,
+          authorizationContext,
+          expectedPermissionCode: PLATFORM_USER_OPERATE_PERMISSION_CODE
+        }),
+        params: params || {},
+        payload: body || {},
+        traceparent,
         authorizationContext
       }),
     updateUserStatus: async ({

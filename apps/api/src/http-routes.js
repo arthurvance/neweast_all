@@ -970,6 +970,23 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
+    platformUpdateUser: async (
+      requestId,
+      authorization,
+      params,
+      body,
+      authorizationContext,
+      traceparent = null
+    ) =>
+      platformUser.updateUser({
+        requestId,
+        authorization,
+        params: params || {},
+        body: body || {},
+        traceparent,
+        authorizationContext
+      }),
+
     platformSoftDeleteUser: async (
       requestId,
       authorization,

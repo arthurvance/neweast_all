@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   DatePicker,
+  Descriptions,
   Drawer,
   Form,
   Input,
@@ -12,7 +13,6 @@ import {
   Spin,
   Space,
   Tree,
-  Typography,
   message
 } from 'antd';
 import CustomCardTable from '../../components/CustomCardTable';
@@ -22,8 +22,10 @@ import {
   createPlatformSettingsApi,
   toProblemMessage
 } from '../../api/platform-settings.mjs';
-
-const { Text } = Typography;
+import {
+  formatDateTimeMinute,
+  toDateTimeMinuteEpoch
+} from '../../utils/date-time.mjs';
 
 const ROLE_STATUS_SELECT_OPTIONS = [
   { label: '全部', value: '' },
@@ -150,22 +152,6 @@ const statusDisplayLabel = (status) => {
   }
   return '-';
 };
-const normalizeDateTimeValue = (value) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
-    return '-';
-  }
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return normalized;
-  }
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-};
 const isSysAdminRole = (roleId) =>
   String(roleId || '').trim().toLowerCase() === 'sys_admin';
 
@@ -192,16 +178,15 @@ export default function PlatformRoleManagementPage({ accessToken }) {
   const [roleEditSubmitting, setRoleEditSubmitting] = useState(false);
   const [roleEditMode, setRoleEditMode] = useState('create');
   const [roleEditTarget, setRoleEditTarget] = useState(null);
-  const [createRolePermissionCodesAvailable, setCreateRolePermissionCodesAvailable] = useState([]);
-  const [createRolePermissionCodesChecked, setCreateRolePermissionCodesChecked] = useState([]);
-  const [createRolePermissionLoading, setCreateRolePermissionLoading] = useState(false);
+  const [roleEditPermissionCodesAvailable, setRoleEditPermissionCodesAvailable] = useState([]);
+  const [roleEditPermissionCodesChecked, setRoleEditPermissionCodesChecked] = useState([]);
+  const [roleEditPermissionLoading, setRoleEditPermissionLoading] = useState(false);
 
   const [roleDetailOpen, setRoleDetailOpen] = useState(false);
   const [roleDetail, setRoleDetail] = useState(null);
   const [permissionCodesAvailable, setPermissionCodesAvailable] = useState([]);
   const [permissionCodesChecked, setPermissionCodesChecked] = useState([]);
   const [permissionLoading, setPermissionLoading] = useState(false);
-  const [permissionSaving, setPermissionSaving] = useState(false);
 
   const notify = useCallback(
     ({ type = 'success', text = '' }) => {
@@ -233,9 +218,12 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     try {
       const payload = await api.listRoles();
       const roles = Array.isArray(payload?.roles) ? payload.roles : [];
-      setRoleList(roles.map((role) => ({ ...role, key: role.role_id })));
+      const normalizedRoles = roles.map((role) => ({ ...role, key: role.role_id }));
+      setRoleList(normalizedRoles);
+      return normalizedRoles;
     } catch (error) {
       withErrorNotice(error, '加载平台角色列表失败');
+      return [];
     } finally {
       setRoleListLoading(false);
     }
@@ -261,19 +249,13 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     const codeFilter = String(roleFilters.code || '').trim().toLowerCase();
     const nameFilter = String(roleFilters.name || '').trim();
     const statusFilter = String(roleFilters.status || '').trim().toLowerCase();
-    const createdAtStart = String(roleFilters.created_at_start || '').trim();
-    const createdAtEnd = String(roleFilters.created_at_end || '').trim();
-    const createdAtStartEpoch = createdAtStart
-      ? new Date(createdAtStart).getTime()
-      : Number.NaN;
-    const createdAtEndEpoch = createdAtEnd
-      ? new Date(createdAtEnd).getTime()
-      : Number.NaN;
+    const createdAtStartEpoch = toDateTimeMinuteEpoch(roleFilters.created_at_start);
+    const createdAtEndEpoch = toDateTimeMinuteEpoch(roleFilters.created_at_end);
     return roleList.filter((role) => {
       const roleCode = String(role.code || '').trim().toLowerCase();
       const roleName = String(role.name || '').trim();
       const roleStatus = String(role.status || '').trim().toLowerCase();
-      const roleCreatedAtEpoch = new Date(String(role.created_at || '').trim()).getTime();
+      const roleCreatedAtEpoch = toDateTimeMinuteEpoch(role.created_at);
       if (codeFilter && roleCode !== codeFilter) {
         return false;
       }
@@ -283,19 +265,71 @@ export default function PlatformRoleManagementPage({ accessToken }) {
       if (statusFilter && roleStatus !== statusFilter) {
         return false;
       }
-      if (Number.isFinite(createdAtStartEpoch)) {
-        if (!Number.isFinite(roleCreatedAtEpoch) || roleCreatedAtEpoch < createdAtStartEpoch) {
+      if (createdAtStartEpoch !== null) {
+        if (roleCreatedAtEpoch === null || roleCreatedAtEpoch < createdAtStartEpoch) {
           return false;
         }
       }
-      if (Number.isFinite(createdAtEndEpoch)) {
-        if (!Number.isFinite(roleCreatedAtEpoch) || roleCreatedAtEpoch > createdAtEndEpoch) {
+      if (createdAtEndEpoch !== null) {
+        if (roleCreatedAtEpoch === null || roleCreatedAtEpoch > createdAtEndEpoch) {
           return false;
         }
       }
       return true;
     });
   }, [roleFilters, roleList]);
+
+  const validateRoleCodeRequired = useCallback((_rule, value) => {
+    if (typeof value !== 'string' || value.trim()) {
+      return Promise.resolve();
+    }
+    return Promise.reject(new Error('请输入角色编码'));
+  }, []);
+
+  const validateRoleNameRequired = useCallback((_rule, value) => {
+    if (typeof value !== 'string' || value.trim()) {
+      return Promise.resolve();
+    }
+    return Promise.reject(new Error('请输入角色名称'));
+  }, []);
+
+  const validateRoleCodeUnique = useCallback((_rule, value) => {
+    const normalizedCode = String(value || '').trim().toLowerCase();
+    if (!normalizedCode) {
+      return Promise.resolve();
+    }
+    const editingRoleId = String(roleEditTarget?.role_id || '').trim().toLowerCase();
+    const duplicated = roleList.some((role) => {
+      const roleId = String(role.role_id || '').trim().toLowerCase();
+      if (roleEditMode === 'edit' && roleId === editingRoleId) {
+        return false;
+      }
+      return String(role.code || '').trim().toLowerCase() === normalizedCode;
+    });
+    if (!duplicated) {
+      return Promise.resolve();
+    }
+    return Promise.reject(new Error('角色编码需在组织内唯一'));
+  }, [roleEditMode, roleEditTarget, roleList]);
+
+  const validateRoleNameUnique = useCallback((_rule, value) => {
+    const normalizedName = String(value || '').trim().toLowerCase();
+    if (!normalizedName) {
+      return Promise.resolve();
+    }
+    const editingRoleId = String(roleEditTarget?.role_id || '').trim().toLowerCase();
+    const duplicated = roleList.some((role) => {
+      const roleId = String(role.role_id || '').trim().toLowerCase();
+      if (roleEditMode === 'edit' && roleId === editingRoleId) {
+        return false;
+      }
+      return String(role.name || '').trim().toLowerCase() === normalizedName;
+    });
+    if (!duplicated) {
+      return Promise.resolve();
+    }
+    return Promise.reject(new Error('角色名称需在组织内唯一'));
+  }, [roleEditMode, roleEditTarget, roleList]);
 
   const loadRolePermissions = useCallback(
     async (roleId) => {
@@ -329,27 +363,61 @@ export default function PlatformRoleManagementPage({ accessToken }) {
   );
 
   const loadCreateRolePermissionCatalog = useCallback(async () => {
-    setCreateRolePermissionLoading(true);
+    setRoleEditPermissionLoading(true);
     try {
       const payload = await api.getRolePermissions('sys_admin');
-      setCreateRolePermissionCodesAvailable(
+      setRoleEditPermissionCodesAvailable(
         Array.isArray(payload?.available_permission_codes)
           ? payload.available_permission_codes
           : []
       );
+      setRoleEditPermissionCodesChecked([]);
     } catch (error) {
-      setCreateRolePermissionCodesAvailable([]);
+      setRoleEditPermissionCodesAvailable([]);
+      setRoleEditPermissionCodesChecked([]);
       withErrorNotice(error, '加载角色权限目录失败');
     } finally {
-      setCreateRolePermissionLoading(false);
+      setRoleEditPermissionLoading(false);
     }
   }, [api, withErrorNotice]);
+
+  const loadEditRolePermissionCatalog = useCallback(
+    async (roleId) => {
+      const normalizedRoleId = String(roleId || '').trim().toLowerCase();
+      if (!normalizedRoleId) {
+        setRoleEditPermissionCodesAvailable([]);
+        setRoleEditPermissionCodesChecked([]);
+        return;
+      }
+      setRoleEditPermissionLoading(true);
+      try {
+        const payload = await api.getRolePermissions(normalizedRoleId);
+        setRoleEditPermissionCodesAvailable(
+          Array.isArray(payload?.available_permission_codes)
+            ? payload.available_permission_codes
+            : []
+        );
+        setRoleEditPermissionCodesChecked(
+          (Array.isArray(payload?.permission_codes) ? payload.permission_codes : [])
+            .map((permissionCode) => String(permissionCode || '').trim())
+            .filter((permissionCode) => permissionCode.startsWith('platform.'))
+        );
+      } catch (error) {
+        setRoleEditPermissionCodesAvailable([]);
+        setRoleEditPermissionCodesChecked([]);
+        withErrorNotice(error, '加载角色权限树失败');
+      } finally {
+        setRoleEditPermissionLoading(false);
+      }
+    },
+    [api, withErrorNotice]
+  );
 
   const openCreateRoleModal = useCallback(() => {
     setRoleEditMode('create');
     setRoleEditTarget(null);
     setRoleEditModalOpen(true);
-    setCreateRolePermissionCodesChecked([]);
+    setRoleEditPermissionCodesChecked([]);
     roleEditForm.setFieldsValue({
       code: '',
       name: ''
@@ -358,21 +426,30 @@ export default function PlatformRoleManagementPage({ accessToken }) {
   }, [loadCreateRolePermissionCatalog, roleEditForm]);
 
   const openEditRoleModal = useCallback(
-    (roleRecord) => {
+    async (roleRecord) => {
       setRoleEditMode('edit');
       setRoleEditTarget(roleRecord);
       setRoleEditModalOpen(true);
+      setRoleEditPermissionCodesChecked([]);
       roleEditForm.setFieldsValue({
         code: roleRecord.code,
         name: roleRecord.name
       });
+      await loadEditRolePermissionCatalog(roleRecord.role_id);
     },
-    [roleEditForm]
+    [loadEditRolePermissionCatalog, roleEditForm]
   );
 
   const handleSubmitRoleEdit = useCallback(async () => {
     try {
       const values = await roleEditForm.validateFields();
+      const normalizedPermissionCodes = [...new Set(
+        (Array.isArray(roleEditPermissionCodesChecked)
+          ? roleEditPermissionCodesChecked
+          : [])
+          .map((permissionCode) => String(permissionCode || '').trim())
+          .filter((permissionCode) => permissionCode.startsWith('platform.'))
+      )];
       setRoleEditSubmitting(true);
       if (roleEditMode === 'create') {
         const payload = await api.createRole({
@@ -382,13 +459,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
         try {
           await api.replaceRolePermissions({
             roleId: payload.role_id,
-            permissionCodes: [...new Set(
-              (Array.isArray(createRolePermissionCodesChecked)
-                ? createRolePermissionCodesChecked
-                : [])
-                .map((permissionCode) => String(permissionCode || '').trim())
-                .filter((permissionCode) => permissionCode.startsWith('platform.'))
-            )]
+            permissionCodes: normalizedPermissionCodes
           });
         } catch (error) {
           notify({
@@ -413,6 +484,22 @@ export default function PlatformRoleManagementPage({ accessToken }) {
             name: String(values.name || '').trim()
           }
         });
+        try {
+          await api.replaceRolePermissions({
+            roleId: roleEditTarget?.role_id,
+            permissionCodes: normalizedPermissionCodes
+          });
+        } catch (error) {
+          notify({
+            type: 'error',
+            text: `平台角色已更新，但权限保存失败（role_id: ${roleEditTarget?.role_id}）：${toProblemMessage(error, '保存平台角色权限失败')}`
+          });
+          setRoleEditModalOpen(false);
+          setRoleEditTarget(null);
+          roleEditForm.resetFields();
+          await loadRoles();
+          return;
+        }
         notify({
           type: 'success',
           text: `平台角色更新成功（request_id: ${payload.request_id}）`
@@ -432,9 +519,9 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     }
   }, [
     api,
-    createRolePermissionCodesChecked,
     loadRoles,
     notify,
+    roleEditPermissionCodesChecked,
     roleEditForm,
     roleEditMode,
     roleEditTarget,
@@ -482,42 +569,28 @@ export default function PlatformRoleManagementPage({ accessToken }) {
           type: 'success',
           text: `平台角色状态更新成功（request_id: ${payload.request_id}）`
         });
-        await loadRoles();
+        const latestRoles = await loadRoles();
+        const selectedRoleId = String(roleDetail?.role_id || '').trim().toLowerCase();
+        if (selectedRoleId && selectedRoleId === normalizedRoleId.toLowerCase()) {
+          const refreshedRole = latestRoles.find(
+            (role) => String(role?.role_id || '').trim().toLowerCase() === selectedRoleId
+          );
+          if (refreshedRole) {
+            setRoleDetail(refreshedRole);
+          } else {
+            setRoleDetail((previous) =>
+              previous
+                ? { ...previous, status: targetStatus }
+                : previous
+            );
+          }
+        }
       } catch (error) {
         withErrorNotice(error, '更新平台角色状态失败');
       }
     },
-    [api, loadRoles, notify, withErrorNotice]
+    [api, loadRoles, notify, roleDetail?.role_id, withErrorNotice]
   );
-
-  const handleSaveRolePermissions = useCallback(async () => {
-    if (!roleDetail?.role_id) {
-      return;
-    }
-    const normalizedPermissionCodes = [...new Set(
-      permissionCodesChecked
-        .map((permissionCode) => String(permissionCode || '').trim())
-        .filter((permissionCode) => permissionCode.startsWith('platform.'))
-    )];
-
-    setPermissionSaving(true);
-    try {
-      const payload = await api.replaceRolePermissions({
-        roleId: roleDetail.role_id,
-        permissionCodes: normalizedPermissionCodes
-      });
-      setPermissionCodesAvailable(payload.available_permission_codes || []);
-      setPermissionCodesChecked(payload.permission_codes || []);
-      notify({
-        type: 'success',
-        text: `权限树保存成功（request_id: ${payload.request_id}）`
-      });
-    } catch (error) {
-      withErrorNotice(error, '保存权限树失败');
-    } finally {
-      setPermissionSaving(false);
-    }
-  }, [api, notify, permissionCodesChecked, roleDetail, withErrorNotice]);
 
   const roleColumns = useMemo(
     () => [
@@ -554,7 +627,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
         dataIndex: 'created_at',
         key: 'created_at',
         width: 180,
-        render: (value) => normalizeDateTimeValue(value)
+        render: (value) => formatDateTimeMinute(value)
       },
       {
         title: '操作',
@@ -568,7 +641,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
               disabled={Boolean(record.is_system) || isSysAdminRole(record.role_id)}
               onClick={(event) => {
                 event.stopPropagation();
-                openEditRoleModal(record);
+                void openEditRoleModal(record);
               }}
             >
               编辑
@@ -701,29 +774,31 @@ export default function PlatformRoleManagementPage({ accessToken }) {
               type="primary"
               onClick={openCreateRoleModal}
             >
-              新建平台角色
+              新建
             </Button>
           )}
         />
 
         <Modal
           open={roleEditModalOpen}
-          title={roleEditMode === 'create' ? '新建平台角色' : '编辑平台角色'}
+          title={roleEditMode === 'create' ? '新建平台角色' : '编辑'}
           onCancel={() => {
             setRoleEditModalOpen(false);
             setRoleEditTarget(null);
-            setCreateRolePermissionCodesChecked([]);
+            setRoleEditPermissionCodesAvailable([]);
+            setRoleEditPermissionCodesChecked([]);
           }}
           onOk={() => {
             void handleSubmitRoleEdit();
           }}
           confirmLoading={roleEditSubmitting}
           okButtonProps={{
-            disabled: roleEditSubmitting,
+            disabled: roleEditSubmitting || roleEditPermissionLoading,
             'data-testid': roleEditMode === 'create' ? 'platform-role-create-confirm' : 'platform-role-edit-confirm'
           }}
           cancelButtonProps={{
-            disabled: roleEditSubmitting
+            disabled: roleEditSubmitting,
+            'data-testid': roleEditMode === 'create' ? 'platform-role-create-cancel' : 'platform-role-edit-cancel'
           }}
           destroyOnClose
         >
@@ -739,6 +814,12 @@ export default function PlatformRoleManagementPage({ accessToken }) {
                 {
                   required: true,
                   message: '请输入角色编码'
+                },
+                {
+                  validator: validateRoleCodeRequired
+                },
+                {
+                  validator: validateRoleCodeUnique
                 }
               ]}
             >
@@ -751,81 +832,31 @@ export default function PlatformRoleManagementPage({ accessToken }) {
                 {
                   required: true,
                   message: '请输入角色名称'
+                },
+                {
+                  validator: validateRoleNameRequired
+                },
+                {
+                  validator: validateRoleNameUnique
                 }
               ]}
             >
               <Input data-testid="platform-role-edit-name" placeholder="请输入角色名称" />
             </CustomForm.Item>
-            {roleEditMode === 'create' ? (
-              <>
-                <CustomForm.Item label="角色权限">
-                  {createRolePermissionLoading ? (
-                    <Spin size="small" />
-                    ) : (
-                      <Tree
-                        data-testid="platform-role-create-permission-tree"
-                        checkable
-                        treeData={toPermissionTreeData(createRolePermissionCodesAvailable)}
-                        checkedKeys={createRolePermissionCodesChecked}
-                        onCheck={(checked) => {
-                          const checkedKeys = Array.isArray(checked)
-                            ? checked
-                          : checked.checked;
-                        setCreateRolePermissionCodesChecked(
-                          checkedKeys
-                            .map((key) => String(key || '').trim())
-                            .filter((code) => code.startsWith('platform.'))
-                        );
-                      }}
-                    />
-                  )}
-                </CustomForm.Item>
-              </>
-            ) : null}
-          </CustomForm>
-        </Modal>
-
-        <Drawer
-          open={roleDetailOpen}
-          title="平台角色详情"
-          size="default"
-          onClose={() => {
-            setRoleDetailOpen(false);
-          }}
-          destroyOnClose
-        >
-          <div data-testid="platform-role-detail-drawer" style={{ display: 'grid', gap: 8 }}>
-            {roleDetailWithPermission?.role_id ? (
-              <>
-                <Text>role_id: {roleDetailWithPermission.role_id}</Text>
-                <Text>code: {roleDetailWithPermission.code}</Text>
-                <Text>name: {roleDetailWithPermission.name}</Text>
-                <Text>status: {statusDisplayLabel(roleDetailWithPermission.status)}</Text>
-                <Text>created_at: {normalizeDateTimeValue(roleDetailWithPermission.created_at)}</Text>
-                <Text>is_system: {String(Boolean(roleDetailWithPermission.is_system))}</Text>
-              </>
-            ) : (
-              <Text type="secondary">暂无角色详情</Text>
-            )}
-
-            <div style={{ marginTop: 12 }}>
-              <Text strong>权限树（仅 platform.*）</Text>
-              {permissionLoading ? (
-                <div style={{ marginTop: 8 }}>
-                  <Spin size="small" />
-                </div>
+            <CustomForm.Item label="角色权限">
+              {roleEditPermissionLoading ? (
+                <Spin size="small" />
               ) : (
                 <Tree
-                  data-testid="platform-role-permission-tree"
-                  style={{ marginTop: 8 }}
+                  data-testid={roleEditMode === 'create' ? 'platform-role-create-permission-tree' : 'platform-role-edit-permission-tree'}
                   checkable
-                  treeData={toPermissionTreeData(permissionCodesAvailable)}
-                  checkedKeys={permissionCodesChecked}
+                  treeData={toPermissionTreeData(roleEditPermissionCodesAvailable)}
+                  checkedKeys={roleEditPermissionCodesChecked}
                   onCheck={(checked) => {
                     const checkedKeys = Array.isArray(checked)
                       ? checked
                       : checked.checked;
-                    setPermissionCodesChecked(
+                    setRoleEditPermissionCodesChecked(
                       checkedKeys
                         .map((key) => String(key || '').trim())
                         .filter((code) => code.startsWith('platform.'))
@@ -833,20 +864,89 @@ export default function PlatformRoleManagementPage({ accessToken }) {
                   }}
                 />
               )}
-            </div>
+            </CustomForm.Item>
+          </CustomForm>
+        </Modal>
 
-            <div>
+        <Drawer
+          open={roleDetailOpen}
+          title={`角色ID：${String(roleDetailWithPermission?.role_id || '-').trim() || '-'}`}
+          extra={(
+            <Space>
               <Button
-                data-testid="platform-role-permission-save"
-                type="primary"
-                loading={permissionSaving}
+                data-testid="platform-role-detail-edit"
                 onClick={() => {
-                  void handleSaveRolePermissions();
+                  if (!roleDetailWithPermission?.role_id) {
+                    return;
+                  }
+                  void openEditRoleModal(roleDetailWithPermission);
                 }}
+                disabled={!roleDetailWithPermission?.role_id || Boolean(roleDetailWithPermission?.is_system) || isSysAdminRole(roleDetailWithPermission?.role_id)}
               >
-                保存权限树
+                编辑
               </Button>
-            </div>
+              <Button
+                data-testid="platform-role-detail-status-toggle"
+                onClick={() => {
+                  if (!roleDetailWithPermission?.role_id) {
+                    return;
+                  }
+                  void handleToggleRoleStatus(roleDetailWithPermission);
+                }}
+                disabled={
+                  !roleDetailWithPermission?.role_id
+                  || Boolean(isSysAdminRole(roleDetailWithPermission?.role_id) && !isDisabledStatus(roleDetailWithPermission?.status))
+                }
+              >
+                {roleDetailWithPermission?.role_id
+                  ? statusToggleLabel(roleDetailWithPermission?.status)
+                  : '启用/禁用'}
+              </Button>
+            </Space>
+          )}
+          size="large"
+          onClose={() => {
+            setRoleDetailOpen(false);
+          }}
+          destroyOnClose
+        >
+          <div data-testid="platform-role-detail-drawer" style={{ display: 'grid', gap: 8 }}>
+            <Descriptions
+              bordered
+              size="small"
+              column={1}
+            >
+              <Descriptions.Item label="角色编码">
+                {String(roleDetailWithPermission?.code || '').trim() || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="角色名称">
+                {String(roleDetailWithPermission?.name || '').trim() || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="状态">
+                {statusDisplayLabel(roleDetailWithPermission?.status)}
+              </Descriptions.Item>
+              <Descriptions.Item label="创建时间">
+                {formatDateTimeMinute(roleDetailWithPermission?.created_at)}
+              </Descriptions.Item>
+              <Descriptions.Item label="角色权限">
+                {permissionLoading ? (
+                  <div style={{ marginTop: 8 }}>
+                    <Spin size="small" />
+                  </div>
+                ) : (
+                  <Tree
+                    data-testid="platform-role-permission-tree"
+                    style={{ marginTop: 8 }}
+                    checkable
+                    disabled
+                    selectable={false}
+                    treeData={toPermissionTreeData(permissionCodesAvailable)}
+                    checkedKeys={permissionCodesChecked}
+                    defaultExpandAll
+                  />
+                )}
+              </Descriptions.Item>
+            </Descriptions>
           </div>
         </Drawer>
       </section>

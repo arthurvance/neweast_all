@@ -180,6 +180,27 @@ export const createPlatformSettingsApi = ({ accessToken }) => {
         idempotencyKey: buildIdempotencyKey('ui-platform-users-create')
       }),
 
+    updateUser: async ({
+      userId,
+      name,
+      department = null,
+      roleIds = undefined
+    } = {}) => {
+      const payload = {
+        name,
+        department
+      };
+      if (Array.isArray(roleIds)) {
+        payload.role_ids = roleIds;
+      }
+      return withToken({
+        path: `/platform/users/${encodeURIComponent(String(userId || '').trim())}`,
+        method: 'PATCH',
+        payload,
+        idempotencyKey: buildIdempotencyKey('ui-platform-users-update')
+      });
+    },
+
     updateUserStatus: async ({ user_id, status, reason = null }) => {
       const payload = {
         user_id,

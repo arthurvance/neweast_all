@@ -5,6 +5,9 @@ const { createPlatformOrgService } = require('../src/modules/platform/org.servic
 const { createTenantMemberService } = require('../src/modules/tenant/member.service');
 const { createTenantRoleService } = require('../src/modules/tenant/role.service');
 const { AuthProblemError } = require('../src/modules/auth/auth.routes');
+const {
+  PLATFORM_ORG_OPERATE_PERMISSION_CODE
+} = require('../src/modules/platform/org.constants');
 const { readConfig } = require('../src/config/env');
 const {
   createServer,
@@ -1139,6 +1142,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/users'].post.responses['403']);
   assert.ok(payload.paths['/platform/users'].post.responses['409']);
   assert.ok(payload.paths['/platform/users'].post.responses['503']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['400']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['401']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['403']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['404']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['409']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['413']);
+  assert.ok(payload.paths['/platform/users/{user_id}'].patch.responses['503']);
   assert.ok(payload.paths['/platform/users/status'].post.responses['400']);
   assert.ok(payload.paths['/platform/users/status'].post.responses['401']);
   assert.ok(payload.paths['/platform/users/status'].post.responses['403']);
@@ -1842,6 +1852,7 @@ test('createRouteHandlers wires shared default auth service for platform org and
         undefined,
         {
           org_name: '组织 default-handler',
+          initial_owner_name: '默认处理器负责人',
           initial_owner_phone: '13800000071'
         },
         {
@@ -1851,7 +1862,7 @@ test('createRouteHandlers wires shared default auth service for platform org and
               user_id: 'platform-operator',
               session_id: 'platform-session'
             },
-            permissionCode: 'platform.member_admin.operate',
+            permissionCode: PLATFORM_ORG_OPERATE_PERMISSION_CODE,
             scope: 'platform'
           })
         }
@@ -1936,8 +1947,12 @@ test('createRouteHandlers fails fast when platformOrgService and platformUserSer
     }
   };
   const platformUserService = {
+    listUsers: async () => ({}),
+    getUser: async () => ({}),
     createUser: async () => ({}),
+    updateUser: async () => ({}),
     updateUserStatus: async () => ({}),
+    softDeleteUser: async () => ({}),
     _internals: {
       authService: {
         authorizeRoute: async () => ({})

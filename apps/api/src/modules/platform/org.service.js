@@ -1051,6 +1051,23 @@ const createPlatformOrgService = ({ authService } = {}) => {
     if (normalizedStatus === 409) {
       return orgErrors.orgConflict();
     }
+    if (normalizedStatus === 503) {
+      const fallbackDependencyProblem = orgErrors.dependencyUnavailable();
+      const resolvedDetail = String(error.detail || '').trim();
+      const upstreamExtensions = isPlainObject(error.extensions) ? error.extensions : {};
+      const retryable = typeof upstreamExtensions.retryable === 'boolean'
+        ? upstreamExtensions.retryable
+        : true;
+      return orgProblem({
+        status: 503,
+        title: String(error.title || fallbackDependencyProblem.title),
+        detail: resolvedDetail || fallbackDependencyProblem.detail,
+        errorCode: fallbackDependencyProblem.errorCode,
+        extensions: {
+          retryable
+        }
+      });
+    }
     return orgErrors.dependencyUnavailable();
   };
 

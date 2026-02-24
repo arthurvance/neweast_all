@@ -1,0 +1,156 @@
+import { Empty } from 'antd';
+import { useMemo, useState } from 'react';
+import CustomLayout from '../../components/CustomLayout';
+import CustomPage from '../../components/CustomPage';
+import {
+  TENANT_DEFAULT_MENU_KEY,
+  TENANT_NAV_GROUP_FALLBACK,
+  TENANT_PAGE_REGISTRY,
+  resolveFirstTenantVisibleMenuKey,
+  resolveTenantMenuKeyByPermission,
+  resolveTenantNavItemsByPermission,
+  resolveTenantOpenKeys
+} from './tenant-management.config';
+
+export default function TenantManagementLayoutPage({
+  accessToken,
+  userName,
+  onLogout,
+  tenantPermissionContext = null,
+  onTenantPermissionContextRefresh,
+  tenantOptions = [],
+  activeTenantId = '',
+  onOpenTenantSwitchPage = null
+}) {
+  const [activeMenuKey, setActiveMenuKey] = useState(TENANT_DEFAULT_MENU_KEY);
+  const firstVisibleMenuKey = useMemo(
+    () => resolveFirstTenantVisibleMenuKey(tenantPermissionContext),
+    [tenantPermissionContext]
+  );
+  const hasVisiblePage = Boolean(firstVisibleMenuKey);
+  const resolvedMenuKey = resolveTenantMenuKeyByPermission(
+    activeMenuKey,
+    tenantPermissionContext
+  );
+  const pageMeta = hasVisiblePage
+    ? TENANT_PAGE_REGISTRY[resolvedMenuKey] || TENANT_PAGE_REGISTRY[firstVisibleMenuKey]
+    : null;
+  const displayPageMeta = pageMeta || {
+    title: '组织设置',
+    subTitle: '组织设置',
+    breadcrumbItems: []
+  };
+  const ActivePageComponent = pageMeta?.Component || null;
+
+  const menuItems = useMemo(
+    () => resolveTenantNavItemsByPermission(tenantPermissionContext),
+    [tenantPermissionContext]
+  );
+  const openKeys = hasVisiblePage ? resolveTenantOpenKeys(resolvedMenuKey) : [];
+  const displayUserName = String(userName || '').trim() || '-';
+  const layoutTitle = useMemo(() => {
+    const normalizedActiveTenantId = String(activeTenantId || '').trim();
+    if (!normalizedActiveTenantId) {
+      return '组织管理';
+    }
+    const matchedTenant = (Array.isArray(tenantOptions) ? tenantOptions : []).find(
+      (tenant) => String(tenant?.tenant_id || '').trim() === normalizedActiveTenantId
+    );
+    const normalizedTenantName = String(matchedTenant?.tenant_name || '').trim();
+    return normalizedTenantName || normalizedActiveTenantId || '组织管理';
+  }, [activeTenantId, tenantOptions]);
+  const userMenuItems = useMemo(
+    () => [
+      { key: 'settings', label: '个人设置' },
+      { key: 'switch-org', label: '切换组织' },
+      { type: 'divider' },
+      { key: 'logout', label: '退出登录' }
+    ],
+    []
+  );
+
+  return (
+    <section data-testid="tenant-governance-panel" style={{ minHeight: 560 }}>
+      <CustomLayout
+        title={layoutTitle}
+        menuItems={menuItems}
+        selectedKeys={hasVisiblePage ? [resolvedMenuKey] : []}
+        openKeys={openKeys}
+        fixedHeader={false}
+        fixSiderbar={false}
+        onMenuClick={({ key }) => {
+          const nextKey = String(key || '').trim();
+          if (!nextKey) {
+            return;
+          }
+          if (TENANT_PAGE_REGISTRY[nextKey]) {
+            const nextPermittedMenuKey = resolveTenantMenuKeyByPermission(
+              nextKey,
+              tenantPermissionContext
+            );
+            if (nextPermittedMenuKey) {
+              setActiveMenuKey(nextPermittedMenuKey);
+            }
+            return;
+          }
+          if (TENANT_NAV_GROUP_FALLBACK[nextKey]) {
+            const fallbackMenuKey = resolveTenantMenuKeyByPermission(
+              TENANT_NAV_GROUP_FALLBACK[nextKey],
+              tenantPermissionContext
+            );
+            if (fallbackMenuKey) {
+              setActiveMenuKey(fallbackMenuKey);
+            }
+          }
+        }}
+        userMenuItems={userMenuItems}
+        onUserMenuClick={({ key }) => {
+          const normalizedKey = String(key || '').trim();
+          if (normalizedKey === 'logout') {
+            onLogout?.();
+            return;
+          }
+          if (normalizedKey === 'switch-org') {
+            onOpenTenantSwitchPage?.();
+            return;
+          }
+        }}
+        showNotification={false}
+        footerRender={false}
+        showBreadcrumb={false}
+        contentStyle={{
+          margin: 12,
+          padding: 12,
+          minHeight: 420
+        }}
+        userInfo={{ name: displayUserName }}
+      >
+        <CustomPage
+          title={displayPageMeta.title}
+          subTitle={displayPageMeta.subTitle}
+          showBreadcrumb={hasVisiblePage}
+          breadcrumbItems={displayPageMeta.breadcrumbItems}
+          bodyStyle={{ display: 'grid', gap: 12 }}
+        >
+          {hasVisiblePage && ActivePageComponent ? (
+            <ActivePageComponent
+              accessToken={accessToken}
+              onTenantPermissionContextRefresh={onTenantPermissionContextRefresh}
+            />
+          ) : (
+            <section
+              data-testid="tenant-menu-empty"
+              style={{
+                minHeight: 240,
+                display: 'grid',
+                placeItems: 'center'
+              }}
+            >
+              <Empty description="当前账号暂无可访问菜单" />
+            </section>
+          )}
+        </CustomPage>
+      </CustomLayout>
+    </section>
+  );
+}

@@ -33,6 +33,11 @@ const CREATE_USER_ALLOWED_FIELDS = new Set([
   'department',
   'role_ids'
 ]);
+const UPDATE_USER_ALLOWED_FIELDS = new Set([
+  'name',
+  'department',
+  'role_ids'
+]);
 const UPDATE_USER_STATUS_ALLOWED_FIELDS = new Set(['user_id', 'status', 'reason']);
 const LIST_USER_ALLOWED_QUERY_FIELDS = new Set([
   'page',
@@ -45,6 +50,7 @@ const LIST_USER_ALLOWED_QUERY_FIELDS = new Set([
   'created_at_end'
 ]);
 const GET_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
+const UPDATE_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const SOFT_DELETE_USER_ALLOWED_PARAM_FIELDS = new Set(['user_id']);
 const VALID_USER_STATUSES = new Set(['active', 'disabled']);
 const VALID_ROLE_STATUSES = new Set(['active', 'disabled']);
@@ -420,6 +426,37 @@ const parseGetUserParams = (params) => {
   };
 };
 
+const parseUpdateUserParams = (params) => {
+  if (!isPlainObject(params)) {
+    throw userErrors.invalidPayload();
+  }
+  const unknownParamKeys = Object.keys(params).filter(
+    (key) => !UPDATE_USER_ALLOWED_PARAM_FIELDS.has(key)
+  );
+  if (unknownParamKeys.length > 0) {
+    throw userErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+  if (!Object.prototype.hasOwnProperty.call(params, 'user_id')) {
+    throw userErrors.invalidPayload('user_id 不能为空');
+  }
+  if (typeof params.user_id !== 'string') {
+    throw userErrors.invalidPayload('user_id 必须为字符串');
+  }
+  const userId = normalizeRequiredString(params.user_id);
+  if (!userId) {
+    throw userErrors.invalidPayload('user_id 不能为空');
+  }
+  if (CONTROL_CHAR_PATTERN.test(userId)) {
+    throw userErrors.invalidPayload('user_id 不能包含控制字符');
+  }
+  if (userId.length > MAX_USER_ID_LENGTH) {
+    throw userErrors.invalidPayload(`user_id 长度不能超过 ${MAX_USER_ID_LENGTH}`);
+  }
+  return {
+    userId
+  };
+};
+
 const parseCreateUserPayload = (payload) => {
   if (!isPlainObject(payload)) {
     throw userErrors.invalidPayload();
@@ -522,6 +559,103 @@ const parseCreateUserPayload = (payload) => {
 
   return {
     phone,
+    name,
+    department,
+    roleIds
+  };
+};
+
+const parseUpdateUserPayload = (payload) => {
+  if (!isPlainObject(payload)) {
+    throw userErrors.invalidPayload();
+  }
+  const unknownPayloadKeys = Object.keys(payload).filter(
+    (key) => !UPDATE_USER_ALLOWED_FIELDS.has(key)
+  );
+  if (unknownPayloadKeys.length > 0) {
+    throw userErrors.invalidPayload('请求参数不完整或格式错误');
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(payload, 'name')) {
+    throw userErrors.invalidPayload();
+  }
+  if (typeof payload.name !== 'string') {
+    throw userErrors.invalidPayload('name 必须为字符串');
+  }
+  const name = payload.name.trim();
+  if (!name) {
+    throw userErrors.invalidPayload('name 不能为空');
+  }
+  if (
+    name.length > MAX_USER_DISPLAY_NAME_LENGTH
+    || CONTROL_CHAR_PATTERN.test(name)
+  ) {
+    throw userErrors.invalidPayload(
+      `name 长度不能超过 ${MAX_USER_DISPLAY_NAME_LENGTH}`
+    );
+  }
+
+  let department = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'department')) {
+    if (payload.department === null || payload.department === undefined) {
+      department = null;
+    } else if (typeof payload.department !== 'string') {
+      throw userErrors.invalidPayload('department 必须为字符串或 null');
+    } else {
+      const normalizedDepartment = payload.department.trim();
+      if (!normalizedDepartment) {
+        department = null;
+      } else if (
+        normalizedDepartment.length > MAX_USER_DEPARTMENT_NAME_LENGTH
+        || CONTROL_CHAR_PATTERN.test(normalizedDepartment)
+      ) {
+        throw userErrors.invalidPayload(
+          `department 长度不能超过 ${MAX_USER_DEPARTMENT_NAME_LENGTH}`
+        );
+      } else {
+        department = normalizedDepartment;
+      }
+    }
+  }
+
+  let roleIds = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'role_ids')) {
+    if (!Array.isArray(payload.role_ids)) {
+      throw userErrors.invalidPayload('role_ids 必须为数组');
+    }
+    if (payload.role_ids.length > MAX_CREATE_USER_ROLE_IDS) {
+      throw userErrors.invalidPayload(
+        `role_ids 数量不能超过 ${MAX_CREATE_USER_ROLE_IDS}`
+      );
+    }
+    const dedupedRoleIds = new Map();
+    for (const roleId of payload.role_ids) {
+      if (typeof roleId !== 'string') {
+        throw userErrors.invalidPayload('role_ids 仅允许字符串');
+      }
+      const normalizedRoleId = normalizeRoleId(roleId);
+      if (!normalizedRoleId) {
+        throw userErrors.invalidPayload('role_ids 不能包含空值');
+      }
+      if (
+        normalizedRoleId.length > MAX_ROLE_ID_LENGTH
+        || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
+      ) {
+        throw userErrors.invalidPayload(
+          `role_ids 值长度不能超过 ${MAX_ROLE_ID_LENGTH}`
+        );
+      }
+      if (!ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)) {
+        throw userErrors.invalidPayload(
+          'role_ids 仅允许字母、数字、点、下划线和中划线，且必须以字母或数字开头'
+        );
+      }
+      dedupedRoleIds.set(normalizedRoleId, normalizedRoleId);
+    }
+    roleIds = [...dedupedRoleIds.values()];
+  }
+
+  return {
     name,
     department,
     roleIds
@@ -811,6 +945,100 @@ const createPlatformUserService = ({ authService } = {}) => {
       operatorUserId,
       operatorSessionId
     };
+  };
+
+  const replaceUserRolesAndSyncSnapshot = async ({
+    userId,
+    roleIds = []
+  }) => {
+    const normalizedRoleIds = Array.isArray(roleIds) ? roleIds : [];
+    const permissionCodesByRoleId = new Map(
+      normalizedRoleIds.map((roleId) => [roleId, []])
+    );
+    if (normalizedRoleIds.length > 0) {
+      const authStoreForRoleCatalog = assertAuthStoreMethod('listPlatformRoleCatalogEntries');
+      const roleCatalogEntries = await authStoreForRoleCatalog.listPlatformRoleCatalogEntries({
+        scope: PLATFORM_USER_SCOPE,
+        tenantId: null
+      });
+      if (!Array.isArray(roleCatalogEntries)) {
+        throw userErrors.dependencyUnavailable();
+      }
+      const enabledRoleIdSet = new Set();
+      for (const roleCatalogEntry of roleCatalogEntries) {
+        const catalogRoleId = normalizeRoleId(
+          roleCatalogEntry?.roleId ?? roleCatalogEntry?.role_id
+        );
+        const catalogRoleStatus = normalizeRoleStatus(roleCatalogEntry?.status);
+        if (
+          catalogRoleId
+          && VALID_ROLE_STATUSES.has(catalogRoleStatus)
+          && catalogRoleStatus === 'active'
+        ) {
+          enabledRoleIdSet.add(catalogRoleId);
+        }
+      }
+      const hasInvalidRoleIds = normalizedRoleIds.some(
+        (roleId) => !enabledRoleIdSet.has(roleId)
+      );
+      if (hasInvalidRoleIds) {
+        throw userErrors.invalidPayload('role_ids 包含不存在或已禁用角色');
+      }
+
+      const authStoreForRoleGrants = assertAuthStoreMethod('listPlatformRolePermissionGrantsByRoleIds');
+      const grants = await authStoreForRoleGrants.listPlatformRolePermissionGrantsByRoleIds({
+        roleIds: normalizedRoleIds
+      });
+      if (!Array.isArray(grants)) {
+        throw userErrors.dependencyUnavailable();
+      }
+      for (const grant of grants) {
+        const grantRoleId = normalizeRoleId(grant?.roleId ?? grant?.role_id);
+        const grantPermissionCodes = Array.isArray(grant?.permissionCodes)
+          ? grant.permissionCodes
+          : Array.isArray(grant?.permission_codes)
+            ? grant.permission_codes
+            : null;
+        if (!grantRoleId || !permissionCodesByRoleId.has(grantRoleId) || !grantPermissionCodes) {
+          throw userErrors.dependencyUnavailable();
+        }
+        permissionCodesByRoleId.set(
+          grantRoleId,
+          [...new Set(
+            grantPermissionCodes
+              .map((permissionCode) => String(permissionCode || '').trim().toLowerCase())
+              .filter((permissionCode) => permissionCode.length > 0)
+          )]
+        );
+      }
+    }
+
+    const rolesForPersistence = normalizedRoleIds.map((roleId) => ({
+      role_id: roleId,
+      status: 'active',
+      permission: toPlatformPermissionSnapshotFromCodes(
+        permissionCodesByRoleId.get(roleId) || []
+      )
+    }));
+    const authStoreForRoleFacts = assertAuthStoreMethod('replacePlatformRolesAndSyncSnapshot');
+    const roleFactSyncResult = await authStoreForRoleFacts.replacePlatformRolesAndSyncSnapshot({
+      userId,
+      roles: rolesForPersistence
+    });
+    const roleFactSyncReason = String(roleFactSyncResult?.reason || '').trim().toLowerCase();
+    if (roleFactSyncReason === 'invalid-user-id') {
+      throw userErrors.userNotFound();
+    }
+    if (roleFactSyncReason === 'db-deadlock' || roleFactSyncReason === 'concurrent-role-facts-update') {
+      throw userErrors.platformSnapshotDegraded({
+        reason: roleFactSyncReason
+      });
+    }
+    if (roleFactSyncReason !== 'ok') {
+      throw userErrors.platformSnapshotDegraded({
+        reason: roleFactSyncReason || 'unknown'
+      });
+    }
   };
 
   const listUsers = async ({
@@ -1227,93 +1455,10 @@ const createPlatformUserService = ({ authService } = {}) => {
 
     const normalizedRoleIds = parsedPayload.roleIds;
     try {
-      const permissionCodesByRoleId = new Map(
-        normalizedRoleIds.map((roleId) => [roleId, []])
-      );
-      if (normalizedRoleIds.length > 0) {
-        const authStoreForRoleCatalog = assertAuthStoreMethod('listPlatformRoleCatalogEntries');
-        const roleCatalogEntries = await authStoreForRoleCatalog.listPlatformRoleCatalogEntries({
-          scope: PLATFORM_USER_SCOPE,
-          tenantId: null
-        });
-        if (!Array.isArray(roleCatalogEntries)) {
-          throw userErrors.dependencyUnavailable();
-        }
-        const enabledRoleIdSet = new Set();
-        for (const roleCatalogEntry of roleCatalogEntries) {
-          const catalogRoleId = normalizeRoleId(
-            roleCatalogEntry?.roleId ?? roleCatalogEntry?.role_id
-          );
-          const catalogRoleStatus = normalizeRoleStatus(roleCatalogEntry?.status);
-          if (
-            catalogRoleId
-            && VALID_ROLE_STATUSES.has(catalogRoleStatus)
-            && catalogRoleStatus === 'active'
-          ) {
-            enabledRoleIdSet.add(catalogRoleId);
-          }
-        }
-        const hasInvalidRoleIds = normalizedRoleIds.some(
-          (roleId) => !enabledRoleIdSet.has(roleId)
-        );
-        if (hasInvalidRoleIds) {
-          throw userErrors.invalidPayload('role_ids 包含不存在或已禁用角色');
-        }
-
-        const authStoreForRoleGrants = assertAuthStoreMethod('listPlatformRolePermissionGrantsByRoleIds');
-        const grants = await authStoreForRoleGrants.listPlatformRolePermissionGrantsByRoleIds({
-          roleIds: normalizedRoleIds
-        })
-        if (!Array.isArray(grants)) {
-          throw userErrors.dependencyUnavailable();
-        }
-        for (const grant of grants) {
-          const grantRoleId = normalizeRoleId(grant?.roleId ?? grant?.role_id);
-          const grantPermissionCodes = Array.isArray(grant?.permissionCodes)
-            ? grant.permissionCodes
-            : Array.isArray(grant?.permission_codes)
-              ? grant.permission_codes
-              : null;
-          if (!grantRoleId || !permissionCodesByRoleId.has(grantRoleId) || !grantPermissionCodes) {
-            throw userErrors.dependencyUnavailable();
-          }
-          permissionCodesByRoleId.set(
-            grantRoleId,
-            [...new Set(
-              grantPermissionCodes
-                .map((permissionCode) => String(permissionCode || '').trim().toLowerCase())
-                .filter((permissionCode) => permissionCode.length > 0)
-            )]
-          );
-        }
-      }
-
-      const rolesForPersistence = normalizedRoleIds.map((roleId) => ({
-        role_id: roleId,
-        status: 'active',
-        permission: toPlatformPermissionSnapshotFromCodes(
-          permissionCodesByRoleId.get(roleId) || []
-        )
-      }));
-      const authStoreForRoleFacts = assertAuthStoreMethod('replacePlatformRolesAndSyncSnapshot');
-      const roleFactSyncResult = await authStoreForRoleFacts.replacePlatformRolesAndSyncSnapshot({
+      await replaceUserRolesAndSyncSnapshot({
         userId: resolvedUserId,
-        roles: rolesForPersistence
+        roleIds: normalizedRoleIds
       });
-      const roleFactSyncReason = String(roleFactSyncResult?.reason || '').trim().toLowerCase();
-      if (roleFactSyncReason === 'invalid-user-id') {
-        throw userErrors.userNotFound();
-      }
-      if (roleFactSyncReason === 'db-deadlock' || roleFactSyncReason === 'concurrent-role-facts-update') {
-        throw userErrors.platformSnapshotDegraded({
-          reason: roleFactSyncReason
-        });
-      }
-      if (roleFactSyncReason !== 'ok') {
-        throw userErrors.platformSnapshotDegraded({
-          reason: roleFactSyncReason || 'unknown'
-        });
-      }
     } catch (error) {
       const mappedError = error instanceof AuthProblemError
         ? error
@@ -1357,6 +1502,221 @@ const createPlatformUserService = ({ authService } = {}) => {
       user_id: resolvedUserId,
       created_user: Boolean(provisionedUser?.created_user),
       reused_existing_user: Boolean(provisionedUser?.reused_existing_user),
+      request_id: resolvedRequestId
+    };
+  };
+
+  const updateUser = async ({
+    requestId,
+    accessToken,
+    params = {},
+    payload = {},
+    traceparent = null,
+    authorizationContext = null
+  }) => {
+    const resolvedRequestId = String(requestId || '').trim() || 'request_id_unset';
+    const normalizedTraceparent = String(traceparent || '').trim() || null;
+    const requestedUserId = String(params?.user_id || '').trim() || null;
+
+    let operatorContext;
+    try {
+      operatorContext = await resolveOperatorContext({
+        requestId: resolvedRequestId,
+        accessToken,
+        authorizationContext
+      });
+    } catch (error) {
+      const mappedError = mapOperatorContextError(error);
+      addAuditEvent({
+        type: 'platform.user.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: 'unknown',
+        targetUserId: requestedUserId,
+        detail: 'operator authorization context invalid',
+        metadata: {
+          error_code: mappedError.errorCode
+        }
+      });
+      throw mappedError;
+    }
+    const { operatorUserId } = operatorContext;
+
+    let parsedParams;
+    try {
+      parsedParams = parseUpdateUserParams(params);
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'platform.user.update.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          targetUserId: requestedUserId,
+          detail: 'path parameter validation failed',
+          metadata: {
+            error_code: error.errorCode
+          }
+        });
+      }
+      throw error;
+    }
+
+    let parsedPayload;
+    try {
+      parsedPayload = parseUpdateUserPayload(payload);
+    } catch (error) {
+      if (error instanceof AuthProblemError) {
+        addAuditEvent({
+          type: 'platform.user.update.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          targetUserId: parsedParams.userId,
+          detail: 'payload validation failed',
+          metadata: {
+            error_code: error.errorCode
+          }
+        });
+      }
+      throw error;
+    }
+
+    let previousUser;
+    try {
+      const authStoreForRead = assertAuthStoreMethod('getPlatformUserById');
+      const existingUser = await authStoreForRead.getPlatformUserById({
+        userId: parsedParams.userId
+      });
+      if (!existingUser) {
+        throw userErrors.userNotFound();
+      }
+      previousUser = normalizeUserReadModel(existingUser);
+    } catch (error) {
+      const mappedError = error instanceof AuthProblemError
+        ? error
+        : userErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.user.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: mappedError.errorCode === 'USR-404-USER-NOT-FOUND'
+          ? 'target user not found'
+          : 'platform user read dependency unavailable before update',
+        metadata: {
+          error_code: mappedError.errorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: String(error?.errorCode || error?.code || 'unknown')
+        }
+      });
+      throw mappedError;
+    }
+
+    if (Array.isArray(parsedPayload.roleIds)) {
+      try {
+        await replaceUserRolesAndSyncSnapshot({
+          userId: parsedParams.userId,
+          roleIds: parsedPayload.roleIds
+        });
+      } catch (error) {
+        const mappedError = error instanceof AuthProblemError
+          ? error
+          : userErrors.dependencyUnavailable();
+        addAuditEvent({
+          type: 'platform.user.update.rejected',
+          requestId: resolvedRequestId,
+          operatorUserId,
+          targetUserId: parsedParams.userId,
+          detail: 'platform user role facts sync rejected',
+          metadata: {
+            phone: maskPhone(previousUser.phone),
+            error_code: mappedError.errorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+            upstream_error_code: String(error?.errorCode || error?.code || 'unknown')
+          }
+        });
+        throw mappedError;
+      }
+    }
+
+    try {
+      const authStoreForProfile = assertAuthStoreMethod('upsertPlatformUserProfile');
+      await authStoreForProfile.upsertPlatformUserProfile({
+        userId: parsedParams.userId,
+        name: parsedPayload.name,
+        department: parsedPayload.department
+      });
+    } catch (error) {
+      const mappedError = error instanceof AuthProblemError
+        ? error
+        : userErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.user.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: 'platform user profile upsert rejected',
+        metadata: {
+          phone: maskPhone(previousUser.phone),
+          error_code: mappedError.errorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: String(error?.errorCode || error?.code || 'unknown')
+        }
+      });
+      throw mappedError;
+    }
+
+    let updatedUser;
+    try {
+      const authStoreForRead = assertAuthStoreMethod('getPlatformUserById');
+      const currentUser = await authStoreForRead.getPlatformUserById({
+        userId: parsedParams.userId
+      });
+      if (!currentUser) {
+        throw userErrors.userNotFound();
+      }
+      updatedUser = normalizeUserReadModel(currentUser);
+    } catch (error) {
+      const mappedError = error instanceof AuthProblemError
+        ? error
+        : userErrors.dependencyUnavailable();
+      addAuditEvent({
+        type: 'platform.user.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId,
+        targetUserId: parsedParams.userId,
+        detail: mappedError.errorCode === 'USR-404-USER-NOT-FOUND'
+          ? 'target user not found after update'
+          : 'platform user read dependency unavailable after update',
+        metadata: {
+          phone: maskPhone(previousUser.phone),
+          error_code: mappedError.errorCode || 'USR-503-DEPENDENCY-UNAVAILABLE',
+          upstream_error_code: String(error?.errorCode || error?.code || 'unknown')
+        }
+      });
+      throw mappedError;
+    }
+
+    const previousRoleIds = previousUser.roles.map((role) => role.role_id).join(',');
+    const currentRoleIds = updatedUser.roles.map((role) => role.role_id).join(',');
+    const isNoOp = (
+      previousUser.name === updatedUser.name
+      && previousUser.department === updatedUser.department
+      && previousRoleIds === currentRoleIds
+    );
+    addAuditEvent({
+      type: 'platform.user.updated',
+      requestId: resolvedRequestId,
+      operatorUserId,
+      targetUserId: parsedParams.userId,
+      detail: isNoOp
+        ? 'platform user update treated as no-op'
+        : 'platform user updated',
+      metadata: {
+        phone: maskPhone(updatedUser.phone),
+        previous_phone: maskPhone(previousUser.phone),
+        role_count: updatedUser.roles.length,
+        traceparent: normalizedTraceparent
+      }
+    });
+
+    return {
+      ...updatedUser,
       request_id: resolvedRequestId
     };
   };
@@ -1752,6 +2112,7 @@ const createPlatformUserService = ({ authService } = {}) => {
     listUsers,
     getUser,
     createUser,
+    updateUser,
     updateUserStatus,
     softDeleteUser,
     _internals: {

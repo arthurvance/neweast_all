@@ -19,6 +19,7 @@ const {
   PLATFORM_USER_LIST_PATH,
   PLATFORM_USER_GET_PATH,
   PLATFORM_USER_CREATE_PATH,
+  PLATFORM_USER_UPDATE_PATH,
   PLATFORM_USER_SOFT_DELETE_PATH,
   PLATFORM_USER_STATUS_PATH,
   PLATFORM_USER_VIEW_PERMISSION_CODE,
@@ -671,6 +672,13 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   {
     method: 'POST',
     path: PLATFORM_USER_CREATE_PATH,
+    access: 'protected',
+    permission_code: PLATFORM_USER_OPERATE_PERMISSION_CODE,
+    scope: PLATFORM_USER_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: PLATFORM_USER_UPDATE_PATH,
     access: 'protected',
     permission_code: PLATFORM_USER_OPERATE_PERMISSION_CODE,
     scope: PLATFORM_USER_SCOPE

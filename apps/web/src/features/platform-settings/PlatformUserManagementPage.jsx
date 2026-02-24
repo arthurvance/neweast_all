@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   DatePicker,
+  Descriptions,
   Drawer,
   Form,
   Input,
@@ -21,6 +22,7 @@ import {
   createPlatformSettingsApi,
   toProblemMessage
 } from '../../api/platform-settings.mjs';
+import { formatDateTimeMinute } from '../../utils/date-time.mjs';
 
 const { Text } = Typography;
 
@@ -49,22 +51,6 @@ const statusDisplayLabel = (status) => {
   }
   return '-';
 };
-const normalizeDateTimeValue = (value) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
-    return '-';
-  }
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return normalized;
-  }
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-};
 const normalizeRoleList = (roles = []) =>
   (Array.isArray(roles) ? roles : [])
     .map((role) => ({
@@ -84,6 +70,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
 
   const [userFilterForm] = Form.useForm();
   const [createUserForm] = Form.useForm();
+  const [editUserForm] = Form.useForm();
   const [statusActionForm] = Form.useForm();
 
   const [userFilters, setUserFilters] = useState({
@@ -96,11 +83,16 @@ export default function PlatformUserManagementPage({ accessToken }) {
   const [userTableRefreshToken, setUserTableRefreshToken] = useState(0);
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [userModalSubmitting, setUserModalSubmitting] = useState(false);
+  const [userEditModalOpen, setUserEditModalOpen] = useState(false);
+  const [userEditModalSubmitting, setUserEditModalSubmitting] = useState(false);
+  const [userEditModalLoading, setUserEditModalLoading] = useState(false);
+  const [userEditTarget, setUserEditTarget] = useState(null);
   const [userStatusModalOpen, setUserStatusModalOpen] = useState(false);
   const [userStatusModalSubmitting, setUserStatusModalSubmitting] = useState(false);
   const [userStatusActionTarget, setUserStatusActionTarget] = useState(null);
   const [statusActionSubmittingByUserId, setStatusActionSubmittingByUserId] = useState({});
   const [userDetailOpen, setUserDetailOpen] = useState(false);
+  const [userDetailTargetUserId, setUserDetailTargetUserId] = useState('');
   const [userDetailLoading, setUserDetailLoading] = useState(false);
   const [userDetail, setUserDetail] = useState(null);
   const [latestUserActionById, setLatestUserActionById] = useState({});
@@ -161,6 +153,21 @@ export default function PlatformUserManagementPage({ accessToken }) {
     void loadEnabledRoleOptions();
   }, [accessToken, loadEnabledRoleOptions]);
 
+  const editRoleOptions = useMemo(() => {
+    const roleOptionMap = new Map(
+      enabledRoleOptions.map((role) => [role.value, role])
+    );
+    for (const role of normalizeRoleList(userEditTarget?.roles)) {
+      if (!roleOptionMap.has(role.role_id)) {
+        roleOptionMap.set(role.role_id, {
+          label: role.name || role.code || role.role_id,
+          value: role.role_id
+        });
+      }
+    }
+    return [...roleOptionMap.values()];
+  }, [enabledRoleOptions, userEditTarget]);
+
   const refreshUserTable = useCallback(() => {
     setUserTableRefreshToken((previous) => previous + 1);
   }, []);
@@ -171,6 +178,8 @@ export default function PlatformUserManagementPage({ accessToken }) {
       if (!normalizedUserId) {
         return;
       }
+      setUserDetailTargetUserId(normalizedUserId);
+      setUserDetail(null);
       setUserDetailOpen(true);
       setUserDetailLoading(true);
       try {
@@ -240,6 +249,60 @@ export default function PlatformUserManagementPage({ accessToken }) {
     }
   }, [api, createUserForm, notify, refreshUserTable, withErrorNotice]);
 
+  const handleUpdateUser = useCallback(async () => {
+    const normalizedUserId = String(userEditTarget?.user_id || '').trim();
+    if (!normalizedUserId) {
+      return;
+    }
+    try {
+      const values = await editUserForm.validateFields();
+      setUserEditModalSubmitting(true);
+      const updatePayload = {
+        userId: normalizedUserId,
+        name: String(values.name || '').trim(),
+        department: String(values.department || '').trim() || null
+      };
+      if (editUserForm.isFieldTouched('role_ids')) {
+        const normalizedRoleIds = (Array.isArray(values.role_ids) ? values.role_ids : [])
+          .map((roleId) => String(roleId || '').trim().toLowerCase())
+          .filter((roleId) => roleId);
+        updatePayload.roleIds = [...new Set(normalizedRoleIds)];
+      }
+      const payload = await api.updateUser(updatePayload);
+      const latestAction = {
+        action: 'update',
+        request_id: payload.request_id,
+        result: 'profile-and-roles-updated'
+      };
+      setLatestUserActionById((previous) => ({
+        ...previous,
+        [normalizedUserId]: latestAction
+      }));
+      notify({
+        type: 'success',
+        text: `平台用户编辑成功（request_id: ${payload.request_id}）`
+      });
+      setUserEditModalOpen(false);
+      setUserEditTarget(null);
+      editUserForm.resetFields();
+      refreshUserTable();
+    } catch (error) {
+      if (error?.errorFields) {
+        return;
+      }
+      withErrorNotice(error, '编辑平台用户失败');
+    } finally {
+      setUserEditModalSubmitting(false);
+    }
+  }, [
+    api,
+    editUserForm,
+    notify,
+    refreshUserTable,
+    userEditTarget,
+    withErrorNotice
+  ]);
+
   const handleSubmitStatusAction = useCallback(async () => {
     if (!userStatusActionTarget) {
       return;
@@ -301,7 +364,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
   ]);
 
   const handleDirectToggleUserStatus = useCallback(
-    async (record) => {
+    async (record, { refreshDetail = false } = {}) => {
       const normalizedUserId = String(record?.user_id || '').trim();
       if (!normalizedUserId) {
         return;
@@ -335,6 +398,9 @@ export default function PlatformUserManagementPage({ accessToken }) {
           text: '操作成功'
         });
         refreshUserTable();
+        if (refreshDetail) {
+          void openUserDetail(payload.user_id, latestAction);
+        }
       } catch (error) {
         withErrorNotice(error, '更新用户状态失败');
       } finally {
@@ -347,6 +413,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
     [
       api,
       notify,
+      openUserDetail,
       refreshUserTable,
       statusActionSubmittingByUserId,
       withErrorNotice
@@ -425,15 +492,40 @@ export default function PlatformUserManagementPage({ accessToken }) {
       userFilters.status
     ]
   );
+  const userDetailUserId = String(userDetail?.user_id || userDetailTargetUserId || '').trim();
+  const userDetailRoleList = normalizeRoleList(userDetail?.roles);
+  const userDetailStatus = String(userDetail?.status || '').trim().toLowerCase();
 
   const openEditUser = useCallback(
-    (record) => {
-      if (!record?.user_id) {
+    async (record) => {
+      const normalizedUserId = String(record?.user_id || '').trim();
+      if (!normalizedUserId) {
         return;
       }
-      void openUserDetail(record.user_id);
+      setUserEditModalOpen(true);
+      setUserEditModalLoading(true);
+      setUserEditTarget(null);
+      editUserForm.resetFields();
+      void loadEnabledRoleOptions();
+      try {
+        const payload = await api.getUser(normalizedUserId);
+        const normalizedRoles = normalizeRoleList(payload?.roles);
+        setUserEditTarget(payload);
+        editUserForm.setFieldsValue({
+          user_id: normalizedUserId,
+          phone: String(payload?.phone || '').trim(),
+          name: String(payload?.name || '').trim(),
+          department: String(payload?.department || '').trim(),
+          role_ids: normalizedRoles.map((role) => role.role_id)
+        });
+      } catch (error) {
+        setUserEditModalOpen(false);
+        withErrorNotice(error, '加载平台用户编辑信息失败');
+      } finally {
+        setUserEditModalLoading(false);
+      }
     },
-    [openUserDetail]
+    [api, editUserForm, loadEnabledRoleOptions, withErrorNotice]
   );
 
   const userColumns = useMemo(
@@ -498,7 +590,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
         dataIndex: 'created_at',
         key: 'created_at',
         width: 180,
-        render: (value) => normalizeDateTimeValue(value)
+        render: (value) => formatDateTimeMinute(value)
       },
       {
         title: '操作',
@@ -761,6 +853,108 @@ export default function PlatformUserManagementPage({ accessToken }) {
         </Modal>
 
         <Modal
+          open={userEditModalOpen}
+          title="编辑平台用户"
+          onCancel={() => {
+            setUserEditModalOpen(false);
+            setUserEditTarget(null);
+          }}
+          onOk={() => {
+            void handleUpdateUser();
+          }}
+          confirmLoading={userEditModalSubmitting}
+          okButtonProps={{
+            disabled: userEditModalSubmitting || userEditModalLoading,
+            'data-testid': 'platform-user-edit-confirm'
+          }}
+          cancelButtonProps={{
+            disabled: userEditModalSubmitting || userEditModalLoading
+          }}
+          destroyOnClose
+        >
+          {userEditModalLoading ? (
+            <Text data-testid="platform-user-edit-loading">加载中...</Text>
+          ) : (
+            <CustomForm
+              form={editUserForm}
+              layout="vertical"
+              submitter={false}
+            >
+              <CustomForm.Item
+                label="用户ID"
+                name="user_id"
+              >
+                <Input
+                  data-testid="platform-user-edit-user-id"
+                  disabled
+                />
+              </CustomForm.Item>
+              <CustomForm.Item
+                label="手机号"
+                name="phone"
+              >
+                <Input
+                  data-testid="platform-user-edit-phone"
+                  maxLength={11}
+                  inputMode="numeric"
+                  disabled
+                />
+              </CustomForm.Item>
+              <CustomForm.Item
+                label="姓名"
+                name="name"
+                rules={[
+                  {
+                    required: true,
+                    message: '请输入姓名'
+                  },
+                  {
+                    max: 64,
+                    message: '姓名长度不能超过 64'
+                  }
+                ]}
+              >
+                <Input
+                  data-testid="platform-user-edit-name"
+                  maxLength={64}
+                  placeholder="请输入姓名"
+                />
+              </CustomForm.Item>
+              <CustomForm.Item
+                label="部门"
+                name="department"
+                rules={[
+                  {
+                    max: 128,
+                    message: '部门长度不能超过 128'
+                  }
+                ]}
+              >
+                <Input
+                  data-testid="platform-user-edit-department"
+                  maxLength={128}
+                  placeholder="请输入部门（选填）"
+                />
+              </CustomForm.Item>
+              <CustomForm.Item
+                label="角色"
+                name="role_ids"
+              >
+                <Select
+                  data-testid="platform-user-edit-roles"
+                  mode="multiple"
+                  allowClear
+                  loading={enabledRoleOptionsLoading}
+                  options={editRoleOptions}
+                  placeholder="请选择角色（可多选）"
+                  optionFilterProp="label"
+                />
+              </CustomForm.Item>
+            </CustomForm>
+          )}
+        </Modal>
+
+        <Modal
           open={userStatusModalOpen}
           title={`${statusToggleLabel(userStatusActionTarget?.status)}平台用户`}
           onCancel={() => {
@@ -806,10 +1000,43 @@ export default function PlatformUserManagementPage({ accessToken }) {
 
         <Drawer
           open={userDetailOpen}
-          title="平台用户详情"
-          size="default"
+          title={userDetailUserId ? `用户ID:${userDetailUserId}` : '用户ID:-'}
+          extra={(
+            <Space>
+              <Button
+                data-testid="platform-user-detail-edit"
+                size="small"
+                disabled={!userDetailUserId}
+                onClick={() => {
+                  void openEditUser({ user_id: userDetailUserId });
+                }}
+              >
+                编辑
+              </Button>
+              <Button
+                data-testid="platform-user-detail-status"
+                size="small"
+                loading={Boolean(statusActionSubmittingByUserId[userDetailUserId])}
+                disabled={!userDetailUserId || !userDetailStatus}
+                onClick={() => {
+                  void handleDirectToggleUserStatus(
+                    {
+                      user_id: userDetailUserId,
+                      status: userDetailStatus
+                    },
+                    { refreshDetail: true }
+                  );
+                }}
+              >
+                {statusToggleLabel(userDetailStatus)}
+              </Button>
+            </Space>
+          )}
+          size="large"
           onClose={() => {
             setUserDetailOpen(false);
+            setUserDetailTargetUserId('');
+            setUserDetail(null);
           }}
           destroyOnClose
         >
@@ -817,17 +1044,24 @@ export default function PlatformUserManagementPage({ accessToken }) {
             {userDetailLoading ? (
               <Text>加载中...</Text>
             ) : userDetail ? (
-              <>
-                <Text>user_id: {userDetail.user_id}</Text>
-                <Text>phone: {userDetail.phone}</Text>
-                <Text>name: {String(userDetail.name || '').trim() || '-'}</Text>
-                <Text>department: {String(userDetail.department || '').trim() || '-'}</Text>
-                <Text>
-                  roles:
-                  {' '}
-                  {normalizeRoleList(userDetail.roles).length > 0 ? (
+              <Descriptions
+                size="small"
+                bordered
+                column={1}
+              >
+                <Descriptions.Item label="手机号">
+                  {String(userDetail.phone || '').trim() || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="姓名">
+                  {String(userDetail.name || '').trim() || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="部门">
+                  {String(userDetail.department || '').trim() || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="角色">
+                  {userDetailRoleList.length > 0 ? (
                     <Space size={[4, 4]} wrap>
-                      {normalizeRoleList(userDetail.roles).map((role) => (
+                      {userDetailRoleList.map((role) => (
                         <Tag key={role.role_id}>
                           {role.name || role.code || role.role_id}
                         </Tag>
@@ -836,19 +1070,14 @@ export default function PlatformUserManagementPage({ accessToken }) {
                   ) : (
                     '-'
                   )}
-                </Text>
-                <Text>status: {statusDisplayLabel(userDetail.status)}</Text>
-                <Text>created_at: {normalizeDateTimeValue(userDetail.created_at)}</Text>
-                <Text>request_id: {userDetail.request_id}</Text>
-                {userDetail.latest_action ? (
-                  <Text>
-                    latest_action: {userDetail.latest_action.action} ({userDetail.latest_action.result}) /
-                    request_id={userDetail.latest_action.request_id}
-                  </Text>
-                ) : (
-                  <Text type="secondary">latest_action: none</Text>
-                )}
-              </>
+                </Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  {statusDisplayLabel(userDetail.status)}
+                </Descriptions.Item>
+                <Descriptions.Item label="创建时间">
+                  {formatDateTimeMinute(userDetail.created_at)}
+                </Descriptions.Item>
+              </Descriptions>
             ) : (
               <Text type="secondary">暂无详情数据</Text>
             )}

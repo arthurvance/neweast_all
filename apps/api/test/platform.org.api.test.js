@@ -2832,6 +2832,7 @@ test('platformCreateOrg maps owner bootstrap 503 errors to ORG-503-DEPENDENCY-UN
       assert.ok(error instanceof AuthProblemError);
       assert.equal(error.status, 503);
       assert.equal(error.errorCode, 'ORG-503-DEPENDENCY-UNAVAILABLE');
+      assert.equal(error.detail, 'default password config unavailable');
       return true;
     }
   );

@@ -15,6 +15,7 @@ import {
   createPlatformSettingsApi,
   toProblemMessage
 } from '../../api/platform-settings.mjs';
+import { formatDateTimeMinute } from '../../utils/date-time.mjs';
 
 const ORG_STATUS_SELECT_OPTIONS = [
   { label: '全部', value: '' },
@@ -43,23 +44,6 @@ const statusDisplayLabel = (status) => {
     return '禁用';
   }
   return '-';
-};
-
-const normalizeDateTimeValue = (value) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
-    return '-';
-  }
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return normalized;
-  }
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
 };
 
 const renderOwnerLabel = (record = {}) => {
@@ -218,7 +202,7 @@ export default function PlatformOrgManagementPage({ accessToken }) {
         dataIndex: 'created_at',
         key: 'created_at',
         width: 180,
-        render: (value) => normalizeDateTimeValue(value)
+        render: (value) => formatDateTimeMinute(value)
       }
     ],
     []
