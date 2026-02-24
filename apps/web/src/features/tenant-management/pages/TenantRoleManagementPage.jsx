@@ -32,6 +32,7 @@ const ROLE_STATUS_OPTIONS = [
   { label: '启用', value: 'active' },
   { label: '禁用', value: 'disabled' }
 ];
+const TENANT_SYS_ADMIN_ROLE_CODE = 'sys_admin';
 const ROLE_FILTER_INITIAL_VALUES = Object.freeze({
   code: '',
   name: '',
@@ -53,16 +54,19 @@ const statusDisplayLabel = (status) => {
   }
   return '-';
 };
-const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const normalizeRoleIdFromCode = (code) =>
-  String(code || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^[^a-z0-9]+/, '')
-    .replace(/[^a-z0-9]+$/, '')
-    .slice(0, 64);
+const isTenantSysAdminRole = (roleRecord) => {
+  const normalizedCode = String(roleRecord?.code || '').trim().toLowerCase();
+  if (normalizedCode === TENANT_SYS_ADMIN_ROLE_CODE) {
+    return true;
+  }
+  const normalizedRoleId = String(
+    roleRecord?.role_id || roleRecord?.roleId || ''
+  ).trim().toLowerCase();
+  return (
+    normalizedRoleId === TENANT_SYS_ADMIN_ROLE_CODE
+    || normalizedRoleId.startsWith(`${TENANT_SYS_ADMIN_ROLE_CODE}__`)
+  );
+};
 
 const SETTINGS_TREE_ROOT_KEY = 'settings';
 const TENANT_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
@@ -246,6 +250,36 @@ const toPermissionTreeData = (availablePermissions = []) => {
       children: orderedNodes
     }
   ];
+};
+
+const selectPermissionCatalogProbeRoleId = (roles = []) => {
+  const normalizedRoles = (Array.isArray(roles) ? roles : [])
+    .map((role) => {
+      if (!role || typeof role !== 'object' || Array.isArray(role)) {
+        return null;
+      }
+      const roleId = String(role.role_id || role.roleId || '').trim().toLowerCase();
+      if (!roleId) {
+        return null;
+      }
+      return {
+        roleId,
+        code: String(role.code || '').trim().toLowerCase(),
+        status: String(role.status || '').trim().toLowerCase()
+      };
+    })
+    .filter(Boolean);
+  const sysAdminRole = normalizedRoles.find(
+    (role) => role.code === 'sys_admin' && role.status === 'active'
+  );
+  if (sysAdminRole?.roleId) {
+    return sysAdminRole.roleId;
+  }
+  const firstActiveRole = normalizedRoles.find((role) => role.status === 'active');
+  if (firstActiveRole?.roleId) {
+    return firstActiveRole.roleId;
+  }
+  return normalizedRoles[0]?.roleId || '';
 };
 
 const formatProblemText = (error, fallback) => {
@@ -443,7 +477,17 @@ export default function TenantRoleManagementPage({ accessToken }) {
   const loadCreateRolePermissionCatalog = useCallback(async () => {
     setRoleEditPermissionLoading(true);
     try {
-      const payload = await api.getRolePermissions('tenant_owner');
+      const fallbackRoleListPayload = await api.listRoles();
+      const fallbackRoles = Array.isArray(fallbackRoleListPayload?.roles)
+        ? fallbackRoleListPayload.roles
+        : [];
+      const probeRoleId = selectPermissionCatalogProbeRoleId(
+        (Array.isArray(roleList) && roleList.length > 0) ? roleList : fallbackRoles
+      );
+      if (!probeRoleId) {
+        throw new Error('tenant-role-permission-catalog-probe-role-missing');
+      }
+      const payload = await api.getRolePermissions(probeRoleId);
       const normalizedAvailablePermissions = normalizeTenantPermissionCatalogItems({
         permissionCodes: Array.isArray(payload?.available_permission_codes)
           ? payload.available_permission_codes
@@ -461,7 +505,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
     } finally {
       setRoleEditPermissionLoading(false);
     }
-  }, [api, notifyError]);
+  }, [api, notifyError, roleList]);
 
   const loadEditRolePermissionCatalog = useCallback(
     async (roleId) => {
@@ -517,6 +561,10 @@ export default function TenantRoleManagementPage({ accessToken }) {
 
   const openEditRoleModal = useCallback(
     async (roleRecord) => {
+      if (isTenantSysAdminRole(roleRecord)) {
+        messageApi.warning('系统管理员角色不支持编辑');
+        return;
+      }
       setRoleEditMode('edit');
       setRoleEditTarget(roleRecord);
       setRoleEditOpen(true);
@@ -529,7 +577,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
       });
       await loadEditRolePermissionCatalog(roleRecord.role_id);
     },
-    [loadEditRolePermissionCatalog, roleEditForm]
+    [loadEditRolePermissionCatalog, messageApi, roleEditForm]
   );
 
   const handleSubmitRoleEdit = useCallback(async () => {
@@ -544,25 +592,31 @@ export default function TenantRoleManagementPage({ accessToken }) {
       )];
       setRoleEditSubmitting(true);
       if (roleEditMode === 'create') {
-        const generatedRoleId = normalizeRoleIdFromCode(values.code);
-        if (!ROLE_ID_ADDRESSABLE_PATTERN.test(generatedRoleId)) {
-          messageApi.error('角色编码无法转换为有效角色ID，请调整编码后重试');
-          setRoleEditSubmitting(false);
-          return;
-        }
         const payload = await api.createRole({
-          role_id: generatedRoleId,
           code: String(values.code || '').trim(),
           name: String(values.name || '').trim(),
           status: 'active'
         });
+        const createdRoleId = String(
+          payload?.role_id || payload?.roleId || ''
+        ).trim().toLowerCase();
+        if (!createdRoleId) {
+          notifyError(new Error('tenant-role-create-missing-role-id'), '组织角色创建成功，但返回的 role_id 无效');
+          setRoleEditOpen(false);
+          setRoleEditTarget(null);
+          setRoleEditPermissionCatalogAvailable([]);
+          setRoleEditPermissionCodesChecked([]);
+          roleEditForm.resetFields();
+          await loadRoles();
+          return;
+        }
         try {
           await api.replaceRolePermissions({
-            roleId: payload.role_id,
+            roleId: createdRoleId,
             permissionCodes: normalizedPermissionCodes
           });
         } catch (error) {
-          notifyError(error, `组织角色已创建，但权限保存失败（role_id: ${payload.role_id}）`);
+          notifyError(error, `组织角色已创建，但权限保存失败（role_id: ${createdRoleId || '-'})`);
           setRoleEditOpen(false);
           setRoleEditTarget(null);
           setRoleEditPermissionCatalogAvailable([]);
@@ -639,6 +693,10 @@ export default function TenantRoleManagementPage({ accessToken }) {
 
   const handleToggleRoleStatus = useCallback(
     async (roleRecord) => {
+      if (isTenantSysAdminRole(roleRecord)) {
+        messageApi.warning('系统管理员角色不支持变更状态');
+        return;
+      }
       const normalizedRoleId = String(roleRecord?.role_id || '').trim().toLowerCase();
       if (!normalizedRoleId) {
         return;
@@ -668,7 +726,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
         notifyError(error, '更新组织角色状态失败');
       }
     },
-    [api, loadRoles, notifyError, notifySuccess, roleDetail?.role_id]
+    [api, loadRoles, messageApi, notifyError, notifySuccess, roleDetail?.role_id]
   );
 
   const roleEditPermissionLeafSet = useMemo(
@@ -765,59 +823,64 @@ export default function TenantRoleManagementPage({ accessToken }) {
       {
         title: '操作',
         key: 'actions',
-        render: (_value, record) => (
-          <Space
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-            onMouseDown={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <Button
-              data-testid={`tenant-role-edit-${record.role_id}`}
-              size="small"
-              type="link"
+        render: (_value, record) => {
+          const isSysAdminRole = isTenantSysAdminRole(record);
+          return (
+            <Space
               onClick={(event) => {
                 event.stopPropagation();
-                void openEditRoleModal(record);
               }}
-            >
-              编辑
-            </Button>
-            <Button
-              data-testid={`tenant-role-status-${record.role_id}`}
-              size="small"
-              type="link"
-              onClick={(event) => {
+              onMouseDown={(event) => {
                 event.stopPropagation();
-                void handleToggleRoleStatus(record);
               }}
             >
-              {statusToggleLabel(String(record?.status || '').trim().toLowerCase())}
-            </Button>
-            {isDisabledStatus(record.status) ? (
-              <Popconfirm
-                title="确认删除该组织角色吗？"
-                onConfirm={() => {
-                  void handleDeleteRole(record.role_id);
+              <Button
+                data-testid={`tenant-role-edit-${record.role_id}`}
+                size="small"
+                type="link"
+                disabled={isSysAdminRole}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void openEditRoleModal(record);
                 }}
               >
-                <Button
-                  data-testid={`tenant-role-delete-${record.role_id}`}
-                  size="small"
-                  type="link"
-                  danger
-                  onClick={(event) => {
-                    event.stopPropagation();
+                编辑
+              </Button>
+              <Button
+                data-testid={`tenant-role-status-${record.role_id}`}
+                size="small"
+                type="link"
+                disabled={isSysAdminRole}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleToggleRoleStatus(record);
+                }}
+              >
+                {statusToggleLabel(String(record?.status || '').trim().toLowerCase())}
+              </Button>
+              {isDisabledStatus(record.status) && !isSysAdminRole ? (
+                <Popconfirm
+                  title="确认删除该组织角色吗？"
+                  onConfirm={() => {
+                    void handleDeleteRole(record.role_id);
                   }}
                 >
-                  删除
-                </Button>
-              </Popconfirm>
-            ) : null}
-          </Space>
-        )
+                  <Button
+                    data-testid={`tenant-role-delete-${record.role_id}`}
+                    size="small"
+                    type="link"
+                    danger
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
+                  >
+                    删除
+                  </Button>
+                </Popconfirm>
+              ) : null}
+            </Space>
+          );
+        }
       }
     ],
     [handleDeleteRole, handleToggleRoleStatus, openEditRoleModal]
@@ -1022,6 +1085,42 @@ export default function TenantRoleManagementPage({ accessToken }) {
       <Drawer
         open={roleDetailOpen}
         title={`角色ID：${String(roleDetailWithPermission?.role_id || '-').trim() || '-'}`}
+        extra={(
+          <Space>
+            <Button
+              data-testid="tenant-role-detail-edit"
+              onClick={() => {
+                if (!roleDetailWithPermission?.role_id) {
+                  return;
+                }
+                void openEditRoleModal(roleDetailWithPermission);
+              }}
+              disabled={
+                !roleDetailWithPermission?.role_id
+                || isTenantSysAdminRole(roleDetailWithPermission)
+              }
+            >
+              编辑
+            </Button>
+            <Button
+              data-testid="tenant-role-detail-status-toggle"
+              onClick={() => {
+                if (!roleDetailWithPermission?.role_id) {
+                  return;
+                }
+                void handleToggleRoleStatus(roleDetailWithPermission);
+              }}
+              disabled={
+                !roleDetailWithPermission?.role_id
+                || isTenantSysAdminRole(roleDetailWithPermission)
+              }
+            >
+              {roleDetailWithPermission?.role_id
+                ? statusToggleLabel(String(roleDetailWithPermission?.status || '').trim().toLowerCase())
+                : '启用/禁用'}
+            </Button>
+          </Space>
+        )}
         size="large"
         onClose={() => {
           rolePermissionLoadingTargetRef.current = '';

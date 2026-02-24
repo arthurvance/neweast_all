@@ -141,6 +141,39 @@ test('POST /tenant/roles creates role and GET /tenant/roles returns tenant-scope
   assert.equal(role.code, 'OPS_ADMIN');
 });
 
+test('POST /tenant/roles auto-generates role_id when omitted and does not reuse code', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-create-auto-role-id',
+    TENANT_OPERATOR_A_PHONE
+  );
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-auto-role-id',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      code: 'TENANT_AUTO_GENERATED_ROLE',
+      name: '租户自动生成角色ID',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(createRoute.status, 200);
+  const createPayload = JSON.parse(createRoute.body);
+  assert.ok(typeof createPayload.role_id === 'string' && createPayload.role_id.length > 0);
+  assert.match(createPayload.role_id, /^[a-z0-9][a-z0-9._-]{0,63}$/);
+  assert.notEqual(createPayload.role_id, 'tenant_auto_generated_role');
+  assert.equal(createPayload.code, 'TENANT_AUTO_GENERATED_ROLE');
+  assert.equal(createPayload.name, '租户自动生成角色ID');
+  assert.equal(createPayload.status, 'active');
+});
+
 test('POST /tenant/roles persists tenant audit event with request_id and traceparent', async () => {
   const harness = createHarness();
   const login = await loginByPhone(

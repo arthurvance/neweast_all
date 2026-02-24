@@ -762,8 +762,18 @@ test('listTenantOptionsByUserId returns active tenant options from mysql storage
     if (normalizedSql.includes('FROM tenant_memberships')) {
       listSql = normalizedSql;
       return [
-        { tenant_id: 'tenant-a', tenant_name: 'Tenant A' },
-        { tenant_id: 'tenant-b', tenant_name: null }
+        {
+          tenant_id: 'tenant-a',
+          tenant_name: 'Tenant A',
+          owner_name: '负责人甲',
+          owner_phone: '13800000011'
+        },
+        {
+          tenant_id: 'tenant-b',
+          tenant_name: null,
+          owner_name: null,
+          owner_phone: null
+        }
       ];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -772,10 +782,17 @@ test('listTenantOptionsByUserId returns active tenant options from mysql storage
 
   const options = await store.listTenantOptionsByUserId('u-3');
   assert.deepEqual(options, [
-    { tenantId: 'tenant-a', tenantName: 'Tenant A' },
+    {
+      tenantId: 'tenant-a',
+      tenantName: 'Tenant A',
+      ownerName: '负责人甲',
+      ownerPhone: '13800000011'
+    },
     { tenantId: 'tenant-b', tenantName: null }
   ]);
   assert.match(listSql, /LEFT JOIN tenants/i);
+  assert.match(listSql, /LEFT JOIN iam_users/i);
+  assert.match(listSql, /AS owner_name/i);
   assert.match(listSql, /o\.status IN \('active', 'enabled'\)/i);
   assert.doesNotMatch(listSql, /o\.id IS NULL/i);
 });
@@ -3428,6 +3445,14 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
         {
           role_id: 'sys_admin',
           permission_code: 'tenant.user_management.operate'
+        },
+        {
+          role_id: 'sys_admin',
+          permission_code: 'tenant.role_management.view'
+        },
+        {
+          role_id: 'sys_admin',
+          permission_code: 'tenant.role_management.operate'
         }
       ];
     }
@@ -3469,7 +3494,9 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
       'tenant.user_management.view',
-      'tenant.user_management.operate'
+      'tenant.user_management.operate',
+      'tenant.role_management.view',
+      'tenant.role_management.operate'
     ]
   });
 
@@ -3479,11 +3506,16 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     new_owner_user_id: 'owner-transfer-store-new-owner',
     membership_id: 'membership-owner-transfer-store-new-owner',
     role_ids: ['sys_admin'],
-    permission_codes: ['tenant.user_management.operate', 'tenant.user_management.view'],
+    permission_codes: [
+      'tenant.role_management.operate',
+      'tenant.role_management.view',
+      'tenant.user_management.operate',
+      'tenant.user_management.view'
+    ],
     audit_recorded: false
   });
   assert.equal(roleCatalogInsertCalled, true);
-  assert.equal(roleGrantInsertCount, 2);
+  assert.equal(roleGrantInsertCount, 4);
   assert.equal(membershipInsertCalled, true);
   assert.equal(tenantDomainAccessUpsertCalled, false);
   assert.equal(ownerSwitchCalled, true);
@@ -3543,7 +3575,9 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     ) {
       return [
         { permission_code: 'tenant.user_management.view' },
-        { permission_code: 'tenant.user_management.operate' }
+        { permission_code: 'tenant.user_management.operate' },
+        { permission_code: 'tenant.role_management.view' },
+        { permission_code: 'tenant.role_management.operate' }
       ];
     }
     if (
@@ -3676,6 +3710,14 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
         {
           role_id: 'sys_admin',
           permission_code: 'tenant.user_management.operate'
+        },
+        {
+          role_id: 'sys_admin',
+          permission_code: 'tenant.role_management.view'
+        },
+        {
+          role_id: 'sys_admin',
+          permission_code: 'tenant.role_management.operate'
         }
       ];
     }
@@ -3716,7 +3758,9 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
       'tenant.user_management.view',
-      'tenant.user_management.operate'
+      'tenant.user_management.operate',
+      'tenant.role_management.view',
+      'tenant.role_management.operate'
     ]
   });
 
@@ -4054,6 +4098,14 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
         {
           role_id: 'sys_admin',
           permission_code: 'tenant.user_management.operate'
+        },
+        {
+          role_id: 'sys_admin',
+          permission_code: 'tenant.role_management.view'
+        },
+        {
+          role_id: 'sys_admin',
+          permission_code: 'tenant.role_management.operate'
         }
       ];
     }
@@ -4095,7 +4147,9 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
       'tenant.user_management.view',
-      'tenant.user_management.operate'
+      'tenant.user_management.operate',
+      'tenant.role_management.view',
+      'tenant.role_management.operate'
     ]
   });
 
@@ -4105,7 +4159,12 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     new_owner_user_id: 'owner-transfer-store-membership-race-new-owner',
     membership_id: 'membership-owner-transfer-store-membership-race',
     role_ids: ['sys_admin'],
-    permission_codes: ['tenant.user_management.operate', 'tenant.user_management.view'],
+    permission_codes: [
+      'tenant.role_management.operate',
+      'tenant.role_management.view',
+      'tenant.user_management.operate',
+      'tenant.user_management.view'
+    ],
     audit_recorded: false
   });
   assert.equal(membershipInsertAttemptCount, 1);

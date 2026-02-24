@@ -4,9 +4,6 @@ export default function TenantApp({
   screen,
   sessionState,
   tenantOptions,
-  tenantSelectionValue,
-  onTenantSelectionChange,
-  onTenantSelectConfirm,
   tenantSwitchValue,
   onTenantSwitchValueChange,
   isTenantSubmitting,
@@ -24,9 +21,6 @@ export default function TenantApp({
       screen={screen}
       sessionState={sessionState}
       tenantOptions={tenantOptions}
-      tenantSelectionValue={tenantSelectionValue}
-      onTenantSelectionChange={onTenantSelectionChange}
-      onTenantSelectConfirm={onTenantSelectConfirm}
       tenantSwitchValue={tenantSwitchValue}
       onTenantSwitchValueChange={onTenantSwitchValueChange}
       isTenantSubmitting={isTenantSubmitting}

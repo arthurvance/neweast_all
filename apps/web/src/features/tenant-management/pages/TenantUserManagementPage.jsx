@@ -346,7 +346,6 @@ export default function TenantUserManagementPage({
       setMemberCreateOpen(false);
       memberCreateForm.resetFields();
       refreshMemberTable();
-      void openMemberDetail(createdMembershipId, latestAction);
     } catch (error) {
       if (error?.errorFields) {
         return;
@@ -373,7 +372,6 @@ export default function TenantUserManagementPage({
         setMemberCreateOpen(false);
         memberCreateForm.resetFields();
         refreshMemberTable();
-        void openMemberDetail(createdMemberPayload.membership_id, fallbackLatestAction);
         return;
       }
       notifyError(error, '新建组织成员失败');
@@ -385,7 +383,6 @@ export default function TenantUserManagementPage({
     memberCreateForm,
     notifyError,
     notifySuccess,
-    openMemberDetail,
     refreshMemberTable
   ]);
 
@@ -487,7 +484,15 @@ export default function TenantUserManagementPage({
       setMemberProfileTarget(null);
       memberProfileForm.resetFields();
       refreshMemberTable();
-      void openMemberDetail(memberProfileTarget.membership_id, latestAction);
+      const normalizedProfileMembershipId = String(memberProfileTarget.membership_id || '').trim();
+      const normalizedDetailMembershipId = String(memberDetail?.membership_id || '').trim();
+      if (
+        memberDetailOpen
+        && normalizedProfileMembershipId
+        && normalizedDetailMembershipId === normalizedProfileMembershipId
+      ) {
+        void openMemberDetail(normalizedProfileMembershipId, latestAction);
+      }
 
       if (typeof onTenantPermissionContextRefresh === 'function') {
         try {
@@ -513,6 +518,8 @@ export default function TenantUserManagementPage({
     }
   }, [
     api,
+    memberDetail,
+    memberDetailOpen,
     memberProfileForm,
     memberProfileTarget,
     messageApi,

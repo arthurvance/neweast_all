@@ -1303,16 +1303,32 @@ const createMySqlRepositoryMethods = ({
       const normalizedUserId = String(userId);
       const rows = await runTenantMembershipQuery({
         sqlWithOrgGuard: `
-            SELECT tenant_id, tenant_name
+            SELECT tenant_id,
+                   tenant_name,
+                   u.phone AS owner_phone,
+                   (
+                     SELECT ut_owner.display_name
+                     FROM tenant_memberships ut_owner
+                     WHERE ut_owner.user_id = o.owner_user_id
+                       AND ut_owner.tenant_id = o.id
+                       AND ut_owner.display_name IS NOT NULL
+                       AND TRIM(ut_owner.display_name) <> ''
+                     ORDER BY ut_owner.joined_at DESC, ut_owner.membership_id DESC
+                     LIMIT 1
+                   ) AS owner_name
             FROM tenant_memberships ut
             LEFT JOIN tenants o ON o.id = ut.tenant_id
+            LEFT JOIN iam_users u ON u.id = o.owner_user_id
             WHERE ut.user_id = ?
               AND ut.status IN ('active', 'enabled')
               AND o.status IN ('active', 'enabled')
             ORDER BY tenant_id ASC
           `,
         sqlWithoutOrgGuard: `
-            SELECT tenant_id, tenant_name
+            SELECT tenant_id,
+                   tenant_name,
+                   NULL AS owner_phone,
+                   NULL AS owner_name
             FROM tenant_memberships ut
             WHERE ut.user_id = ?
               AND ut.status IN ('active', 'enabled')
@@ -1322,10 +1338,16 @@ const createMySqlRepositoryMethods = ({
       });
 
       return (Array.isArray(rows) ? rows : [])
-        .map((row) => ({
-          tenantId: String(row.tenant_id || '').trim(),
-          tenantName: row.tenant_name ? String(row.tenant_name) : null
-        }))
+        .map((row) => {
+          const ownerName = row.owner_name ? String(row.owner_name).trim() : null;
+          const ownerPhone = row.owner_phone ? String(row.owner_phone).trim() : null;
+          return {
+            tenantId: String(row.tenant_id || '').trim(),
+            tenantName: row.tenant_name ? String(row.tenant_name) : null,
+            ...(ownerName ? { ownerName } : {}),
+            ...(ownerPhone ? { ownerPhone } : {})
+          };
+        })
         .filter((row) => row.tenantId.length > 0);
     },
 

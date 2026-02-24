@@ -1,5 +1,5 @@
 import { Empty, Spin } from 'antd';
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import CustomLayout from '../../components/CustomLayout';
 import CustomPage from '../../components/CustomPage';
 import {
@@ -12,6 +12,36 @@ import {
   resolveTenantOpenKeys
 } from './tenant-management.config';
 
+const TENANT_ACTIVE_MENU_STORAGE_KEY = 'tenant-management-active-menu-key';
+
+const readTenantActiveMenuKey = () => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  try {
+    return String(
+      window.sessionStorage.getItem(TENANT_ACTIVE_MENU_STORAGE_KEY) || ''
+    ).trim();
+  } catch (error) {
+    return '';
+  }
+};
+
+const persistTenantActiveMenuKey = (menuKey) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const normalizedMenuKey = String(menuKey || '').trim();
+  if (!normalizedMenuKey) {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(TENANT_ACTIVE_MENU_STORAGE_KEY, normalizedMenuKey);
+  } catch (error) {
+    // Ignore storage write failures to keep menu navigation available.
+  }
+};
+
 export default function TenantManagementLayoutPage({
   accessToken,
   userName,
@@ -22,7 +52,9 @@ export default function TenantManagementLayoutPage({
   activeTenantId = '',
   onOpenTenantSwitchPage = null
 }) {
-  const [activeMenuKey, setActiveMenuKey] = useState(TENANT_DEFAULT_MENU_KEY);
+  const [activeMenuKey, setActiveMenuKey] = useState(
+    () => readTenantActiveMenuKey() || TENANT_DEFAULT_MENU_KEY
+  );
   const firstVisibleMenuKey = useMemo(
     () => resolveFirstTenantVisibleMenuKey(tenantPermissionContext),
     [tenantPermissionContext]
@@ -46,6 +78,17 @@ export default function TenantManagementLayoutPage({
     () => resolveTenantNavItemsByPermission(tenantPermissionContext),
     [tenantPermissionContext]
   );
+  useEffect(() => {
+    if (!resolvedMenuKey) {
+      return;
+    }
+    if (resolvedMenuKey !== activeMenuKey) {
+      setActiveMenuKey(resolvedMenuKey);
+      return;
+    }
+    persistTenantActiveMenuKey(resolvedMenuKey);
+  }, [activeMenuKey, resolvedMenuKey]);
+
   const openKeys = hasVisiblePage ? resolveTenantOpenKeys(resolvedMenuKey) : [];
   const displayUserName = String(userName || '').trim() || '-';
   const layoutTitle = useMemo(() => {
@@ -127,7 +170,6 @@ export default function TenantManagementLayoutPage({
       >
         <CustomPage
           title={displayPageMeta.title}
-          subTitle={displayPageMeta.subTitle}
           showBreadcrumb={hasVisiblePage}
           breadcrumbItems={displayPageMeta.breadcrumbItems}
           bodyStyle={{ display: 'grid', gap: 12 }}

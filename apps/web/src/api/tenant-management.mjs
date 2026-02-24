@@ -186,18 +186,25 @@ export const createTenantManagementApi = ({ accessToken }) => {
         method: 'GET'
       }),
 
-    createRole: async (payload = {}) =>
-      withToken({
+    createRole: async (payload = {}) => {
+      const normalizedPayload = {
+        code: String(payload.code || '').trim(),
+        name: String(payload.name || '').trim(),
+        status: String(payload.status || 'active').trim().toLowerCase()
+      };
+      const normalizedRoleId = String(
+        payload.role_id || payload.roleId || ''
+      ).trim().toLowerCase();
+      if (normalizedRoleId) {
+        normalizedPayload.role_id = normalizedRoleId;
+      }
+      return withToken({
         path: '/tenant/roles',
         method: 'POST',
-        payload: {
-          role_id: String(payload.role_id || '').trim().toLowerCase(),
-          code: String(payload.code || '').trim(),
-          name: String(payload.name || '').trim(),
-          status: String(payload.status || 'active').trim().toLowerCase()
-        },
+        payload: normalizedPayload,
         idempotencyKey: buildIdempotencyKey('ui-tenant-roles-create')
-      }),
+      });
+    },
 
     updateRole: async ({ roleId, payload = {} }) =>
       withToken({

@@ -1,3 +1,11 @@
+const normalizeOptionalTenantOwnerField = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
 const createTenantContextService = ({
   sessionRepository,
   tenantMembershipRepository,
@@ -16,10 +24,20 @@ const createTenantContextService = ({
       return [];
     }
     return options
-      .map((option) => ({
-        tenant_id: normalizeTenantId(option.tenantId || option.tenant_id),
-        tenant_name: option.tenantName || option.tenant_name || null
-      }))
+      .map((option) => {
+        const ownerName = normalizeOptionalTenantOwnerField(
+          option.ownerName || option.owner_name
+        );
+        const ownerPhone = normalizeOptionalTenantOwnerField(
+          option.ownerPhone || option.owner_phone
+        );
+        return {
+          tenant_id: normalizeTenantId(option.tenantId || option.tenant_id),
+          tenant_name: option.tenantName || option.tenant_name || null,
+          ...(ownerName ? { owner_name: ownerName } : {}),
+          ...(ownerPhone ? { owner_phone: ownerPhone } : {})
+        };
+      })
       .filter((option) => option.tenant_id);
   };
 

@@ -9,6 +9,8 @@ const {
   KNOWN_TENANT_PERMISSION_CODES,
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   toPlatformPermissionSnapshotFromCodes,
@@ -145,10 +147,12 @@ const createInMemoryAuthStore = ({
   const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
   const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
   const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
-  const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
+  const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = '管理员';
   const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
     TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
-    TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
+    TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+    TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
   ]);
   const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
   const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
@@ -3494,6 +3498,8 @@ const createInMemoryAuthStore = ({
         if (
           !Boolean(effectivePermission.canViewUserManagement)
           || !Boolean(effectivePermission.canOperateUserManagement)
+          || !Boolean(effectivePermission.canViewRoleManagement)
+          || !Boolean(effectivePermission.canOperateRoleManagement)
         ) {
           const permissionInsufficientError = new Error(
             'owner transfer takeover permission insufficient'
@@ -3629,7 +3635,7 @@ const createInMemoryAuthStore = ({
       reason = null,
       takeoverRoleId = 'sys_admin',
       takeoverRoleCode = 'sys_admin',
-      takeoverRoleName = 'sys_admin',
+      takeoverRoleName = '管理员',
       requiredPermissionCodes = [],
       auditContext = null
     } = {}) => {
@@ -3975,6 +3981,8 @@ const createInMemoryAuthStore = ({
         if (
           !Boolean(syncResult?.permission?.canViewUserManagement)
           || !Boolean(syncResult?.permission?.canOperateUserManagement)
+          || !Boolean(syncResult?.permission?.canViewRoleManagement)
+          || !Boolean(syncResult?.permission?.canOperateRoleManagement)
         ) {
           const permissionInsufficientError = new Error(
             'owner transfer takeover permission insufficient'

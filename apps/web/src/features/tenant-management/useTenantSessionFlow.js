@@ -11,7 +11,6 @@ import { createLatestRequestExecutor } from '../../latest-request.mjs';
 import { asTenantOptions, normalizeUserName } from '../auth/session-model';
 import {
   APP_SCREEN_DASHBOARD,
-  APP_SCREEN_TENANT_SELECT,
   APP_SCREEN_TENANT_SWITCH
 } from '../app-shell/app-screen';
 
@@ -23,7 +22,6 @@ export const useTenantSessionFlow = ({
   sessionState,
   sessionStateRef,
   tenantOptions,
-  tenantSelectionValue,
   tenantSwitchValue,
   isTenantSubmitting,
   setSessionState,
@@ -153,7 +151,7 @@ export const useTenantSessionFlow = ({
       }
 
       if (options.length > 1) {
-        setScreen(APP_SCREEN_TENANT_SELECT);
+        setScreen(APP_SCREEN_TENANT_SWITCH);
         setGlobalMessage({
           type: 'success',
           text: '登录成功，请先选择组织后进入工作台'
@@ -222,49 +220,6 @@ export const useTenantSessionFlow = ({
       nextSessionState
     };
   }, [sessionStateRef, setSessionState, setTenantOptions, setTenantSelectionValue, setTenantSwitchValue, tenantOptions]);
-
-  const handleTenantSelect = useCallback(async () => {
-    if (!sessionState?.access_token) {
-      return;
-    }
-    const accessToken = sessionState.access_token;
-    const tenantId = String(tenantSelectionValue || '').trim();
-    if (!tenantId) {
-      setGlobalMessage({ type: 'error', text: '请选择组织后再继续' });
-      return;
-    }
-
-    setIsTenantSubmitting(true);
-    try {
-      const payload = await requestJson({
-        path: '/auth/tenant/select',
-        method: 'POST',
-        payload: { tenant_id: tenantId },
-        accessToken
-      });
-      const { nextAccessToken, nextSessionState } = applyTenantMutationPayload(payload, tenantId);
-      setScreen(APP_SCREEN_DASHBOARD);
-      setGlobalMessage({ type: 'success', text: '组织选择成功，已进入工作台' });
-      void refreshTenantContext(nextAccessToken || accessToken, {
-        expectedSession: nextSessionState
-      }).catch(() => {
-        setGlobalMessage((previous) => ({
-          type: 'error',
-          text: previous?.type === 'success'
-            ? `${previous.text}（注意：组织上下文刷新失败，权限视图可能过期）`
-            : '组织上下文刷新失败，当前权限视图可能过期'
-        }));
-      });
-    } catch (error) {
-      const payload = error.payload || {};
-      setGlobalMessage({
-        type: 'error',
-        text: formatRetryMessage(payload.detail)
-      });
-    } finally {
-      setIsTenantSubmitting(false);
-    }
-  }, [applyTenantMutationPayload, formatRetryMessage, refreshTenantContext, requestJson, sessionState, setGlobalMessage, setIsTenantSubmitting, setScreen, tenantSelectionValue]);
 
   const handleTenantSwitch = useCallback(async (tenantIdOverride = null) => {
     if (!sessionState?.access_token) {
@@ -391,7 +346,6 @@ export const useTenantSessionFlow = ({
 
   return {
     applyLoginPayload,
-    handleTenantSelect,
     refreshTenantPermissionContextFailClosed,
     handleTenantSwitchFromDashboard,
     handleOpenTenantSwitchPage,

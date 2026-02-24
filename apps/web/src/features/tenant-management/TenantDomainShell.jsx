@@ -1,6 +1,5 @@
 import TenantDashboardFallbackPanel from './TenantDashboardFallbackPanel';
 import TenantManagementLayoutPage from './TenantManagementLayoutPage';
-import TenantSelectScreen from './TenantSelectScreen';
 import TenantSwitchScreen from './TenantSwitchScreen';
 import {
   APP_SCREEN_DASHBOARD,
@@ -12,9 +11,6 @@ export default function TenantDomainShell({
   screen,
   sessionState,
   tenantOptions,
-  tenantSelectionValue,
-  onTenantSelectionChange,
-  onTenantSelectConfirm,
   tenantSwitchValue,
   onTenantSwitchValueChange,
   isTenantSubmitting,
@@ -27,18 +23,6 @@ export default function TenantDomainShell({
   onOpenTenantSwitchPage,
   onTenantSwitchFromSwitchPage
 }) {
-  if (screen === APP_SCREEN_TENANT_SELECT) {
-    return (
-      <TenantSelectScreen
-        tenantOptions={tenantOptions}
-        tenantSelectionValue={tenantSelectionValue}
-        onTenantSelectionChange={onTenantSelectionChange}
-        onConfirm={onTenantSelectConfirm}
-        isSubmitting={isTenantSubmitting}
-      />
-    );
-  }
-
   if (screen === APP_SCREEN_DASHBOARD && sessionState?.entry_domain === 'tenant') {
     if (isTenantManagementDashboardScreen) {
       return (
@@ -70,7 +54,7 @@ export default function TenantDomainShell({
     );
   }
 
-  if (screen === APP_SCREEN_TENANT_SWITCH) {
+  if (screen === APP_SCREEN_TENANT_SWITCH || screen === APP_SCREEN_TENANT_SELECT) {
     return (
       <TenantSwitchScreen
         tenantOptions={tenantOptions}

@@ -11,6 +11,8 @@ const {
   KNOWN_TENANT_PERMISSION_CODES,
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE,
@@ -126,10 +128,12 @@ const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
 const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
-const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
+const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = '管理员';
 const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
-  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
 ]);
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
 const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
@@ -8199,6 +8203,8 @@ const createMySqlAuthStore = ({
             if (
               !Boolean(effectivePermission.canViewUserManagement)
               || !Boolean(effectivePermission.canOperateUserManagement)
+              || !Boolean(effectivePermission.canViewRoleManagement)
+              || !Boolean(effectivePermission.canOperateRoleManagement)
             ) {
               const permissionInsufficientError = new Error(
                 'owner transfer takeover permission insufficient'
@@ -8330,7 +8336,7 @@ const createMySqlAuthStore = ({
       reason = null,
       takeoverRoleId = 'sys_admin',
       takeoverRoleCode = 'sys_admin',
-      takeoverRoleName = 'sys_admin',
+      takeoverRoleName = '管理员',
       requiredPermissionCodes = [],
       auditContext = null
     } = {}) => {
@@ -8906,6 +8912,8 @@ const createMySqlAuthStore = ({
             if (
               !Boolean(effectivePermission.canViewUserManagement)
               || !Boolean(effectivePermission.canOperateUserManagement)
+              || !Boolean(effectivePermission.canViewRoleManagement)
+              || !Boolean(effectivePermission.canOperateRoleManagement)
             ) {
               const permissionInsufficientError = new Error(
                 'owner transfer takeover permission insufficient'

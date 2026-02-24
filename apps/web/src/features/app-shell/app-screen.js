@@ -14,7 +14,7 @@ const normalizePathname = (pathname) => {
 export const resolvePreferredScreenFromPathname = (pathname) => {
   const normalizedPathname = normalizePathname(pathname).toLowerCase();
   if (normalizedPathname === '/tenant/select') {
-    return APP_SCREEN_TENANT_SELECT;
+    return APP_SCREEN_TENANT_SWITCH;
   }
   if (normalizedPathname === '/tenant/switch') {
     return APP_SCREEN_TENANT_SWITCH;
@@ -44,16 +44,16 @@ export const resolveInitialScreen = ({
   }
   const entryDomain = String(restoredSession.entry_domain || '').trim().toLowerCase();
   if (entryDomain === 'tenant' && restoredSession.tenant_selection_required) {
-    return APP_SCREEN_TENANT_SELECT;
+    return APP_SCREEN_TENANT_SWITCH;
   }
   if (
     entryDomain === 'tenant'
     && (
-      preferredScreen === APP_SCREEN_TENANT_SELECT
-      || preferredScreen === APP_SCREEN_TENANT_SWITCH
+      preferredScreen === APP_SCREEN_TENANT_SWITCH
+      || preferredScreen === APP_SCREEN_TENANT_SELECT
     )
   ) {
-    return preferredScreen;
+    return APP_SCREEN_TENANT_SWITCH;
   }
   return APP_SCREEN_DASHBOARD;
 };
@@ -72,7 +72,7 @@ export const resolvePathForScreen = ({
     return `/login/${normalizedEntryDomain}`;
   }
   if (normalizedScreen === APP_SCREEN_TENANT_SELECT) {
-    return '/tenant/select';
+    return '/tenant/switch';
   }
   if (normalizedScreen === APP_SCREEN_TENANT_SWITCH) {
     return '/tenant/switch';
