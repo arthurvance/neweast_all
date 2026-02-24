@@ -167,7 +167,6 @@ export default function App() {
 
   const {
     applyLoginPayload,
-    handleTenantSelect,
     refreshTenantPermissionContextFailClosed,
     handleTenantSwitchFromDashboard,
     handleOpenTenantSwitchPage,
@@ -177,7 +176,6 @@ export default function App() {
     sessionState,
     sessionStateRef,
     tenantOptions,
-    tenantSelectionValue,
     tenantSwitchValue,
     isTenantSubmitting,
     setSessionState,
@@ -191,6 +189,63 @@ export default function App() {
     formatRetryMessage,
     clearAuthSession
   });
+
+  const refreshPlatformPermissionContextFailClosed = useCallback(async () => {
+    const currentSession = sessionStateRef.current;
+    const accessToken = String(currentSession?.access_token || '').trim();
+    if (!accessToken) {
+      const error = new Error('当前会话无效，请重新登录');
+      error.payload = {
+        detail: '当前会话无效，请重新登录'
+      };
+      throw error;
+    }
+
+    try {
+      const payload = await requestJson({
+        path: '/auth/platform/options',
+        method: 'GET',
+        accessToken
+      });
+      setSessionState((previous) => {
+        const nextUserName = Object.prototype.hasOwnProperty.call(payload, 'user_name')
+          ? String(payload.user_name || '').trim() || null
+          : String(previous?.user_name || '').trim() || null;
+        const nextSessionState = {
+          ...(previous || {}),
+          session_id: payload.session_id || previous?.session_id || null,
+          entry_domain: payload.entry_domain || previous?.entry_domain || 'platform',
+          active_tenant_id: Object.prototype.hasOwnProperty.call(payload, 'active_tenant_id')
+            ? payload.active_tenant_id
+            : previous?.active_tenant_id ?? null,
+          user_name: nextUserName,
+          platform_permission_context: payload.platform_permission_context || null
+        };
+        sessionStateRef.current = nextSessionState;
+        return nextSessionState;
+      });
+    } catch (error) {
+      setSessionState((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        const nextSessionState = {
+          ...previous,
+          platform_permission_context: null
+        };
+        sessionStateRef.current = nextSessionState;
+        return nextSessionState;
+      });
+      setGlobalMessage({
+        type: 'error',
+        text: formatRetryMessage(
+          error?.payload?.detail || '平台上下文刷新失败，已按 fail-closed 收敛权限'
+        )
+      });
+      error.uiMessageHandled = true;
+      throw error;
+    }
+  }, [formatRetryMessage, setGlobalMessage, setSessionState]);
 
   useEffect(() => {
     persistAuthSession({
@@ -273,15 +328,13 @@ export default function App() {
         screen={screen}
         sessionState={sessionState}
         onLogout={handleLogout}
+        onPlatformPermissionContextRefresh={refreshPlatformPermissionContextFailClosed}
       />
 
       <TenantApp
         screen={screen}
         sessionState={sessionState}
         tenantOptions={tenantOptions}
-        tenantSelectionValue={tenantSelectionValue}
-        onTenantSelectionChange={setTenantSelectionValue}
-        onTenantSelectConfirm={handleTenantSelect}
         tenantSwitchValue={tenantSwitchValue}
         onTenantSwitchValueChange={setTenantSwitchValue}
         isTenantSubmitting={isTenantSubmitting}

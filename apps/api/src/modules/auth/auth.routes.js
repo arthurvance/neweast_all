@@ -108,6 +108,20 @@ const createAuthHandlers = (authService = createAuthService()) => {
         authorizationContext
       }),
 
+    platformOptions: async ({ requestId, authorization, authorizationContext = null }) => {
+      const result = await authService.platformOptions({
+        requestId,
+        accessToken: extractBearerToken(authorization),
+        authorizationContext
+      });
+      return {
+        ...(result || {}),
+        platform_permission_context: toPlatformPermissionContextResponse(
+          result?.platform_permission_context
+        )
+      };
+    },
+
     tenantSelect: async ({
       requestId,
       authorization,

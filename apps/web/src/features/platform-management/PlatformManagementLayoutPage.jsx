@@ -16,6 +16,7 @@ export default function PlatformManagementLayoutPage({
   accessToken,
   userName,
   onLogout,
+  onPlatformPermissionContextRefresh,
   platformPermissionContext = null
 }) {
   const [activeMenuKey, setActiveMenuKey] = useState(PLATFORM_DEFAULT_MENU_KEY);
@@ -94,7 +95,6 @@ export default function PlatformManagementLayoutPage({
       >
         <CustomPage
           title={displayPageMeta.title}
-          subTitle={displayPageMeta.subTitle}
           showBreadcrumb={hasVisiblePage}
           breadcrumbItems={displayPageMeta.breadcrumbItems}
           bodyStyle={{ display: 'grid', gap: 12 }}
@@ -114,7 +114,10 @@ export default function PlatformManagementLayoutPage({
                 </section>
               )}
             >
-              <ActivePageComponent accessToken={accessToken} />
+              <ActivePageComponent
+                accessToken={accessToken}
+                onPlatformPermissionContextRefresh={onPlatformPermissionContextRefresh}
+              />
             </Suspense>
           ) : (
             <section

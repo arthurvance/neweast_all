@@ -32,6 +32,13 @@ const createAuthRouteHandlers = ({
       authorizationContext
     }),
 
+  authPlatformOptions: async (requestId, authorization, authorizationContext) =>
+    auth.platformOptions({
+      requestId,
+      authorization,
+      authorizationContext
+    }),
+
   authTenantSelect: async (
     requestId,
     authorization,

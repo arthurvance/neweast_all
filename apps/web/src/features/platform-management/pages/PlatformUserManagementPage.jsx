@@ -61,7 +61,10 @@ const normalizeRoleList = (roles = []) =>
     }))
     .filter((role) => role.role_id);
 
-export default function PlatformUserManagementPage({ accessToken }) {
+export default function PlatformUserManagementPage({
+  accessToken,
+  onPlatformPermissionContextRefresh
+}) {
   const api = useMemo(
     () => createPlatformManagementApi({ accessToken }),
     [accessToken]
@@ -286,6 +289,15 @@ export default function PlatformUserManagementPage({ accessToken }) {
       setUserEditTarget(null);
       editUserForm.resetFields();
       refreshUserTable();
+      if (typeof onPlatformPermissionContextRefresh === 'function') {
+        try {
+          await onPlatformPermissionContextRefresh();
+        } catch (refreshError) {
+          if (!refreshError?.uiMessageHandled) {
+            withErrorNotice(refreshError, '平台权限上下文刷新失败');
+          }
+        }
+      }
     } catch (error) {
       if (error?.errorFields) {
         return;
@@ -300,6 +312,7 @@ export default function PlatformUserManagementPage({ accessToken }) {
     notify,
     refreshUserTable,
     userEditTarget,
+    onPlatformPermissionContextRefresh,
     withErrorNotice
   ]);
 

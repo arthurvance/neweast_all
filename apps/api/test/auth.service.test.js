@@ -880,6 +880,69 @@ test('tenant entry with single option binds active tenant directly', async () =>
   assert.equal(login.user_name, '单租户成员');
 });
 
+test('tenant entry surfaces owner fields when tenant options include owner metadata', async () => {
+  const bootstrapService = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-owner-option-user',
+        phone: '13810000088',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA },
+          { tenantId: 'tenant-b', tenantName: 'Tenant B', permission: tenantPermissionB }
+        ]
+      }
+    ]
+  });
+  const baseStore = bootstrapService._internals.authStore;
+  const authStore = {
+    ...baseStore,
+    listTenantOptionsByUserId: async () => [
+      {
+        tenantId: 'tenant-a',
+        tenantName: 'Tenant A',
+        ownerName: '负责人甲',
+        ownerPhone: '13800000011'
+      },
+      {
+        tenantId: 'tenant-b',
+        tenantName: 'Tenant B',
+        ownerName: '负责人乙',
+        ownerPhone: '13800000012'
+      }
+    ]
+  };
+  const service = createAuthService({
+    authStore,
+    otpStore: noOpOtpStore,
+    rateLimitStore: passRateLimitStore
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-owner-option',
+    phone: '13810000088',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+
+  assert.deepEqual(login.tenant_options, [
+    {
+      tenant_id: 'tenant-a',
+      tenant_name: 'Tenant A',
+      owner_name: '负责人甲',
+      owner_phone: '13800000011'
+    },
+    {
+      tenant_id: 'tenant-b',
+      tenant_name: 'Tenant B',
+      owner_name: '负责人乙',
+      owner_phone: '13800000012'
+    }
+  ]);
+});
+
 test('tenant entry accepts enabled tenant membership in in-memory auth store', async () => {
   const service = createAuthService({
     seedUsers: [
@@ -1093,6 +1156,111 @@ test('tenant options in platform entry session is blocked with AUTH-403-NO-DOMAI
     () =>
       service.tenantOptions({
         requestId: 'req-tenant-options-platform',
+        accessToken: login.access_token
+      }),
+    (error) => {
+      assert.ok(error instanceof AuthProblemError);
+      assert.equal(error.status, 403);
+      assert.equal(error.errorCode, 'AUTH-403-NO-DOMAIN');
+      return true;
+    }
+  );
+});
+
+test('platform options returns current platform session context', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'platform-context-user',
+        phone: '13810000032',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        platformProfile: {
+          name: '平台管理员甲'
+        },
+        platformRoles: [
+          {
+            roleId: 'platform-context-role',
+            status: 'active',
+            permission: {
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewTenantManagement: true,
+              canOperateTenantManagement: false,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: false
+            }
+          }
+        ],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+        ]
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-platform-context-user',
+    phone: '13810000032',
+    password: 'Passw0rd!',
+    entryDomain: 'platform'
+  });
+  assert.equal(login.entry_domain, 'platform');
+
+  const options = await service.platformOptions({
+    requestId: 'req-platform-options-context',
+    accessToken: login.access_token
+  });
+  assert.equal(options.entry_domain, 'platform');
+  assert.equal(options.active_tenant_id, null);
+  assert.equal(options.user_name, '平台管理员甲');
+  assert.deepEqual(options.platform_permission_context, {
+    scope_label: '平台权限（角色并集）',
+    can_view_user_management: true,
+    can_operate_user_management: true,
+    can_view_tenant_management: true,
+    can_operate_tenant_management: false,
+    can_view_role_management: true,
+    can_operate_role_management: false
+  });
+});
+
+test('platform options in tenant entry session is blocked with AUTH-403-NO-DOMAIN', async () => {
+  const service = createAuthService({
+    seedUsers: [
+      {
+        id: 'tenant-entry-platform-options-blocked-user',
+        phone: '13810000033',
+        password: 'Passw0rd!',
+        status: 'active',
+        domains: ['platform', 'tenant'],
+        tenants: [
+          { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+        ],
+        platformPermission: {
+          scopeLabel: '平台权限快照',
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewTenantManagement: true,
+          canOperateTenantManagement: true
+        }
+      }
+    ]
+  });
+
+  const login = await service.login({
+    requestId: 'req-login-tenant-entry-platform-options-blocked',
+    phone: '13810000033',
+    password: 'Passw0rd!',
+    entryDomain: 'tenant'
+  });
+  assert.equal(login.entry_domain, 'tenant');
+
+  await assert.rejects(
+    () =>
+      service.platformOptions({
+        requestId: 'req-platform-options-tenant-entry',
         accessToken: login.access_token
       }),
     (error) => {
@@ -7977,6 +8145,13 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
     scope: 'tenant'
   });
   assert.equal(tenantAuthorizedBeforeDisable.user_id, 'org-status-owner-user');
+  const tenantRoleAuthorizedBeforeDisable = await service.authorizeRoute({
+    requestId: 'req-org-status-tenant-role-authorize-before-disable',
+    accessToken: ownerLogin.access_token,
+    permissionCode: 'tenant.role_management.operate',
+    scope: 'tenant'
+  });
+  assert.equal(tenantRoleAuthorizedBeforeDisable.user_id, 'org-status-owner-user');
 
   const disabled = await service.updateOrganizationStatus({
     requestId: 'req-org-status-disable',
@@ -8471,6 +8646,8 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     tenantId: orgId
   });
   assert.ok(tenantOwnerRole);
+  assert.equal(tenantOwnerRole.code, 'sys_admin');
+  assert.equal(tenantOwnerRole.name, '管理员');
   assert.equal(tenantOwnerRole.status, 'active');
   const tenantOwnerRolePermissionCodes =
     await service._internals.authStore.listTenantRolePermissionGrants({
@@ -8481,6 +8658,12 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
   );
   assert.ok(
     tenantOwnerRolePermissionCodes.includes('tenant.user_management.operate')
+  );
+  assert.ok(
+    tenantOwnerRolePermissionCodes.includes('tenant.role_management.view')
+  );
+  assert.ok(
+    tenantOwnerRolePermissionCodes.includes('tenant.role_management.operate')
   );
 
   const newMembership = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
@@ -8500,6 +8683,8 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
   });
   assert.equal(newPermission.canViewUserManagement, true);
   assert.equal(newPermission.canOperateUserManagement, true);
+  assert.equal(newPermission.canViewRoleManagement, true);
+  assert.equal(newPermission.canOperateRoleManagement, true);
 
   const oldMembershipAfter = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
     userId: 'owner-transfer-execute-old-owner',

@@ -6,6 +6,8 @@ const { createInMemoryAuthStore } = require('./auth.store.memory');
 const {
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
@@ -58,10 +60,12 @@ const MAX_ORG_STATUS_CASCADE_COUNT = 100000;
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
 const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
-const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
+const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = '管理员';
 const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
-  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
 ]);
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
@@ -3280,6 +3284,51 @@ const createAuthService = (options = {}) => {
       tenant_options: options,
       user_name: userName,
       tenant_permission_context: tenantPermissionContext,
+      request_id: requestId || 'request_id_unset'
+    };
+  };
+
+  const platformOptions = async ({
+    requestId,
+    accessToken,
+    authorizationContext = null
+  }) => {
+    const { session, user } = await resolveAuthorizedSession({
+      requestId,
+      accessToken,
+      authorizationContext
+    });
+    const sessionId = session.sessionId || session.session_id;
+    const sessionContext = buildSessionContext(session);
+    if (sessionContext.entry_domain !== 'platform') {
+      rejectNoDomainAccess({
+        requestId,
+        userId: user.id,
+        sessionId,
+        entryDomain: sessionContext.entry_domain,
+        tenantId: null,
+        detail: `platform options rejected for entry domain ${sessionContext.entry_domain}`
+      });
+    }
+
+    const platformPermissionContext = await getPlatformPermissionContext({
+      requestId,
+      userId: user.id,
+      sessionId,
+      entryDomain: sessionContext.entry_domain
+    });
+    const userName = await resolveLoginUserName({
+      userId: user.id,
+      entryDomain: sessionContext.entry_domain,
+      activeTenantId: null
+    });
+
+    return {
+      session_id: sessionId,
+      entry_domain: sessionContext.entry_domain,
+      active_tenant_id: sessionContext.active_tenant_id,
+      user_name: userName,
+      platform_permission_context: platformPermissionContext,
       request_id: requestId || 'request_id_unset'
     };
   };
@@ -8391,6 +8440,7 @@ const createAuthService = (options = {}) => {
     login,
     sendOtp,
     loginWithOtp,
+    platformOptions,
     tenantOptions,
     authorizeRoute,
     selectTenant,

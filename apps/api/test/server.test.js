@@ -104,6 +104,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/health']);
   assert.ok(payload.paths['/auth/otp/send']);
   assert.ok(payload.paths['/auth/otp/login']);
+  assert.ok(payload.paths['/auth/platform/options']);
   assert.ok(payload.paths['/auth/tenant/user-management/probe']);
   assert.ok(payload.paths['/auth/platform/user-management/probe']);
   assert.ok(payload.paths['/auth/tenant/user-management/provision-user']);

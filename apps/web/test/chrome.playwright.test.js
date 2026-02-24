@@ -927,7 +927,9 @@ const createPlatformGovernanceApiServer = async () => {
       can_view_user_management: permissionSet.has('platform.user_management.view'),
       can_operate_user_management: permissionSet.has('platform.user_management.operate'),
       can_view_tenant_management: permissionSet.has('platform.tenant_management.view'),
-      can_operate_tenant_management: permissionSet.has('platform.tenant_management.operate')
+      can_operate_tenant_management: permissionSet.has('platform.tenant_management.operate'),
+      can_view_role_management: permissionSet.has('platform.role_management.view'),
+      can_operate_role_management: permissionSet.has('platform.role_management.operate')
     };
   };
   const toRoleReadModel = (roleId) => {
@@ -1053,6 +1055,32 @@ const createPlatformGovernanceApiServer = async () => {
             can_operate_role_management: true
           },
           tenant_permission_context: null,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/auth/platform/options') {
+      const currentSessionUser = users.get('platform-user-1') || null;
+      const displayUserName = String(currentSessionUser?.name || '').trim() || null;
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          session_id: 'platform-management-session',
+          entry_domain: 'platform',
+          active_tenant_id: null,
+          user_name: displayUserName,
+          platform_permission_context: {
+            scope_label: '平台权限（角色并集）',
+            can_view_user_management: true,
+            can_operate_user_management: true,
+            can_view_tenant_management: true,
+            can_operate_tenant_management: true,
+            can_view_role_management: true,
+            can_operate_role_management: true
+          },
           request_id: requestId
         }
       });
@@ -3131,25 +3159,17 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-select"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-org-switch-shell"]'))`,
     10000,
-    'tenant-entry login should require tenant selection when multiple options exist'
+    'tenant-entry login should require tenant switch page when multiple options exist'
   );
   await evaluate(
     cdp,
     sessionId,
     `(() => {
-      const select = document.querySelector('[data-testid="tenant-select"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-      setter.call(select, 'tenant-101');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-org-switch-card-tenant-101"]')?.click();
       return true;
     })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-select-confirm"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -3165,8 +3185,7 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
         Boolean(membersModule) &&
         Boolean(userTab) &&
         roleTab === null &&
-        message.includes('请稍后重试') === false &&
-        message.includes('组织选择成功')
+        message.includes('请稍后重试') === false
       );
     })()`,
     10000,
@@ -3291,12 +3310,13 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
     true,
     'tenant login should remain available through /login/tenant URL'
   );
-  assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/select')?.body, {
-    tenant_id: 'tenant-101'
-  });
-  assert.deepEqual(api.requests.find((request) => request.path === '/auth/tenant/switch')?.body, {
-    tenant_id: 'tenant-202'
-  });
+  const tenantSwitchRequests = api.requests
+    .filter((request) => request.path === '/auth/tenant/switch')
+    .map((request) => String(request.body?.tenant_id || '').trim());
+  assert.deepEqual(
+    tenantSwitchRequests.slice(0, 2),
+    ['tenant-101', 'tenant-202']
+  );
   await waitForRequest(
     api.responses,
     () =>
@@ -3307,7 +3327,7 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
           && response.body?.error_code === 'AUTH-503-TENANT-REFRESH'
       ).length >= 2,
     10000,
-    'tenant context refresh should fail once after select and once after switch'
+    'tenant context refresh should fail after initial tenant switch and explicit tenant switch'
   );
   assert.equal(
     api.responses.filter(
@@ -3505,25 +3525,17 @@ test('chrome regression validates tenant permission UI against real API authoriz
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-select"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-org-switch-shell"]'))`,
     10000,
-    'tenant entry login should require tenant selection'
+    'tenant entry login should require tenant switch page'
   );
   await evaluate(
     cdp,
     sessionId,
     `(() => {
-      const select = document.querySelector('[data-testid="tenant-select"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-      setter.call(select, '${REAL_API_TEST_USER.tenantA}');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-org-switch-card-${REAL_API_TEST_USER.tenantA}"]')?.click();
       return true;
     })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-select-confirm"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -3558,16 +3570,16 @@ test('chrome regression validates tenant permission UI against real API authoriz
   const accessToken = loginByApi.body.access_token;
   assert.equal(typeof accessToken, 'string');
 
-  const selectTenantAByApi = await requestRealApi({
+  const switchTenantAByApi = await requestRealApi({
     baseUrl: apiBaseUrl,
     method: 'POST',
-    path: '/auth/tenant/select',
+    path: '/auth/tenant/switch',
     accessToken,
     body: {
       tenant_id: REAL_API_TEST_USER.tenantA
     }
   });
-  assert.equal(selectTenantAByApi.status, 200);
+  assert.equal(switchTenantAByApi.status, 200);
   const probeAllowedByApi = await requestRealApi({
     baseUrl: apiBaseUrl,
     method: 'GET',
@@ -3971,12 +3983,47 @@ test('chrome regression validates platform management workbench with modal/drawe
     8000,
     'platform user edit request should reach API stub'
   );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/auth/platform/options' && request.method === 'GET',
+    8000,
+    'platform permission refresh should call /auth/platform/options after user edit'
+  );
   await waitForCondition(
     cdp,
     sessionId,
     `(() => !document.querySelector('[data-testid="platform-user-edit-user-id"]'))()`,
     5000,
     'platform user edit modal should close after successful submit'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => String(document.querySelector('[data-testid="layout-user-name"]')?.textContent || '').trim() === '平台管理员甲（已编辑）')()`,
+    8000,
+    'platform current session user name should update after self profile edit'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      window.location.reload();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="platform-user-status-platform-user-1"]'))`,
+    10000,
+    'platform user table should recover after refresh'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => String(document.querySelector('[data-testid="layout-user-name"]')?.textContent || '').trim() === '平台管理员甲（已编辑）')()`,
+    8000,
+    'platform current session user name should remain updated after refresh'
   );
 
   await evaluate(
@@ -4465,25 +4512,17 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-select"]'))`,
+    `Boolean(document.querySelector('[data-testid="tenant-org-switch-shell"]'))`,
     10000,
-    'tenant entry login should require tenant selection'
+    'tenant entry login should require tenant switch page'
   );
   await evaluate(
     cdp,
     sessionId,
     `(() => {
-      const select = document.querySelector('[data-testid="tenant-select"]');
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-      setter.call(select, 'tenant-101');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-org-switch-card-tenant-101"]')?.click();
       return true;
     })()`
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-select-confirm"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -4744,26 +4783,10 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const drawer = document.querySelector('[data-testid="tenant-member-detail-drawer"]');
-      const title = String(document.querySelector('.ant-drawer-title')?.textContent || '');
-      const text = String(drawer?.textContent || '');
-      return (
-        Boolean(drawer)
-        && title.includes('用户ID:tenant-user-3')
-        && text.includes('新建成员甲')
-        && text.includes('13800000029')
-      );
+      return !document.querySelector('[data-testid="tenant-member-detail-drawer"]');
     })()`,
-    12000,
-    'newly created tenant member detail should be visible in drawer'
-  );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => {
-      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
-      return true;
-    })()`
+    8000,
+    'tenant member create save should not auto-open detail drawer'
   );
 
   const tenantMemberStatusToggleRequestBaseline = api.requests.length;
@@ -4895,6 +4918,13 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       && response.status === 200,
     8000,
     'tenant member profile update should succeed after retry'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => !document.querySelector('[data-testid="tenant-member-detail-drawer"]'))()`,
+    5000,
+    'tenant member profile save should not auto-open detail drawer'
   );
 
   await evaluate(

@@ -3384,6 +3384,72 @@ const buildOpenApiSpec = () => {
         }
       }
     },
+    '/auth/platform/options': {
+      get: {
+        summary: 'Read current platform session context and permission snapshot',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Platform session context',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PlatformContextResponse' }
+              }
+            }
+          },
+          401: {
+            description: 'Invalid access token',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' }
+              }
+            }
+          },
+          403: {
+            description: 'No access to platform domain',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  no_domain: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Forbidden',
+                      status: 403,
+                      detail: '当前入口无可用访问域权限',
+                      error_code: 'AUTH-403-NO-DOMAIN',
+                      request_id: 'request_id_unset'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          503: {
+            description: 'Platform permission snapshot sync temporarily degraded',
+            content: {
+              'application/problem+json': {
+                schema: { $ref: '#/components/schemas/ProblemDetails' },
+                examples: {
+                  snapshot_sync_degraded: {
+                    value: {
+                      type: 'about:blank',
+                      title: 'Service Unavailable',
+                      status: 503,
+                      detail: '平台权限同步暂时不可用，请稍后重试',
+                      error_code: 'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED',
+                      retryable: true,
+                      request_id: 'request_id_unset',
+                      degradation_reason: 'db-deadlock'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/auth/platform/user-management/probe': {
       get: {
         summary: 'Probe platform user-management view permission with unified authorization semantics',
@@ -12019,6 +12085,26 @@ const buildOpenApiSpec = () => {
           },
           tenant_permission_context: {
             $ref: '#/components/schemas/TenantPermissionContext'
+          },
+          request_id: { type: 'string' }
+        }
+      },
+      PlatformContextResponse: {
+        type: 'object',
+        required: [
+          'session_id',
+          'entry_domain',
+          'active_tenant_id',
+          'platform_permission_context',
+          'request_id'
+        ],
+        properties: {
+          session_id: { type: 'string' },
+          entry_domain: { type: 'string', enum: ['platform'] },
+          active_tenant_id: { type: 'string', nullable: true },
+          user_name: { type: 'string', nullable: true },
+          platform_permission_context: {
+            $ref: '#/components/schemas/PlatformPermissionContext'
           },
           request_id: { type: 'string' }
         }

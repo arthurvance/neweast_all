@@ -413,6 +413,140 @@ test('tenant options in platform entry is blocked with AUTH-403-NO-DOMAIN', asyn
   assert.equal(typeof options.body.request_id, 'string');
 });
 
+test('platform options returns platform session context in platform entry', async () => {
+  const context = {
+    dependencyProbe,
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'domain-user-platform-options',
+          phone: '13820000009',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform', 'tenant'],
+          platformProfile: {
+            name: '平台管理员甲'
+          },
+          platformRoles: [
+            {
+              roleId: 'platform-options-manager',
+              status: 'active',
+              permission: {
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewTenantManagement: true,
+                canOperateTenantManagement: false,
+                canViewRoleManagement: true,
+                canOperateRoleManagement: false
+              }
+            }
+          ],
+          tenants: [
+            { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+          ]
+        }
+      ]
+    })
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13820000009',
+        password: 'Passw0rd!',
+        entry_domain: 'platform'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+  assert.equal(login.body.entry_domain, 'platform');
+
+  const options = await callRoute(
+    {
+      pathname: '/auth/platform/options',
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    },
+    context
+  );
+
+  assert.equal(options.status, 200);
+  assert.equal(options.body.entry_domain, 'platform');
+  assert.equal(options.body.active_tenant_id, null);
+  assert.equal(options.body.user_name, '平台管理员甲');
+  assert.deepEqual(options.body.platform_permission_context, {
+    scope_label: '平台权限（角色并集）',
+    can_view_user_management: true,
+    can_operate_user_management: true,
+    can_view_tenant_management: true,
+    can_operate_tenant_management: false,
+    can_view_role_management: true,
+    can_operate_role_management: false
+  });
+});
+
+test('platform options in tenant entry is blocked with AUTH-403-NO-DOMAIN', async () => {
+  const context = {
+    dependencyProbe,
+    authService: createAuthService({
+      seedUsers: [
+        {
+          id: 'domain-user-platform-options-blocked',
+          phone: '13820000010',
+          password: 'Passw0rd!',
+          status: 'active',
+          domains: ['platform', 'tenant'],
+          tenants: [
+            { tenantId: 'tenant-a', tenantName: 'Tenant A', permission: tenantPermissionA }
+          ],
+          platformPermission: {
+            scopeLabel: '平台权限快照',
+            canViewUserManagement: true,
+            canOperateUserManagement: true,
+            canViewTenantManagement: true,
+            canOperateTenantManagement: true
+          }
+        }
+      ]
+    })
+  };
+
+  const login = await callRoute(
+    {
+      pathname: '/auth/login',
+      method: 'POST',
+      body: {
+        phone: '13820000010',
+        password: 'Passw0rd!',
+        entry_domain: 'tenant'
+      }
+    },
+    context
+  );
+  assert.equal(login.status, 200);
+  assert.equal(login.body.entry_domain, 'tenant');
+
+  const options = await callRoute(
+    {
+      pathname: '/auth/platform/options',
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${login.body.access_token}`
+      }
+    },
+    context
+  );
+
+  assert.equal(options.status, 403);
+  assert.equal(options.body.error_code, 'AUTH-403-NO-DOMAIN');
+  assert.equal(typeof options.body.request_id, 'string');
+});
+
 test('platform scoped route is blocked with AUTH-403-NO-DOMAIN in tenant entry', async () => {
   const context = {
     dependencyProbe,

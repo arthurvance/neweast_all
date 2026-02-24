@@ -4,7 +4,8 @@ import { APP_SCREEN_DASHBOARD } from '../app-shell/app-screen';
 export default function PlatformDomainShell({
   screen,
   sessionState,
-  onLogout
+  onLogout,
+  onPlatformPermissionContextRefresh
 }) {
   if (screen !== APP_SCREEN_DASHBOARD || sessionState?.entry_domain !== 'platform') {
     return null;
@@ -16,6 +17,7 @@ export default function PlatformDomainShell({
       userName={sessionState?.user_name}
       platformPermissionContext={sessionState?.platform_permission_context || null}
       onLogout={onLogout}
+      onPlatformPermissionContextRefresh={onPlatformPermissionContextRefresh}
     />
   );
 }

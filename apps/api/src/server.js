@@ -2217,6 +2217,16 @@ const createRouteTable = ({
           ),
         requestId
       ),
+    'GET /auth/platform/options': async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.authPlatformOptions(
+            requestId,
+            headers.authorization,
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     'POST /auth/tenant/select': async () =>
       runAuthRouteWithTrace(
         () =>

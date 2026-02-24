@@ -197,6 +197,10 @@ test('tenant audit query route exposes explicit permission declaration', () => {
 });
 
 test('platform protected auth route exposes explicit permission declaration', () => {
+  const platformOptions = findRouteDefinition({
+    method: 'GET',
+    path: '/auth/platform/options'
+  });
   const platformUserManagementProbe = findRouteDefinition({
     method: 'GET',
     path: '/auth/platform/user-management/probe'
@@ -205,6 +209,11 @@ test('platform protected auth route exposes explicit permission declaration', ()
     method: 'POST',
     path: '/auth/platform/user-management/provision-user'
   });
+
+  assert.ok(platformOptions);
+  assert.equal(platformOptions.access, 'protected');
+  assert.equal(platformOptions.scope, 'platform');
+  assert.equal(platformOptions.permission_code, 'platform.user_management.view');
 
   assert.ok(platformUserManagementProbe);
   assert.equal(platformUserManagementProbe.access, 'protected');

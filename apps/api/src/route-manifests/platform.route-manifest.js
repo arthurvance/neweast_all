@@ -72,6 +72,13 @@ const {
 const PLATFORM_ROUTE_MANIFEST = Object.freeze([
   {
     method: 'GET',
+    path: '/auth/platform/options',
+    access: 'protected',
+    permission_code: PLATFORM_USER_VIEW_PERMISSION_CODE,
+    scope: 'platform'
+  },
+  {
+    method: 'GET',
     path: '/auth/platform/user-management/probe',
     access: 'protected',
     permission_code: PLATFORM_USER_VIEW_PERMISSION_CODE,
