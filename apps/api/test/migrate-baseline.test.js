@@ -94,10 +94,10 @@ test('0005 migration defines tenant permission columns required by runtime prefl
   );
   const sql = readFileSync(sqlPath, 'utf8');
 
-  assert.match(sql, /can_view_member_admin/i);
-  assert.match(sql, /can_operate_member_admin/i);
-  assert.match(sql, /can_view_billing/i);
-  assert.match(sql, /can_operate_billing/i);
+  assert.match(sql, /can_view_user_management/i);
+  assert.match(sql, /can_operate_user_management/i);
+  assert.match(sql, /can_view_organization_management/i);
+  assert.match(sql, /can_operate_organization_management/i);
 });
 
 test('0006 migration defines guarded platform permission snapshot DDL on auth_user_domain_access', () => {
@@ -110,15 +110,15 @@ test('0006 migration defines guarded platform permission snapshot DDL on auth_us
   const sql = readFileSync(sqlPath, 'utf8');
 
   assert.match(sql, /table_name = 'auth_user_domain_access'/i);
-  assert.match(sql, /column_name = 'can_view_member_admin'/i);
-  assert.match(sql, /column_name = 'can_operate_member_admin'/i);
-  assert.match(sql, /column_name = 'can_view_billing'/i);
-  assert.match(sql, /column_name = 'can_operate_billing'/i);
+  assert.match(sql, /column_name = 'can_view_user_management'/i);
+  assert.match(sql, /column_name = 'can_operate_user_management'/i);
+  assert.match(sql, /column_name = 'can_view_organization_management'/i);
+  assert.match(sql, /column_name = 'can_operate_organization_management'/i);
   assert.match(sql, /PREPARE migration_stmt FROM @ddl_sql/i);
-  assert.match(sql, /ADD COLUMN can_view_member_admin/i);
-  assert.match(sql, /ADD COLUMN can_operate_member_admin/i);
-  assert.match(sql, /ADD COLUMN can_view_billing/i);
-  assert.match(sql, /ADD COLUMN can_operate_billing/i);
+  assert.match(sql, /ADD COLUMN can_view_user_management/i);
+  assert.match(sql, /ADD COLUMN can_operate_user_management/i);
+  assert.match(sql, /ADD COLUMN can_view_organization_management/i);
+  assert.match(sql, /ADD COLUMN can_operate_organization_management/i);
 });
 
 test('0006 down migration defines guarded rollback DDL for platform permission snapshot', () => {
@@ -131,15 +131,15 @@ test('0006 down migration defines guarded rollback DDL for platform permission s
   const sql = readFileSync(sqlPath, 'utf8');
 
   assert.match(sql, /table_name = 'auth_user_domain_access'/i);
-  assert.match(sql, /column_name = 'can_operate_billing'/i);
-  assert.match(sql, /column_name = 'can_view_billing'/i);
-  assert.match(sql, /column_name = 'can_operate_member_admin'/i);
-  assert.match(sql, /column_name = 'can_view_member_admin'/i);
+  assert.match(sql, /column_name = 'can_operate_organization_management'/i);
+  assert.match(sql, /column_name = 'can_view_organization_management'/i);
+  assert.match(sql, /column_name = 'can_operate_user_management'/i);
+  assert.match(sql, /column_name = 'can_view_user_management'/i);
   assert.match(sql, /PREPARE migration_stmt FROM @ddl_sql/i);
-  assert.match(sql, /DROP COLUMN can_operate_billing/i);
-  assert.match(sql, /DROP COLUMN can_view_billing/i);
-  assert.match(sql, /DROP COLUMN can_operate_member_admin/i);
-  assert.match(sql, /DROP COLUMN can_view_member_admin/i);
+  assert.match(sql, /DROP COLUMN can_operate_organization_management/i);
+  assert.match(sql, /DROP COLUMN can_view_organization_management/i);
+  assert.match(sql, /DROP COLUMN can_operate_user_management/i);
+  assert.match(sql, /DROP COLUMN can_view_user_management/i);
 });
 
 test('0007 migration defines platform role fact table and reserved legacy snapshot backfill', () => {
@@ -153,10 +153,10 @@ test('0007 migration defines platform role fact table and reserved legacy snapsh
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS auth_user_platform_roles/i);
   assert.match(sql, /role_id/i);
-  assert.match(sql, /can_view_member_admin/i);
-  assert.match(sql, /can_operate_member_admin/i);
-  assert.match(sql, /can_view_billing/i);
-  assert.match(sql, /can_operate_billing/i);
+  assert.match(sql, /can_view_user_management/i);
+  assert.match(sql, /can_operate_user_management/i);
+  assert.match(sql, /can_view_organization_management/i);
+  assert.match(sql, /can_operate_organization_management/i);
   assert.match(sql, /INSERT INTO auth_user_platform_roles/i);
   assert.match(sql, /__migr_0007_legacy_snapshot__/i);
   assert.match(sql, /FROM auth_user_domain_access/i);
@@ -399,8 +399,8 @@ test('0017 migration migrates legacy tenant_owner bindings to tenant-scoped take
   assert.match(sql, /INSERT INTO platform_role_catalog/i);
   assert.match(sql, /INSERT IGNORE INTO tenant_role_permission_grants/i);
   assert.match(sql, /LOWER\(TRIM\(permission_code\)\) IN/i);
-  assert.match(sql, /tenant\.billing\.view/i);
-  assert.match(sql, /tenant\.billing\.operate/i);
+  assert.match(sql, /tenant\.organization_management\.view/i);
+  assert.match(sql, /tenant\.organization_management\.operate/i);
   assert.match(sql, /INSERT IGNORE INTO auth_tenant_membership_roles/i);
   assert.match(sql, /DELETE mr\s+FROM auth_tenant_membership_roles/i);
   assert.match(sql, /UPDATE auth_user_tenants ut/i);
@@ -520,7 +520,7 @@ test('0020 migration normalizes and prunes role permission grants to final autho
   assert.match(sql, /DELETE\s+grants\s+FROM\s+platform_role_permission_grants/i);
   assert.match(
     sql,
-    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'platform\.member_admin\.view'[\s\S]*'platform\.system_config\.operate'\s*\)/i
+    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'platform\.user_management\.view'[\s\S]*'platform\.system_config\.operate'\s*\)/i
   );
   const binaryNormalizedComparisonMatches = sql.match(
     /BINARY\s+grants\.permission_code\s*<>\s*BINARY\s+LOWER\(TRIM\(grants\.permission_code\)\)/ig
@@ -530,14 +530,14 @@ test('0020 migration normalizes and prunes role permission grants to final autho
   assert.match(sql, /ON DUPLICATE KEY UPDATE/i);
   assert.match(sql, /CREATE TEMPORARY TABLE tmp_tenant_role_permission_grants_final_authorization/i);
   assert.match(sql, /catalog\.scope = 'tenant'/i);
-  assert.match(sql, /tenant\.member_admin\.view/i);
-  assert.match(sql, /tenant\.member_admin\.operate/i);
-  assert.match(sql, /tenant\.billing\.view/i);
-  assert.match(sql, /tenant\.billing\.operate/i);
+  assert.match(sql, /tenant\.user_management\.view/i);
+  assert.match(sql, /tenant\.user_management\.operate/i);
+  assert.match(sql, /tenant\.organization_management\.view/i);
+  assert.match(sql, /tenant\.organization_management\.operate/i);
   assert.match(sql, /DELETE\s+grants\s+FROM\s+tenant_role_permission_grants/i);
   assert.match(
     sql,
-    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'tenant\.member_admin\.view'[\s\S]*'tenant\.billing\.operate'\s*\)/i
+    /LOWER\(TRIM\(grants\.permission_code\)\)\s+NOT IN\s*\(\s*'tenant\.user_management\.view'[\s\S]*'tenant\.organization_management\.operate'\s*\)/i
   );
   assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
 });

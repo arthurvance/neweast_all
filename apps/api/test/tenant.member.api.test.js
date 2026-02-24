@@ -221,7 +221,7 @@ test('GET /tenant/members lists members in active tenant scope', async () => {
   assert.equal(payload.members[0].membership_id, 'membership-a1');
   assert.equal(payload.members[0].tenant_id, 'tenant-a');
   assert.equal(harness.authorizeCalls.length, 1);
-  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.member_admin.view');
+  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.user_management.view');
   assert.equal(harness.authorizeCalls[0].scope, 'tenant');
   assert.equal(harness.listCalls.length, 1);
   assert.equal(harness.listCalls[0].tenantId, 'tenant-a');
@@ -713,7 +713,7 @@ test('POST /tenant/members creates member and returns membership fields', async 
     request_id: 'req-tenant-member-create'
   });
   assert.equal(harness.authorizeCalls.length, 1);
-  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.member_admin.operate');
+  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.user_management.operate');
   assert.equal(harness.provisionCalls.length, 1);
   assert.equal(harness.provisionCalls[0].payload.phone, '13800000022');
   assert.equal(harness.provisionCalls[0].authorizedRoute.active_tenant_id, 'tenant-a');
@@ -2011,7 +2011,7 @@ test('GET /tenant/members/:membership_id/roles lists role bindings under active 
   const harness = createHarness({
     listTenantMemberRoleBindings: async ({ membershipId }) => ({
       membership_id: membershipId,
-      role_ids: ['tenant_ops_admin', 'tenant_billing_viewer']
+      role_ids: ['tenant_ops_admin', 'tenant_role_management_viewer']
     })
   });
 
@@ -2028,10 +2028,10 @@ test('GET /tenant/members/:membership_id/roles lists role bindings under active 
   assert.equal(route.status, 200);
   const payload = JSON.parse(route.body);
   assert.equal(payload.membership_id, 'membership-role-read-1');
-  assert.deepEqual(payload.role_ids, ['tenant_ops_admin', 'tenant_billing_viewer']);
+  assert.deepEqual(payload.role_ids, ['tenant_ops_admin', 'tenant_role_management_viewer']);
   assert.equal(payload.request_id, 'req-tenant-member-role-read-1');
   assert.equal(harness.authorizeCalls.length, 1);
-  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.member_admin.view');
+  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.user_management.view');
   assert.equal(harness.roleBindingReadCalls.length, 1);
   assert.equal(harness.roleBindingReadCalls[0].tenantId, 'tenant-a');
   assert.equal(harness.roleBindingReadCalls[0].membershipId, 'membership-role-read-1');
@@ -2112,7 +2112,7 @@ test('PUT /tenant/members/:membership_id/roles replaces role bindings with norma
       authorization: 'Bearer fake-access-token'
     },
     body: {
-      role_ids: ['Tenant_Ops_Admin', 'tenant.billing_viewer']
+      role_ids: ['Tenant_Ops_Admin', 'tenant.role_management_viewer']
     },
     handlers: harness.handlers
   });
@@ -2120,16 +2120,16 @@ test('PUT /tenant/members/:membership_id/roles replaces role bindings with norma
   assert.equal(route.status, 200);
   const payload = JSON.parse(route.body);
   assert.equal(payload.membership_id, 'membership-role-write-1');
-  assert.deepEqual(payload.role_ids, ['tenant_ops_admin', 'tenant.billing_viewer']);
+  assert.deepEqual(payload.role_ids, ['tenant_ops_admin', 'tenant.role_management_viewer']);
   assert.equal(payload.request_id, 'req-tenant-member-role-write-1');
   assert.equal(harness.authorizeCalls.length, 1);
-  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.member_admin.operate');
+  assert.equal(harness.authorizeCalls[0].permissionCode, 'tenant.user_management.operate');
   assert.equal(harness.roleBindingWriteCalls.length, 1);
   assert.equal(harness.roleBindingWriteCalls[0].tenantId, 'tenant-a');
   assert.equal(harness.roleBindingWriteCalls[0].membershipId, 'membership-role-write-1');
   assert.deepEqual(
     harness.roleBindingWriteCalls[0].roleIds,
-    ['tenant_ops_admin', 'tenant.billing_viewer']
+    ['tenant_ops_admin', 'tenant.role_management_viewer']
   );
 });
 
@@ -2355,7 +2355,7 @@ test('GET /tenant/members/:membership_id/roles fails closed when downstream role
   const harness = createHarness({
     listTenantMemberRoleBindings: async ({ membershipId }) => ({
       membership_id: membershipId,
-      role_ids: 'tenant_member_admin'
+      role_ids: 'tenant_user_management'
     })
   });
 
@@ -2379,7 +2379,7 @@ test('GET /tenant/members/:membership_id/roles fails closed when downstream role
   const harness = createHarness({
     listTenantMemberRoleBindings: async ({ membershipId }) => ({
       membership_id: membershipId,
-      role_ids: [' tenant_member_admin']
+      role_ids: [' tenant_user_management']
     })
   });
 
@@ -2403,7 +2403,7 @@ test('GET /tenant/members/:membership_id/roles fails closed when downstream memb
   const harness = createHarness({
     listTenantMemberRoleBindings: async ({ membershipId }) => ({
       membership_id: ` ${membershipId} `,
-      role_ids: ['tenant_member_admin']
+      role_ids: ['tenant_user_management']
     })
   });
 

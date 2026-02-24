@@ -91,7 +91,7 @@ test('redis idempotency store shares replay state across store instances', async
     redis: redisClient,
     keyPrefix
   });
-  const scopeWindowKey = 'POST /auth/platform/member-admin/provision-user:scope-a';
+  const scopeWindowKey = 'POST /auth/platform/user-management/provision-user:scope-a';
   const scopeKey = `${scopeWindowKey}:idem-key-a`;
   const requestHash = 'request-hash-a';
 

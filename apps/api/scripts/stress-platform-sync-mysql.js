@@ -67,10 +67,10 @@ const createRoleTemplates = (size) => {
     templates.push({
       role_id: `stress-role-${i + 1}`,
       status: i % 5 === 0 ? 'disabled' : 'active',
-      can_view_member_admin: i % 2 === 0 ? 1 : 0,
-      can_operate_member_admin: i % 3 === 0 ? 1 : 0,
-      can_view_billing: i % 2 === 1 ? 1 : 0,
-      can_operate_billing: i % 4 === 0 ? 1 : 0
+      can_view_user_management: i % 2 === 0 ? 1 : 0,
+      can_operate_user_management: i % 3 === 0 ? 1 : 0,
+      can_view_organization_management: i % 2 === 1 ? 1 : 0,
+      can_operate_organization_management: i % 4 === 0 ? 1 : 0
     });
   }
   return templates;
@@ -93,26 +93,26 @@ const pickRoles = (templates) => {
 };
 
 const aggregateExpectedPermission = (roles) => {
-  let canViewMemberAdmin = 0;
-  let canOperateMemberAdmin = 0;
-  let canViewBilling = 0;
-  let canOperateBilling = 0;
+  let canViewUserManagement = 0;
+  let canOperateUserManagement = 0;
+  let canViewOrganizationManagement = 0;
+  let canOperateOrganizationManagement = 0;
 
   for (const role of roles) {
     if (!role || !['active', 'enabled'].includes(String(role.status || '').toLowerCase())) {
       continue;
     }
-    canViewMemberAdmin = canViewMemberAdmin || Number(role.can_view_member_admin ? 1 : 0);
-    canOperateMemberAdmin = canOperateMemberAdmin || Number(role.can_operate_member_admin ? 1 : 0);
-    canViewBilling = canViewBilling || Number(role.can_view_billing ? 1 : 0);
-    canOperateBilling = canOperateBilling || Number(role.can_operate_billing ? 1 : 0);
+    canViewUserManagement = canViewUserManagement || Number(role.can_view_user_management ? 1 : 0);
+    canOperateUserManagement = canOperateUserManagement || Number(role.can_operate_user_management ? 1 : 0);
+    canViewOrganizationManagement = canViewOrganizationManagement || Number(role.can_view_organization_management ? 1 : 0);
+    canOperateOrganizationManagement = canOperateOrganizationManagement || Number(role.can_operate_organization_management ? 1 : 0);
   }
 
   return {
-    can_view_member_admin: canViewMemberAdmin,
-    can_operate_member_admin: canOperateMemberAdmin,
-    can_view_billing: canViewBilling,
-    can_operate_billing: canOperateBilling
+    can_view_user_management: canViewUserManagement,
+    can_operate_user_management: canOperateUserManagement,
+    can_view_organization_management: canViewOrganizationManagement,
+    can_operate_organization_management: canOperateOrganizationManagement
   };
 };
 
@@ -158,18 +158,18 @@ const resetTargetUserData = async ({ dbClient, userId }) => {
         user_id,
         domain,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, 'platform', 'active', 0, 0, 0, 0)
       ON DUPLICATE KEY UPDATE
         status = 'active',
-        can_view_member_admin = 0,
-        can_operate_member_admin = 0,
-        can_view_billing = 0,
-        can_operate_billing = 0,
+        can_view_user_management = 0,
+        can_operate_user_management = 0,
+        can_view_organization_management = 0,
+        can_operate_organization_management = 0,
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [userId]
@@ -187,10 +187,10 @@ const writeRoleFacts = async ({ dbClient, userId, roles }) => {
             user_id,
             role_id,
             status,
-            can_view_member_admin,
-            can_operate_member_admin,
-            can_view_billing,
-            can_operate_billing
+            can_view_user_management,
+            can_operate_user_management,
+            can_view_organization_management,
+            can_operate_organization_management
           )
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
@@ -198,10 +198,10 @@ const writeRoleFacts = async ({ dbClient, userId, roles }) => {
           userId,
           role.role_id,
           role.status,
-          Number(role.can_view_member_admin ? 1 : 0),
-          Number(role.can_operate_member_admin ? 1 : 0),
-          Number(role.can_view_billing ? 1 : 0),
-          Number(role.can_operate_billing ? 1 : 0)
+          Number(role.can_view_user_management ? 1 : 0),
+          Number(role.can_operate_user_management ? 1 : 0),
+          Number(role.can_view_organization_management ? 1 : 0),
+          Number(role.can_operate_organization_management ? 1 : 0)
         ]
       );
     }
@@ -211,10 +211,10 @@ const writeRoleFacts = async ({ dbClient, userId, roles }) => {
 const readCurrentSnapshot = async ({ dbClient, userId }) => {
   const rows = await dbClient.query(
     `
-      SELECT can_view_member_admin,
-             can_operate_member_admin,
-             can_view_billing,
-             can_operate_billing
+      SELECT can_view_user_management,
+             can_operate_user_management,
+             can_view_organization_management,
+             can_operate_organization_management
       FROM auth_user_domain_access
       WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
       LIMIT 1
@@ -223,10 +223,10 @@ const readCurrentSnapshot = async ({ dbClient, userId }) => {
   );
   const row = rows?.[0] || {};
   return {
-    can_view_member_admin: Number(row.can_view_member_admin ? 1 : 0),
-    can_operate_member_admin: Number(row.can_operate_member_admin ? 1 : 0),
-    can_view_billing: Number(row.can_view_billing ? 1 : 0),
-    can_operate_billing: Number(row.can_operate_billing ? 1 : 0)
+    can_view_user_management: Number(row.can_view_user_management ? 1 : 0),
+    can_operate_user_management: Number(row.can_operate_user_management ? 1 : 0),
+    can_view_organization_management: Number(row.can_view_organization_management ? 1 : 0),
+    can_operate_organization_management: Number(row.can_operate_organization_management ? 1 : 0)
   };
 };
 
@@ -357,10 +357,10 @@ const run = async () => {
       userId: config.userId
     });
     const consistent =
-      expected.can_view_member_admin === actual.can_view_member_admin
-      && expected.can_operate_member_admin === actual.can_operate_member_admin
-      && expected.can_view_billing === actual.can_view_billing
-      && expected.can_operate_billing === actual.can_operate_billing;
+      expected.can_view_user_management === actual.can_view_user_management
+      && expected.can_operate_user_management === actual.can_operate_user_management
+      && expected.can_view_organization_management === actual.can_view_organization_management
+      && expected.can_operate_organization_management === actual.can_operate_organization_management;
 
     const durationMs = Date.now() - startedAt;
     const result = {

@@ -268,19 +268,19 @@ test('tenant mutation permission context is fail-closed when payload omits tenan
     hasTenantPermissionContext: true,
     nextTenantPermissionContext: {
       scope_label: '组织权限（Tenant B）',
-      can_view_member_admin: true
+      can_view_user_management: true
     }
   });
   assert.deepEqual(withContext, {
     scope_label: '组织权限（Tenant B）',
-    can_view_member_admin: true
+    can_view_user_management: true
   });
 
   const missingContext = resolveTenantMutationPermissionContext({
     hasTenantPermissionContext: false,
     nextTenantPermissionContext: {
       scope_label: 'stale-context',
-      can_view_member_admin: true
+      can_view_user_management: true
     }
   });
   assert.equal(missingContext, null);

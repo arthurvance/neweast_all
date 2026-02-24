@@ -3,37 +3,21 @@ const AUTH_SESSION_CHANGE_PASSWORD_PERMISSION_CODE = 'auth.session.change_passwo
 
 const TENANT_CONTEXT_READ_PERMISSION_CODE = 'tenant.context.read';
 const TENANT_CONTEXT_SWITCH_PERMISSION_CODE = 'tenant.context.switch';
-const TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE = 'tenant.member_admin.view';
-const TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE = 'tenant.member_admin.operate';
-const TENANT_BILLING_VIEW_PERMISSION_CODE = 'tenant.billing.view';
-const TENANT_BILLING_OPERATE_PERMISSION_CODE = 'tenant.billing.operate';
+const TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.user_management.view';
+const TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.user_management.operate';
+const TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
+const TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
 
-const PLATFORM_MEMBER_ADMIN_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
-const PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE = 'platform.member_admin.operate';
-const PLATFORM_BILLING_VIEW_PERMISSION_CODE = 'platform.billing.view';
-const PLATFORM_BILLING_OPERATE_PERMISSION_CODE = 'platform.billing.operate';
-const PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE = 'platform.system_config.view';
-const PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE = 'platform.system_config.operate';
+const PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.user_management.view';
+const PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.user_management.operate';
+const PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.organization_management.view';
+const PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.organization_management.operate';
+const PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.role_management.view';
+const PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.role_management.operate';
 
 const PERMISSION_SCOPE_SESSION = 'session';
 const PERMISSION_SCOPE_PLATFORM = 'platform';
 const PERMISSION_SCOPE_TENANT = 'tenant';
-
-const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze([
-  PLATFORM_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
-  PLATFORM_BILLING_VIEW_PERMISSION_CODE,
-  PLATFORM_BILLING_OPERATE_PERMISSION_CODE
-]);
-
-const KNOWN_TENANT_PERMISSION_CODES = Object.freeze([
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  TENANT_BILLING_VIEW_PERMISSION_CODE,
-  TENANT_BILLING_OPERATE_PERMISSION_CODE
-]);
 
 const TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT = new Set([
   TENANT_CONTEXT_READ_PERMISSION_CODE,
@@ -43,19 +27,93 @@ const TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT = new Set([
 const toPermissionCodeKey = (permissionCode) =>
   String(permissionCode || '').trim().toLowerCase();
 
-const SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET = new Set([
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+const ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET = new Set([
+  PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
 ].map((permissionCode) => toPermissionCodeKey(permissionCode)));
+
+const readBooleanPermissionField = (permissionContext, fieldKey) =>
+  Boolean(permissionContext?.[fieldKey]);
+
+const readPermissionCodeSet = (permissionContext) => {
+  const permissionCodeSet = permissionContext?.permission_code_set
+    ?? permissionContext?.permissionCodeSet;
+  if (permissionCodeSet instanceof Set) {
+    return permissionCodeSet;
+  }
+  if (Array.isArray(permissionCodeSet)) {
+    return new Set(permissionCodeSet.map((permissionCode) => toPermissionCodeKey(permissionCode)));
+  }
+  return null;
+};
+
+const hasPermissionCodeGrant = ({ permissionContext = null, permissionCode }) => {
+  const normalizedPermissionCode = toPermissionCodeKey(permissionCode);
+  if (!normalizedPermissionCode) {
+    return false;
+  }
+
+  const permissionCodeSet = readPermissionCodeSet(permissionContext);
+  if (permissionCodeSet && permissionCodeSet.has(normalizedPermissionCode)) {
+    return true;
+  }
+
+  switch (normalizedPermissionCode) {
+    case PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_user_management')
+        || readBooleanPermissionField(permissionContext, 'canViewUserManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_user_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateUserManagement');
+    case PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_user_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateUserManagement');
+    case PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_organization_management')
+        || readBooleanPermissionField(permissionContext, 'canViewOrganizationManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_organization_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateOrganizationManagement');
+    case PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_organization_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateOrganizationManagement');
+    case PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_role_management')
+        || readBooleanPermissionField(permissionContext, 'canViewRoleManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_role_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateRoleManagement');
+    case PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_role_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateRoleManagement');
+    case TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_user_management')
+        || readBooleanPermissionField(permissionContext, 'canViewUserManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_user_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateUserManagement');
+    case TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_user_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateUserManagement');
+    case TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_role_management')
+        || readBooleanPermissionField(permissionContext, 'canViewRoleManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_role_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateRoleManagement');
+    case TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_role_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateRoleManagement');
+    default:
+      return false;
+  }
+};
 
 const buildContextEvaluator = ({
   contextKey,
+  permissionCode = null,
   requiredFlags = []
 }) => {
   const normalizedContextKey = String(contextKey || '').trim().toLowerCase();
   if (normalizedContextKey === 'always') {
     return () => true;
   }
+  const normalizedPermissionCode = toPermissionCodeKey(permissionCode);
   const normalizedRequiredFlags = (Array.isArray(requiredFlags) ? requiredFlags : [])
     .map((flagKey) => String(flagKey || '').trim())
     .filter((flagKey) => flagKey.length > 0);
@@ -67,112 +125,198 @@ const buildContextEvaluator = ({
     const permissionContext = normalizedContextKey === 'platform'
       ? platformPermissionContext
       : tenantPermissionContext;
+
+    if (
+      normalizedPermissionCode
+      && hasPermissionCodeGrant({
+        permissionContext,
+        permissionCode: normalizedPermissionCode
+      })
+    ) {
+      return true;
+    }
+
+    if (normalizedRequiredFlags.length === 0) {
+      return false;
+    }
+
     return normalizedRequiredFlags.every((flagKey) =>
       Boolean(permissionContext?.[flagKey])
     );
   };
 };
 
+const normalizeCatalogScope = (scopes = []) => {
+  const normalizedScopes = (Array.isArray(scopes) ? scopes : [])
+    .map((scope) => String(scope || '').trim().toLowerCase())
+    .filter((scope) => scope.length > 0);
+  if (normalizedScopes.includes(PERMISSION_SCOPE_PLATFORM)) {
+    return PERMISSION_SCOPE_PLATFORM;
+  }
+  if (normalizedScopes.includes(PERMISSION_SCOPE_TENANT)) {
+    return PERMISSION_SCOPE_TENANT;
+  }
+  if (normalizedScopes.includes(PERMISSION_SCOPE_SESSION)) {
+    return PERMISSION_SCOPE_SESSION;
+  }
+  return normalizedScopes[0] || '';
+};
+
+const createPermissionDefinition = ({
+  code,
+  scopes,
+  contextKey = 'always',
+  requiredFlags = [],
+  assignable = true,
+  groupKey = '',
+  actionKey = '',
+  labelKey = '',
+  order = 0
+}) => {
+  const normalizedCode = toPermissionCodeKey(code);
+  return Object.freeze({
+    code: normalizedCode,
+    scopes: Object.freeze(
+      (Array.isArray(scopes) ? scopes : [])
+        .map((scope) => String(scope || '').trim().toLowerCase())
+        .filter((scope) => scope.length > 0)
+    ),
+    scope: normalizeCatalogScope(scopes),
+    assignable: Boolean(assignable),
+    group_key: String(groupKey || '').trim(),
+    action_key: String(actionKey || '').trim(),
+    label_key: String(labelKey || '').trim(),
+    order: Number.isFinite(order) ? Number(order) : 0,
+    evaluate: buildContextEvaluator({
+      contextKey,
+      permissionCode: normalizedCode,
+      requiredFlags
+    })
+  });
+};
+
 const ROUTE_PERMISSION_DEFINITIONS = Object.freeze([
-  Object.freeze({
+  createPermissionDefinition({
     code: TENANT_CONTEXT_READ_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_TENANT]),
-    evaluate: buildContextEvaluator({ contextKey: 'always' })
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'always',
+    assignable: false,
+    labelKey: 'permission.tenant.context.read',
+    order: 10
   }),
-  Object.freeze({
+  createPermissionDefinition({
     code: TENANT_CONTEXT_SWITCH_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_TENANT]),
-    evaluate: buildContextEvaluator({ contextKey: 'always' })
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'always',
+    assignable: false,
+    labelKey: 'permission.tenant.context.switch',
+    order: 20
   }),
-  Object.freeze({
+  createPermissionDefinition({
     code: AUTH_SESSION_LOGOUT_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_SESSION]),
-    evaluate: buildContextEvaluator({ contextKey: 'always' })
+    scopes: [PERMISSION_SCOPE_SESSION],
+    contextKey: 'always',
+    assignable: false,
+    labelKey: 'permission.auth.session.logout',
+    order: 10
   }),
-  Object.freeze({
+  createPermissionDefinition({
     code: AUTH_SESSION_CHANGE_PASSWORD_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_SESSION]),
-    evaluate: buildContextEvaluator({ contextKey: 'always' })
+    scopes: [PERMISSION_SCOPE_SESSION],
+    contextKey: 'always',
+    assignable: false,
+    labelKey: 'permission.auth.session.change_password',
+    order: 20
   }),
-  Object.freeze({
-    code: PLATFORM_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_PLATFORM]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'platform',
-      requiredFlags: ['can_view_member_admin']
-    })
+  createPermissionDefinition({
+    code: PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_PLATFORM],
+    contextKey: 'platform',
+    groupKey: 'user_management',
+    actionKey: 'view',
+    labelKey: 'permission.platform.user_management.view',
+    order: 110
   }),
-  Object.freeze({
-    code: PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_PLATFORM]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'platform',
-      requiredFlags: ['can_view_member_admin', 'can_operate_member_admin']
-    })
+  createPermissionDefinition({
+    code: PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_PLATFORM],
+    contextKey: 'platform',
+    groupKey: 'user_management',
+    actionKey: 'operate',
+    labelKey: 'permission.platform.user_management.operate',
+    order: 120
   }),
-  Object.freeze({
-    code: PLATFORM_BILLING_VIEW_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_PLATFORM]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'platform',
-      requiredFlags: ['can_view_billing']
-    })
+  createPermissionDefinition({
+    code: PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_PLATFORM],
+    contextKey: 'platform',
+    groupKey: 'organization_management',
+    actionKey: 'view',
+    labelKey: 'permission.platform.organization_management.view',
+    order: 210
   }),
-  Object.freeze({
-    code: PLATFORM_BILLING_OPERATE_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_PLATFORM]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'platform',
-      requiredFlags: ['can_view_billing', 'can_operate_billing']
-    })
+  createPermissionDefinition({
+    code: PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_PLATFORM],
+    contextKey: 'platform',
+    groupKey: 'organization_management',
+    actionKey: 'operate',
+    labelKey: 'permission.platform.organization_management.operate',
+    order: 220
   }),
-  Object.freeze({
-    code: PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_PLATFORM]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'platform',
-      requiredFlags: ['can_view_system_config']
-    })
+  createPermissionDefinition({
+    code: PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_PLATFORM],
+    contextKey: 'platform',
+    groupKey: 'role_management',
+    actionKey: 'view',
+    labelKey: 'permission.platform.role_management.view',
+    order: 310
   }),
-  Object.freeze({
-    code: PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_PLATFORM]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'platform',
-      requiredFlags: ['can_view_system_config', 'can_operate_system_config']
-    })
+  createPermissionDefinition({
+    code: PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_PLATFORM],
+    contextKey: 'platform',
+    groupKey: 'role_management',
+    actionKey: 'operate',
+    labelKey: 'permission.platform.role_management.operate',
+    order: 320
   }),
-  Object.freeze({
-    code: TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_TENANT]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'tenant',
-      requiredFlags: ['can_view_member_admin']
-    })
+  createPermissionDefinition({
+    code: TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'user_management',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.user_management.view',
+    order: 110
   }),
-  Object.freeze({
-    code: TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_TENANT]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'tenant',
-      requiredFlags: ['can_view_member_admin', 'can_operate_member_admin']
-    })
+  createPermissionDefinition({
+    code: TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'user_management',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.user_management.operate',
+    order: 120
   }),
-  Object.freeze({
-    code: TENANT_BILLING_VIEW_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_TENANT]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'tenant',
-      requiredFlags: ['can_view_billing']
-    })
+  createPermissionDefinition({
+    code: TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'role_management',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.role_management.view',
+    order: 210
   }),
-  Object.freeze({
-    code: TENANT_BILLING_OPERATE_PERMISSION_CODE,
-    scopes: Object.freeze([PERMISSION_SCOPE_TENANT]),
-    evaluate: buildContextEvaluator({
-      contextKey: 'tenant',
-      requiredFlags: ['can_view_billing', 'can_operate_billing']
-    })
+  createPermissionDefinition({
+    code: TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'role_management',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.role_management.operate',
+    order: 220
   })
 ]);
 
@@ -203,35 +347,35 @@ const normalizeDistinctPermissionCodeKeys = (permissionCodes = []) =>
 
 const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
   const snapshot = {
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false,
-    canViewSystemConfig: false,
-    canOperateSystemConfig: false
+    canViewUserManagement: false,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   };
   for (const permissionCode of normalizeDistinctPermissionCodeKeys(permissionCodes)) {
     switch (permissionCode) {
-      case PLATFORM_MEMBER_ADMIN_VIEW_PERMISSION_CODE:
-        snapshot.canViewMemberAdmin = true;
+      case PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewUserManagement = true;
         break;
-      case PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE:
-        snapshot.canViewMemberAdmin = true;
-        snapshot.canOperateMemberAdmin = true;
+      case PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewUserManagement = true;
+        snapshot.canOperateUserManagement = true;
         break;
-      case PLATFORM_BILLING_VIEW_PERMISSION_CODE:
-        snapshot.canViewBilling = true;
+      case PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewOrganizationManagement = true;
         break;
-      case PLATFORM_BILLING_OPERATE_PERMISSION_CODE:
-        snapshot.canViewBilling = true;
-        snapshot.canOperateBilling = true;
+      case PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewOrganizationManagement = true;
+        snapshot.canOperateOrganizationManagement = true;
         break;
-      case PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE:
-        snapshot.canViewSystemConfig = true;
+      case PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewRoleManagement = true;
         break;
-      case PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE:
-        snapshot.canViewSystemConfig = true;
-        snapshot.canOperateSystemConfig = true;
+      case PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewRoleManagement = true;
+        snapshot.canOperateRoleManagement = true;
         break;
       default:
         break;
@@ -242,26 +386,26 @@ const toPlatformPermissionSnapshotFromCodes = (permissionCodes = []) => {
 
 const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
   const snapshot = {
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: false,
+    canOperateUserManagement: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   };
   for (const permissionCode of normalizeDistinctPermissionCodeKeys(permissionCodes)) {
     switch (permissionCode) {
-      case TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE:
-        snapshot.canViewMemberAdmin = true;
+      case TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewUserManagement = true;
         break;
-      case TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE:
-        snapshot.canViewMemberAdmin = true;
-        snapshot.canOperateMemberAdmin = true;
+      case TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewUserManagement = true;
+        snapshot.canOperateUserManagement = true;
         break;
-      case TENANT_BILLING_VIEW_PERMISSION_CODE:
-        snapshot.canViewBilling = true;
+      case TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewRoleManagement = true;
         break;
-      case TENANT_BILLING_OPERATE_PERMISSION_CODE:
-        snapshot.canViewBilling = true;
-        snapshot.canOperateBilling = true;
+      case TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewRoleManagement = true;
+        snapshot.canOperateRoleManagement = true;
         break;
       default:
         break;
@@ -269,6 +413,66 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
   }
   return snapshot;
 };
+
+const toCatalogItem = (definition) =>
+  Object.freeze({
+    code: definition.code,
+    scope: definition.scope,
+    group_key: definition.group_key,
+    action_key: definition.action_key,
+    label_key: definition.label_key,
+    order: definition.order,
+    assignable: Boolean(definition.assignable)
+  });
+
+const sortCatalogItems = (items = []) =>
+  [...items].sort((left, right) => {
+    const leftOrder = Number.isFinite(left?.order) ? Number(left.order) : 0;
+    const rightOrder = Number.isFinite(right?.order) ? Number(right.order) : 0;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return String(left?.code || '').localeCompare(String(right?.code || ''));
+  });
+
+const listRoutePermissionCatalogItems = () =>
+  sortCatalogItems(ROUTE_PERMISSION_DEFINITIONS.map((definition) => toCatalogItem(definition)));
+
+const listPlatformPermissionCatalogItems = ({
+  includeUnassignable = false
+} = {}) =>
+  sortCatalogItems(
+    ROUTE_PERMISSION_DEFINITIONS
+      .filter((definition) =>
+        definition.scope === PERMISSION_SCOPE_PLATFORM
+        && (includeUnassignable || definition.assignable)
+      )
+      .map((definition) => toCatalogItem(definition))
+  );
+
+const listTenantPermissionCatalogItems = ({
+  includeTenantContextCodes = false,
+  includeUnassignable = false
+} = {}) =>
+  sortCatalogItems(
+    ROUTE_PERMISSION_DEFINITIONS
+      .filter((definition) => {
+        if (definition.scope !== PERMISSION_SCOPE_TENANT) {
+          return false;
+        }
+        if (!includeUnassignable && !definition.assignable) {
+          return false;
+        }
+        if (
+          !includeTenantContextCodes
+          && TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT.has(definition.code)
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((definition) => toCatalogItem(definition))
+  );
 
 const listSupportedRoutePermissionCodes = () =>
   ROUTE_PERMISSION_DEFINITIONS.map((definition) => definition.code);
@@ -282,48 +486,49 @@ const listSupportedRoutePermissionScopes = () =>
   );
 
 const listSupportedPlatformPermissionCodes = () =>
-  listSupportedRoutePermissionCodes()
-    .filter((permissionCode) =>
-      permissionCode.startsWith('platform.')
-      && (ROUTE_PERMISSION_SCOPE_RULES[permissionCode] || []).includes(PERMISSION_SCOPE_PLATFORM)
-    )
+  listPlatformPermissionCatalogItems()
+    .map((item) => item.code)
     .sort((left, right) => left.localeCompare(right));
 
 const listSupportedTenantPermissionCodes = ({
   includeTenantContextCodes = false
 } = {}) =>
-  listSupportedRoutePermissionCodes()
-    .filter((permissionCode) =>
-      permissionCode.startsWith('tenant.')
-      && (ROUTE_PERMISSION_SCOPE_RULES[permissionCode] || []).includes(PERMISSION_SCOPE_TENANT)
-      && (
-        includeTenantContextCodes
-        || !TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT.has(permissionCode)
-      )
-    )
+  listTenantPermissionCatalogItems({ includeTenantContextCodes })
+    .map((item) => item.code)
     .sort((left, right) => left.localeCompare(right));
+
+const KNOWN_PLATFORM_PERMISSION_CODES = Object.freeze(
+  listSupportedPlatformPermissionCodes()
+);
+
+const KNOWN_TENANT_PERMISSION_CODES = Object.freeze(
+  listSupportedTenantPermissionCodes()
+);
 
 module.exports = {
   AUTH_SESSION_LOGOUT_PERMISSION_CODE,
   AUTH_SESSION_CHANGE_PASSWORD_PERMISSION_CODE,
   TENANT_CONTEXT_READ_PERMISSION_CODE,
   TENANT_CONTEXT_SWITCH_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  TENANT_BILLING_VIEW_PERMISSION_CODE,
-  TENANT_BILLING_OPERATE_PERMISSION_CODE,
-  PLATFORM_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  PLATFORM_BILLING_VIEW_PERMISSION_CODE,
-  PLATFORM_BILLING_OPERATE_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_ORGANIZATION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_ORGANIZATION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   KNOWN_PLATFORM_PERMISSION_CODES,
   KNOWN_TENANT_PERMISSION_CODES,
   TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT,
-  SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET,
+  ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET,
   ROUTE_PERMISSION_EVALUATORS,
   ROUTE_PERMISSION_SCOPE_RULES,
+  listRoutePermissionCatalogItems,
+  listPlatformPermissionCatalogItems,
+  listTenantPermissionCatalogItems,
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes,
   listSupportedPlatformPermissionCodes,

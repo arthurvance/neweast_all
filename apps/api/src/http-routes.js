@@ -762,17 +762,17 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
-    authTenantMemberAdminProbe: async (requestId) => ({
+    authTenantUserManagementProbe: async (requestId) => ({
       ok: true,
       request_id: requestId || 'request_id_unset'
     }),
 
-    authPlatformMemberAdminProbe: async (requestId) => ({
+    authPlatformUserManagementProbe: async (requestId) => ({
       ok: true,
       request_id: requestId || 'request_id_unset'
     }),
 
-    authPlatformMemberAdminProvisionUser: async (
+    authPlatformUserManagementProvisionUser: async (
       requestId,
       authorization,
       body,
@@ -1293,7 +1293,7 @@ const createRouteHandlers = (config, options = {}) => {
         authorizationContext
       }),
 
-    authTenantMemberAdminProvisionUser: async (
+    authTenantUserManagementProvisionUser: async (
       requestId,
       authorization,
       body,

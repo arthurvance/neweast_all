@@ -138,10 +138,10 @@ const REQUIRED_AUTH_SCHEMA = {
     'user_id',
     'domain',
     'status',
-    'can_view_member_admin',
-    'can_operate_member_admin',
-    'can_view_billing',
-    'can_operate_billing',
+    'can_view_user_management',
+    'can_operate_user_management',
+    'can_view_organization_management',
+    'can_operate_organization_management',
     'updated_at'
   ],
   auth_user_tenants: [
@@ -154,19 +154,19 @@ const REQUIRED_AUTH_SCHEMA = {
     'department_name',
     'joined_at',
     'left_at',
-    'can_view_member_admin',
-    'can_operate_member_admin',
-    'can_view_billing',
-    'can_operate_billing'
+    'can_view_user_management',
+    'can_operate_user_management',
+    'can_view_organization_management',
+    'can_operate_organization_management'
   ],
   auth_user_platform_roles: [
     'user_id',
     'role_id',
     'status',
-    'can_view_member_admin',
-    'can_operate_member_admin',
-    'can_view_billing',
-    'can_operate_billing',
+    'can_view_user_management',
+    'can_operate_user_management',
+    'can_view_organization_management',
+    'can_operate_organization_management',
     'updated_at'
   ],
   platform_user_profiles: [

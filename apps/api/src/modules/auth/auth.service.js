@@ -4,12 +4,12 @@ const { log } = require('../../common/logger');
 const { normalizeTraceparent } = require('../../common/trace-context');
 const { createInMemoryAuthStore } = require('./auth.store.memory');
 const {
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
-  SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET,
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET,
   TENANT_SCOPE_ALLOWED_WITHOUT_ACTIVE_TENANT,
   ROUTE_PERMISSION_EVALUATORS,
   ROUTE_PERMISSION_SCOPE_RULES,
@@ -17,6 +17,8 @@ const {
   listSupportedRoutePermissionScopes,
   listSupportedPlatformPermissionCodes,
   listSupportedTenantPermissionCodes,
+  listPlatformPermissionCatalogItems,
+  listTenantPermissionCatalogItems,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
@@ -52,8 +54,8 @@ const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
 const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
 const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
 const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
 ]);
 const MAX_AUTH_AUDIT_TRAIL_ENTRIES = 2000;
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
@@ -81,18 +83,22 @@ const REJECTED_SYSTEM_CONFIG_AUDIT_EVENT_TYPES = new Set([
   'auth.system_config.read.rejected',
   'auth.system_config.update.rejected'
 ]);
-const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE;
+const PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE = PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE;
 const PLATFORM_ROLE_CATALOG_SCOPE = 'platform';
 const TENANT_ROLE_SCOPE = 'tenant';
 const PLATFORM_ROLE_PERMISSION_FIELD_KEYS = Object.freeze([
-  'canViewMemberAdmin',
-  'can_view_member_admin',
-  'canOperateMemberAdmin',
-  'can_operate_member_admin',
-  'canViewBilling',
-  'can_view_billing',
-  'canOperateBilling',
-  'can_operate_billing'
+  'canViewUserManagement',
+  'can_view_user_management',
+  'canOperateUserManagement',
+  'can_operate_user_management',
+  'canViewOrganizationManagement',
+  'can_view_organization_management',
+  'canOperateOrganizationManagement',
+  'can_operate_organization_management',
+  'canViewRoleManagement',
+  'can_view_role_management',
+  'canOperateRoleManagement',
+  'can_operate_role_management'
 ]);
 const PLATFORM_ROLE_ASSIGNMENT_ALLOWED_FIELDS = new Set([
   'role_id',
@@ -1237,18 +1243,28 @@ const normalizeTenantMembershipRecordFromStore = ({
 
 const buildPlatformPermissionContext = () => ({
   scope_label: '平台入口（无组织侧权限上下文）',
-  can_view_member_admin: false,
-  can_operate_member_admin: false,
-  can_view_billing: false,
-  can_operate_billing: false
+  can_view_user_management: false,
+  can_operate_user_management: false,
+  can_view_organization_management: false,
+  can_operate_organization_management: false,
+  can_view_role_management: false,
+  can_operate_role_management: false
 });
 
 const buildTenantUnselectedPermissionContext = () => ({
   scope_label: '组织未选择（无可操作权限）',
-  can_view_member_admin: false,
-  can_operate_member_admin: false,
-  can_view_billing: false,
-  can_operate_billing: false
+  can_view_user_management: false,
+  can_operate_user_management: false,
+  can_view_role_management: false,
+  can_operate_role_management: false
+});
+
+const buildTenantPlatformEntryPermissionContext = () => ({
+  scope_label: '平台入口（无组织侧权限上下文）',
+  can_view_user_management: false,
+  can_operate_user_management: false,
+  can_view_role_management: false,
+  can_operate_role_management: false
 });
 
 const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel) => {
@@ -1260,15 +1276,17 @@ const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel)
       || permissionContext.scope_label
       || fallbackScopeLabel
       || '组织权限快照（默认）',
-    can_view_member_admin: Boolean(
-      permissionContext.canViewMemberAdmin ?? permissionContext.can_view_member_admin
+    can_view_user_management: Boolean(
+      permissionContext.canViewUserManagement ?? permissionContext.can_view_user_management
     ),
-    can_operate_member_admin: Boolean(
-      permissionContext.canOperateMemberAdmin ?? permissionContext.can_operate_member_admin
+    can_operate_user_management: Boolean(
+      permissionContext.canOperateUserManagement ?? permissionContext.can_operate_user_management
     ),
-    can_view_billing: Boolean(permissionContext.canViewBilling ?? permissionContext.can_view_billing),
-    can_operate_billing: Boolean(
-      permissionContext.canOperateBilling ?? permissionContext.can_operate_billing
+    can_view_role_management: Boolean(
+      permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management
+    ),
+    can_operate_role_management: Boolean(
+      permissionContext.canOperateRoleManagement ?? permissionContext.can_operate_role_management
     )
   };
 };
@@ -1282,21 +1300,21 @@ const normalizePlatformPermissionContext = (permissionContext, fallbackScopeLabe
       || permissionContext.scope_label
       || fallbackScopeLabel
       || '平台权限快照（默认）',
-    can_view_member_admin: Boolean(
-      permissionContext.canViewMemberAdmin ?? permissionContext.can_view_member_admin
+    can_view_user_management: Boolean(
+      permissionContext.canViewUserManagement ?? permissionContext.can_view_user_management
     ),
-    can_operate_member_admin: Boolean(
-      permissionContext.canOperateMemberAdmin ?? permissionContext.can_operate_member_admin
+    can_operate_user_management: Boolean(
+      permissionContext.canOperateUserManagement ?? permissionContext.can_operate_user_management
     ),
-    can_view_billing: Boolean(permissionContext.canViewBilling ?? permissionContext.can_view_billing),
-    can_operate_billing: Boolean(
-      permissionContext.canOperateBilling ?? permissionContext.can_operate_billing
+    can_view_organization_management: Boolean(permissionContext.canViewOrganizationManagement ?? permissionContext.can_view_organization_management),
+    can_operate_organization_management: Boolean(
+      permissionContext.canOperateOrganizationManagement ?? permissionContext.can_operate_organization_management
     ),
-    can_view_system_config: Boolean(
-      permissionContext.canViewSystemConfig ?? permissionContext.can_view_system_config
+    can_view_role_management: Boolean(
+      permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management
     ),
-    can_operate_system_config: Boolean(
-      permissionContext.canOperateSystemConfig ?? permissionContext.can_operate_system_config
+    can_operate_role_management: Boolean(
+      permissionContext.canOperateRoleManagement ?? permissionContext.can_operate_role_management
     )
   };
 };
@@ -1895,7 +1913,7 @@ const createAuthService = (options = {}) => {
     activeTenantId
   }) => {
     if (entryDomain !== 'tenant') {
-      return buildPlatformPermissionContext();
+      return buildTenantPlatformEntryPermissionContext();
     }
 
     const normalizedTenantId = normalizeTenantId(activeTenantId);
@@ -2082,13 +2100,13 @@ const createAuthService = (options = {}) => {
           userId,
           sessionId,
           entryDomain,
-          permissionCode: PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+          permissionCode: PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
         });
-        normalized.can_view_system_config = Boolean(
-          systemConfigGrant?.can_view_system_config
+        normalized.can_view_role_management = Boolean(
+          systemConfigGrant?.can_view_role_management
         );
-        normalized.can_operate_system_config = Boolean(
-          systemConfigGrant?.can_operate_system_config
+        normalized.can_operate_role_management = Boolean(
+          systemConfigGrant?.can_operate_role_management
         );
       } catch (error) {
         if (
@@ -2165,8 +2183,8 @@ const createAuthService = (options = {}) => {
   }) => {
     if (entryDomain !== 'platform') {
       return {
-        can_view_system_config: false,
-        can_operate_system_config: false,
+        can_view_role_management: false,
+        can_operate_role_management: false,
         granted: false
       };
     }
@@ -2217,23 +2235,23 @@ const createAuthService = (options = {}) => {
 
     if (typeof lookupResult === 'boolean') {
       return {
-        can_view_system_config: lookupResult,
-        can_operate_system_config: lookupResult,
+        can_view_role_management: lookupResult,
+        can_operate_role_management: lookupResult,
         granted: lookupResult
       };
     }
 
-    const canViewSystemConfig = Boolean(lookupResult?.canViewSystemConfig);
-    const canOperateSystemConfig =
-      canViewSystemConfig && Boolean(lookupResult?.canOperateSystemConfig);
+    const canViewRoleManagement = Boolean(lookupResult?.canViewRoleManagement);
+    const canOperateRoleManagement =
+      canViewRoleManagement && Boolean(lookupResult?.canOperateRoleManagement);
     const normalizedPermissionCodeKey = toPlatformPermissionCodeKey(permissionCode);
     const granted =
-      normalizedPermissionCodeKey === PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
-        ? canOperateSystemConfig
-        : canViewSystemConfig;
+      normalizedPermissionCodeKey === PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+        ? canOperateRoleManagement
+        : canViewRoleManagement;
     return {
-      can_view_system_config: canViewSystemConfig,
-      can_operate_system_config: canOperateSystemConfig,
+      can_view_role_management: canViewRoleManagement,
+      can_operate_role_management: canOperateRoleManagement,
       granted
     };
   };
@@ -4038,40 +4056,40 @@ const createAuthService = (options = {}) => {
       if (!enforceRoleCatalogValidation) {
         const rolePermissionSource = hasPermissionField ? role.permission : {};
         assertOptionalBooleanRolePermission(
-          rolePermissionSource?.canViewMemberAdmin ?? rolePermissionSource?.can_view_member_admin,
+          rolePermissionSource?.canViewUserManagement ?? rolePermissionSource?.can_view_user_management,
           errors.invalidPayload
         );
         assertOptionalBooleanRolePermission(
-          rolePermissionSource?.canOperateMemberAdmin ?? rolePermissionSource?.can_operate_member_admin,
+          rolePermissionSource?.canOperateUserManagement ?? rolePermissionSource?.can_operate_user_management,
           errors.invalidPayload
         );
         assertOptionalBooleanRolePermission(
-          rolePermissionSource?.canViewBilling ?? rolePermissionSource?.can_view_billing,
+          rolePermissionSource?.canViewOrganizationManagement ?? rolePermissionSource?.can_view_organization_management,
           errors.invalidPayload
         );
         assertOptionalBooleanRolePermission(
-          rolePermissionSource?.canOperateBilling ?? rolePermissionSource?.can_operate_billing,
+          rolePermissionSource?.canOperateOrganizationManagement ?? rolePermissionSource?.can_operate_organization_management,
           errors.invalidPayload
         );
         normalizedRoleFacts.push({
           roleId: normalizedRoleIdKey,
           status: resolvedRoleStatus,
           permission: {
-            canViewMemberAdmin: Boolean(
-              rolePermissionSource?.canViewMemberAdmin
-              ?? rolePermissionSource?.can_view_member_admin
+            canViewUserManagement: Boolean(
+              rolePermissionSource?.canViewUserManagement
+              ?? rolePermissionSource?.can_view_user_management
             ),
-            canOperateMemberAdmin: Boolean(
-              rolePermissionSource?.canOperateMemberAdmin
-              ?? rolePermissionSource?.can_operate_member_admin
+            canOperateUserManagement: Boolean(
+              rolePermissionSource?.canOperateUserManagement
+              ?? rolePermissionSource?.can_operate_user_management
             ),
-            canViewBilling: Boolean(
-              rolePermissionSource?.canViewBilling
-              ?? rolePermissionSource?.can_view_billing
+            canViewOrganizationManagement: Boolean(
+              rolePermissionSource?.canViewOrganizationManagement
+              ?? rolePermissionSource?.can_view_organization_management
             ),
-            canOperateBilling: Boolean(
-              rolePermissionSource?.canOperateBilling
-              ?? rolePermissionSource?.can_operate_billing
+            canOperateOrganizationManagement: Boolean(
+              rolePermissionSource?.canOperateOrganizationManagement
+              ?? rolePermissionSource?.can_operate_organization_management
             )
           }
         });
@@ -4472,7 +4490,7 @@ const createAuthService = (options = {}) => {
     );
     if (
       normalizedScope === 'platform'
-      && SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET.has(normalizedPermissionCodeKey)
+      && ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET.has(normalizedPermissionCodeKey)
     ) {
       const grant = await resolveSystemConfigPermissionGrant({
         requestId,
@@ -4482,8 +4500,8 @@ const createAuthService = (options = {}) => {
         permissionCode: normalizedPermissionCode
       });
       if (platformPermissionContext && typeof platformPermissionContext === 'object') {
-        platformPermissionContext.can_view_system_config = grant.can_view_system_config;
-        platformPermissionContext.can_operate_system_config = grant.can_operate_system_config;
+        platformPermissionContext.can_view_role_management = grant.can_view_role_management;
+        platformPermissionContext.can_operate_role_management = grant.can_operate_role_management;
       }
       allowed = grant.granted;
     }
@@ -5954,6 +5972,9 @@ const createAuthService = (options = {}) => {
   const listPlatformPermissionCatalog = () =>
     listSupportedPlatformPermissionCodes();
 
+  const listPlatformPermissionCatalogEntries = () =>
+    listPlatformPermissionCatalogItems();
+
   const listPlatformRolePermissionGrants = async ({ roleId }) => {
     const normalizedRoleId = normalizeRequiredStringField(
       roleId,
@@ -5972,7 +5993,8 @@ const createAuthService = (options = {}) => {
     return {
       role_id: normalizedRoleId,
       permission_codes: grants,
-      available_permission_codes: listPlatformPermissionCatalog()
+      available_permission_codes: listPlatformPermissionCatalog(),
+      available_permissions: listPlatformPermissionCatalogEntries()
     };
   };
 
@@ -6143,21 +6165,21 @@ const createAuthService = (options = {}) => {
         && typeof roleFact.permission === 'object'
         && !Array.isArray(roleFact.permission)
           ? {
-            canViewMemberAdmin: Boolean(
-              roleFact.permission.canViewMemberAdmin
-              ?? roleFact.permission.can_view_member_admin
+            canViewUserManagement: Boolean(
+              roleFact.permission.canViewUserManagement
+              ?? roleFact.permission.can_view_user_management
             ),
-            canOperateMemberAdmin: Boolean(
-              roleFact.permission.canOperateMemberAdmin
-              ?? roleFact.permission.can_operate_member_admin
+            canOperateUserManagement: Boolean(
+              roleFact.permission.canOperateUserManagement
+              ?? roleFact.permission.can_operate_user_management
             ),
-            canViewBilling: Boolean(
-              roleFact.permission.canViewBilling
-              ?? roleFact.permission.can_view_billing
+            canViewOrganizationManagement: Boolean(
+              roleFact.permission.canViewOrganizationManagement
+              ?? roleFact.permission.can_view_organization_management
             ),
-            canOperateBilling: Boolean(
-              roleFact.permission.canOperateBilling
-              ?? roleFact.permission.can_operate_billing
+            canOperateOrganizationManagement: Boolean(
+              roleFact.permission.canOperateOrganizationManagement
+              ?? roleFact.permission.can_operate_organization_management
             )
           }
           : null
@@ -7072,6 +7094,9 @@ const createAuthService = (options = {}) => {
   const listTenantPermissionCatalog = () =>
     listSupportedTenantPermissionCodes();
 
+  const listTenantPermissionCatalogEntries = () =>
+    listTenantPermissionCatalogItems();
+
   const listTenantRolePermissionGrants = async ({
     tenantId,
     roleId
@@ -7092,7 +7117,8 @@ const createAuthService = (options = {}) => {
     return {
       role_id: normalizedRoleId,
       permission_codes: grants,
-      available_permission_codes: listTenantPermissionCatalog()
+      available_permission_codes: listTenantPermissionCatalog(),
+      available_permissions: listTenantPermissionCatalogEntries()
     };
   };
 
@@ -8580,8 +8606,8 @@ const createAuthService = (options = {}) => {
     }
 
     const permissionCode = normalizedScope === 'platform'
-      ? PLATFORM_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
-      : TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE;
+      ? PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
+      : TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE;
     const normalizedAuthorizedRoute =
       authorizedRoute && typeof authorizedRoute === 'object'
         ? {
@@ -9025,7 +9051,7 @@ const createAuthService = (options = {}) => {
       resolvedAuthorizedRoute = await authorizeRoute({
         requestId: input.requestId,
         accessToken: input.accessToken,
-        permissionCode: TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
+        permissionCode: TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
         scope: 'tenant',
         authorizationContext: input.authorizationContext || null
       });
@@ -9169,7 +9195,7 @@ const createAuthService = (options = {}) => {
       resolvedAuthorizedRoute = await authorizeRoute({
         requestId: normalizedRequestId,
         accessToken,
-        permissionCode: TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
+        permissionCode: TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
         scope: 'tenant',
         authorizationContext
       });
@@ -9473,9 +9499,11 @@ const createAuthService = (options = {}) => {
     listPlatformRolePermissionGrants,
     replacePlatformRolePermissionGrants,
     listPlatformPermissionCatalog,
+    listPlatformPermissionCatalogEntries,
     listTenantRolePermissionGrants,
     replaceTenantRolePermissionGrants,
     listTenantPermissionCatalog,
+    listTenantPermissionCatalogEntries,
     listTenantMemberRoleBindings,
     replaceTenantMemberRoleBindings,
     updateOrganizationStatus,

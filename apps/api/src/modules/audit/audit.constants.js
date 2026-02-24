@@ -4,8 +4,8 @@ const TENANT_AUDIT_EVENTS_PATH = '/tenant/audit/events';
 const PLATFORM_AUDIT_EVENTS_ROUTE_KEY = 'GET /platform/audit/events';
 const TENANT_AUDIT_EVENTS_ROUTE_KEY = 'GET /tenant/audit/events';
 
-const PLATFORM_AUDIT_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
-const TENANT_AUDIT_VIEW_PERMISSION_CODE = 'tenant.member_admin.view';
+const PLATFORM_AUDIT_VIEW_PERMISSION_CODE = 'platform.user_management.view';
+const TENANT_AUDIT_VIEW_PERMISSION_CODE = 'tenant.user_management.view';
 
 const PLATFORM_AUDIT_SCOPE = 'platform';
 const TENANT_AUDIT_SCOPE = 'tenant';

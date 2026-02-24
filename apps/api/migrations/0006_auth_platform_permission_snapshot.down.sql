@@ -3,12 +3,12 @@ SET @column_exists := (
   FROM information_schema.columns
   WHERE table_schema = DATABASE()
     AND table_name = 'auth_user_domain_access'
-    AND column_name = 'can_operate_billing'
+    AND column_name = 'can_operate_organization_management'
 );
 SET @ddl_sql := IF(
   @column_exists = 0,
   'SELECT 1',
-  'ALTER TABLE auth_user_domain_access DROP COLUMN can_operate_billing'
+  'ALTER TABLE auth_user_domain_access DROP COLUMN can_operate_organization_management'
 );
 PREPARE migration_stmt FROM @ddl_sql;
 EXECUTE migration_stmt;
@@ -19,12 +19,12 @@ SET @column_exists := (
   FROM information_schema.columns
   WHERE table_schema = DATABASE()
     AND table_name = 'auth_user_domain_access'
-    AND column_name = 'can_view_billing'
+    AND column_name = 'can_view_organization_management'
 );
 SET @ddl_sql := IF(
   @column_exists = 0,
   'SELECT 1',
-  'ALTER TABLE auth_user_domain_access DROP COLUMN can_view_billing'
+  'ALTER TABLE auth_user_domain_access DROP COLUMN can_view_organization_management'
 );
 PREPARE migration_stmt FROM @ddl_sql;
 EXECUTE migration_stmt;
@@ -35,12 +35,12 @@ SET @column_exists := (
   FROM information_schema.columns
   WHERE table_schema = DATABASE()
     AND table_name = 'auth_user_domain_access'
-    AND column_name = 'can_operate_member_admin'
+    AND column_name = 'can_operate_user_management'
 );
 SET @ddl_sql := IF(
   @column_exists = 0,
   'SELECT 1',
-  'ALTER TABLE auth_user_domain_access DROP COLUMN can_operate_member_admin'
+  'ALTER TABLE auth_user_domain_access DROP COLUMN can_operate_user_management'
 );
 PREPARE migration_stmt FROM @ddl_sql;
 EXECUTE migration_stmt;
@@ -51,12 +51,12 @@ SET @column_exists := (
   FROM information_schema.columns
   WHERE table_schema = DATABASE()
     AND table_name = 'auth_user_domain_access'
-    AND column_name = 'can_view_member_admin'
+    AND column_name = 'can_view_user_management'
 );
 SET @ddl_sql := IF(
   @column_exists = 0,
   'SELECT 1',
-  'ALTER TABLE auth_user_domain_access DROP COLUMN can_view_member_admin'
+  'ALTER TABLE auth_user_domain_access DROP COLUMN can_view_user_management'
 );
 PREPARE migration_stmt FROM @ddl_sql;
 EXECUTE migration_stmt;

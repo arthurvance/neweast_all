@@ -32,10 +32,10 @@ const createHarness = () => {
             status: 'active',
             permission: {
               scopeLabel: '组织权限（Tenant A）',
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: true
             }
           }
         ]
@@ -54,10 +54,10 @@ const createHarness = () => {
             status: 'active',
             permission: {
               scopeLabel: '组织权限（Tenant B）',
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewRoleManagement: true,
+              canOperateRoleManagement: true
             }
           }
         ]
@@ -1687,7 +1687,7 @@ test('PATCH /tenant/roles/:role_id disabling role converges affected sessions an
     requestId: 'req-tenant-role-disable-permission-replace-1',
     headers: operatorHeaders,
     body: {
-      permission_codes: ['tenant.member_admin.operate']
+      permission_codes: ['tenant.role_management.operate']
     },
     handlers: harness.handlers
   });
@@ -1711,7 +1711,7 @@ test('PATCH /tenant/roles/:role_id disabling role converges affected sessions an
     TENANT_OPERATOR_A_PHONE
   );
   const targetProbeAllowed = await dispatchApiRoute({
-    pathname: '/auth/tenant/member-admin/probe',
+    pathname: '/tenant/roles',
     method: 'GET',
     requestId: 'req-tenant-role-disable-probe-allowed',
     headers: {
@@ -1737,7 +1737,7 @@ test('PATCH /tenant/roles/:role_id disabling role converges affected sessions an
   assert.equal(JSON.parse(disableRole.body).status, 'disabled');
 
   const probeWithOldToken = await dispatchApiRoute({
-    pathname: '/auth/tenant/member-admin/probe',
+    pathname: '/auth/tenant/user-management/probe',
     method: 'GET',
     requestId: 'req-tenant-role-disable-probe-old-token',
     headers: {
@@ -1754,7 +1754,7 @@ test('PATCH /tenant/roles/:role_id disabling role converges affected sessions an
     TENANT_OPERATOR_A_PHONE
   );
   const targetProbeDenied = await dispatchApiRoute({
-    pathname: '/auth/tenant/member-admin/probe',
+    pathname: '/tenant/roles',
     method: 'GET',
     requestId: 'req-tenant-role-disable-probe-denied',
     headers: {
@@ -2093,7 +2093,7 @@ test('GET/PUT /tenant/roles/:role_id/permissions manages tenant role permission 
     requestId: 'req-tenant-role-permission-write',
     headers,
     body: {
-      permission_codes: ['tenant.member_admin.view', 'tenant.billing.view']
+      permission_codes: ['tenant.user_management.view', 'tenant.role_management.view']
     },
     handlers: harness.handlers
   });
@@ -2102,7 +2102,7 @@ test('GET/PUT /tenant/roles/:role_id/permissions manages tenant role permission 
   assert.equal(replacePayload.role_id, 'tenant_permission_target');
   assert.deepEqual(
     [...replacePayload.permission_codes].sort(),
-    ['tenant.billing.view', 'tenant.member_admin.view']
+    ['tenant.role_management.view', 'tenant.user_management.view']
   );
   assert.equal(Number.isInteger(replacePayload.affected_user_count), true);
   assert.ok(replacePayload.affected_user_count >= 0);
@@ -2118,7 +2118,7 @@ test('GET/PUT /tenant/roles/:role_id/permissions manages tenant role permission 
   const readAfterPayload = JSON.parse(readAfter.body);
   assert.deepEqual(
     [...readAfterPayload.permission_codes].sort(),
-    ['tenant.billing.view', 'tenant.member_admin.view']
+    ['tenant.role_management.view', 'tenant.user_management.view']
   );
 });
 
@@ -2200,7 +2200,7 @@ test('PUT /tenant/roles/:role_id/permissions rejects non-tenant permission codes
     requestId: 'req-tenant-role-permission-invalid-code',
     headers,
     body: {
-      permission_codes: ['platform.member_admin.view']
+      permission_codes: ['platform.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2243,7 +2243,7 @@ test('PUT /tenant/roles/:role_id/permissions rejects permission codes with leadi
     requestId: 'req-tenant-role-permission-whitespace-code',
     headers,
     body: {
-      permission_codes: [' tenant.member_admin.view']
+      permission_codes: [' tenant.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2287,15 +2287,15 @@ test('PUT /tenant/roles/:role_id/permissions canonicalizes duplicated permission
     headers,
     body: {
       permission_codes: [
-        'tenant.member_admin.view',
-        'tenant.Member_Admin.View'
+        'tenant.user_management.view',
+        'tenant.User_Management.View'
       ]
     },
     handlers: harness.handlers
   });
   assert.equal(replaceRoute.status, 200);
   const payload = JSON.parse(replaceRoute.body);
-  assert.deepEqual(payload.permission_codes, ['tenant.member_admin.view']);
+  assert.deepEqual(payload.permission_codes, ['tenant.user_management.view']);
 });
 
 test('PUT /tenant/roles/:role_id/permissions enforces idempotency across canonicalized role_id path variants', async () => {
@@ -2333,7 +2333,7 @@ test('PUT /tenant/roles/:role_id/permissions enforces idempotency across canonic
       'idempotency-key': 'idem-tenant-role-permission-canonicalized'
     },
     body: {
-      permission_codes: ['tenant.member_admin.view']
+      permission_codes: ['tenant.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2348,7 +2348,7 @@ test('PUT /tenant/roles/:role_id/permissions enforces idempotency across canonic
       'idempotency-key': 'idem-tenant-role-permission-canonicalized'
     },
     body: {
-      permission_codes: ['tenant.billing.view']
+      permission_codes: ['tenant.role_management.view']
     },
     handlers: harness.handlers
   });
@@ -2390,7 +2390,7 @@ test('PUT /tenant/roles/:role_id/permissions does not cache retryable 409 respon
         'idempotency-key': 'idem-tenant-role-permission-retryable-conflict'
       },
       body: {
-        permission_codes: ['tenant.member_admin.view']
+        permission_codes: ['tenant.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -2438,7 +2438,7 @@ test('PUT /tenant/roles/:role_id/permissions caches non-retryable 409 responses 
         'idempotency-key': 'idem-tenant-role-permission-non-retryable-conflict'
       },
       body: {
-        permission_codes: ['tenant.member_admin.view']
+        permission_codes: ['tenant.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -2483,8 +2483,8 @@ test('GET /tenant/roles/:role_id/permissions fails closed when downstream payloa
 
   harness.authService.listTenantRolePermissionGrants = async ({ roleId }) => ({
     role_id: roleId,
-    permission_codes: 'tenant.member_admin.view',
-    available_permission_codes: ['tenant.member_admin.view']
+    permission_codes: 'tenant.user_management.view',
+    available_permission_codes: ['tenant.user_management.view']
   });
 
   const readRoute = await dispatchApiRoute({
@@ -2531,14 +2531,48 @@ test('GET /tenant/roles/:role_id/permissions returns deterministically sorted pe
       return {
         role_id: 'tenant_permission_read_sort_stability',
         permission_codes: [
-          'tenant.member_admin.view',
-          'tenant.member_admin.operate'
+          'tenant.user_management.view',
+          'tenant.user_management.operate'
         ],
         available_permission_codes: [
-          'tenant.member_admin.view',
-          'tenant.billing.operate',
-          'tenant.member_admin.operate',
-          'tenant.billing.view'
+          'tenant.user_management.view',
+          'tenant.role_management.operate',
+          'tenant.user_management.operate',
+          'tenant.role_management.view'
+        ],
+        available_permissions: [
+          {
+            code: 'tenant.user_management.view',
+            scope: 'tenant',
+            group_key: 'user_management',
+            action_key: 'view',
+            label_key: 'permission.tenant.user_management.view',
+            order: 110
+          },
+          {
+            code: 'tenant.role_management.operate',
+            scope: 'tenant',
+            group_key: 'role_management',
+            action_key: 'operate',
+            label_key: 'permission.tenant.role_management.operate',
+            order: 220
+          },
+          {
+            code: 'tenant.user_management.operate',
+            scope: 'tenant',
+            group_key: 'user_management',
+            action_key: 'operate',
+            label_key: 'permission.tenant.user_management.operate',
+            order: 120
+          },
+          {
+            code: 'tenant.role_management.view',
+            scope: 'tenant',
+            group_key: 'role_management',
+            action_key: 'view',
+            label_key: 'permission.tenant.role_management.view',
+            order: 210
+          }
         ]
       };
     }
@@ -2556,14 +2590,14 @@ test('GET /tenant/roles/:role_id/permissions returns deterministically sorted pe
     assert.equal(readRoute.status, 200);
     const payload = JSON.parse(readRoute.body);
     assert.deepEqual(payload.permission_codes, [
-      'tenant.member_admin.operate',
-      'tenant.member_admin.view'
+      'tenant.user_management.operate',
+      'tenant.user_management.view'
     ]);
     assert.deepEqual(payload.available_permission_codes, [
-      'tenant.billing.operate',
-      'tenant.billing.view',
-      'tenant.member_admin.operate',
-      'tenant.member_admin.view'
+      'tenant.role_management.operate',
+      'tenant.role_management.view',
+      'tenant.user_management.operate',
+      'tenant.user_management.view'
     ]);
   } finally {
     harness.authService.listTenantRolePermissionGrants = originalListTenantRolePermissionGrants;
@@ -2651,8 +2685,9 @@ test('GET /tenant/roles/:role_id/permissions fails closed when permission catalo
   });
   assert.equal(createRoute.status, 200);
 
-  const originalListTenantPermissionCatalog = harness.authService.listTenantPermissionCatalog;
-  harness.authService.listTenantPermissionCatalog = () => {
+  const originalListTenantPermissionCatalogEntries =
+    harness.authService.listTenantPermissionCatalogEntries;
+  harness.authService.listTenantPermissionCatalogEntries = () => {
     throw new Error('catalog dependency unavailable');
   };
 
@@ -2669,7 +2704,8 @@ test('GET /tenant/roles/:role_id/permissions fails closed when permission catalo
     assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
     assert.equal(payload.request_id, 'req-tenant-role-permission-read-catalog-dependency');
   } finally {
-    harness.authService.listTenantPermissionCatalog = originalListTenantPermissionCatalog;
+    harness.authService.listTenantPermissionCatalogEntries =
+      originalListTenantPermissionCatalogEntries;
   }
 });
 
@@ -2701,8 +2737,8 @@ test('GET /tenant/roles/:role_id/permissions fails closed when downstream payloa
 
   harness.authService.listTenantRolePermissionGrants = async ({ roleId }) => ({
     role_id: roleId,
-    permission_codes: [' tenant.member_admin.view'],
-    available_permission_codes: ['tenant.member_admin.view']
+    permission_codes: [' tenant.user_management.view'],
+    available_permission_codes: ['tenant.user_management.view']
   });
 
   const readRoute = await dispatchApiRoute({
@@ -2745,8 +2781,8 @@ test('GET /tenant/roles/:role_id/permissions fails closed when downstream payloa
 
   harness.authService.listTenantRolePermissionGrants = async ({ roleId }) => ({
     role_id: ` ${roleId} `,
-    permission_codes: ['tenant.member_admin.view'],
-    available_permission_codes: ['tenant.member_admin.view']
+    permission_codes: ['tenant.user_management.view'],
+    available_permission_codes: ['tenant.user_management.view']
   });
 
   const readRoute = await dispatchApiRoute({
@@ -2799,7 +2835,7 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when downstream write 
     requestId: 'req-tenant-role-permission-write-malformed',
     headers,
     body: {
-      permission_codes: ['tenant.member_admin.view']
+      permission_codes: ['tenant.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2846,7 +2882,7 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when downstream write 
     requestId: 'req-tenant-role-permission-write-roleid-whitespace',
     headers,
     body: {
-      permission_codes: ['tenant.member_admin.view']
+      permission_codes: ['tenant.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2893,7 +2929,7 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when downstream write 
     requestId: 'req-tenant-role-permission-write-affected-user-count-string',
     headers,
     body: {
-      permission_codes: ['tenant.member_admin.view']
+      permission_codes: ['tenant.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2928,8 +2964,9 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when permission catalo
   });
   assert.equal(createRoute.status, 200);
 
-  const originalListTenantPermissionCatalog = harness.authService.listTenantPermissionCatalog;
-  harness.authService.listTenantPermissionCatalog = () => {
+  const originalListTenantPermissionCatalogEntries =
+    harness.authService.listTenantPermissionCatalogEntries;
+  harness.authService.listTenantPermissionCatalogEntries = () => {
     throw new Error('catalog dependency unavailable');
   };
 
@@ -2940,7 +2977,7 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when permission catalo
       requestId: 'req-tenant-role-permission-write-catalog-dependency',
       headers,
       body: {
-        permission_codes: ['tenant.member_admin.view']
+        permission_codes: ['tenant.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -2949,7 +2986,8 @@ test('PUT /tenant/roles/:role_id/permissions fails closed when permission catalo
     assert.equal(payload.error_code, 'TROLE-503-DEPENDENCY-UNAVAILABLE');
     assert.equal(payload.request_id, 'req-tenant-role-permission-write-catalog-dependency');
   } finally {
-    harness.authService.listTenantPermissionCatalog = originalListTenantPermissionCatalog;
+    harness.authService.listTenantPermissionCatalogEntries =
+      originalListTenantPermissionCatalogEntries;
   }
 });
 
@@ -2979,11 +3017,12 @@ test('PUT /tenant/roles/:role_id/permissions fails closed before write when perm
   });
   assert.equal(createRoute.status, 200);
 
-  const originalListTenantPermissionCatalog = harness.authService.listTenantPermissionCatalog;
+  const originalListTenantPermissionCatalogEntries =
+    harness.authService.listTenantPermissionCatalogEntries;
   const originalReplaceTenantRolePermissionGrants =
     harness.authService.replaceTenantRolePermissionGrants;
   let replaceTenantRolePermissionGrantsCalls = 0;
-  harness.authService.listTenantPermissionCatalog = () => ({
+  harness.authService.listTenantPermissionCatalogEntries = () => ({
     malformed: true
   });
   harness.authService.replaceTenantRolePermissionGrants = async ({ roleId }) => {
@@ -3012,7 +3051,8 @@ test('PUT /tenant/roles/:role_id/permissions fails closed before write when perm
     assert.equal(payload.request_id, 'req-tenant-role-permission-write-catalog-malformed');
     assert.equal(replaceTenantRolePermissionGrantsCalls, 0);
   } finally {
-    harness.authService.listTenantPermissionCatalog = originalListTenantPermissionCatalog;
+    harness.authService.listTenantPermissionCatalogEntries =
+      originalListTenantPermissionCatalogEntries;
     harness.authService.replaceTenantRolePermissionGrants =
       originalReplaceTenantRolePermissionGrants;
   }

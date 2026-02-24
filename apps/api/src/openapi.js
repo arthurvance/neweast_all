@@ -725,13 +725,13 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/auth/tenant/member-admin/probe': {
+    '/auth/tenant/user-management/probe': {
       get: {
-        summary: 'Probe tenant member-admin operate permission with unified authorization semantics',
+        summary: 'Probe tenant user-management operate permission with unified authorization semantics',
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Current session is authorized for member-admin operate capability',
+            description: 'Current session is authorized for user-management operate capability',
             content: {
               'application/json': {
                 schema: {
@@ -787,7 +787,7 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/auth/tenant/member-admin/provision-user': {
+    '/auth/tenant/user-management/provision-user': {
       post: {
         summary: 'Provision tenant member user by phone with default password policy',
         security: [{ bearerAuth: [] }],
@@ -2968,14 +2968,32 @@ const buildOpenApiSpec = () => {
                     value: {
                       role_id: 'tenant_permission_target',
                       permission_codes: [
-                        'tenant.billing.operate',
-                        'tenant.member_admin.operate'
+                        'tenant.role_management.operate',
+                        'tenant.user_management.operate'
                       ],
                       available_permission_codes: [
-                        'tenant.billing.operate',
-                        'tenant.billing.view',
-                        'tenant.member_admin.operate',
-                        'tenant.member_admin.view'
+                        'tenant.role_management.operate',
+                        'tenant.role_management.view',
+                        'tenant.user_management.operate',
+                        'tenant.user_management.view'
+                      ],
+                      available_permissions: [
+                        {
+                          code: 'tenant.user_management.view',
+                          scope: 'tenant',
+                          group_key: 'user_management',
+                          action_key: 'view',
+                          label_key: 'permission.tenant.user_management.view',
+                          order: 110
+                        },
+                        {
+                          code: 'tenant.user_management.operate',
+                          scope: 'tenant',
+                          group_key: 'user_management',
+                          action_key: 'operate',
+                          label_key: 'permission.tenant.user_management.operate',
+                          order: 120
+                        }
                       ],
                       request_id: 'req-tenant-role-permission-read'
                     }
@@ -3147,14 +3165,32 @@ const buildOpenApiSpec = () => {
                     value: {
                       role_id: 'tenant_permission_target',
                       permission_codes: [
-                        'tenant.billing.operate',
-                        'tenant.member_admin.operate'
+                        'tenant.role_management.operate',
+                        'tenant.user_management.operate'
                       ],
                       available_permission_codes: [
-                        'tenant.billing.operate',
-                        'tenant.billing.view',
-                        'tenant.member_admin.operate',
-                        'tenant.member_admin.view'
+                        'tenant.role_management.operate',
+                        'tenant.role_management.view',
+                        'tenant.user_management.operate',
+                        'tenant.user_management.view'
+                      ],
+                      available_permissions: [
+                        {
+                          code: 'tenant.user_management.view',
+                          scope: 'tenant',
+                          group_key: 'user_management',
+                          action_key: 'view',
+                          label_key: 'permission.tenant.user_management.view',
+                          order: 110
+                        },
+                        {
+                          code: 'tenant.user_management.operate',
+                          scope: 'tenant',
+                          group_key: 'user_management',
+                          action_key: 'operate',
+                          label_key: 'permission.tenant.user_management.operate',
+                          order: 120
+                        }
                       ],
                       affected_user_count: 2,
                       request_id: 'req-tenant-role-permission-write'
@@ -3348,13 +3384,13 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/auth/platform/member-admin/probe': {
+    '/auth/platform/user-management/probe': {
       get: {
-        summary: 'Probe platform member-admin view permission with unified authorization semantics',
+        summary: 'Probe platform user-management view permission with unified authorization semantics',
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Current session is authorized for platform member-admin view capability',
+            description: 'Current session is authorized for platform user-management view capability',
             content: {
               'application/json': {
                 schema: {
@@ -3432,7 +3468,7 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/auth/platform/member-admin/provision-user': {
+    '/auth/platform/user-management/provision-user': {
       post: {
         summary: 'Provision platform member user by phone with default password policy',
         security: [{ bearerAuth: [] }],
@@ -4253,16 +4289,34 @@ const buildOpenApiSpec = () => {
                     value: {
                       role_id: 'platform_permission_editor',
                       permission_codes: [
-                        'platform.billing.operate',
-                        'platform.member_admin.operate'
+                        'platform.organization_management.operate',
+                        'platform.user_management.operate'
                       ],
                       available_permission_codes: [
-                        'platform.billing.operate',
-                        'platform.billing.view',
-                        'platform.member_admin.operate',
-                        'platform.member_admin.view',
-                        'platform.system_config.operate',
-                        'platform.system_config.view'
+                        'platform.organization_management.operate',
+                        'platform.organization_management.view',
+                        'platform.user_management.operate',
+                        'platform.user_management.view',
+                        'platform.role_management.operate',
+                        'platform.role_management.view'
+                      ],
+                      available_permissions: [
+                        {
+                          code: 'platform.user_management.view',
+                          scope: 'platform',
+                          group_key: 'user_management',
+                          action_key: 'view',
+                          label_key: 'permission.platform.user_management.view',
+                          order: 110
+                        },
+                        {
+                          code: 'platform.user_management.operate',
+                          scope: 'platform',
+                          group_key: 'user_management',
+                          action_key: 'operate',
+                          label_key: 'permission.platform.user_management.operate',
+                          order: 120
+                        }
                       ],
                       request_id: 'req-platform-role-permission-read'
                     }
@@ -4358,16 +4412,34 @@ const buildOpenApiSpec = () => {
                     value: {
                       role_id: 'platform_permission_editor',
                       permission_codes: [
-                        'platform.billing.operate',
-                        'platform.member_admin.operate'
+                        'platform.organization_management.operate',
+                        'platform.user_management.operate'
                       ],
                       available_permission_codes: [
-                        'platform.billing.operate',
-                        'platform.billing.view',
-                        'platform.member_admin.operate',
-                        'platform.member_admin.view',
-                        'platform.system_config.operate',
-                        'platform.system_config.view'
+                        'platform.organization_management.operate',
+                        'platform.organization_management.view',
+                        'platform.user_management.operate',
+                        'platform.user_management.view',
+                        'platform.role_management.operate',
+                        'platform.role_management.view'
+                      ],
+                      available_permissions: [
+                        {
+                          code: 'platform.user_management.view',
+                          scope: 'platform',
+                          group_key: 'user_management',
+                          action_key: 'view',
+                          label_key: 'permission.platform.user_management.view',
+                          order: 110
+                        },
+                        {
+                          code: 'platform.user_management.operate',
+                          scope: 'platform',
+                          group_key: 'user_management',
+                          action_key: 'operate',
+                          label_key: 'permission.platform.user_management.operate',
+                          order: 120
+                        }
                       ],
                       affected_user_count: 3,
                       request_id: 'req-platform-role-permission-write'
@@ -8067,7 +8139,7 @@ const buildOpenApiSpec = () => {
                   value: {
                     name: '平台用户甲（已编辑）',
                     department: '平台运营中心',
-                    role_ids: ['platform_member_admin', 'platform_permission_editor']
+                    role_ids: ['platform_user_management', 'platform_permission_editor']
                   }
                 }
               }
@@ -11520,10 +11592,64 @@ const buildOpenApiSpec = () => {
       PlatformRolePermission: {
         type: 'object',
         properties: {
-          can_view_member_admin: { type: 'boolean' },
-          can_operate_member_admin: { type: 'boolean' },
-          can_view_billing: { type: 'boolean' },
-          can_operate_billing: { type: 'boolean' }
+          can_view_user_management: { type: 'boolean' },
+          can_operate_user_management: { type: 'boolean' },
+          can_view_organization_management: { type: 'boolean' },
+          can_operate_organization_management: { type: 'boolean' }
+        }
+      },
+      PlatformPermissionCatalogItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['code', 'scope', 'group_key', 'action_key', 'label_key', 'order'],
+        properties: {
+          code: {
+            type: 'string',
+            pattern: '^platform\\.[A-Za-z0-9._-]+$'
+          },
+          scope: {
+            type: 'string',
+            enum: ['platform']
+          },
+          group_key: {
+            type: 'string'
+          },
+          action_key: {
+            type: 'string'
+          },
+          label_key: {
+            type: 'string'
+          },
+          order: {
+            type: 'integer'
+          }
+        }
+      },
+      TenantPermissionCatalogItem: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['code', 'scope', 'group_key', 'action_key', 'label_key', 'order'],
+        properties: {
+          code: {
+            type: 'string',
+            pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+          },
+          scope: {
+            type: 'string',
+            enum: ['tenant']
+          },
+          group_key: {
+            type: 'string'
+          },
+          action_key: {
+            type: 'string'
+          },
+          label_key: {
+            type: 'string'
+          },
+          order: {
+            type: 'integer'
+          }
         }
       },
       ReplaceTenantRolePermissionGrantsRequest: {
@@ -11536,8 +11662,8 @@ const buildOpenApiSpec = () => {
             maxItems: 64,
             description: '仅允许 tenant.* 最终授权权限点；服务端按大小写不敏感语义去重、排序并持久化，不接受权限树中间态节点。',
             example: [
-              'tenant.member_admin.operate',
-              'tenant.billing.view'
+              'tenant.user_management.operate',
+              'tenant.role_management.view'
             ],
             items: {
               type: 'string',
@@ -11553,6 +11679,7 @@ const buildOpenApiSpec = () => {
           'role_id',
           'permission_codes',
           'available_permission_codes',
+          'available_permissions',
           'request_id'
         ],
         properties: {
@@ -11566,8 +11693,8 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
             example: [
-              'tenant.billing.operate',
-              'tenant.member_admin.operate'
+              'tenant.role_management.operate',
+              'tenant.user_management.operate'
             ],
             items: {
               type: 'string',
@@ -11578,14 +11705,21 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '当前租户权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
             example: [
-              'tenant.billing.operate',
-              'tenant.billing.view',
-              'tenant.member_admin.operate',
-              'tenant.member_admin.view'
+              'tenant.role_management.operate',
+              'tenant.role_management.view',
+              'tenant.user_management.operate',
+              'tenant.user_management.view'
             ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permissions: {
+            type: 'array',
+            description: '租户权限目录元数据（按 order、code 排序）；前端应基于该结构渲染权限树。',
+            items: {
+              $ref: '#/components/schemas/TenantPermissionCatalogItem'
             }
           },
           request_id: { type: 'string' }
@@ -11598,6 +11732,7 @@ const buildOpenApiSpec = () => {
           'role_id',
           'permission_codes',
           'available_permission_codes',
+          'available_permissions',
           'affected_user_count',
           'request_id'
         ],
@@ -11612,8 +11747,8 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
             example: [
-              'tenant.billing.operate',
-              'tenant.member_admin.operate'
+              'tenant.role_management.operate',
+              'tenant.user_management.operate'
             ],
             items: {
               type: 'string',
@@ -11624,14 +11759,21 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '当前租户权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
             example: [
-              'tenant.billing.operate',
-              'tenant.billing.view',
-              'tenant.member_admin.operate',
-              'tenant.member_admin.view'
+              'tenant.role_management.operate',
+              'tenant.role_management.view',
+              'tenant.user_management.operate',
+              'tenant.user_management.view'
             ],
             items: {
               type: 'string',
               pattern: '^tenant\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permissions: {
+            type: 'array',
+            description: '租户权限目录元数据（按 order、code 排序）；前端应基于该结构渲染权限树。',
+            items: {
+              $ref: '#/components/schemas/TenantPermissionCatalogItem'
             }
           },
           affected_user_count: {
@@ -11651,8 +11793,8 @@ const buildOpenApiSpec = () => {
             maxItems: 64,
             description: '仅允许 platform.* 最终授权权限点；服务端按大小写不敏感语义去重、排序并持久化，不接受权限树中间态节点。',
             example: [
-              'platform.member_admin.operate',
-              'platform.billing.view'
+              'platform.user_management.operate',
+              'platform.organization_management.view'
             ],
             items: {
               type: 'string',
@@ -11668,6 +11810,7 @@ const buildOpenApiSpec = () => {
           'role_id',
           'permission_codes',
           'available_permission_codes',
+          'available_permissions',
           'request_id'
         ],
         properties: {
@@ -11681,8 +11824,8 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
             example: [
-              'platform.billing.operate',
-              'platform.member_admin.operate'
+              'platform.organization_management.operate',
+              'platform.user_management.operate'
             ],
             items: {
               type: 'string',
@@ -11693,16 +11836,23 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '当前平台权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
             example: [
-              'platform.billing.operate',
-              'platform.billing.view',
-              'platform.member_admin.operate',
-              'platform.member_admin.view',
-              'platform.system_config.operate',
-              'platform.system_config.view'
+              'platform.organization_management.operate',
+              'platform.organization_management.view',
+              'platform.user_management.operate',
+              'platform.user_management.view',
+              'platform.role_management.operate',
+              'platform.role_management.view'
             ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permissions: {
+            type: 'array',
+            description: '平台权限目录元数据（按 order、code 排序）；前端应基于该结构渲染权限树。',
+            items: {
+              $ref: '#/components/schemas/PlatformPermissionCatalogItem'
             }
           },
           request_id: { type: 'string' }
@@ -11715,6 +11865,7 @@ const buildOpenApiSpec = () => {
           'role_id',
           'permission_codes',
           'available_permission_codes',
+          'available_permissions',
           'affected_user_count',
           'request_id'
         ],
@@ -11729,8 +11880,8 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '仅返回最终授权权限点集合（叶子授权结果）；前端可据此恢复 checked 节点。',
             example: [
-              'platform.billing.operate',
-              'platform.member_admin.operate'
+              'platform.organization_management.operate',
+              'platform.user_management.operate'
             ],
             items: {
               type: 'string',
@@ -11741,16 +11892,23 @@ const buildOpenApiSpec = () => {
             type: 'array',
             description: '当前平台权限目录基线；用于前端根据目录重建 checked/half-checked 展示。',
             example: [
-              'platform.billing.operate',
-              'platform.billing.view',
-              'platform.member_admin.operate',
-              'platform.member_admin.view',
-              'platform.system_config.operate',
-              'platform.system_config.view'
+              'platform.organization_management.operate',
+              'platform.organization_management.view',
+              'platform.user_management.operate',
+              'platform.user_management.view',
+              'platform.role_management.operate',
+              'platform.role_management.view'
             ],
             items: {
               type: 'string',
               pattern: '^platform\\.[A-Za-z0-9._-]+$'
+            }
+          },
+          available_permissions: {
+            type: 'array',
+            description: '平台权限目录元数据（按 order、code 排序）；前端应基于该结构渲染权限树。',
+            items: {
+              $ref: '#/components/schemas/PlatformPermissionCatalogItem'
             }
           },
           affected_user_count: {
@@ -11764,17 +11922,17 @@ const buildOpenApiSpec = () => {
         type: 'object',
         required: [
           'scope_label',
-          'can_view_member_admin',
-          'can_operate_member_admin',
-          'can_view_billing',
-          'can_operate_billing'
+          'can_view_user_management',
+          'can_operate_user_management',
+          'can_view_organization_management',
+          'can_operate_organization_management'
         ],
         properties: {
           scope_label: { type: 'string' },
-          can_view_member_admin: { type: 'boolean' },
-          can_operate_member_admin: { type: 'boolean' },
-          can_view_billing: { type: 'boolean' },
-          can_operate_billing: { type: 'boolean' }
+          can_view_user_management: { type: 'boolean' },
+          can_operate_user_management: { type: 'boolean' },
+          can_view_organization_management: { type: 'boolean' },
+          can_operate_organization_management: { type: 'boolean' }
         }
       },
       ReplacePlatformRoleFactsResponse: {
@@ -11892,17 +12050,17 @@ const buildOpenApiSpec = () => {
         type: 'object',
         required: [
           'scope_label',
-          'can_view_member_admin',
-          'can_operate_member_admin',
-          'can_view_billing',
-          'can_operate_billing'
+          'can_view_user_management',
+          'can_operate_user_management',
+          'can_view_organization_management',
+          'can_operate_organization_management'
         ],
         properties: {
           scope_label: { type: 'string' },
-          can_view_member_admin: { type: 'boolean' },
-          can_operate_member_admin: { type: 'boolean' },
-          can_view_billing: { type: 'boolean' },
-          can_operate_billing: { type: 'boolean' }
+          can_view_user_management: { type: 'boolean' },
+          can_operate_user_management: { type: 'boolean' },
+          can_view_organization_management: { type: 'boolean' },
+          can_operate_organization_management: { type: 'boolean' }
         }
       },
       ProblemDetails: {

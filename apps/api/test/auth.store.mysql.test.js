@@ -567,10 +567,10 @@ test('createTenantMembershipForUser fails closed when existing membership status
           tenant_id: 'tenant-empty-status',
           tenant_name: 'Tenant Empty Status',
           status: '',
-          can_view_member_admin: 0,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0,
+          can_view_user_management: 0,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0,
           joined_at: null,
           left_at: null
         }
@@ -917,8 +917,8 @@ test('hasAnyTenantRelationshipByUserId returns true when tenant relationships ex
 test('findTenantPermissionByUserAndTenantId surfaces schema errors for missing permission columns', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('can_view_member_admin')) {
-      const error = new Error('Unknown column can_view_member_admin');
+    if (normalizedSql.includes('can_view_user_management')) {
+      const error = new Error('Unknown column can_view_user_management');
       error.code = 'ER_BAD_FIELD_ERROR';
       throw error;
     }
@@ -932,7 +932,7 @@ test('findTenantPermissionByUserAndTenantId surfaces schema errors for missing p
         userId: 'u-4',
         tenantId: 'tenant-a'
       }),
-    /Unknown column can_view_member_admin/
+    /Unknown column can_view_user_management/
   );
 });
 
@@ -940,16 +940,16 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
   let permissionSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
-    if (normalizedSql.includes('can_view_member_admin')) {
+    if (normalizedSql.includes('can_view_user_management')) {
       permissionSql = normalizedSql;
       return [
         {
           tenant_id: 'tenant-z',
           tenant_name: 'Tenant Z',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 1,
-          can_operate_billing: 1
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 1
         }
       ];
     }
@@ -963,10 +963,10 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
   });
   assert.deepEqual(permission, {
     scopeLabel: '组织权限（Tenant Z）',
-    canViewMemberAdmin: true,
-    canOperateMemberAdmin: false,
-    canViewBilling: true,
-    canOperateBilling: true
+    canViewUserManagement: true,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: true,
+    canOperateOrganizationManagement: true
   });
   assert.match(permissionSql, /LEFT JOIN orgs/i);
   assert.match(permissionSql, /o\.status IN \('active', 'enabled'\)/i);
@@ -994,10 +994,10 @@ test('findPlatformPermissionByUserId reads explicit platform permission snapshot
       return [
         {
           status: 'enabled',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: '1',
-          can_operate_billing: false
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: '1',
+          can_operate_organization_management: false
         }
       ];
     }
@@ -1008,10 +1008,10 @@ test('findPlatformPermissionByUserId reads explicit platform permission snapshot
   const permission = await store.findPlatformPermissionByUserId({ userId: 'u-platform-2' });
   assert.deepEqual(permission, {
     scopeLabel: '平台权限（服务端快照）',
-    canViewMemberAdmin: true,
-    canOperateMemberAdmin: false,
-    canViewBilling: true,
-    canOperateBilling: false
+    canViewUserManagement: true,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: true,
+    canOperateOrganizationManagement: false
   });
 });
 
@@ -1071,7 +1071,7 @@ test('hasPlatformPermissionByUserId is fail-closed for unsupported permission co
   });
   const result = await store.hasPlatformPermissionByUserId({
     userId: 'u-platform-unsupported',
-    permissionCode: 'platform.member_admin.view'
+    permissionCode: 'platform.user_management.view'
   });
   assert.deepEqual(result, {
     canViewSystemConfig: false,
@@ -1102,7 +1102,7 @@ test('hasPlatformPermissionByUserId resolves system_config.view from active role
 
   const result = await store.hasPlatformPermissionByUserId({
     userId: 'u-platform-system-config-view',
-    permissionCode: 'platform.system_config.view'
+    permissionCode: 'platform.role_management.view'
   });
   assert.deepEqual(result, {
     canViewSystemConfig: true,
@@ -1133,7 +1133,7 @@ test('hasPlatformPermissionByUserId treats system_config.operate as granting vie
 
   const viewResult = await store.hasPlatformPermissionByUserId({
     userId: 'u-platform-system-config-operate',
-    permissionCode: 'platform.system_config.view'
+    permissionCode: 'platform.role_management.view'
   });
   assert.deepEqual(viewResult, {
     canViewSystemConfig: true,
@@ -1143,7 +1143,7 @@ test('hasPlatformPermissionByUserId treats system_config.operate as granting vie
 
   const operateResult = await store.hasPlatformPermissionByUserId({
     userId: 'u-platform-system-config-operate',
-    permissionCode: 'platform.system_config.operate'
+    permissionCode: 'platform.role_management.operate'
   });
   assert.deepEqual(operateResult, {
     canViewSystemConfig: true,
@@ -1163,10 +1163,10 @@ test('syncPlatformPermissionSnapshotByUserId recalculates platform snapshot from
     ) {
       return [
         {
-          can_view_member_admin: 0,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0,
+          can_view_user_management: 0,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:00:00.000Z'
         }
       ];
@@ -1179,18 +1179,18 @@ test('syncPlatformPermissionSnapshotByUserId recalculates platform snapshot from
         {
           role_id: 'platform-view',
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         },
         {
           role_id: 'platform-disabled',
           status: 'disabled',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 1,
-          can_view_billing: 1,
-          can_operate_billing: 1
+          can_view_user_management: 1,
+          can_operate_user_management: 1,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 1
         }
       ];
     }
@@ -1208,10 +1208,10 @@ test('syncPlatformPermissionSnapshotByUserId recalculates platform snapshot from
   assert.equal(result.synced, true);
   assert.deepEqual(result.permission, {
     scopeLabel: '平台权限（角色并集）',
-    canViewMemberAdmin: true,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: true,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false
   });
   assert.deepEqual(updateParams, [
     1,
@@ -1244,10 +1244,10 @@ test('syncPlatformPermissionSnapshotByUserId clears snapshot when role facts are
     ) {
       return [
         {
-          can_view_member_admin: 1,
-          can_operate_member_admin: 1,
-          can_view_billing: 1,
-          can_operate_billing: 0,
+          can_view_user_management: 1,
+          can_operate_user_management: 1,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:00:03.000Z'
         }
       ];
@@ -1257,7 +1257,7 @@ test('syncPlatformPermissionSnapshotByUserId clears snapshot when role facts are
     }
     if (
       normalizedSql.includes('UPDATE auth_user_domain_access')
-      && normalizedSql.includes('SET can_view_member_admin = 0')
+      && normalizedSql.includes('SET can_view_user_management = 0')
     ) {
       zeroUpdateParams = params;
       return { affectedRows: 1 };
@@ -1273,10 +1273,10 @@ test('syncPlatformPermissionSnapshotByUserId clears snapshot when role facts are
   assert.equal(result.synced, true);
   assert.deepEqual(result.permission, {
     scopeLabel: '平台权限（角色并集）',
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: false,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false
   });
   assert.deepEqual(zeroUpdateParams, ['u-sync-empty', 'u-sync-empty']);
 });
@@ -1293,10 +1293,10 @@ test('syncPlatformPermissionSnapshotByUserId skips role-row loading when snapsho
     ) {
       return [
         {
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0,
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:01:00.000Z'
         }
       ];
@@ -1323,10 +1323,10 @@ test('syncPlatformPermissionSnapshotByUserId skips role-row loading when snapsho
   assert.equal(result.reason, 'up-to-date');
   assert.deepEqual(result.permission, {
     scopeLabel: '平台权限（角色并集）',
-    canViewMemberAdmin: true,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: true,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false
   });
   assert.equal(roleRowQueryCount, 0);
   assert.equal(updateQueryCount, 0);
@@ -1344,10 +1344,10 @@ test('syncPlatformPermissionSnapshotByUserId does not short-circuit when snapsho
     ) {
       return [
         {
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0,
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:00:10.000Z'
         }
       ];
@@ -1367,10 +1367,10 @@ test('syncPlatformPermissionSnapshotByUserId does not short-circuit when snapsho
         {
           role_id: 'role-platform-admin',
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 1,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 1,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -1390,10 +1390,10 @@ test('syncPlatformPermissionSnapshotByUserId does not short-circuit when snapsho
   assert.equal(result.reason, 'ok');
   assert.deepEqual(result.permission, {
     scopeLabel: '平台权限（角色并集）',
-    canViewMemberAdmin: true,
-    canOperateMemberAdmin: true,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: true,
+    canOperateUserManagement: true,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false
   });
   assert.equal(roleRowQueryCount, 1);
   assert.equal(updateQueryCount, 1);
@@ -1410,10 +1410,10 @@ test('syncPlatformPermissionSnapshotByUserId aborts zeroing when role facts chan
     ) {
       return [
         {
-          can_view_member_admin: 1,
-          can_operate_member_admin: 1,
-          can_view_billing: 1,
-          can_operate_billing: 0,
+          can_view_user_management: 1,
+          can_operate_user_management: 1,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:00:03.000Z'
         }
       ];
@@ -1427,7 +1427,7 @@ test('syncPlatformPermissionSnapshotByUserId aborts zeroing when role facts chan
     }
     if (
       normalizedSql.includes('UPDATE auth_user_domain_access')
-      && normalizedSql.includes('SET can_view_member_admin = 0')
+      && normalizedSql.includes('SET can_view_user_management = 0')
     ) {
       return { affectedRows: 0 };
     }
@@ -1457,10 +1457,10 @@ test('syncPlatformPermissionSnapshotByUserId aborts stale overwrite when role fa
     ) {
       return [
         {
-          can_view_member_admin: 0,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0,
+          can_view_user_management: 0,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:00:00.000Z'
         }
       ];
@@ -1477,10 +1477,10 @@ test('syncPlatformPermissionSnapshotByUserId aborts stale overwrite when role fa
         {
           role_id: 'platform-view',
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -1512,10 +1512,10 @@ test('syncPlatformPermissionSnapshotByUserId detects concurrent role fact change
     ) {
       return [
         {
-          can_view_member_admin: 0,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0,
+          can_view_user_management: 0,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0,
           updated_at: '2026-02-14T00:00:00.000Z'
         }
       ];
@@ -1546,10 +1546,10 @@ test('syncPlatformPermissionSnapshotByUserId detects concurrent role fact change
         {
           role_id: 'platform-view',
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -1583,10 +1583,10 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
       return [
         {
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 1,
-          can_view_billing: 1,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 1,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -1610,30 +1610,30 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       },
       {
         roleId: 'platform-operate',
         status: 'active',
         permission: {
-          canViewMemberAdmin: false,
-          canOperateMemberAdmin: true,
-          canViewBilling: true,
-          canOperateBilling: false
+          canViewUserManagement: false,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: false
         }
       },
       {
         roleId: 'platform-disabled',
         status: 'disabled',
         permission: {
-          canViewMemberAdmin: false,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: true
+          canViewUserManagement: false,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: true
         }
       }
     ]
@@ -1641,10 +1641,10 @@ test('replacePlatformRolesAndSyncSnapshot writes role facts and snapshot atomica
 
   assert.deepEqual(result.permission, {
     scopeLabel: '平台权限（角色并集）',
-    canViewMemberAdmin: true,
-    canOperateMemberAdmin: true,
-    canViewBilling: true,
-    canOperateBilling: false
+    canViewUserManagement: true,
+    canOperateUserManagement: true,
+    canViewOrganizationManagement: true,
+    canOperateOrganizationManagement: false
   });
   assert.equal(
     statements.some((statement) =>
@@ -1689,10 +1689,10 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
       return [
         {
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 1,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -1714,23 +1714,23 @@ test('replacePlatformRolesAndSyncSnapshot deduplicates role facts by role_id bef
     userId: 'u-sync-duplicate-role',
     roles: [
       {
-        roleId: 'platform-member-admin',
+        roleId: 'platform-user-management',
         status: 'active',
         permission: {
-          canViewMemberAdmin: false,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: false,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       },
       {
         roleId: 'Platform-Member-Admin',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: true,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -1813,10 +1813,10 @@ test('replacePlatformRolesAndSyncSnapshot with empty roles does not create new p
 
   assert.deepEqual(result.permission, {
     scopeLabel: '平台权限（角色并集）',
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: false,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false
   });
   assert.equal(
     statements.some((statement) =>
@@ -1834,7 +1834,7 @@ test('replacePlatformRolesAndSyncSnapshot with empty roles does not create new p
     statement.includes('UPDATE auth_user_domain_access')
   );
   assert.ok(updateStatement);
-  assert.equal(/can_view_member_admin\s*<>\s*\?/i.test(updateStatement), true);
+  assert.equal(/can_view_user_management\s*<>\s*\?/i.test(updateStatement), true);
 });
 
 test('replacePlatformRolesAndSyncSnapshot rejects unknown user id without mutating role facts', async () => {
@@ -1871,10 +1871,10 @@ test('replacePlatformRolesAndSyncSnapshot rejects unknown user id without mutati
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -1902,10 +1902,10 @@ test('replacePlatformRolesAndSyncSnapshot bumps session version and converges se
       return [
         {
           status: 'disabled',
-          can_view_member_admin: 0,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 0,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -1950,10 +1950,10 @@ test('replacePlatformRolesAndSyncSnapshot bumps session version and converges se
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -1990,10 +1990,10 @@ test('replacePlatformRolesAndSyncSnapshot does not bump session version when eff
       return [
         {
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -2020,10 +2020,10 @@ test('replacePlatformRolesAndSyncSnapshot does not bump session version when eff
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -2050,10 +2050,10 @@ test('replacePlatformRolesAndSyncSnapshot reports synced=true when snapshot writ
       return [
         {
           status: 'active',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 0,
-          can_operate_billing: 0
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 0,
+          can_operate_organization_management: 0
         }
       ];
     }
@@ -2080,10 +2080,10 @@ test('replacePlatformRolesAndSyncSnapshot reports synced=true when snapshot writ
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -2109,7 +2109,7 @@ test('replacePlatformRolesAndSyncSnapshot rejects invalid platform role status',
             roleId: 'platform-role-x',
             status: 'archived',
             permission: {
-              canViewMemberAdmin: true
+              canViewUserManagement: true
             }
           }
         ]
@@ -2135,7 +2135,7 @@ test('replacePlatformRolesAndSyncSnapshot rejects blank platform role status', a
             roleId: 'platform-role-x',
             status: '   ',
             permission: {
-              canViewMemberAdmin: true
+              canViewUserManagement: true
             }
           }
         ]
@@ -2163,10 +2163,10 @@ test('syncPlatformPermissionSnapshotByUserId retries deadlock with backoff+jitte
         }
         return [
           {
-            can_view_member_admin: 0,
-            can_operate_member_admin: 0,
-            can_view_billing: 0,
-            can_operate_billing: 0,
+            can_view_user_management: 0,
+            can_operate_user_management: 0,
+            can_view_organization_management: 0,
+            can_operate_organization_management: 0,
             updated_at: '2026-02-14T00:00:00.000Z'
           }
         ];
@@ -2179,10 +2179,10 @@ test('syncPlatformPermissionSnapshotByUserId retries deadlock with backoff+jitte
           {
             role_id: 'platform-view',
             status: 'active',
-            can_view_member_admin: 1,
-            can_operate_member_admin: 0,
-            can_view_billing: 0,
-            can_operate_billing: 0
+            can_view_user_management: 1,
+            can_operate_user_management: 0,
+            can_view_organization_management: 0,
+            can_operate_organization_management: 0
           }
         ];
       }
@@ -2262,10 +2262,10 @@ test('syncPlatformPermissionSnapshotByUserId normalizes invalid random() output 
         }
         return [
           {
-            can_view_member_admin: 0,
-            can_operate_member_admin: 0,
-            can_view_billing: 0,
-            can_operate_billing: 0,
+            can_view_user_management: 0,
+            can_operate_user_management: 0,
+            can_view_organization_management: 0,
+            can_operate_organization_management: 0,
             updated_at: '2026-02-14T00:00:00.000Z'
           }
         ];
@@ -2278,10 +2278,10 @@ test('syncPlatformPermissionSnapshotByUserId normalizes invalid random() output 
           {
             role_id: 'platform-view',
             status: 'active',
-            can_view_member_admin: 1,
-            can_operate_member_admin: 0,
-            can_view_billing: 0,
-            can_operate_billing: 0
+            can_view_user_management: 1,
+            can_operate_user_management: 0,
+            can_view_organization_management: 0,
+            can_operate_organization_management: 0
           }
         ];
       }
@@ -2405,10 +2405,10 @@ test('replacePlatformRolesAndSyncSnapshot retries deadlock with backoff+jitter a
         return [
           {
             status: 'active',
-            can_view_member_admin: 1,
-            can_operate_member_admin: 0,
-            can_view_billing: 0,
-            can_operate_billing: 0
+            can_view_user_management: 1,
+            can_operate_user_management: 0,
+            can_view_organization_management: 0,
+            can_operate_organization_management: 0
           }
         ];
       }
@@ -2452,10 +2452,10 @@ test('replacePlatformRolesAndSyncSnapshot retries deadlock with backoff+jitter a
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -2498,10 +2498,10 @@ test('replacePlatformRolesAndSyncSnapshot returns db-deadlock after retry exhaus
         return [
           {
             status: 'active',
-            can_view_member_admin: 1,
-            can_operate_member_admin: 0,
-            can_view_billing: 0,
-            can_operate_billing: 0
+            can_view_user_management: 1,
+            can_operate_user_management: 0,
+            can_view_organization_management: 0,
+            can_operate_organization_management: 0
           }
         ];
       }
@@ -2536,10 +2536,10 @@ test('replacePlatformRolesAndSyncSnapshot returns db-deadlock after retry exhaus
         roleId: 'platform-view',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -2694,10 +2694,10 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
                 tenant_id: String(params[1] || '').trim(),
                 status: 'active',
                 tenant_name: txState.orgName,
-                can_view_member_admin: 0,
-                can_operate_member_admin: 0,
-                can_view_billing: 0,
-                can_operate_billing: 0,
+                can_view_user_management: 0,
+                can_operate_user_management: 0,
+                can_view_organization_management: 0,
+                can_operate_organization_management: 0,
                 joined_at: '2026-01-01T00:00:00.000Z',
                 left_at: null
               }];
@@ -2711,10 +2711,10 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
                 user_id: txState.ownerUserId,
                 tenant_id: String(params[1] || '').trim(),
                 status: 'active',
-                can_view_member_admin: 0,
-                can_operate_member_admin: 0,
-                can_view_billing: 0,
-                can_operate_billing: 0
+                can_view_user_management: 0,
+                can_operate_user_management: 0,
+                can_view_organization_management: 0,
+                can_operate_organization_management: 0
               }];
             }
             if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
@@ -2809,7 +2809,7 @@ test('createOrganizationWithOwner persists org and owner membership in one trans
             }
             if (
               normalizedSql.includes('UPDATE auth_user_tenants')
-              && normalizedSql.includes('SET can_view_member_admin = ?')
+              && normalizedSql.includes('SET can_view_user_management = ?')
             ) {
               return { affectedRows: 1 };
             }
@@ -2899,10 +2899,10 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
                 tenant_id: String(params[1] || '').trim(),
                 status: 'active',
                 tenant_name: txState.orgName,
-                can_view_member_admin: 0,
-                can_operate_member_admin: 0,
-                can_view_billing: 0,
-                can_operate_billing: 0,
+                can_view_user_management: 0,
+                can_operate_user_management: 0,
+                can_view_organization_management: 0,
+                can_operate_organization_management: 0,
                 joined_at: '2026-01-01T00:00:00.000Z',
                 left_at: null
               }];
@@ -2916,10 +2916,10 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
                 user_id: txState.ownerUserId,
                 tenant_id: String(params[1] || '').trim(),
                 status: 'active',
-                can_view_member_admin: 0,
-                can_operate_member_admin: 0,
-                can_view_billing: 0,
-                can_operate_billing: 0
+                can_view_user_management: 0,
+                can_operate_user_management: 0,
+                can_view_organization_management: 0,
+                can_operate_organization_management: 0
               }];
             }
             if (normalizedSql.includes('INSERT INTO auth_user_domain_access')) {
@@ -3014,7 +3014,7 @@ test('createOrganizationWithOwner retries deadlock and succeeds on next transact
             }
             if (
               normalizedSql.includes('UPDATE auth_user_tenants')
-              && normalizedSql.includes('SET can_view_member_admin = ?')
+              && normalizedSql.includes('SET can_view_user_management = ?')
             ) {
               return { affectedRows: 1 };
             }
@@ -3891,7 +3891,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       normalizedSql.includes('SELECT membership_id')
       && normalizedSql.includes('FROM auth_user_tenants')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
-      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
@@ -3899,10 +3899,10 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
         user_id: 'owner-transfer-store-new-owner',
         tenant_id: 'owner-transfer-store-org-success',
         status: 'active',
-        can_view_member_admin: 0,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0
+        can_view_user_management: 0,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0
       }];
     }
     if (
@@ -3927,17 +3927,17 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
       return [
         {
           role_id: 'sys_admin',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         },
         {
           role_id: 'sys_admin',
-          permission_code: 'tenant.member_admin.operate'
+          permission_code: 'tenant.user_management.operate'
         }
       ];
     }
     if (
       normalizedSql.includes('UPDATE auth_user_tenants')
-      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       snapshotSyncCalled = true;
@@ -3972,8 +3972,8 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     takeoverRoleCode: 'sys_admin',
     takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
-      'tenant.member_admin.view',
-      'tenant.member_admin.operate'
+      'tenant.user_management.view',
+      'tenant.user_management.operate'
     ]
   });
 
@@ -3983,7 +3983,7 @@ test('executeOwnerTransferTakeover atomically switches owner and converges tenan
     new_owner_user_id: 'owner-transfer-store-new-owner',
     membership_id: 'membership-owner-transfer-store-new-owner',
     role_ids: ['sys_admin'],
-    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view'],
+    permission_codes: ['tenant.user_management.operate', 'tenant.user_management.view'],
     audit_recorded: false
   });
   assert.equal(roleCatalogInsertCalled, true);
@@ -4046,8 +4046,8 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [
-        { permission_code: 'tenant.member_admin.view' },
-        { permission_code: 'tenant.member_admin.operate' }
+        { permission_code: 'tenant.user_management.view' },
+        { permission_code: 'tenant.user_management.operate' }
       ];
     }
     if (
@@ -4064,10 +4064,10 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
           tenant_id: 'owner-transfer-store-left-rejoin',
           status: 'left',
           tenant_name: '历史组织',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 0,
-          can_view_billing: 1,
-          can_operate_billing: 0,
+          can_view_user_management: 1,
+          can_operate_user_management: 0,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 0,
           joined_at: '2025-01-01T00:00:00.000Z',
           left_at: '2025-01-31T00:00:00.000Z'
         }];
@@ -4078,10 +4078,10 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
         tenant_id: 'owner-transfer-store-left-rejoin',
         status: 'active',
         tenant_name: '历史组织',
-        can_view_member_admin: 0,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0,
+        can_view_user_management: 0,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0,
         joined_at: '2026-02-20T00:00:00.000Z',
         left_at: null
       }];
@@ -4139,7 +4139,7 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       normalizedSql.includes('SELECT membership_id')
       && normalizedSql.includes('FROM auth_user_tenants')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
-      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
@@ -4147,10 +4147,10 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
         user_id: 'owner-transfer-store-left-rejoin-new-owner',
         tenant_id: 'owner-transfer-store-left-rejoin',
         status: 'active',
-        can_view_member_admin: 0,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0
+        can_view_user_management: 0,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0
       }];
     }
     if (
@@ -4175,17 +4175,17 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
       return [
         {
           role_id: 'sys_admin',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         },
         {
           role_id: 'sys_admin',
-          permission_code: 'tenant.member_admin.operate'
+          permission_code: 'tenant.user_management.operate'
         }
       ];
     }
     if (
       normalizedSql.includes('UPDATE auth_user_tenants')
-      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       return { affectedRows: 1 };
@@ -4219,8 +4219,8 @@ test('executeOwnerTransferTakeover archives full membership snapshot when rejoin
     takeoverRoleCode: 'sys_admin',
     takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
-      'tenant.member_admin.view',
-      'tenant.member_admin.operate'
+      'tenant.user_management.view',
+      'tenant.user_management.operate'
     ]
   });
 
@@ -4275,7 +4275,7 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
       return [{
         role_id: 'sys_admin__aaaaaaaaaaaaaaaaaaaaaaaa',
         tenant_id: 'owner-transfer-store-role-code-invalid',
-        code: 'TENANT_BILLING_GUARD',
+        code: 'TENANT_ROLE_MANAGEMENT_GUARD',
         status: 'active',
         scope: 'tenant'
       }];
@@ -4298,8 +4298,8 @@ test('executeOwnerTransferTakeover rejects existing takeover role with mismatche
         takeoverRoleCode: 'sys_admin',
         takeoverRoleName: 'sys_admin',
         requiredPermissionCodes: [
-          'tenant.member_admin.view',
-          'tenant.member_admin.operate'
+          'tenant.user_management.view',
+          'tenant.user_management.operate'
         ]
       }),
     (error) => {
@@ -4375,8 +4375,8 @@ test('executeOwnerTransferTakeover rejects duplicate takeover role insert when r
         takeoverRoleCode: 'sys_admin',
         takeoverRoleName: 'sys_admin',
         requiredPermissionCodes: [
-          'tenant.member_admin.view',
-          'tenant.member_admin.operate'
+          'tenant.user_management.view',
+          'tenant.user_management.operate'
         ]
       }),
     (error) => {
@@ -4517,7 +4517,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       normalizedSql.includes('SELECT membership_id')
       && normalizedSql.includes('FROM auth_user_tenants')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
-      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
@@ -4525,10 +4525,10 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
         user_id: 'owner-transfer-store-membership-race-new-owner',
         tenant_id: 'owner-transfer-store-membership-race',
         status: 'active',
-        can_view_member_admin: 0,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0
+        can_view_user_management: 0,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0
       }];
     }
     if (
@@ -4553,17 +4553,17 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
       return [
         {
           role_id: 'sys_admin',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         },
         {
           role_id: 'sys_admin',
-          permission_code: 'tenant.member_admin.operate'
+          permission_code: 'tenant.user_management.operate'
         }
       ];
     }
     if (
       normalizedSql.includes('UPDATE auth_user_tenants')
-      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       snapshotSyncCalled = true;
@@ -4598,8 +4598,8 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     takeoverRoleCode: 'sys_admin',
     takeoverRoleName: 'sys_admin',
     requiredPermissionCodes: [
-      'tenant.member_admin.view',
-      'tenant.member_admin.operate'
+      'tenant.user_management.view',
+      'tenant.user_management.operate'
     ]
   });
 
@@ -4609,7 +4609,7 @@ test('executeOwnerTransferTakeover resolves membership after duplicate membershi
     new_owner_user_id: 'owner-transfer-store-membership-race-new-owner',
     membership_id: 'membership-owner-transfer-store-membership-race',
     role_ids: ['sys_admin'],
-    permission_codes: ['tenant.member_admin.operate', 'tenant.member_admin.view'],
+    permission_codes: ['tenant.user_management.operate', 'tenant.user_management.view'],
     audit_recorded: false
   });
   assert.equal(membershipInsertAttemptCount, 1);
@@ -4667,7 +4667,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
-        permission_code: 'tenant.member_admin.view'
+        permission_code: 'tenant.user_management.view'
       }];
     }
     if (
@@ -4729,7 +4729,7 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
       normalizedSql.includes('SELECT membership_id')
       && normalizedSql.includes('FROM auth_user_tenants')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
-      && normalizedSql.includes('can_view_member_admin')
+      && normalizedSql.includes('can_view_user_management')
       && normalizedSql.includes('FOR UPDATE')
     ) {
       return [{
@@ -4737,10 +4737,10 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
         user_id: 'owner-transfer-store-permission-new-owner',
         tenant_id: 'owner-transfer-store-permission-invalid',
         status: 'active',
-        can_view_member_admin: 0,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0
+        can_view_user_management: 0,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0
       }];
     }
     if (
@@ -4764,12 +4764,12 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
     ) {
       return [{
         role_id: 'sys_admin',
-        permission_code: 'tenant.member_admin.view'
+        permission_code: 'tenant.user_management.view'
       }];
     }
     if (
       normalizedSql.includes('UPDATE auth_user_tenants')
-      && normalizedSql.includes('SET can_view_member_admin = ?')
+      && normalizedSql.includes('SET can_view_user_management = ?')
       && normalizedSql.includes('WHERE membership_id = ? AND tenant_id = ?')
     ) {
       return { affectedRows: 1 };
@@ -4805,8 +4805,8 @@ test('executeOwnerTransferTakeover rejects malformed effective permission snapsh
         takeoverRoleCode: 'sys_admin',
         takeoverRoleName: 'sys_admin',
         requiredPermissionCodes: [
-          'tenant.member_admin.view',
-          'tenant.member_admin.operate'
+          'tenant.user_management.view',
+          'tenant.user_management.operate'
         ]
       }),
     (error) => {
@@ -5576,10 +5576,10 @@ test('updateTenantMembershipStatus fails closed when membership history table is
         tenant_id: 'tenant-history',
         tenant_name: 'Tenant History',
         status: 'left',
-        can_view_member_admin: 1,
-        can_operate_member_admin: 1,
-        can_view_billing: 1,
-        can_operate_billing: 0,
+        can_view_user_management: 1,
+        can_operate_user_management: 1,
+        can_view_organization_management: 1,
+        can_operate_organization_management: 0,
         joined_at: '2026-02-01T00:00:00.000Z',
         left_at: '2026-02-10T00:00:00.000Z'
       }];
@@ -5636,10 +5636,10 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
         tenant_id: 'tenant-reactivate',
         tenant_name: 'Tenant Reactivate',
         status: membershipLookupCount === 1 ? 'disabled' : 'active',
-        can_view_member_admin: 1,
-        can_operate_member_admin: 0,
-        can_view_billing: 1,
-        can_operate_billing: 0,
+        can_view_user_management: 1,
+        can_operate_user_management: 0,
+        can_view_organization_management: 1,
+        can_operate_organization_management: 0,
         joined_at: '2026-02-01T00:00:00.000Z',
         left_at: null
       }];
@@ -5674,11 +5674,11 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
       return [
         {
           role_id: 'tenant_role_reactivate',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         },
         {
           role_id: 'tenant_role_reactivate',
-          permission_code: 'tenant.billing.view'
+          permission_code: 'tenant.role_management.view'
         }
       ];
     }
@@ -5723,10 +5723,10 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     current_status: 'active',
     audit_recorded: false
   });
-  assert.match(updateSql, /can_view_member_admin\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
-  assert.match(updateSql, /can_operate_member_admin\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
-  assert.match(updateSql, /can_view_billing\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
-  assert.match(updateSql, /can_operate_billing\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_view_user_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_operate_user_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_view_organization_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
+  assert.match(updateSql, /can_operate_organization_management\s*=\s*CASE\s+WHEN\s+\?\s*=\s*'left'/i);
   assert.equal(updateParams.length, 9);
   assert.deepEqual(
     updateParams.slice(0, 7),
@@ -5760,10 +5760,10 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
           tenant_id: 'tenant-reactivate-left',
           tenant_name: 'Tenant Reactivate Left',
           status: 'left',
-          can_view_member_admin: 1,
-          can_operate_member_admin: 1,
-          can_view_billing: 1,
-          can_operate_billing: 1,
+          can_view_user_management: 1,
+          can_operate_user_management: 1,
+          can_view_organization_management: 1,
+          can_operate_organization_management: 1,
           joined_at: '2026-02-01T00:00:00.000Z',
           left_at: '2026-02-10T00:00:00.000Z'
         }];
@@ -5774,10 +5774,10 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
         tenant_id: 'tenant-reactivate-left',
         tenant_name: 'Tenant Reactivate Left',
         status: 'active',
-        can_view_member_admin: 0,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0,
+        can_view_user_management: 0,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0,
         joined_at: '2026-02-11T00:00:00.000Z',
         left_at: null
       }];
@@ -5830,10 +5830,10 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
   assert.equal(result.previous_status, 'left');
   assert.equal(result.current_status, 'active');
   assert.notEqual(result.membership_id, 'membership-reactivate-left');
-  assert.match(updateSql, /can_view_member_admin\s*=\s*0/i);
-  assert.match(updateSql, /can_operate_member_admin\s*=\s*0/i);
-  assert.match(updateSql, /can_view_billing\s*=\s*0/i);
-  assert.match(updateSql, /can_operate_billing\s*=\s*0/i);
+  assert.match(updateSql, /can_view_user_management\s*=\s*0/i);
+  assert.match(updateSql, /can_operate_user_management\s*=\s*0/i);
+  assert.match(updateSql, /can_view_organization_management\s*=\s*0/i);
+  assert.match(updateSql, /can_operate_organization_management\s*=\s*0/i);
   assert.equal(updateParams.length, 3);
   assert.equal(deleteMembershipRoleBindingCount, 1);
   assert.equal(membershipLookupCount, 2);
@@ -5855,10 +5855,10 @@ test('updateTenantMembershipStatus writes tenant audit event when auditContext i
         tenant_id: 'tenant-status-audit',
         tenant_name: 'Tenant Status Audit',
         status: 'active',
-        can_view_member_admin: 1,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0,
+        can_view_user_management: 1,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0,
         joined_at: '2026-02-20T00:00:00.000Z',
         left_at: null
       }];
@@ -5928,10 +5928,10 @@ test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_F
         tenant_id: 'tenant-status-audit-failed',
         tenant_name: 'Tenant Status Audit Failed',
         status: 'active',
-        can_view_member_admin: 1,
-        can_operate_member_admin: 0,
-        can_view_billing: 0,
-        can_operate_billing: 0,
+        can_view_user_management: 1,
+        can_operate_user_management: 0,
+        can_view_organization_management: 0,
+        can_operate_organization_management: 0,
         joined_at: '2026-02-20T00:00:00.000Z',
         left_at: null
       }];
@@ -6364,7 +6364,7 @@ test('replaceTenantRolePermissionGrantsAndSyncSnapshots rejects malformed affect
       store.replaceTenantRolePermissionGrantsAndSyncSnapshots({
         tenantId: 'tenant-role-permission-user-id-invalid',
         roleId: 'tenant_role_permission_affected_user_invalid',
-        permissionCodes: ['tenant.member_admin.view']
+        permissionCodes: ['tenant.user_management.view']
       }),
     (error) => {
       assert.equal(error?.code, 'ERR_TENANT_ROLE_PERMISSION_GRANTS_INVALID');
@@ -6382,7 +6382,7 @@ test('listPlatformRolePermissionGrants rejects malformed permission codes from s
       && normalizedSql.includes('WHERE role_id = ?')
     ) {
       return [
-        { permission_code: 'platform.member_admin.view' },
+        { permission_code: 'platform.user_management.view' },
         { permission_code: '   ' }
       ];
     }
@@ -6411,8 +6411,8 @@ test('listPlatformRolePermissionGrants rejects duplicate permission codes from s
       && normalizedSql.includes('WHERE role_id = ?')
     ) {
       return [
-        { permission_code: 'platform.member_admin.view' },
-        { permission_code: 'PLATFORM.MEMBER_ADMIN.VIEW' }
+        { permission_code: 'platform.user_management.view' },
+        { permission_code: 'PLATFORM.USER_MANAGEMENT.VIEW' }
       ];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -6442,11 +6442,11 @@ test('listPlatformRolePermissionGrantsByRoleIds rejects unexpected role rows fro
       return [
         {
           role_id: 'platform_role_permission_batch_expected',
-          permission_code: 'platform.member_admin.view'
+          permission_code: 'platform.user_management.view'
         },
         {
           role_id: 'platform_role_permission_batch_unexpected',
-          permission_code: 'platform.billing.view'
+          permission_code: 'platform.organization_management.view'
         }
       ];
     }
@@ -6477,7 +6477,7 @@ test('listPlatformRolePermissionGrantsByRoleIds rejects role rows with uppercase
       return [
         {
           role_id: 'PLATFORM_ROLE_PERMISSION_BATCH_CASE_TARGET',
-          permission_code: 'platform.member_admin.view'
+          permission_code: 'platform.user_management.view'
         }
       ];
     }
@@ -6508,11 +6508,11 @@ test('listPlatformRolePermissionGrantsByRoleIds rejects duplicate permission cod
       return [
         {
           role_id: 'platform_role_permission_batch_duplicate_target',
-          permission_code: 'platform.member_admin.view'
+          permission_code: 'platform.user_management.view'
         },
         {
           role_id: 'platform_role_permission_batch_duplicate_target',
-          permission_code: 'PLATFORM.MEMBER_ADMIN.VIEW'
+          permission_code: 'PLATFORM.USER_MANAGEMENT.VIEW'
         }
       ];
     }
@@ -6541,7 +6541,7 @@ test('listTenantRolePermissionGrants rejects malformed permission codes from sto
       && normalizedSql.includes('WHERE role_id = ?')
     ) {
       return [
-        { permission_code: 'tenant.member_admin.view' },
+        { permission_code: 'tenant.user_management.view' },
         { permission_code: '   ' }
       ];
     }
@@ -6570,8 +6570,8 @@ test('listTenantRolePermissionGrants rejects duplicate permission codes from sto
       && normalizedSql.includes('WHERE role_id = ?')
     ) {
       return [
-        { permission_code: 'tenant.member_admin.view' },
-        { permission_code: 'TENANT.MEMBER_ADMIN.VIEW' }
+        { permission_code: 'tenant.user_management.view' },
+        { permission_code: 'TENANT.USER_MANAGEMENT.VIEW' }
       ];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -6601,11 +6601,11 @@ test('listTenantRolePermissionGrantsByRoleIds rejects unexpected role rows from 
       return [
         {
           role_id: 'tenant_role_permission_batch_expected',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         },
         {
           role_id: 'tenant_role_permission_batch_unexpected',
-          permission_code: 'tenant.billing.view'
+          permission_code: 'tenant.role_management.view'
         }
       ];
     }
@@ -6634,7 +6634,7 @@ test('listTenantRolePermissionGrants rejects permission codes with surrounding w
       && normalizedSql.includes('WHERE role_id = ?')
     ) {
       return [
-        { permission_code: ' tenant.member_admin.view' }
+        { permission_code: ' tenant.user_management.view' }
       ];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
@@ -6664,7 +6664,7 @@ test('listTenantRolePermissionGrantsByRoleIds rejects role rows with surrounding
       return [
         {
           role_id: ' tenant_role_permission_batch_whitespace',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         }
       ];
     }
@@ -6695,7 +6695,7 @@ test('listTenantRolePermissionGrantsByRoleIds rejects role rows with uppercase r
       return [
         {
           role_id: 'TENANT_ROLE_PERMISSION_BATCH_CASE_TARGET',
-          permission_code: 'tenant.member_admin.view'
+          permission_code: 'tenant.user_management.view'
         }
       ];
     }

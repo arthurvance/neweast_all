@@ -354,10 +354,10 @@ test('change password under tenant entry without active tenant falls back to pla
               tenantName: 'Tenant A',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: false,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             },
             {
@@ -366,10 +366,10 @@ test('change password under tenant entry without active tenant falls back to pla
               tenantName: 'Tenant B',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: false,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -443,13 +443,13 @@ test('platform role-facts replace converges session and invalidates previous acc
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -493,10 +493,10 @@ test('platform role-facts replace converges session and invalidates previous acc
   assert.equal(replaced.body.reason, 'ok');
   assert.deepEqual(replaced.body.platform_permission_context, {
     scope_label: '平台权限（角色并集）',
-    can_view_member_admin: true,
-    can_operate_member_admin: true,
-    can_view_billing: true,
-    can_operate_billing: true
+    can_view_user_management: true,
+    can_operate_user_management: true,
+    can_view_organization_management: true,
+    can_operate_organization_management: true
   });
 
   const oldAccess = await callRoute(
@@ -556,13 +556,13 @@ test('platform role-facts replace replays the same Idempotency-Key without dupli
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -656,13 +656,13 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -675,13 +675,13 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-target-old',
+              roleId: 'platform-user-management-target-old',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -735,13 +735,13 @@ test('platform role-facts replace rejects payload drift for reused Idempotency-K
         user_id: 'user-platform-role-target-idempotency-conflict',
         roles: [
           {
-            role_id: 'platform-member-admin-target-new',
+            role_id: 'platform-user-management-target-new',
             status: 'active',
             permission: {
-              can_view_member_admin: true,
-              can_operate_member_admin: true,
-              can_view_billing: false,
-              can_operate_billing: false
+              can_view_user_management: true,
+              can_operate_user_management: true,
+              can_view_organization_management: false,
+              can_operate_organization_management: false
             }
           }
         ]
@@ -775,13 +775,13 @@ test('platform role-facts replace rejects unknown user id with AUTH-400-INVALID-
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -836,13 +836,13 @@ test('platform role-facts replace rejects non-string user_id with AUTH-400-INVAL
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -885,7 +885,7 @@ test('platform role-facts replace rejects non-string user_id with AUTH-400-INVAL
   assert.equal(replaced.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('platform role-facts replace rejects caller without platform.member_admin.operate', async () => {
+test('platform role-facts replace rejects caller without platform.user_management.operate', async () => {
   const context = {
     authService: createAuthService({
       seedUsers: [
@@ -947,13 +947,13 @@ test('platform role-facts replace rejects missing roles field with AUTH-400-INVA
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1007,13 +1007,13 @@ test('platform role-facts replace rejects unsupported role status with AUTH-400-
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1048,7 +1048,7 @@ test('platform role-facts replace rejects unsupported role status with AUTH-400-
         user_id: 'user-platform-role-admin-4',
         roles: [
           {
-            role_id: 'platform-member-admin-operator',
+            role_id: 'platform-user-management-operator',
             status: 'pending-approval'
           }
         ]
@@ -1073,13 +1073,13 @@ test('platform role-facts replace rejects blank role status with AUTH-400-INVALI
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1114,7 +1114,7 @@ test('platform role-facts replace rejects blank role status with AUTH-400-INVALI
         user_id: 'user-platform-role-admin-4b',
         roles: [
           {
-            role_id: 'platform-member-admin-operator',
+            role_id: 'platform-user-management-operator',
             status: '   '
           }
         ]
@@ -1139,13 +1139,13 @@ test('platform role-facts replace rejects payload with more than 5 role facts', 
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1207,13 +1207,13 @@ test('platform role-facts replace rejects role_id longer than 64 chars', async (
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1268,13 +1268,13 @@ test('platform role-facts replace rejects non-boolean permission flags with AUTH
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1309,10 +1309,10 @@ test('platform role-facts replace rejects non-boolean permission flags with AUTH
         user_id: 'user-platform-role-admin-4g',
         roles: [
           {
-            role_id: 'platform-member-admin-operator',
+            role_id: 'platform-user-management-operator',
             status: 'active',
             permission: {
-              can_operate_member_admin: 'true'
+              can_operate_user_management: 'true'
             }
           }
         ]
@@ -1337,13 +1337,13 @@ test('platform role-facts replace rejects non-object permission payload with AUT
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1378,7 +1378,7 @@ test('platform role-facts replace rejects non-object permission payload with AUT
         user_id: 'user-platform-role-admin-4h',
         roles: [
           {
-            role_id: 'platform-member-admin-operator',
+            role_id: 'platform-user-management-operator',
             status: 'active',
             permission: 'invalid'
           }
@@ -1404,13 +1404,13 @@ test('platform role-facts replace rejects top-level permission fields with AUTH-
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1445,8 +1445,8 @@ test('platform role-facts replace rejects top-level permission fields with AUTH-
         user_id: 'user-platform-role-admin-4i',
         roles: [
           {
-            role_id: 'platform-member-admin-operator',
-            can_view_member_admin: true
+            role_id: 'platform-user-management-operator',
+            can_view_user_management: true
           }
         ]
       }
@@ -1470,13 +1470,13 @@ test('platform role-facts replace rejects duplicate role_id entries with AUTH-40
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1538,13 +1538,13 @@ test('platform role-facts replace rejects duplicate role_id entries regardless o
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1602,13 +1602,13 @@ test('platform role-facts replace rejects role item missing role_id with AUTH-40
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1663,13 +1663,13 @@ test('platform role-facts replace rejects non-string role_id with AUTH-400-INVAL
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1724,13 +1724,13 @@ test('platform role-facts replace maps degraded sync reason to AUTH-503-PLATFORM
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1781,7 +1781,7 @@ test('platform role-facts replace maps degraded sync reason to AUTH-503-PLATFORM
   assert.equal(replaced.body.degradation_reason, 'db-deadlock');
 });
 
-test('platform member-admin provision-user endpoint creates user and rejects duplicate relationship requests', async () => {
+test('platform user-management provision-user endpoint creates user and rejects duplicate relationship requests', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -1799,13 +1799,13 @@ test('platform member-admin provision-user endpoint creates user and rejects dup
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1835,7 +1835,7 @@ test('platform member-admin provision-user endpoint creates user and rejects dup
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -1867,7 +1867,7 @@ test('platform member-admin provision-user endpoint creates user and rejects dup
 
   const duplicateProvision = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -1882,7 +1882,7 @@ test('platform member-admin provision-user endpoint creates user and rejects dup
   assert.equal(duplicateProvision.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
 });
 
-test('platform member-admin provision-user endpoint rejects tenant_name payload', async () => {
+test('platform user-management provision-user endpoint rejects tenant_name payload', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-tenant-name-invalid-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -1900,13 +1900,13 @@ test('platform member-admin provision-user endpoint rejects tenant_name payload'
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -1936,7 +1936,7 @@ test('platform member-admin provision-user endpoint rejects tenant_name payload'
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -1952,7 +1952,7 @@ test('platform member-admin provision-user endpoint rejects tenant_name payload'
   assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('platform member-admin provision-user endpoint rejects unknown payload property', async () => {
+test('platform user-management provision-user endpoint rejects unknown payload property', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-unknown-field-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -1970,13 +1970,13 @@ test('platform member-admin provision-user endpoint rejects unknown payload prop
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2006,7 +2006,7 @@ test('platform member-admin provision-user endpoint rejects unknown payload prop
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2022,7 +2022,7 @@ test('platform member-admin provision-user endpoint rejects unknown payload prop
   assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('tenant member-admin provision-user endpoint creates tenant relationship and rejects duplicate relationship requests', async () => {
+test('tenant user-management provision-user endpoint creates tenant relationship and rejects duplicate relationship requests', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2043,10 +2043,10 @@ test('tenant member-admin provision-user endpoint creates tenant relationship an
               tenantId: 'tenant-api-a',
               tenantName: 'Tenant API A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2077,7 +2077,7 @@ test('tenant member-admin provision-user endpoint creates tenant relationship an
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2095,7 +2095,7 @@ test('tenant member-admin provision-user endpoint creates tenant relationship an
 
   const duplicateProvision = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2111,7 +2111,7 @@ test('tenant member-admin provision-user endpoint creates tenant relationship an
   assert.equal(duplicateProvision.body.error_code, 'AUTH-409-PROVISION-CONFLICT');
 });
 
-test('tenant member-admin provision-user endpoint reuses existing user without mutating password hash', async () => {
+test('tenant user-management provision-user endpoint reuses existing user without mutating password hash', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-reuse-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2132,10 +2132,10 @@ test('tenant member-admin provision-user endpoint reuses existing user without m
               tenantId: 'tenant-api-reuse-a',
               tenantName: 'Tenant API Reuse A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2175,7 +2175,7 @@ test('tenant member-admin provision-user endpoint reuses existing user without m
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2196,7 +2196,7 @@ test('tenant member-admin provision-user endpoint reuses existing user without m
   assert.equal(currentUser.passwordHash, previousPasswordHash);
 });
 
-test('tenant member-admin provision-user endpoint returns conflict when tenant domain remains unavailable after relationship provisioning', async () => {
+test('tenant user-management provision-user endpoint returns conflict when tenant domain remains unavailable after relationship provisioning', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-domain-disabled-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2217,10 +2217,10 @@ test('tenant member-admin provision-user endpoint returns conflict when tenant d
               tenantId: 'tenant-api-domain-disabled-a',
               tenantName: 'Tenant API Domain Disabled A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2274,7 +2274,7 @@ test('tenant member-admin provision-user endpoint returns conflict when tenant d
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2297,7 +2297,7 @@ test('tenant member-admin provision-user endpoint returns conflict when tenant d
   );
 });
 
-test('tenant member-admin provision-user endpoint rejects oversized tenant_name', async () => {
+test('tenant user-management provision-user endpoint rejects oversized tenant_name', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-name-validation-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2318,10 +2318,10 @@ test('tenant member-admin provision-user endpoint rejects oversized tenant_name'
               tenantId: 'tenant-api-name-validation-a',
               tenantName: 'Tenant API Name Validation A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2351,7 +2351,7 @@ test('tenant member-admin provision-user endpoint rejects oversized tenant_name'
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2367,7 +2367,7 @@ test('tenant member-admin provision-user endpoint rejects oversized tenant_name'
   assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('tenant member-admin provision-user endpoint rejects tenant_name with oversized raw payload length', async () => {
+test('tenant user-management provision-user endpoint rejects tenant_name with oversized raw payload length', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-raw-length-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2388,10 +2388,10 @@ test('tenant member-admin provision-user endpoint rejects tenant_name with overs
               tenantId: 'tenant-api-raw-length-a',
               tenantName: 'Tenant API Raw Length A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2422,7 +2422,7 @@ test('tenant member-admin provision-user endpoint rejects tenant_name with overs
   const paddedTenantName = ` ${'X'.repeat(128)} `;
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2438,7 +2438,7 @@ test('tenant member-admin provision-user endpoint rejects tenant_name with overs
   assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('tenant member-admin provision-user endpoint rejects blank tenant_name', async () => {
+test('tenant user-management provision-user endpoint rejects blank tenant_name', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-name-blank-validation-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2459,10 +2459,10 @@ test('tenant member-admin provision-user endpoint rejects blank tenant_name', as
               tenantId: 'tenant-api-name-blank-validation-a',
               tenantName: 'Tenant API Name Blank Validation A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2492,7 +2492,7 @@ test('tenant member-admin provision-user endpoint rejects blank tenant_name', as
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2508,7 +2508,7 @@ test('tenant member-admin provision-user endpoint rejects blank tenant_name', as
   assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('tenant member-admin provision-user endpoint rejects unknown payload property', async () => {
+test('tenant user-management provision-user endpoint rejects unknown payload property', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-unknown-field-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2529,10 +2529,10 @@ test('tenant member-admin provision-user endpoint rejects unknown payload proper
               tenantId: 'tenant-api-unknown-field-a',
               tenantName: 'Tenant API Unknown Field A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2562,7 +2562,7 @@ test('tenant member-admin provision-user endpoint rejects unknown payload proper
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2579,7 +2579,7 @@ test('tenant member-admin provision-user endpoint rejects unknown payload proper
   assert.equal(provisioned.body.error_code, 'AUTH-400-INVALID-PAYLOAD');
 });
 
-test('tenant member-admin provision-user endpoint rejects tenant_name that mismatches active tenant canonical name', async () => {
+test('tenant user-management provision-user endpoint rejects tenant_name that mismatches active tenant canonical name', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-name-canonical-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2600,10 +2600,10 @@ test('tenant member-admin provision-user endpoint rejects tenant_name that misma
               tenantId: 'tenant-api-name-canonical-a',
               tenantName: 'Tenant API Name Canonical A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2633,7 +2633,7 @@ test('tenant member-admin provision-user endpoint rejects tenant_name that misma
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2651,7 +2651,7 @@ test('tenant member-admin provision-user endpoint rejects tenant_name that misma
   assert.equal(unexpectedUser, null);
 });
 
-test('tenant member-admin provision-user endpoint rejects caller tenant_name when active tenant canonical name is unavailable', async () => {
+test('tenant user-management provision-user endpoint rejects caller tenant_name when active tenant canonical name is unavailable', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-name-missing-canonical-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2672,10 +2672,10 @@ test('tenant member-admin provision-user endpoint rejects caller tenant_name whe
               tenantId: 'tenant-api-name-missing-canonical-a',
               tenantName: null,
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2705,7 +2705,7 @@ test('tenant member-admin provision-user endpoint rejects caller tenant_name whe
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2723,7 +2723,7 @@ test('tenant member-admin provision-user endpoint rejects caller tenant_name whe
   assert.equal(unexpectedUser, null);
 });
 
-test('tenant member-admin provision-user endpoint rejects request when active tenant canonical name is unavailable even without tenant_name payload', async () => {
+test('tenant user-management provision-user endpoint rejects request when active tenant canonical name is unavailable even without tenant_name payload', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-name-missing-canonical-implicit-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -2744,10 +2744,10 @@ test('tenant member-admin provision-user endpoint rejects request when active te
               tenantId: 'tenant-api-name-missing-canonical-implicit-a',
               tenantName: null,
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2777,7 +2777,7 @@ test('tenant member-admin provision-user endpoint rejects request when active te
 
   const provisioned = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2794,7 +2794,7 @@ test('tenant member-admin provision-user endpoint rejects request when active te
   assert.equal(unexpectedUser, null);
 });
 
-test('platform member-admin provision-user endpoint is fail-closed when default password secure config is unavailable', async () => {
+test('platform user-management provision-user endpoint is fail-closed when default password secure config is unavailable', async () => {
   const context = {
     authService: createAuthService({
       seedUsers: [
@@ -2806,13 +2806,13 @@ test('platform member-admin provision-user endpoint is fail-closed when default 
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2842,7 +2842,7 @@ test('platform member-admin provision-user endpoint is fail-closed when default 
 
   const provisionFailed = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2858,7 +2858,7 @@ test('platform member-admin provision-user endpoint is fail-closed when default 
   assert.equal(provisionFailed.body.retryable, true);
 });
 
-test('platform member-admin provision-user endpoint maps unexpected dependency failures to stable 503 problem details', async () => {
+test('platform user-management provision-user endpoint maps unexpected dependency failures to stable 503 problem details', async () => {
   const context = {
     authService: createAuthService({
       seedUsers: [
@@ -2870,13 +2870,13 @@ test('platform member-admin provision-user endpoint maps unexpected dependency f
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2906,7 +2906,7 @@ test('platform member-admin provision-user endpoint maps unexpected dependency f
 
   const provisionFailed = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2922,7 +2922,7 @@ test('platform member-admin provision-user endpoint maps unexpected dependency f
   assert.equal(provisionFailed.body.retryable, true);
 });
 
-test('tenant member-admin provision-user endpoint maps unexpected dependency failures to stable 503 problem details', async () => {
+test('tenant user-management provision-user endpoint maps unexpected dependency failures to stable 503 problem details', async () => {
   const context = {
     authService: createAuthService({
       seedUsers: [
@@ -2937,10 +2937,10 @@ test('tenant member-admin provision-user endpoint maps unexpected dependency fai
               tenantId: 'tenant-unexpected-failure-a',
               tenantName: 'Tenant Unexpected Failure A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -2970,7 +2970,7 @@ test('tenant member-admin provision-user endpoint maps unexpected dependency fai
 
   const provisionFailed = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
@@ -2986,7 +2986,7 @@ test('tenant member-admin provision-user endpoint maps unexpected dependency fai
   assert.equal(provisionFailed.body.retryable, true);
 });
 
-test('platform member-admin provision-user replays the same Idempotency-Key with stable semantics', async () => {
+test('platform user-management provision-user replays the same Idempotency-Key with stable semantics', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-idempotency-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3004,13 +3004,13 @@ test('platform member-admin provision-user replays the same Idempotency-Key with
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3041,7 +3041,7 @@ test('platform member-admin provision-user replays the same Idempotency-Key with
   const idempotencyKey = 'idem-platform-provision-001';
   const firstProvision = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3058,7 +3058,7 @@ test('platform member-admin provision-user replays the same Idempotency-Key with
 
   const replayProvision = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3079,7 +3079,7 @@ test('platform member-admin provision-user replays the same Idempotency-Key with
   assert.ok(idempotencyHitEvents.length >= 1);
 });
 
-test('platform member-admin provision-user keeps idempotency semantics after refresh token rotation', async () => {
+test('platform user-management provision-user keeps idempotency semantics after refresh token rotation', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-idempotency-refresh';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3097,13 +3097,13 @@ test('platform member-admin provision-user keeps idempotency semantics after ref
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3134,7 +3134,7 @@ test('platform member-admin provision-user keeps idempotency semantics after ref
   const idempotencyKey = 'idem-platform-provision-004';
   const firstProvision = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3162,7 +3162,7 @@ test('platform member-admin provision-user keeps idempotency semantics after ref
 
   const replayAfterRefresh = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${refreshed.body.access_token}`,
@@ -3178,7 +3178,7 @@ test('platform member-admin provision-user keeps idempotency semantics after ref
   assertSamePayloadWithFreshRequestId(replayAfterRefresh.body, firstProvision.body);
 });
 
-test('platform member-admin provision-user rejects payload drift when Idempotency-Key is reused', async () => {
+test('platform user-management provision-user rejects payload drift when Idempotency-Key is reused', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-idempotency-conflict';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3196,13 +3196,13 @@ test('platform member-admin provision-user rejects payload drift when Idempotenc
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3233,7 +3233,7 @@ test('platform member-admin provision-user rejects payload drift when Idempotenc
   const idempotencyKey = 'idem-platform-provision-002';
   const firstProvision = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3249,7 +3249,7 @@ test('platform member-admin provision-user rejects payload drift when Idempotenc
 
   const mismatchedReplay = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3276,7 +3276,7 @@ test('platform member-admin provision-user rejects payload drift when Idempotenc
   assert.ok(idempotencyConflictEvents.length >= 1);
 });
 
-test('platform member-admin provision-user deduplicates concurrent replays with the same Idempotency-Key', async () => {
+test('platform user-management provision-user deduplicates concurrent replays with the same Idempotency-Key', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-idempotency-concurrent';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3294,13 +3294,13 @@ test('platform member-admin provision-user deduplicates concurrent replays with 
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3332,7 +3332,7 @@ test('platform member-admin provision-user deduplicates concurrent replays with 
   const request = () =>
     callRoute(
       {
-        pathname: '/auth/platform/member-admin/provision-user',
+        pathname: '/auth/platform/user-management/provision-user',
         method: 'POST',
         headers: {
           authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3351,7 +3351,7 @@ test('platform member-admin provision-user deduplicates concurrent replays with 
   assertSamePayloadWithFreshRequestId(second.body, first.body);
 });
 
-test('tenant member-admin provision-user treats equivalent payloads with different JSON key order as the same idempotent request', async () => {
+test('tenant user-management provision-user treats equivalent payloads with different JSON key order as the same idempotent request', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-idempotency-key-order';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3372,10 +3372,10 @@ test('tenant member-admin provision-user treats equivalent payloads with differe
               tenantId: 'tenant-idempotency-key-order',
               tenantName: 'Tenant Idempotency Key Order',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3406,7 +3406,7 @@ test('tenant member-admin provision-user treats equivalent payloads with differe
   const idempotencyKey = 'idem-tenant-provision-order-001';
   const firstProvision = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3423,7 +3423,7 @@ test('tenant member-admin provision-user treats equivalent payloads with differe
 
   const replayWithReorderedPayload = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3443,7 +3443,7 @@ test('tenant member-admin provision-user treats equivalent payloads with differe
   );
 });
 
-test('platform member-admin provision-user rejects invalid Idempotency-Key header values', async () => {
+test('platform user-management provision-user rejects invalid Idempotency-Key header values', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-platform-provision-idempotency-invalid';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3461,13 +3461,13 @@ test('platform member-admin provision-user rejects invalid Idempotency-Key heade
           domains: ['platform'],
           platformRoles: [
             {
-              roleId: 'platform-member-admin-operator',
+              roleId: 'platform-user-management-operator',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3498,7 +3498,7 @@ test('platform member-admin provision-user rejects invalid Idempotency-Key heade
   const invalidIdempotencyKey = 'x'.repeat(129);
   const invalidHeaderResponse = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3520,7 +3520,7 @@ test('platform member-admin provision-user rejects invalid Idempotency-Key heade
   assert.equal(unexpectedUser, null);
 });
 
-test('tenant member-admin provision-user applies idempotency replay and payload drift conflict semantics', async () => {
+test('tenant user-management provision-user applies idempotency replay and payload drift conflict semantics', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'api-tenant-provision-idempotency';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -3541,10 +3541,10 @@ test('tenant member-admin provision-user applies idempotency replay and payload 
               tenantId: 'tenant-idempotency-a',
               tenantName: 'Tenant Idempotency A',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: true,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -3576,7 +3576,7 @@ test('tenant member-admin provision-user applies idempotency replay and payload 
   const idempotencyKey = 'idem-tenant-provision-001';
   const firstProvision = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3593,7 +3593,7 @@ test('tenant member-admin provision-user applies idempotency replay and payload 
 
   const replayProvision = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,
@@ -3611,7 +3611,7 @@ test('tenant member-admin provision-user applies idempotency replay and payload 
 
   const payloadDrift = await callRoute(
     {
-      pathname: '/auth/tenant/member-admin/provision-user',
+      pathname: '/auth/tenant/user-management/provision-user',
       method: 'POST',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`,

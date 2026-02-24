@@ -9,8 +9,8 @@ const PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY = 'PATCH /platform/integrations/:int
 const PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY =
   'POST /platform/integrations/:integration_id/lifecycle';
 
-const PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
-const PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_INTEGRATION_VIEW_PERMISSION_CODE = 'platform.user_management.view';
+const PLATFORM_INTEGRATION_OPERATE_PERMISSION_CODE = 'platform.user_management.operate';
 const PLATFORM_INTEGRATION_SCOPE = 'platform';
 
 const PLATFORM_INTEGRATION_DIRECTIONS = Object.freeze([

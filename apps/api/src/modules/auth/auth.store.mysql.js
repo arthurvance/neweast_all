@@ -9,11 +9,11 @@ const {
 const {
   KNOWN_PLATFORM_PERMISSION_CODES,
   KNOWN_TENANT_PERMISSION_CODES,
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
-  SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET,
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
@@ -113,7 +113,7 @@ const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
 const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
 const KNOWN_PLATFORM_PERMISSION_CODE_SET = new Set(KNOWN_PLATFORM_PERMISSION_CODES);
 const KNOWN_TENANT_PERMISSION_CODE_SET = new Set(KNOWN_TENANT_PERMISSION_CODES);
-const PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET = SYSTEM_CONFIG_PERMISSION_CODE_KEY_SET;
+const PLATFORM_ROLE_MANAGEMENT_PERMISSION_CODE_SET = ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET;
 const OWNER_TRANSFER_LOCK_TIMEOUT_SECONDS_MAX = 30;
 const OWNER_TRANSFER_LOCK_NAME_PREFIX = 'neweast:owner-transfer:';
 const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
@@ -121,8 +121,8 @@ const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
 const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
 const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
 const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
 ]);
 const AUDIT_EVENT_ALLOWED_DOMAINS = new Set(['platform', 'tenant']);
 const AUDIT_EVENT_ALLOWED_RESULTS = new Set(['success', 'rejected', 'failed']);
@@ -1294,43 +1294,53 @@ const isActiveLikeStatus = (status) => {
 const VALID_PLATFORM_ROLE_FACT_STATUS = new Set(['active', 'enabled', 'disabled']);
 
 const toPlatformPermissionSnapshot = ({
-  canViewMemberAdmin = false,
-  canOperateMemberAdmin = false,
-  canViewBilling = false,
-  canOperateBilling = false
+  canViewUserManagement = false,
+  canOperateUserManagement = false,
+  canViewOrganizationManagement = false,
+  canOperateOrganizationManagement = false,
+  canViewRoleManagement = false,
+  canOperateRoleManagement = false
 } = {}, scopeLabel = '平台权限（角色并集）') => ({
   scopeLabel,
-  canViewMemberAdmin: Boolean(canViewMemberAdmin),
-  canOperateMemberAdmin: Boolean(canOperateMemberAdmin),
-  canViewBilling: Boolean(canViewBilling),
-  canOperateBilling: Boolean(canOperateBilling)
+  canViewUserManagement: Boolean(canViewUserManagement),
+  canOperateUserManagement: Boolean(canOperateUserManagement),
+  canViewOrganizationManagement: Boolean(canViewOrganizationManagement),
+  canOperateOrganizationManagement: Boolean(canOperateOrganizationManagement),
+  canViewRoleManagement: Boolean(canViewRoleManagement),
+  canOperateRoleManagement: Boolean(canOperateRoleManagement)
 });
 
 const toPlatformPermissionSnapshotFromRow = (row, scopeLabel = '平台权限（角色并集）') =>
   toPlatformPermissionSnapshot(
     {
-      canViewMemberAdmin: row?.can_view_member_admin ?? row?.canViewMemberAdmin,
-      canOperateMemberAdmin: row?.can_operate_member_admin ?? row?.canOperateMemberAdmin,
-      canViewBilling: row?.can_view_billing ?? row?.canViewBilling,
-      canOperateBilling: row?.can_operate_billing ?? row?.canOperateBilling
+      canViewUserManagement: row?.can_view_user_management ?? row?.canViewUserManagement,
+      canOperateUserManagement: row?.can_operate_user_management ?? row?.canOperateUserManagement,
+      canViewOrganizationManagement: row?.can_view_organization_management ?? row?.canViewOrganizationManagement,
+      canOperateOrganizationManagement: row?.can_operate_organization_management ?? row?.canOperateOrganizationManagement,
+      canViewRoleManagement: row?.can_view_role_management ?? row?.canViewRoleManagement,
+      canOperateRoleManagement: row?.can_operate_role_management ?? row?.canOperateRoleManagement
     },
     scopeLabel
   );
 
 const isEmptyPlatformPermissionSnapshot = (permission = {}) =>
-  !Boolean(permission.canViewMemberAdmin)
-  && !Boolean(permission.canOperateMemberAdmin)
-  && !Boolean(permission.canViewBilling)
-  && !Boolean(permission.canOperateBilling);
+  !Boolean(permission.canViewUserManagement)
+  && !Boolean(permission.canOperateUserManagement)
+  && !Boolean(permission.canViewOrganizationManagement)
+  && !Boolean(permission.canOperateOrganizationManagement)
+  && !Boolean(permission.canViewRoleManagement)
+  && !Boolean(permission.canOperateRoleManagement);
 
 const isSamePlatformPermissionSnapshot = (left, right) => {
   const normalizedLeft = left || toPlatformPermissionSnapshot();
   const normalizedRight = right || toPlatformPermissionSnapshot();
   return (
-    Boolean(normalizedLeft.canViewMemberAdmin) === Boolean(normalizedRight.canViewMemberAdmin)
-    && Boolean(normalizedLeft.canOperateMemberAdmin) === Boolean(normalizedRight.canOperateMemberAdmin)
-    && Boolean(normalizedLeft.canViewBilling) === Boolean(normalizedRight.canViewBilling)
-    && Boolean(normalizedLeft.canOperateBilling) === Boolean(normalizedRight.canOperateBilling)
+    Boolean(normalizedLeft.canViewUserManagement) === Boolean(normalizedRight.canViewUserManagement)
+    && Boolean(normalizedLeft.canOperateUserManagement) === Boolean(normalizedRight.canOperateUserManagement)
+    && Boolean(normalizedLeft.canViewOrganizationManagement) === Boolean(normalizedRight.canViewOrganizationManagement)
+    && Boolean(normalizedLeft.canOperateOrganizationManagement) === Boolean(normalizedRight.canOperateOrganizationManagement)
+    && Boolean(normalizedLeft.canViewRoleManagement) === Boolean(normalizedRight.canViewRoleManagement)
+    && Boolean(normalizedLeft.canOperateRoleManagement) === Boolean(normalizedRight.canOperateRoleManagement)
   );
 };
 
@@ -1376,17 +1386,17 @@ const aggregatePlatformPermissionFromRoleRows = (rows) => {
     hasRoleFacts: normalizedRows.length > 0,
     hasActiveRoleFacts: activeRows.length > 0,
     permission: toPlatformPermissionSnapshot({
-      canViewMemberAdmin: activeRows.some((row) =>
-        toBoolean(row?.can_view_member_admin ?? row?.canViewMemberAdmin)
+      canViewUserManagement: activeRows.some((row) =>
+        toBoolean(row?.can_view_user_management ?? row?.canViewUserManagement)
       ),
-      canOperateMemberAdmin: activeRows.some((row) =>
-        toBoolean(row?.can_operate_member_admin ?? row?.canOperateMemberAdmin)
+      canOperateUserManagement: activeRows.some((row) =>
+        toBoolean(row?.can_operate_user_management ?? row?.canOperateUserManagement)
       ),
-      canViewBilling: activeRows.some((row) =>
-        toBoolean(row?.can_view_billing ?? row?.canViewBilling)
+      canViewOrganizationManagement: activeRows.some((row) =>
+        toBoolean(row?.can_view_organization_management ?? row?.canViewOrganizationManagement)
       ),
-      canOperateBilling: activeRows.some((row) =>
-        toBoolean(row?.can_operate_billing ?? row?.canOperateBilling)
+      canOperateOrganizationManagement: activeRows.some((row) =>
+        toBoolean(row?.can_operate_organization_management ?? row?.canOperateOrganizationManagement)
       )
     })
   };
@@ -1401,17 +1411,17 @@ const normalizePlatformRoleFactPayload = (role) => {
   return {
     roleId,
     status: normalizePlatformRoleStatus(role?.status),
-    canViewMemberAdmin: toBoolean(
-      permissionSource?.canViewMemberAdmin ?? permissionSource?.can_view_member_admin
+    canViewUserManagement: toBoolean(
+      permissionSource?.canViewUserManagement ?? permissionSource?.can_view_user_management
     ),
-    canOperateMemberAdmin: toBoolean(
-      permissionSource?.canOperateMemberAdmin ?? permissionSource?.can_operate_member_admin
+    canOperateUserManagement: toBoolean(
+      permissionSource?.canOperateUserManagement ?? permissionSource?.can_operate_user_management
     ),
-    canViewBilling: toBoolean(
-      permissionSource?.canViewBilling ?? permissionSource?.can_view_billing
+    canViewOrganizationManagement: toBoolean(
+      permissionSource?.canViewOrganizationManagement ?? permissionSource?.can_view_organization_management
     ),
-    canOperateBilling: toBoolean(
-      permissionSource?.canOperateBilling ?? permissionSource?.can_operate_billing
+    canOperateOrganizationManagement: toBoolean(
+      permissionSource?.canOperateOrganizationManagement ?? permissionSource?.can_operate_organization_management
     )
   };
 };
@@ -1578,10 +1588,12 @@ const toPlatformPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
     normalizePlatformPermissionCodes(permissionCodes)
   );
   return toPlatformPermissionSnapshot({
-    canViewMemberAdmin: snapshot.canViewMemberAdmin,
-    canOperateMemberAdmin: snapshot.canOperateMemberAdmin,
-    canViewBilling: snapshot.canViewBilling,
-    canOperateBilling: snapshot.canOperateBilling
+    canViewUserManagement: snapshot.canViewUserManagement,
+    canOperateUserManagement: snapshot.canOperateUserManagement,
+    canViewOrganizationManagement: snapshot.canViewOrganizationManagement,
+    canOperateOrganizationManagement: snapshot.canOperateOrganizationManagement,
+    canViewRoleManagement: snapshot.canViewRoleManagement,
+    canOperateRoleManagement: snapshot.canOperateRoleManagement
   });
 };
 const normalizeTenantPermissionCode = (permissionCode) =>
@@ -1714,29 +1726,47 @@ const toTenantPermissionSnapshotFromGrantCodes = (permissionCodes = []) => {
     normalizeTenantPermissionCodes(permissionCodes)
   );
   return toPlatformPermissionSnapshot({
-    canViewMemberAdmin: snapshot.canViewMemberAdmin,
-    canOperateMemberAdmin: snapshot.canOperateMemberAdmin,
-    canViewBilling: snapshot.canViewBilling,
-    canOperateBilling: snapshot.canOperateBilling
+    canViewUserManagement: snapshot.canViewUserManagement,
+    canOperateUserManagement: snapshot.canOperateUserManagement,
+    canViewRoleManagement: snapshot.canViewRoleManagement,
+    canOperateRoleManagement: snapshot.canOperateRoleManagement
   }, '组织权限（角色并集）');
 };
+const toTenantPermissionSnapshotFromRow = (row, scopeLabel = '组织权限（角色并集）') =>
+  toPlatformPermissionSnapshot(
+    {
+      canViewUserManagement: row?.can_view_user_management ?? row?.canViewUserManagement,
+      canOperateUserManagement: row?.can_operate_user_management ?? row?.canOperateUserManagement,
+      canViewRoleManagement:
+        row?.can_view_role_management
+        ?? row?.canViewRoleManagement
+        ?? row?.can_view_organization_management
+        ?? row?.canViewOrganizationManagement,
+      canOperateRoleManagement:
+        row?.can_operate_role_management
+        ?? row?.canOperateRoleManagement
+        ?? row?.can_operate_organization_management
+        ?? row?.canOperateOrganizationManagement
+    },
+    scopeLabel
+  );
 const isSameTenantPermissionSnapshot = (left, right) =>
   isSamePlatformPermissionSnapshot(
     toPlatformPermissionSnapshot(
       {
-        canViewMemberAdmin: left?.canViewMemberAdmin,
-        canOperateMemberAdmin: left?.canOperateMemberAdmin,
-        canViewBilling: left?.canViewBilling,
-        canOperateBilling: left?.canOperateBilling
+        canViewUserManagement: left?.canViewUserManagement,
+        canOperateUserManagement: left?.canOperateUserManagement,
+        canViewRoleManagement: left?.canViewRoleManagement,
+        canOperateRoleManagement: left?.canOperateRoleManagement
       },
       '组织权限（角色并集）'
     ),
     toPlatformPermissionSnapshot(
       {
-        canViewMemberAdmin: right?.canViewMemberAdmin,
-        canOperateMemberAdmin: right?.canOperateMemberAdmin,
-        canViewBilling: right?.canViewBilling,
-        canOperateBilling: right?.canOperateBilling
+        canViewUserManagement: right?.canViewUserManagement,
+        canOperateUserManagement: right?.canOperateUserManagement,
+        canViewRoleManagement: right?.canViewRoleManagement,
+        canOperateRoleManagement: right?.canOperateRoleManagement
       },
       '组织权限（角色并集）'
     )
@@ -2011,10 +2041,10 @@ const createMySqlAuthStore = ({
             tenant_id,
             tenant_name,
             status,
-            can_view_member_admin,
-            can_operate_member_admin,
-            can_view_billing,
-            can_operate_billing,
+            can_view_user_management,
+            can_operate_user_management,
+            can_view_organization_management,
+            can_operate_organization_management,
             joined_at,
             left_at,
             archived_reason,
@@ -2030,10 +2060,10 @@ const createMySqlAuthStore = ({
             ? null
             : String(row.tenant_name || '').trim() || null,
           normalizedRowStatus,
-          toBoolean(row?.can_view_member_admin) ? 1 : 0,
-          toBoolean(row?.can_operate_member_admin) ? 1 : 0,
-          toBoolean(row?.can_view_billing) ? 1 : 0,
-          toBoolean(row?.can_operate_billing) ? 1 : 0,
+          toBoolean(row?.can_view_user_management) ? 1 : 0,
+          toBoolean(row?.can_operate_user_management) ? 1 : 0,
+          toBoolean(row?.can_view_organization_management) ? 1 : 0,
+          toBoolean(row?.can_operate_organization_management) ? 1 : 0,
           row?.joined_at || row?.created_at || null,
           row?.left_at || null,
           archivedReason === null || archivedReason === undefined
@@ -2384,10 +2414,10 @@ const createMySqlAuthStore = ({
                user_id,
                tenant_id,
                status,
-               can_view_member_admin,
-               can_operate_member_admin,
-               can_view_billing,
-               can_operate_billing
+               can_view_user_management,
+               can_operate_user_management,
+               can_view_organization_management,
+               can_operate_organization_management
         FROM auth_user_tenants
         WHERE membership_id = ? AND tenant_id = ?
         LIMIT 1
@@ -2405,7 +2435,7 @@ const createMySqlAuthStore = ({
       };
     }
 
-    const previousSnapshot = toPlatformPermissionSnapshotFromRow(
+    const previousSnapshot = toTenantPermissionSnapshotFromRow(
       membership,
       '组织权限（角色并集）'
     );
@@ -2426,18 +2456,18 @@ const createMySqlAuthStore = ({
       await txClient.query(
         `
           UPDATE auth_user_tenants
-          SET can_view_member_admin = ?,
-              can_operate_member_admin = ?,
-              can_view_billing = ?,
-              can_operate_billing = ?,
+          SET can_view_user_management = ?,
+              can_operate_user_management = ?,
+              can_view_organization_management = ?,
+              can_operate_organization_management = ?,
               updated_at = CURRENT_TIMESTAMP(3)
           WHERE membership_id = ? AND tenant_id = ?
         `,
         [
-          nextSnapshot.canViewMemberAdmin ? 1 : 0,
-          nextSnapshot.canOperateMemberAdmin ? 1 : 0,
-          nextSnapshot.canViewBilling ? 1 : 0,
-          nextSnapshot.canOperateBilling ? 1 : 0,
+          nextSnapshot.canViewUserManagement ? 1 : 0,
+          nextSnapshot.canOperateUserManagement ? 1 : 0,
+          nextSnapshot.canViewRoleManagement ? 1 : 0,
+          nextSnapshot.canOperateRoleManagement ? 1 : 0,
           normalizedMembershipId,
           normalizedTenantId
         ]
@@ -2455,10 +2485,10 @@ const createMySqlAuthStore = ({
       reason: 'ok',
       changed,
       permission: {
-        canViewMemberAdmin: nextSnapshot.canViewMemberAdmin,
-        canOperateMemberAdmin: nextSnapshot.canOperateMemberAdmin,
-        canViewBilling: nextSnapshot.canViewBilling,
-        canOperateBilling: nextSnapshot.canOperateBilling
+        canViewUserManagement: nextSnapshot.canViewUserManagement,
+        canOperateUserManagement: nextSnapshot.canOperateUserManagement,
+        canViewRoleManagement: nextSnapshot.canViewRoleManagement,
+        canOperateRoleManagement: nextSnapshot.canOperateRoleManagement
       },
       membershipId: normalizedMembershipId,
       tenantId: normalizedTenantId,
@@ -2552,10 +2582,10 @@ const createMySqlAuthStore = ({
                        '#',
                        role_id,
                        status,
-                       can_view_member_admin,
-                       can_operate_member_admin,
-                       can_view_billing,
-                       can_operate_billing,
+                       can_view_user_management,
+                       can_operate_user_management,
+                       can_view_organization_management,
+                       can_operate_organization_management,
                        DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')
                      )
                    )
@@ -2640,10 +2670,10 @@ const createMySqlAuthStore = ({
 
     const snapshotRows = await txClient.query(
       `
-        SELECT can_view_member_admin,
-               can_operate_member_admin,
-               can_view_billing,
-               can_operate_billing,
+        SELECT can_view_user_management,
+               can_operate_user_management,
+               can_view_organization_management,
+               can_operate_organization_management,
                updated_at
         FROM auth_user_domain_access
         WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
@@ -2705,17 +2735,17 @@ const createMySqlAuthStore = ({
       const zeroUpdateResult = await txClient.query(
         `
           UPDATE auth_user_domain_access
-          SET can_view_member_admin = 0,
-              can_operate_member_admin = 0,
-              can_view_billing = 0,
-              can_operate_billing = 0,
+          SET can_view_user_management = 0,
+              can_operate_user_management = 0,
+              can_view_organization_management = 0,
+              can_operate_organization_management = 0,
               updated_at = CURRENT_TIMESTAMP(3)
           WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
             AND (
-              can_view_member_admin <> 0
-              OR can_operate_member_admin <> 0
-              OR can_view_billing <> 0
-              OR can_operate_billing <> 0
+              can_view_user_management <> 0
+              OR can_operate_user_management <> 0
+              OR can_view_organization_management <> 0
+              OR can_operate_organization_management <> 0
             )
             AND (
               SELECT COUNT(*)
@@ -2767,10 +2797,10 @@ const createMySqlAuthStore = ({
       `
         SELECT role_id,
                status,
-               can_view_member_admin,
-               can_operate_member_admin,
-               can_view_billing,
-               can_operate_billing
+               can_view_user_management,
+               can_operate_user_management,
+               can_view_organization_management,
+               can_operate_organization_management
         FROM auth_user_platform_roles
         WHERE user_id = ?
       `,
@@ -2787,24 +2817,24 @@ const createMySqlAuthStore = ({
     }
 
     const permission = aggregate.permission;
-    const canViewMemberAdmin = Number(permission.canViewMemberAdmin);
-    const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
-    const canViewBilling = Number(permission.canViewBilling);
-    const canOperateBilling = Number(permission.canOperateBilling);
+    const canViewUserManagement = Number(permission.canViewUserManagement);
+    const canOperateUserManagement = Number(permission.canOperateUserManagement);
+    const canViewOrganizationManagement = Number(permission.canViewOrganizationManagement);
+    const canOperateOrganizationManagement = Number(permission.canOperateOrganizationManagement);
     const updateResult = await txClient.query(
       `
         UPDATE auth_user_domain_access
-        SET can_view_member_admin = ?,
-            can_operate_member_admin = ?,
-            can_view_billing = ?,
-            can_operate_billing = ?,
+        SET can_view_user_management = ?,
+            can_operate_user_management = ?,
+            can_view_organization_management = ?,
+            can_operate_organization_management = ?,
             updated_at = CURRENT_TIMESTAMP(3)
         WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
           AND (
-            can_view_member_admin <> ?
-            OR can_operate_member_admin <> ?
-            OR can_view_billing <> ?
-            OR can_operate_billing <> ?
+            can_view_user_management <> ?
+            OR can_operate_user_management <> ?
+            OR can_view_organization_management <> ?
+            OR can_operate_organization_management <> ?
           )
           AND (
             SELECT COUNT(*)
@@ -2829,10 +2859,10 @@ const createMySqlAuthStore = ({
                       '#',
                       role_id,
                       status,
-                      can_view_member_admin,
-                      can_operate_member_admin,
-                      can_view_billing,
-                      can_operate_billing,
+                      can_view_user_management,
+                      can_operate_user_management,
+                      can_view_organization_management,
+                      can_operate_organization_management,
                       DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f')
                     )
                   )
@@ -2845,15 +2875,15 @@ const createMySqlAuthStore = ({
           )
       `,
       [
-        canViewMemberAdmin,
-        canOperateMemberAdmin,
-        canViewBilling,
-        canOperateBilling,
+        canViewUserManagement,
+        canOperateUserManagement,
+        canViewOrganizationManagement,
+        canOperateOrganizationManagement,
         normalizedUserId,
-        canViewMemberAdmin,
-        canOperateMemberAdmin,
-        canViewBilling,
-        canOperateBilling,
+        canViewUserManagement,
+        canOperateUserManagement,
+        canViewOrganizationManagement,
+        canOperateOrganizationManagement,
         normalizedUserId,
         roleFactCount,
         normalizedUserId,
@@ -2942,10 +2972,10 @@ const createMySqlAuthStore = ({
     const previousRoleRows = await transactionalClient.query(
       `
         SELECT status,
-               can_view_member_admin,
-               can_operate_member_admin,
-               can_view_billing,
-               can_operate_billing
+               can_view_user_management,
+               can_operate_user_management,
+               can_view_organization_management,
+               can_operate_organization_management
         FROM auth_user_platform_roles
         WHERE user_id = ?
       `,
@@ -2968,10 +2998,10 @@ const createMySqlAuthStore = ({
             user_id,
             role_id,
             status,
-            can_view_member_admin,
-            can_operate_member_admin,
-            can_view_billing,
-            can_operate_billing
+            can_view_user_management,
+            can_operate_user_management,
+            can_view_organization_management,
+            can_operate_organization_management
           )
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
@@ -2979,19 +3009,19 @@ const createMySqlAuthStore = ({
           normalizedUserId,
           role.roleId,
           role.status,
-          Number(role.canViewMemberAdmin),
-          Number(role.canOperateMemberAdmin),
-          Number(role.canViewBilling),
-          Number(role.canOperateBilling)
+          Number(role.canViewUserManagement),
+          Number(role.canOperateUserManagement),
+          Number(role.canViewOrganizationManagement),
+          Number(role.canOperateOrganizationManagement)
         ]
       );
     }
 
     const permission = aggregatePlatformPermissionFromRoleRows(normalizedRoles).permission;
-    const canViewMemberAdmin = Number(permission.canViewMemberAdmin);
-    const canOperateMemberAdmin = Number(permission.canOperateMemberAdmin);
-    const canViewBilling = Number(permission.canViewBilling);
-    const canOperateBilling = Number(permission.canOperateBilling);
+    const canViewUserManagement = Number(permission.canViewUserManagement);
+    const canOperateUserManagement = Number(permission.canOperateUserManagement);
+    const canViewOrganizationManagement = Number(permission.canViewOrganizationManagement);
+    const canOperateOrganizationManagement = Number(permission.canOperateOrganizationManagement);
 
     if (normalizedRoles.length > 0) {
       await transactionalClient.query(
@@ -3000,54 +3030,54 @@ const createMySqlAuthStore = ({
             user_id,
             domain,
             status,
-            can_view_member_admin,
-            can_operate_member_admin,
-            can_view_billing,
-            can_operate_billing
+            can_view_user_management,
+            can_operate_user_management,
+            can_view_organization_management,
+            can_operate_organization_management
           )
           VALUES (?, 'platform', 'active', ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
-            can_view_member_admin = VALUES(can_view_member_admin),
-            can_operate_member_admin = VALUES(can_operate_member_admin),
-            can_view_billing = VALUES(can_view_billing),
-            can_operate_billing = VALUES(can_operate_billing),
+            can_view_user_management = VALUES(can_view_user_management),
+            can_operate_user_management = VALUES(can_operate_user_management),
+            can_view_organization_management = VALUES(can_view_organization_management),
+            can_operate_organization_management = VALUES(can_operate_organization_management),
             updated_at = CURRENT_TIMESTAMP(3)
         `,
         [
           normalizedUserId,
-          canViewMemberAdmin,
-          canOperateMemberAdmin,
-          canViewBilling,
-          canOperateBilling
+          canViewUserManagement,
+          canOperateUserManagement,
+          canViewOrganizationManagement,
+          canOperateOrganizationManagement
         ]
       );
     } else {
       await transactionalClient.query(
         `
           UPDATE auth_user_domain_access
-          SET can_view_member_admin = ?,
-              can_operate_member_admin = ?,
-              can_view_billing = ?,
-              can_operate_billing = ?,
+          SET can_view_user_management = ?,
+              can_operate_user_management = ?,
+              can_view_organization_management = ?,
+              can_operate_organization_management = ?,
               updated_at = CURRENT_TIMESTAMP(3)
           WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
             AND (
-              can_view_member_admin <> ?
-              OR can_operate_member_admin <> ?
-              OR can_view_billing <> ?
-              OR can_operate_billing <> ?
+              can_view_user_management <> ?
+              OR can_operate_user_management <> ?
+              OR can_view_organization_management <> ?
+              OR can_operate_organization_management <> ?
             )
         `,
         [
-          canViewMemberAdmin,
-          canOperateMemberAdmin,
-          canViewBilling,
-          canOperateBilling,
+          canViewUserManagement,
+          canOperateUserManagement,
+          canViewOrganizationManagement,
+          canOperateOrganizationManagement,
           normalizedUserId,
-          canViewMemberAdmin,
-          canOperateMemberAdmin,
-          canViewBilling,
-          canOperateBilling
+          canViewUserManagement,
+          canOperateUserManagement,
+          canViewOrganizationManagement,
+          canOperateOrganizationManagement
         ]
       );
     }
@@ -8161,10 +8191,10 @@ const createMySqlAuthStore = ({
                   return {
                     roleId: normalizedRoleIdForUser,
                     status: normalizePlatformRoleStatus(row?.status),
-                    canViewMemberAdmin: permissionSnapshot.canViewMemberAdmin,
-                    canOperateMemberAdmin: permissionSnapshot.canOperateMemberAdmin,
-                    canViewBilling: permissionSnapshot.canViewBilling,
-                    canOperateBilling: permissionSnapshot.canOperateBilling
+                    canViewUserManagement: permissionSnapshot.canViewUserManagement,
+                    canOperateUserManagement: permissionSnapshot.canOperateUserManagement,
+                    canViewOrganizationManagement: permissionSnapshot.canViewOrganizationManagement,
+                    canOperateOrganizationManagement: permissionSnapshot.canOperateOrganizationManagement
                   };
                 })
                 .filter(Boolean);
@@ -8549,10 +8579,10 @@ const createMySqlAuthStore = ({
         `
           SELECT role_id,
                  status,
-                 can_view_member_admin,
-                 can_operate_member_admin,
-                 can_view_billing,
-                 can_operate_billing
+                 can_view_user_management,
+                 can_operate_user_management,
+                 can_view_organization_management,
+                 can_operate_organization_management
           FROM auth_user_platform_roles
           WHERE user_id = ?
           ORDER BY role_id ASC
@@ -8564,10 +8594,10 @@ const createMySqlAuthStore = ({
         role_id: String(row?.role_id || '').trim(),
         status: String(row?.status || 'active').trim().toLowerCase() || 'active',
         permission: {
-          canViewMemberAdmin: toBoolean(row?.can_view_member_admin),
-          canOperateMemberAdmin: toBoolean(row?.can_operate_member_admin),
-          canViewBilling: toBoolean(row?.can_view_billing),
-          canOperateBilling: toBoolean(row?.can_operate_billing)
+          canViewUserManagement: toBoolean(row?.can_view_user_management),
+          canOperateUserManagement: toBoolean(row?.can_operate_user_management),
+          canViewOrganizationManagement: toBoolean(row?.can_view_organization_management),
+          canOperateOrganizationManagement: toBoolean(row?.can_operate_organization_management)
         }
       }));
     },
@@ -9158,10 +9188,10 @@ const createMySqlAuthStore = ({
                        tenant_id,
                        status,
                        tenant_name,
-                       can_view_member_admin,
-                       can_operate_member_admin,
-                       can_view_billing,
-                       can_operate_billing,
+                       can_view_user_management,
+                       can_operate_user_management,
+                       can_view_organization_management,
+                       can_operate_organization_management,
                        joined_at,
                        left_at
                 FROM auth_user_tenants
@@ -9213,10 +9243,10 @@ const createMySqlAuthStore = ({
                   UPDATE auth_user_tenants
                   SET membership_id = ?,
                       status = 'active',
-                      can_view_member_admin = 0,
-                      can_operate_member_admin = 0,
-                      can_view_billing = 0,
-                      can_operate_billing = 0,
+                      can_view_user_management = 0,
+                      can_operate_user_management = 0,
+                      can_view_organization_management = 0,
+                      can_operate_organization_management = 0,
                       display_name = CASE
                         WHEN ? IS NULL THEN display_name
                         ELSE ?
@@ -9262,10 +9292,10 @@ const createMySqlAuthStore = ({
                        tenant_id,
                        status,
                        tenant_name,
-                       can_view_member_admin,
-                       can_operate_member_admin,
-                       can_view_billing,
-                       can_operate_billing,
+                       can_view_user_management,
+                       can_operate_user_management,
+                       can_view_organization_management,
+                       can_operate_organization_management,
                        joined_at,
                        left_at
                 FROM auth_user_tenants
@@ -9513,8 +9543,8 @@ const createMySqlAuthStore = ({
             }
             const effectivePermission = syncResult?.permission || {};
             if (
-              !Boolean(effectivePermission.canViewMemberAdmin)
-              || !Boolean(effectivePermission.canOperateMemberAdmin)
+              !Boolean(effectivePermission.canViewUserManagement)
+              || !Boolean(effectivePermission.canOperateUserManagement)
             ) {
               const permissionInsufficientError = new Error(
                 'owner transfer takeover permission insufficient'
@@ -9673,8 +9703,8 @@ const createMySqlAuthStore = ({
         requiredPermissionCodes
       );
       const missingRequiredPermissionCodes = [
-        TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-        TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+        TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+        TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
       ].filter(
         (permissionCode) =>
           !normalizedRequiredPermissionCodes.includes(permissionCode)
@@ -9943,10 +9973,10 @@ const createMySqlAuthStore = ({
                        tenant_id,
                        status,
                        tenant_name,
-                       can_view_member_admin,
-                       can_operate_member_admin,
-                       can_view_billing,
-                       can_operate_billing,
+                       can_view_user_management,
+                       can_operate_user_management,
+                       can_view_organization_management,
+                       can_operate_organization_management,
                        joined_at,
                        left_at
                 FROM auth_user_tenants
@@ -10007,10 +10037,10 @@ const createMySqlAuthStore = ({
                          tenant_id,
                          status,
                          tenant_name,
-                         can_view_member_admin,
-                         can_operate_member_admin,
-                         can_view_billing,
-                         can_operate_billing,
+                         can_view_user_management,
+                         can_operate_user_management,
+                         can_view_organization_management,
+                         can_operate_organization_management,
                          joined_at,
                          left_at
                   FROM auth_user_tenants
@@ -10065,10 +10095,10 @@ const createMySqlAuthStore = ({
                     UPDATE auth_user_tenants
                     SET membership_id = ?,
                         status = 'active',
-                        can_view_member_admin = 0,
-                        can_operate_member_admin = 0,
-                        can_view_billing = 0,
-                        can_operate_billing = 0,
+                        can_view_user_management = 0,
+                        can_operate_user_management = 0,
+                        can_view_organization_management = 0,
+                        can_operate_organization_management = 0,
                         joined_at = CURRENT_TIMESTAMP(3),
                         left_at = NULL,
                         updated_at = CURRENT_TIMESTAMP(3)
@@ -10099,10 +10129,10 @@ const createMySqlAuthStore = ({
                          tenant_id,
                          status,
                          tenant_name,
-                         can_view_member_admin,
-                         can_operate_member_admin,
-                         can_view_billing,
-                         can_operate_billing,
+                         can_view_user_management,
+                         can_operate_user_management,
+                         can_view_organization_management,
+                         can_operate_organization_management,
                          joined_at,
                          left_at
                   FROM auth_user_tenants
@@ -10220,8 +10250,8 @@ const createMySqlAuthStore = ({
 
             const effectivePermission = syncResult?.permission || {};
             if (
-              !Boolean(effectivePermission.canViewMemberAdmin)
-              || !Boolean(effectivePermission.canOperateMemberAdmin)
+              !Boolean(effectivePermission.canViewUserManagement)
+              || !Boolean(effectivePermission.canOperateUserManagement)
             ) {
               const permissionInsufficientError = new Error(
                 'owner transfer takeover permission insufficient'
@@ -10401,10 +10431,10 @@ const createMySqlAuthStore = ({
                   `
                     UPDATE auth_user_tenants
                     SET status = 'disabled',
-                        can_view_member_admin = 0,
-                        can_operate_member_admin = 0,
-                        can_view_billing = 0,
-                        can_operate_billing = 0,
+                        can_view_user_management = 0,
+                        can_operate_user_management = 0,
+                        can_view_organization_management = 0,
+                        can_operate_organization_management = 0,
                         updated_at = CURRENT_TIMESTAMP(3)
                     WHERE tenant_id = ?
                       AND status IN ('active', 'enabled')
@@ -10758,10 +10788,10 @@ const createMySqlAuthStore = ({
               `
                 UPDATE auth_user_tenants
                 SET status = 'disabled',
-                    can_view_member_admin = 0,
-                    can_operate_member_admin = 0,
-                    can_view_billing = 0,
-                    can_operate_billing = 0,
+                    can_view_user_management = 0,
+                    can_operate_user_management = 0,
+                    can_view_organization_management = 0,
+                    can_operate_organization_management = 0,
                     updated_at = CURRENT_TIMESTAMP(3)
                 WHERE user_id = ?
                   AND status IN ('active', 'enabled')
@@ -10968,10 +10998,10 @@ const createMySqlAuthStore = ({
                        status,
                        display_name,
                        department_name,
-                       can_view_member_admin,
-                       can_operate_member_admin,
-                       can_view_billing,
-                       can_operate_billing,
+                       can_view_user_management,
+                       can_operate_user_management,
+                       can_view_organization_management,
+                       can_operate_organization_management,
                        joined_at,
                        left_at
                 FROM auth_user_tenants
@@ -11055,10 +11085,10 @@ const createMySqlAuthStore = ({
                 SET membership_id = ?,
                     tenant_name = ?,
                     status = 'active',
-                    can_view_member_admin = 0,
-                    can_operate_member_admin = 0,
-                    can_view_billing = 0,
-                    can_operate_billing = 0,
+                    can_view_user_management = 0,
+                    can_operate_user_management = 0,
+                    can_view_organization_management = 0,
+                    can_operate_organization_management = 0,
                     joined_at = CURRENT_TIMESTAMP(3),
                     left_at = NULL,
                     updated_at = CURRENT_TIMESTAMP(3)
@@ -11309,10 +11339,10 @@ const createMySqlAuthStore = ({
           sqlWithOrgGuard: `
             SELECT tenant_id,
                    tenant_name,
-                   can_view_member_admin,
-                   can_operate_member_admin,
-                   can_view_billing,
-                   can_operate_billing
+                   can_view_user_management,
+                   can_operate_user_management,
+                   can_view_organization_management,
+                   can_operate_organization_management
             FROM auth_user_tenants ut
             LEFT JOIN orgs o ON o.id = ut.tenant_id
             WHERE ut.user_id = ?
@@ -11324,10 +11354,10 @@ const createMySqlAuthStore = ({
           sqlWithoutOrgGuard: `
             SELECT tenant_id,
                    tenant_name,
-                   can_view_member_admin,
-                   can_operate_member_admin,
-                   can_view_billing,
-                   can_operate_billing
+                   can_view_user_management,
+                   can_operate_user_management,
+                   can_view_organization_management,
+                   can_operate_organization_management
             FROM auth_user_tenants ut
             WHERE ut.user_id = ?
               AND ut.tenant_id = ?
@@ -11342,10 +11372,14 @@ const createMySqlAuthStore = ({
         }
         return {
           scopeLabel: `组织权限（${String(row.tenant_name || normalizedTenantId)}）`,
-          canViewMemberAdmin: toBoolean(row.can_view_member_admin),
-          canOperateMemberAdmin: toBoolean(row.can_operate_member_admin),
-          canViewBilling: toBoolean(row.can_view_billing),
-          canOperateBilling: toBoolean(row.can_operate_billing)
+          canViewUserManagement: toBoolean(row.can_view_user_management),
+          canOperateUserManagement: toBoolean(row.can_operate_user_management),
+          canViewRoleManagement: toBoolean(
+            row.can_view_role_management ?? row.can_view_organization_management
+          ),
+          canOperateRoleManagement: toBoolean(
+            row.can_operate_role_management ?? row.can_operate_organization_management
+          )
         };
       } catch (error) {
         throw error;
@@ -11979,10 +12013,10 @@ const createMySqlAuthStore = ({
                        tenant_id,
                        tenant_name,
                        status,
-                       can_view_member_admin,
-                       can_operate_member_admin,
-                       can_view_billing,
-                       can_operate_billing,
+                       can_view_user_management,
+                       can_operate_user_management,
+                       can_view_organization_management,
+                       can_operate_organization_management,
                        joined_at,
                        left_at
                 FROM auth_user_tenants
@@ -12025,10 +12059,10 @@ const createMySqlAuthStore = ({
                     UPDATE auth_user_tenants
                     SET membership_id = ?,
                         status = 'active',
-                        can_view_member_admin = 0,
-                        can_operate_member_admin = 0,
-                        can_view_billing = 0,
-                        can_operate_billing = 0,
+                        can_view_user_management = 0,
+                        can_operate_user_management = 0,
+                        can_view_organization_management = 0,
+                        can_operate_organization_management = 0,
                         left_at = NULL,
                         joined_at = CURRENT_TIMESTAMP(3),
                         updated_at = CURRENT_TIMESTAMP(3)
@@ -12056,10 +12090,10 @@ const createMySqlAuthStore = ({
                   `
                     UPDATE auth_user_tenants
                     SET status = ?,
-                        can_view_member_admin = CASE WHEN ? = 'left' THEN 0 ELSE can_view_member_admin END,
-                        can_operate_member_admin = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_member_admin END,
-                        can_view_billing = CASE WHEN ? = 'left' THEN 0 ELSE can_view_billing END,
-                        can_operate_billing = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_billing END,
+                        can_view_user_management = CASE WHEN ? = 'left' THEN 0 ELSE can_view_user_management END,
+                        can_operate_user_management = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_user_management END,
+                        can_view_organization_management = CASE WHEN ? = 'left' THEN 0 ELSE can_view_organization_management END,
+                        can_operate_organization_management = CASE WHEN ? = 'left' THEN 0 ELSE can_operate_organization_management END,
                         left_at = CASE
                           WHEN ? = 'left' THEN CURRENT_TIMESTAMP(3)
                           WHEN ? = 'active' THEN NULL
@@ -12211,10 +12245,10 @@ const createMySqlAuthStore = ({
         const rows = await dbClient.query(
           `
             SELECT status,
-                   can_view_member_admin,
-                   can_operate_member_admin,
-                   can_view_billing,
-                   can_operate_billing
+                   can_view_user_management,
+                   can_operate_user_management,
+                   can_view_organization_management,
+                   can_operate_organization_management
             FROM auth_user_domain_access
             WHERE user_id = ? AND domain = 'platform' AND status IN ('active', 'enabled')
             LIMIT 1
@@ -12227,29 +12261,29 @@ const createMySqlAuthStore = ({
         }
 
         const hasPermissionSnapshot =
-          Object.prototype.hasOwnProperty.call(row, 'can_view_member_admin')
-          || Object.prototype.hasOwnProperty.call(row, 'can_operate_member_admin')
-          || Object.prototype.hasOwnProperty.call(row, 'can_view_billing')
-          || Object.prototype.hasOwnProperty.call(row, 'can_operate_billing')
-          || Object.prototype.hasOwnProperty.call(row, 'canViewMemberAdmin')
-          || Object.prototype.hasOwnProperty.call(row, 'canOperateMemberAdmin')
-          || Object.prototype.hasOwnProperty.call(row, 'canViewBilling')
-          || Object.prototype.hasOwnProperty.call(row, 'canOperateBilling');
+          Object.prototype.hasOwnProperty.call(row, 'can_view_user_management')
+          || Object.prototype.hasOwnProperty.call(row, 'can_operate_user_management')
+          || Object.prototype.hasOwnProperty.call(row, 'can_view_organization_management')
+          || Object.prototype.hasOwnProperty.call(row, 'can_operate_organization_management')
+          || Object.prototype.hasOwnProperty.call(row, 'canViewUserManagement')
+          || Object.prototype.hasOwnProperty.call(row, 'canOperateUserManagement')
+          || Object.prototype.hasOwnProperty.call(row, 'canViewOrganizationManagement')
+          || Object.prototype.hasOwnProperty.call(row, 'canOperateOrganizationManagement');
         if (!hasPermissionSnapshot) {
           return null;
         }
 
         return {
           scopeLabel: '平台权限（服务端快照）',
-          canViewMemberAdmin: toBoolean(
-            row.can_view_member_admin ?? row.canViewMemberAdmin
+          canViewUserManagement: toBoolean(
+            row.can_view_user_management ?? row.canViewUserManagement
           ),
-          canOperateMemberAdmin: toBoolean(
-            row.can_operate_member_admin ?? row.canOperateMemberAdmin
+          canOperateUserManagement: toBoolean(
+            row.can_operate_user_management ?? row.canOperateUserManagement
           ),
-          canViewBilling: toBoolean(row.can_view_billing ?? row.canViewBilling),
-          canOperateBilling: toBoolean(
-            row.can_operate_billing ?? row.canOperateBilling
+          canViewOrganizationManagement: toBoolean(row.can_view_organization_management ?? row.canViewOrganizationManagement),
+          canOperateOrganizationManagement: toBoolean(
+            row.can_operate_organization_management ?? row.canOperateOrganizationManagement
           )
         };
       } catch (error) {
@@ -12265,11 +12299,11 @@ const createMySqlAuthStore = ({
       const normalizedPermissionCode = toPlatformPermissionCodeKey(permissionCode);
       if (
         !normalizedUserId
-        || !PLATFORM_SYSTEM_CONFIG_PERMISSION_CODE_SET.has(normalizedPermissionCode)
+        || !PLATFORM_ROLE_MANAGEMENT_PERMISSION_CODE_SET.has(normalizedPermissionCode)
       ) {
         return {
-          canViewSystemConfig: false,
-          canOperateSystemConfig: false,
+          canViewRoleManagement: false,
+          canOperateRoleManagement: false,
           granted: false
         };
       }
@@ -12281,13 +12315,13 @@ const createMySqlAuthStore = ({
                      WHEN prg.permission_code = ? THEN 1
                      ELSE 0
                    END
-                 ) AS can_view_system_config,
+                 ) AS can_view_role_management,
                  MAX(
                    CASE
                      WHEN prg.permission_code = ? THEN 1
                      ELSE 0
                    END
-                 ) AS can_operate_system_config
+                 ) AS can_operate_role_management
           FROM auth_user_platform_roles upr
           INNER JOIN platform_role_catalog prc
             ON prc.role_id = upr.role_id
@@ -12301,24 +12335,24 @@ const createMySqlAuthStore = ({
             AND upr.status IN ('active', 'enabled')
         `,
         [
-          PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-          PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
-          PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-          PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+          PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+          PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+          PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+          PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
           normalizedUserId
         ]
       );
       const row = rows?.[0] || null;
-      const canOperateSystemConfig = toBoolean(row?.can_operate_system_config);
-      const canViewSystemConfig =
-        canOperateSystemConfig || toBoolean(row?.can_view_system_config);
+      const canOperateRoleManagement = toBoolean(row?.can_operate_role_management);
+      const canViewRoleManagement =
+        canOperateRoleManagement || toBoolean(row?.can_view_role_management);
       const granted =
-        normalizedPermissionCode === PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
-          ? canOperateSystemConfig
-          : canViewSystemConfig;
+        normalizedPermissionCode === PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+          ? canOperateRoleManagement
+          : canViewRoleManagement;
       return {
-        canViewSystemConfig,
-        canOperateSystemConfig,
+        canViewRoleManagement,
+        canOperateRoleManagement,
         granted
       };
     },

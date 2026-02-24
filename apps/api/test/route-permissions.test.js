@@ -28,13 +28,13 @@ test('tenant protected auth routes expose explicit permission declarations', () 
     method: 'POST',
     path: '/auth/tenant/switch'
   });
-  const memberAdminProbe = findRouteDefinition({
+  const userManagementProbe = findRouteDefinition({
     method: 'GET',
-    path: '/auth/tenant/member-admin/probe'
+    path: '/auth/tenant/user-management/probe'
   });
-  const memberAdminProvisionUser = findRouteDefinition({
+  const userManagementProvisionUser = findRouteDefinition({
     method: 'POST',
-    path: '/auth/tenant/member-admin/provision-user'
+    path: '/auth/tenant/user-management/provision-user'
   });
 
   assert.ok(tenantOptions);
@@ -50,15 +50,15 @@ test('tenant protected auth routes expose explicit permission declarations', () 
     assert.ok(route.permission_code.length > 0);
   }
 
-  assert.ok(memberAdminProbe);
-  assert.equal(memberAdminProbe.access, 'protected');
-  assert.equal(memberAdminProbe.scope, 'tenant');
-  assert.equal(memberAdminProbe.permission_code, 'tenant.member_admin.operate');
+  assert.ok(userManagementProbe);
+  assert.equal(userManagementProbe.access, 'protected');
+  assert.equal(userManagementProbe.scope, 'tenant');
+  assert.equal(userManagementProbe.permission_code, 'tenant.user_management.operate');
 
-  assert.ok(memberAdminProvisionUser);
-  assert.equal(memberAdminProvisionUser.access, 'protected');
-  assert.equal(memberAdminProvisionUser.scope, 'tenant');
-  assert.equal(memberAdminProvisionUser.permission_code, 'tenant.member_admin.operate');
+  assert.ok(userManagementProvisionUser);
+  assert.equal(userManagementProvisionUser.access, 'protected');
+  assert.equal(userManagementProvisionUser.scope, 'tenant');
+  assert.equal(userManagementProvisionUser.permission_code, 'tenant.user_management.operate');
 });
 
 test('tenant member governance routes expose explicit permission declarations', () => {
@@ -94,37 +94,37 @@ test('tenant member governance routes expose explicit permission declarations', 
   assert.ok(tenantMemberList);
   assert.equal(tenantMemberList.access, 'protected');
   assert.equal(tenantMemberList.scope, 'tenant');
-  assert.equal(tenantMemberList.permission_code, 'tenant.member_admin.view');
+  assert.equal(tenantMemberList.permission_code, 'tenant.user_management.view');
 
   assert.ok(tenantMemberCreate);
   assert.equal(tenantMemberCreate.access, 'protected');
   assert.equal(tenantMemberCreate.scope, 'tenant');
-  assert.equal(tenantMemberCreate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantMemberCreate.permission_code, 'tenant.user_management.operate');
 
   assert.ok(tenantMemberStatusUpdate);
   assert.equal(tenantMemberStatusUpdate.access, 'protected');
   assert.equal(tenantMemberStatusUpdate.scope, 'tenant');
-  assert.equal(tenantMemberStatusUpdate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantMemberStatusUpdate.permission_code, 'tenant.user_management.operate');
 
   assert.ok(tenantMemberDetailRead);
   assert.equal(tenantMemberDetailRead.access, 'protected');
   assert.equal(tenantMemberDetailRead.scope, 'tenant');
-  assert.equal(tenantMemberDetailRead.permission_code, 'tenant.member_admin.view');
+  assert.equal(tenantMemberDetailRead.permission_code, 'tenant.user_management.view');
 
   assert.ok(tenantMemberProfileUpdate);
   assert.equal(tenantMemberProfileUpdate.access, 'protected');
   assert.equal(tenantMemberProfileUpdate.scope, 'tenant');
-  assert.equal(tenantMemberProfileUpdate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantMemberProfileUpdate.permission_code, 'tenant.user_management.operate');
 
   assert.ok(tenantMemberRoleBindingsRead);
   assert.equal(tenantMemberRoleBindingsRead.access, 'protected');
   assert.equal(tenantMemberRoleBindingsRead.scope, 'tenant');
-  assert.equal(tenantMemberRoleBindingsRead.permission_code, 'tenant.member_admin.view');
+  assert.equal(tenantMemberRoleBindingsRead.permission_code, 'tenant.user_management.view');
 
   assert.ok(tenantMemberRoleBindingsUpdate);
   assert.equal(tenantMemberRoleBindingsUpdate.access, 'protected');
   assert.equal(tenantMemberRoleBindingsUpdate.scope, 'tenant');
-  assert.equal(tenantMemberRoleBindingsUpdate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantMemberRoleBindingsUpdate.permission_code, 'tenant.user_management.operate');
 });
 
 test('tenant role governance routes expose explicit permission declarations', () => {
@@ -156,32 +156,32 @@ test('tenant role governance routes expose explicit permission declarations', ()
   assert.ok(tenantRoleList);
   assert.equal(tenantRoleList.access, 'protected');
   assert.equal(tenantRoleList.scope, 'tenant');
-  assert.equal(tenantRoleList.permission_code, 'tenant.member_admin.view');
+  assert.equal(tenantRoleList.permission_code, 'tenant.role_management.view');
 
   assert.ok(tenantRoleCreate);
   assert.equal(tenantRoleCreate.access, 'protected');
   assert.equal(tenantRoleCreate.scope, 'tenant');
-  assert.equal(tenantRoleCreate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantRoleCreate.permission_code, 'tenant.role_management.operate');
 
   assert.ok(tenantRoleUpdate);
   assert.equal(tenantRoleUpdate.access, 'protected');
   assert.equal(tenantRoleUpdate.scope, 'tenant');
-  assert.equal(tenantRoleUpdate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantRoleUpdate.permission_code, 'tenant.role_management.operate');
 
   assert.ok(tenantRoleDelete);
   assert.equal(tenantRoleDelete.access, 'protected');
   assert.equal(tenantRoleDelete.scope, 'tenant');
-  assert.equal(tenantRoleDelete.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantRoleDelete.permission_code, 'tenant.role_management.operate');
 
   assert.ok(tenantRolePermissionRead);
   assert.equal(tenantRolePermissionRead.access, 'protected');
   assert.equal(tenantRolePermissionRead.scope, 'tenant');
-  assert.equal(tenantRolePermissionRead.permission_code, 'tenant.member_admin.view');
+  assert.equal(tenantRolePermissionRead.permission_code, 'tenant.role_management.view');
 
   assert.ok(tenantRolePermissionUpdate);
   assert.equal(tenantRolePermissionUpdate.access, 'protected');
   assert.equal(tenantRolePermissionUpdate.scope, 'tenant');
-  assert.equal(tenantRolePermissionUpdate.permission_code, 'tenant.member_admin.operate');
+  assert.equal(tenantRolePermissionUpdate.permission_code, 'tenant.role_management.operate');
 });
 
 test('tenant audit query route exposes explicit permission declaration', () => {
@@ -193,28 +193,28 @@ test('tenant audit query route exposes explicit permission declaration', () => {
   assert.ok(tenantAuditEvents);
   assert.equal(tenantAuditEvents.access, 'protected');
   assert.equal(tenantAuditEvents.scope, 'tenant');
-  assert.equal(tenantAuditEvents.permission_code, 'tenant.member_admin.view');
+  assert.equal(tenantAuditEvents.permission_code, 'tenant.user_management.view');
 });
 
 test('platform protected auth route exposes explicit permission declaration', () => {
-  const platformMemberAdminProbe = findRouteDefinition({
+  const platformUserManagementProbe = findRouteDefinition({
     method: 'GET',
-    path: '/auth/platform/member-admin/probe'
+    path: '/auth/platform/user-management/probe'
   });
-  const platformMemberAdminProvisionUser = findRouteDefinition({
+  const platformUserManagementProvisionUser = findRouteDefinition({
     method: 'POST',
-    path: '/auth/platform/member-admin/provision-user'
+    path: '/auth/platform/user-management/provision-user'
   });
 
-  assert.ok(platformMemberAdminProbe);
-  assert.equal(platformMemberAdminProbe.access, 'protected');
-  assert.equal(platformMemberAdminProbe.scope, 'platform');
-  assert.equal(platformMemberAdminProbe.permission_code, 'platform.member_admin.view');
+  assert.ok(platformUserManagementProbe);
+  assert.equal(platformUserManagementProbe.access, 'protected');
+  assert.equal(platformUserManagementProbe.scope, 'platform');
+  assert.equal(platformUserManagementProbe.permission_code, 'platform.user_management.view');
 
-  assert.ok(platformMemberAdminProvisionUser);
-  assert.equal(platformMemberAdminProvisionUser.access, 'protected');
-  assert.equal(platformMemberAdminProvisionUser.scope, 'platform');
-  assert.equal(platformMemberAdminProvisionUser.permission_code, 'platform.member_admin.operate');
+  assert.ok(platformUserManagementProvisionUser);
+  assert.equal(platformUserManagementProvisionUser.access, 'protected');
+  assert.equal(platformUserManagementProvisionUser.scope, 'platform');
+  assert.equal(platformUserManagementProvisionUser.permission_code, 'platform.user_management.operate');
 });
 
 test('platform audit query route exposes explicit permission declaration', () => {
@@ -226,7 +226,7 @@ test('platform audit query route exposes explicit permission declaration', () =>
   assert.ok(platformAuditEvents);
   assert.equal(platformAuditEvents.access, 'protected');
   assert.equal(platformAuditEvents.scope, 'platform');
-  assert.equal(platformAuditEvents.permission_code, 'platform.member_admin.view');
+  assert.equal(platformAuditEvents.permission_code, 'platform.user_management.view');
 });
 
 test('platform system config routes expose explicit permission declarations', () => {
@@ -242,12 +242,12 @@ test('platform system config routes expose explicit permission declarations', ()
   assert.ok(getSystemConfig);
   assert.equal(getSystemConfig.access, 'protected');
   assert.equal(getSystemConfig.scope, 'platform');
-  assert.equal(getSystemConfig.permission_code, 'platform.system_config.view');
+  assert.equal(getSystemConfig.permission_code, 'platform.role_management.view');
 
   assert.ok(updateSystemConfig);
   assert.equal(updateSystemConfig.access, 'protected');
   assert.equal(updateSystemConfig.scope, 'platform');
-  assert.equal(updateSystemConfig.permission_code, 'platform.system_config.operate');
+  assert.equal(updateSystemConfig.permission_code, 'platform.role_management.operate');
 });
 
 test('platform integration routes expose explicit permission declarations', () => {
@@ -276,14 +276,14 @@ test('platform integration routes expose explicit permission declarations', () =
     assert.ok(route);
     assert.equal(route.access, 'protected');
     assert.equal(route.scope, 'platform');
-    assert.equal(route.permission_code, 'platform.member_admin.view');
+    assert.equal(route.permission_code, 'platform.user_management.view');
   }
 
   for (const route of [createIntegration, updateIntegration, changeLifecycle]) {
     assert.ok(route);
     assert.equal(route.access, 'protected');
     assert.equal(route.scope, 'platform');
-    assert.equal(route.permission_code, 'platform.member_admin.operate');
+    assert.equal(route.permission_code, 'platform.user_management.operate');
   }
 });
 
@@ -304,13 +304,13 @@ test('platform integration freeze routes expose explicit permission declarations
   assert.ok(getFreezeStatus);
   assert.equal(getFreezeStatus.access, 'protected');
   assert.equal(getFreezeStatus.scope, 'platform');
-  assert.equal(getFreezeStatus.permission_code, 'platform.member_admin.view');
+  assert.equal(getFreezeStatus.permission_code, 'platform.user_management.view');
 
   for (const route of [activateFreeze, releaseFreeze]) {
     assert.ok(route);
     assert.equal(route.access, 'protected');
     assert.equal(route.scope, 'platform');
-    assert.equal(route.permission_code, 'platform.member_admin.operate');
+    assert.equal(route.permission_code, 'platform.user_management.operate');
   }
 });
 
@@ -339,7 +339,7 @@ test('platform integration contract routes expose explicit permission declaratio
   assert.ok(listContracts);
   assert.equal(listContracts.access, 'protected');
   assert.equal(listContracts.scope, 'platform');
-  assert.equal(listContracts.permission_code, 'platform.member_admin.view');
+  assert.equal(listContracts.permission_code, 'platform.user_management.view');
 
   for (const route of [
     createContract,
@@ -350,7 +350,7 @@ test('platform integration contract routes expose explicit permission declaratio
     assert.ok(route);
     assert.equal(route.access, 'protected');
     assert.equal(route.scope, 'platform');
-    assert.equal(route.permission_code, 'platform.member_admin.operate');
+    assert.equal(route.permission_code, 'platform.user_management.operate');
   }
 });
 
@@ -367,12 +367,12 @@ test('platform integration recovery routes expose explicit permission declaratio
   assert.ok(listRecoveryQueue);
   assert.equal(listRecoveryQueue.access, 'protected');
   assert.equal(listRecoveryQueue.scope, 'platform');
-  assert.equal(listRecoveryQueue.permission_code, 'platform.member_admin.view');
+  assert.equal(listRecoveryQueue.permission_code, 'platform.user_management.view');
 
   assert.ok(replayRecoveryQueueItem);
   assert.equal(replayRecoveryQueueItem.access, 'protected');
   assert.equal(replayRecoveryQueueItem.scope, 'platform');
-  assert.equal(replayRecoveryQueueItem.permission_code, 'platform.member_admin.operate');
+  assert.equal(replayRecoveryQueueItem.permission_code, 'platform.user_management.operate');
 });
 
 test('platform role-facts replace route exposes explicit permission declaration', () => {
@@ -384,7 +384,7 @@ test('platform role-facts replace route exposes explicit permission declaration'
   assert.ok(replaceRoleFacts);
   assert.equal(replaceRoleFacts.access, 'protected');
   assert.equal(replaceRoleFacts.scope, 'platform');
-  assert.equal(replaceRoleFacts.permission_code, 'platform.member_admin.operate');
+  assert.equal(replaceRoleFacts.permission_code, 'platform.user_management.operate');
 });
 
 test('platform org create route exposes explicit permission declaration', () => {
@@ -396,7 +396,7 @@ test('platform org create route exposes explicit permission declaration', () => 
   assert.ok(createPlatformOrg);
   assert.equal(createPlatformOrg.access, 'protected');
   assert.equal(createPlatformOrg.scope, 'platform');
-  assert.equal(createPlatformOrg.permission_code, 'platform.billing.operate');
+  assert.equal(createPlatformOrg.permission_code, 'platform.organization_management.operate');
 });
 
 test('platform org status route exposes explicit permission declaration', () => {
@@ -408,7 +408,7 @@ test('platform org status route exposes explicit permission declaration', () => 
   assert.ok(updatePlatformOrgStatus);
   assert.equal(updatePlatformOrgStatus.access, 'protected');
   assert.equal(updatePlatformOrgStatus.scope, 'platform');
-  assert.equal(updatePlatformOrgStatus.permission_code, 'platform.billing.operate');
+  assert.equal(updatePlatformOrgStatus.permission_code, 'platform.organization_management.operate');
 });
 
 test('platform owner-transfer route exposes explicit permission declaration', () => {
@@ -420,7 +420,7 @@ test('platform owner-transfer route exposes explicit permission declaration', ()
   assert.ok(transferPlatformOrgOwner);
   assert.equal(transferPlatformOrgOwner.access, 'protected');
   assert.equal(transferPlatformOrgOwner.scope, 'platform');
-  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.billing.operate');
+  assert.equal(transferPlatformOrgOwner.permission_code, 'platform.organization_management.operate');
 });
 
 test('platform user create route exposes explicit permission declaration', () => {
@@ -432,7 +432,7 @@ test('platform user create route exposes explicit permission declaration', () =>
   assert.ok(createPlatformUser);
   assert.equal(createPlatformUser.access, 'protected');
   assert.equal(createPlatformUser.scope, 'platform');
-  assert.equal(createPlatformUser.permission_code, 'platform.member_admin.operate');
+  assert.equal(createPlatformUser.permission_code, 'platform.user_management.operate');
 });
 
 test('platform user list route exposes explicit permission declaration', () => {
@@ -444,7 +444,7 @@ test('platform user list route exposes explicit permission declaration', () => {
   assert.ok(listPlatformUsers);
   assert.equal(listPlatformUsers.access, 'protected');
   assert.equal(listPlatformUsers.scope, 'platform');
-  assert.equal(listPlatformUsers.permission_code, 'platform.member_admin.view');
+  assert.equal(listPlatformUsers.permission_code, 'platform.user_management.view');
 });
 
 test('platform user get route exposes explicit permission declaration', () => {
@@ -456,7 +456,7 @@ test('platform user get route exposes explicit permission declaration', () => {
   assert.ok(getPlatformUser);
   assert.equal(getPlatformUser.access, 'protected');
   assert.equal(getPlatformUser.scope, 'platform');
-  assert.equal(getPlatformUser.permission_code, 'platform.member_admin.view');
+  assert.equal(getPlatformUser.permission_code, 'platform.user_management.view');
 });
 
 test('platform user status route exposes explicit permission declaration', () => {
@@ -468,7 +468,7 @@ test('platform user status route exposes explicit permission declaration', () =>
   assert.ok(updatePlatformUserStatus);
   assert.equal(updatePlatformUserStatus.access, 'protected');
   assert.equal(updatePlatformUserStatus.scope, 'platform');
-  assert.equal(updatePlatformUserStatus.permission_code, 'platform.member_admin.operate');
+  assert.equal(updatePlatformUserStatus.permission_code, 'platform.user_management.operate');
 });
 
 test('platform user soft-delete route exposes explicit permission declaration', () => {
@@ -480,7 +480,7 @@ test('platform user soft-delete route exposes explicit permission declaration', 
   assert.ok(softDeletePlatformUser);
   assert.equal(softDeletePlatformUser.access, 'protected');
   assert.equal(softDeletePlatformUser.scope, 'platform');
-  assert.equal(softDeletePlatformUser.permission_code, 'platform.member_admin.operate');
+  assert.equal(softDeletePlatformUser.permission_code, 'platform.user_management.operate');
 });
 
 test('platform role list route exposes explicit permission declaration', () => {
@@ -492,7 +492,7 @@ test('platform role list route exposes explicit permission declaration', () => {
   assert.ok(listPlatformRoles);
   assert.equal(listPlatformRoles.access, 'protected');
   assert.equal(listPlatformRoles.scope, 'platform');
-  assert.equal(listPlatformRoles.permission_code, 'platform.system_config.view');
+  assert.equal(listPlatformRoles.permission_code, 'platform.role_management.view');
 });
 
 test('platform role create route exposes explicit permission declaration', () => {
@@ -504,7 +504,7 @@ test('platform role create route exposes explicit permission declaration', () =>
   assert.ok(createPlatformRole);
   assert.equal(createPlatformRole.access, 'protected');
   assert.equal(createPlatformRole.scope, 'platform');
-  assert.equal(createPlatformRole.permission_code, 'platform.system_config.operate');
+  assert.equal(createPlatformRole.permission_code, 'platform.role_management.operate');
 });
 
 test('platform role update route exposes explicit permission declaration', () => {
@@ -516,7 +516,7 @@ test('platform role update route exposes explicit permission declaration', () =>
   assert.ok(updatePlatformRole);
   assert.equal(updatePlatformRole.access, 'protected');
   assert.equal(updatePlatformRole.scope, 'platform');
-  assert.equal(updatePlatformRole.permission_code, 'platform.system_config.operate');
+  assert.equal(updatePlatformRole.permission_code, 'platform.role_management.operate');
 });
 
 test('platform role permissions read route exposes explicit permission declaration', () => {
@@ -528,7 +528,7 @@ test('platform role permissions read route exposes explicit permission declarati
   assert.ok(readPlatformRolePermissions);
   assert.equal(readPlatformRolePermissions.access, 'protected');
   assert.equal(readPlatformRolePermissions.scope, 'platform');
-  assert.equal(readPlatformRolePermissions.permission_code, 'platform.system_config.view');
+  assert.equal(readPlatformRolePermissions.permission_code, 'platform.role_management.view');
 });
 
 test('platform role permissions update route exposes explicit permission declaration', () => {
@@ -540,7 +540,7 @@ test('platform role permissions update route exposes explicit permission declara
   assert.ok(updatePlatformRolePermissions);
   assert.equal(updatePlatformRolePermissions.access, 'protected');
   assert.equal(updatePlatformRolePermissions.scope, 'platform');
-  assert.equal(updatePlatformRolePermissions.permission_code, 'platform.system_config.operate');
+  assert.equal(updatePlatformRolePermissions.permission_code, 'platform.role_management.operate');
 });
 
 test('route parameter extraction decodes URL-encoded path values', () => {
@@ -635,7 +635,7 @@ test('platform role delete route exposes explicit permission declaration', () =>
   assert.ok(deletePlatformRole);
   assert.equal(deletePlatformRole.access, 'protected');
   assert.equal(deletePlatformRole.scope, 'platform');
-  assert.equal(deletePlatformRole.permission_code, 'platform.system_config.operate');
+  assert.equal(deletePlatformRole.permission_code, 'platform.role_management.operate');
 });
 
 test('protected routes are fail-closed when declaration is missing', () => {
@@ -684,9 +684,9 @@ test('route permission check fails when declaration uses unknown permission code
       },
       {
         method: 'GET',
-        path: '/auth/tenant/member-admin/probe',
+        path: '/auth/tenant/user-management/probe',
         access: 'protected',
-        permission_code: 'tenant.member_admin.operat',
+        permission_code: 'tenant.user_management.operat',
         scope: 'tenant'
       }
     ],
@@ -699,8 +699,8 @@ test('route permission check fails when declaration uses unknown permission code
   assert.deepEqual(result.unknown, [
     {
       method: 'GET',
-      path: '/auth/tenant/member-admin/probe',
-      permission_code: 'tenant.member_admin.operat'
+      path: '/auth/tenant/user-management/probe',
+      permission_code: 'tenant.user_management.operat'
     }
   ]);
 });
@@ -717,9 +717,9 @@ test('route permission check fails when permission_code scope is incompatible', 
       },
       {
         method: 'GET',
-        path: '/auth/tenant/member-admin/probe',
+        path: '/auth/tenant/user-management/probe',
         access: 'protected',
-        permission_code: 'tenant.member_admin.operate',
+        permission_code: 'tenant.user_management.operate',
         scope: 'session'
       }
     ],
@@ -733,8 +733,8 @@ test('route permission check fails when permission_code scope is incompatible', 
   assert.deepEqual(result.incompatible, [
     {
       method: 'GET',
-      path: '/auth/tenant/member-admin/probe',
-      permission_code: 'tenant.member_admin.operate',
+      path: '/auth/tenant/user-management/probe',
+      permission_code: 'tenant.user_management.operate',
       scope: 'session',
       allowed_scopes: ['tenant']
     }
@@ -1095,7 +1095,7 @@ test('baseline route declarations are fully aligned with executable route table'
 
 test('runtime mutation cannot downgrade baseline protected route declaration', () => {
   const declaration = ROUTE_DEFINITIONS.find(
-    (route) => route.path === '/auth/tenant/member-admin/probe' && route.method === 'GET'
+    (route) => route.path === '/auth/tenant/user-management/probe' && route.method === 'GET'
   );
   assert.ok(declaration);
 
@@ -1106,7 +1106,7 @@ test('runtime mutation cannot downgrade baseline protected route declaration', (
   assert.equal(
     findRouteDefinition({
       method: 'GET',
-      path: '/auth/tenant/member-admin/probe'
+      path: '/auth/tenant/user-management/probe'
     }).access,
     previousAccess
   );

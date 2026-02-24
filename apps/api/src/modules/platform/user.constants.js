@@ -12,8 +12,8 @@ const PLATFORM_USER_SOFT_DELETE_PATH = PLATFORM_USER_ITEM_PATH;
 const PLATFORM_USER_SOFT_DELETE_ROUTE_KEY = 'DELETE /platform/users/:user_id';
 const PLATFORM_USER_STATUS_PATH = '/platform/users/status';
 const PLATFORM_USER_STATUS_ROUTE_KEY = 'POST /platform/users/status';
-const PLATFORM_USER_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
-const PLATFORM_USER_OPERATE_PERMISSION_CODE = 'platform.member_admin.operate';
+const PLATFORM_USER_VIEW_PERMISSION_CODE = 'platform.user_management.view';
+const PLATFORM_USER_OPERATE_PERMISSION_CODE = 'platform.user_management.operate';
 const PLATFORM_USER_PERMISSION_CODE = PLATFORM_USER_OPERATE_PERMISSION_CODE;
 const PLATFORM_USER_SCOPE = 'platform';
 

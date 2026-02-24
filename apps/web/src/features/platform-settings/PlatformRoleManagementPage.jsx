@@ -40,91 +40,178 @@ const ROLE_FILTER_INITIAL_VALUES = Object.freeze({
 });
 
 const SETTINGS_TREE_ROOT_KEY = 'settings';
-const SETTINGS_TREE_MENU_ORDER = Object.freeze([
-  'settings/users',
-  'settings/roles',
-  'settings/orgs'
-]);
-const PLATFORM_PERMISSION_MENU_MAP = Object.freeze({
-  member_admin: Object.freeze({
-    key: 'settings/users',
-    title: '用户管理'
-  }),
-  system_config: Object.freeze({
-    key: 'settings/roles',
-    title: '角色管理'
-  }),
-  billing: Object.freeze({
-    key: 'settings/orgs',
-    title: '组织管理'
-  })
+const PLATFORM_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
+  user_management: '用户管理',
+  role_management: '角色管理',
+  organization_management: '组织管理'
+});
+const PLATFORM_PERMISSION_ACTION_LABEL_MAP = Object.freeze({
+  view: '查看',
+  operate: '操作'
+});
+const PLATFORM_PERMISSION_LABEL_KEY_MAP = Object.freeze({
+  'permission.platform.user_management.view': '查看用户管理',
+  'permission.platform.user_management.operate': '操作用户管理',
+  'permission.platform.role_management.view': '查看角色管理',
+  'permission.platform.role_management.operate': '操作角色管理',
+  'permission.platform.organization_management.view': '查看组织管理',
+  'permission.platform.organization_management.operate': '操作组织管理'
 });
 
-const toPermissionActionTitle = (permissionCode) => {
-  const sections = String(permissionCode || '').trim().split('.');
-  const action = String(sections.slice(2).join('.') || '').trim().toLowerCase();
-  if (action === 'view') {
-    return '查看';
+const toPermissionCodeParts = (permissionCode) => {
+  const normalizedCode = String(permissionCode || '').trim().toLowerCase();
+  if (!normalizedCode.startsWith('platform.')) {
+    return null;
   }
-  if (action === 'operate') {
-    return '操作';
-  }
-  return action || String(permissionCode || '').trim();
+  const sections = normalizedCode.split('.');
+  return {
+    code: normalizedCode,
+    moduleKey: String(sections[1] || '').trim().toLowerCase(),
+    actionKey: String(sections.slice(2).join('.') || '').trim().toLowerCase()
+  };
 };
 
-const toPermissionTreeData = (availablePermissionCodes = []) => {
-  const menuNodes = new Map(
-    SETTINGS_TREE_MENU_ORDER.map((menuKey) => [
-      menuKey,
-      {
-        key: menuKey,
-        title:
-          menuKey === 'settings/users'
-            ? '用户管理'
-            : menuKey === 'settings/roles'
-              ? '角色管理'
-              : '组织管理',
-        selectable: false,
-        children: []
-      }
-    ])
-  );
+const toReadableLabelFromKey = (value) => String(value || '').trim() || '其他';
 
-  for (const permissionCode of availablePermissionCodes) {
-    const normalizedCode = String(permissionCode || '').trim();
-    if (!normalizedCode.startsWith('platform.')) {
+const normalizePlatformPermissionCatalogItems = ({
+  permissionCodes = [],
+  permissionCatalogItems = []
+} = {}) => {
+  const itemByCode = new Map();
+  const addItem = ({
+    code,
+    groupKey = '',
+    actionKey = '',
+    labelKey = '',
+    order = 0
+  }) => {
+    const parsed = toPermissionCodeParts(code);
+    if (!parsed) {
+      return;
+    }
+    if (itemByCode.has(parsed.code)) {
+      return;
+    }
+    const normalizedOrder = Number.isFinite(Number(order)) ? Number(order) : 0;
+    itemByCode.set(parsed.code, {
+      code: parsed.code,
+      group_key: String(groupKey || parsed.moduleKey || '').trim().toLowerCase(),
+      action_key: String(actionKey || parsed.actionKey || '').trim().toLowerCase(),
+      label_key: String(labelKey || '').trim(),
+      order: normalizedOrder
+    });
+  };
+
+  for (const item of Array.isArray(permissionCatalogItems) ? permissionCatalogItems : []) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
       continue;
     }
-    const sections = normalizedCode.split('.');
-    const moduleName = String(sections[1] || '').trim().toLowerCase();
-    const mappedMenu = PLATFORM_PERMISSION_MENU_MAP[moduleName];
-    const menuKey = mappedMenu?.key || `settings/${moduleName || 'misc'}`;
-    const menuTitle = mappedMenu?.title || (moduleName || '其他');
-    const menuNode = menuNodes.get(menuKey) || {
-      key: menuKey,
-      title: menuTitle,
-      selectable: false,
-      children: []
-    };
-    menuNode.children.push({
-      key: normalizedCode,
-      title: toPermissionActionTitle(normalizedCode)
+    addItem({
+      code: item.code,
+      groupKey: item.group_key,
+      actionKey: item.action_key,
+      labelKey: item.label_key,
+      order: item.order
     });
-    menuNodes.set(menuKey, menuNode);
   }
 
-  const orderedNodes = [...menuNodes.values()]
-    .map((node) => ({
-      ...node,
-      children: [...node.children].sort((left, right) => String(left.key).localeCompare(String(right.key)))
+  let fallbackOrder = 10000;
+  for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
+    addItem({
+      code: permissionCode,
+      order: fallbackOrder
+    });
+    fallbackOrder += 1;
+  }
+
+  return [...itemByCode.values()].sort((left, right) => {
+    if (left.order !== right.order) {
+      return left.order - right.order;
+    }
+    return String(left.code).localeCompare(String(right.code));
+  });
+};
+
+const toPlatformPermissionActionLabel = (permissionItem = {}) => {
+  const labelKey = String(permissionItem.label_key || '').trim();
+  if (labelKey && PLATFORM_PERMISSION_LABEL_KEY_MAP[labelKey]) {
+    return PLATFORM_PERMISSION_LABEL_KEY_MAP[labelKey];
+  }
+  const actionKey = String(permissionItem.action_key || '').trim().toLowerCase();
+  if (actionKey && PLATFORM_PERMISSION_ACTION_LABEL_MAP[actionKey]) {
+    return PLATFORM_PERMISSION_ACTION_LABEL_MAP[actionKey];
+  }
+  const parsed = toPermissionCodeParts(permissionItem.code);
+  if (parsed?.actionKey && PLATFORM_PERMISSION_ACTION_LABEL_MAP[parsed.actionKey]) {
+    return PLATFORM_PERMISSION_ACTION_LABEL_MAP[parsed.actionKey];
+  }
+  return toReadableLabelFromKey(actionKey || permissionItem.code);
+};
+
+const toPlatformPermissionGroupLabel = (groupKey = '') => {
+  const normalizedGroupKey = String(groupKey || '').trim().toLowerCase();
+  if (normalizedGroupKey && PLATFORM_PERMISSION_GROUP_LABEL_MAP[normalizedGroupKey]) {
+    return PLATFORM_PERMISSION_GROUP_LABEL_MAP[normalizedGroupKey];
+  }
+  return toReadableLabelFromKey(normalizedGroupKey || 'misc');
+};
+
+const toPermissionTreeData = (availablePermissions = []) => {
+  const groupNodeByKey = new Map();
+  for (const permissionItem of Array.isArray(availablePermissions) ? availablePermissions : []) {
+    const permissionCode = String(permissionItem?.code || '').trim().toLowerCase();
+    if (!permissionCode.startsWith('platform.')) {
+      continue;
+    }
+    const parsed = toPermissionCodeParts(permissionCode);
+    const groupKey = String(
+      permissionItem?.group_key || parsed?.moduleKey || 'misc'
+    ).trim().toLowerCase();
+    const menuKey = `settings/${groupKey || 'misc'}`;
+    const groupOrder = Number(permissionItem?.order || 0);
+    const currentNode = groupNodeByKey.get(menuKey) || {
+      key: menuKey,
+      title: toPlatformPermissionGroupLabel(groupKey),
+      selectable: false,
+      order: Number.isFinite(groupOrder) ? groupOrder : 0,
+      children: []
+    };
+    if (Number.isFinite(groupOrder)) {
+      currentNode.order = Math.min(currentNode.order, groupOrder);
+    }
+    currentNode.children.push({
+      key: permissionCode,
+      title: toPlatformPermissionActionLabel(permissionItem),
+      order: Number.isFinite(groupOrder) ? groupOrder : 0
+    });
+    groupNodeByKey.set(menuKey, currentNode);
+  }
+
+  const orderedNodes = [...groupNodeByKey.values()]
+    .map((groupNode) => ({
+      key: groupNode.key,
+      title: groupNode.title,
+      selectable: false,
+      order: groupNode.order,
+      children: [...groupNode.children]
+        .sort((left, right) => {
+          const leftOrder = Number(left?.order || 0);
+          const rightOrder = Number(right?.order || 0);
+          if (leftOrder !== rightOrder) {
+            return leftOrder - rightOrder;
+          }
+          return String(left.key).localeCompare(String(right.key));
+        })
+        .map((childNode) => ({
+          key: childNode.key,
+          title: childNode.title
+        }))
     }))
     .sort((left, right) => {
-      const leftIndex = SETTINGS_TREE_MENU_ORDER.indexOf(String(left.key));
-      const rightIndex = SETTINGS_TREE_MENU_ORDER.indexOf(String(right.key));
-      const normalizedLeftIndex = leftIndex === -1 ? Number.POSITIVE_INFINITY : leftIndex;
-      const normalizedRightIndex = rightIndex === -1 ? Number.POSITIVE_INFINITY : rightIndex;
-      if (normalizedLeftIndex !== normalizedRightIndex) {
-        return normalizedLeftIndex - normalizedRightIndex;
+      const leftOrder = Number(left?.order || 0);
+      const rightOrder = Number(right?.order || 0);
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
       }
       return String(left.key).localeCompare(String(right.key));
     });
@@ -178,12 +265,13 @@ export default function PlatformRoleManagementPage({ accessToken }) {
   const [roleEditSubmitting, setRoleEditSubmitting] = useState(false);
   const [roleEditMode, setRoleEditMode] = useState('create');
   const [roleEditTarget, setRoleEditTarget] = useState(null);
-  const [roleEditPermissionCodesAvailable, setRoleEditPermissionCodesAvailable] = useState([]);
+  const [roleEditPermissionCatalogAvailable, setRoleEditPermissionCatalogAvailable] = useState([]);
   const [roleEditPermissionCodesChecked, setRoleEditPermissionCodesChecked] = useState([]);
   const [roleEditPermissionLoading, setRoleEditPermissionLoading] = useState(false);
 
   const [roleDetailOpen, setRoleDetailOpen] = useState(false);
   const [roleDetail, setRoleDetail] = useState(null);
+  const [permissionCatalogAvailable, setPermissionCatalogAvailable] = useState([]);
   const [permissionCodesAvailable, setPermissionCodesAvailable] = useState([]);
   const [permissionCodesChecked, setPermissionCodesChecked] = useState([]);
   const [permissionLoading, setPermissionLoading] = useState(false);
@@ -240,9 +328,19 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     () => ({
       ...(roleDetail || {}),
       permission_codes: permissionCodesChecked,
-      available_permission_codes: permissionCodesAvailable
+      available_permission_codes: permissionCodesAvailable,
+      available_permissions: permissionCatalogAvailable
     }),
-    [permissionCodesAvailable, permissionCodesChecked, roleDetail]
+    [permissionCatalogAvailable, permissionCodesAvailable, permissionCodesChecked, roleDetail]
+  );
+
+  const roleEditPermissionLeafSet = useMemo(
+    () => new Set(
+      roleEditPermissionCatalogAvailable
+        .map((item) => String(item?.code || '').trim())
+        .filter((code) => code.startsWith('platform.'))
+    ),
+    [roleEditPermissionCatalogAvailable]
   );
 
   const filteredRoleList = useMemo(() => {
@@ -340,9 +438,28 @@ export default function PlatformRoleManagementPage({ accessToken }) {
       setPermissionLoading(true);
       try {
         const payload = await api.getRolePermissions(normalizedRoleId);
-        setPermissionCodesAvailable(payload.available_permission_codes || []);
-        setPermissionCodesChecked(payload.permission_codes || []);
+        const normalizedAvailablePermissions = normalizePlatformPermissionCatalogItems({
+          permissionCodes: Array.isArray(payload?.available_permission_codes)
+            ? payload.available_permission_codes
+            : [],
+          permissionCatalogItems: Array.isArray(payload?.available_permissions)
+            ? payload.available_permissions
+            : []
+        });
+        const availablePermissionSet = new Set(
+          normalizedAvailablePermissions.map((item) => item.code)
+        );
+        setPermissionCatalogAvailable(normalizedAvailablePermissions);
+        setPermissionCodesAvailable(
+          normalizedAvailablePermissions.map((item) => item.code)
+        );
+        setPermissionCodesChecked(
+          (Array.isArray(payload?.permission_codes) ? payload.permission_codes : [])
+            .map((permissionCode) => String(permissionCode || '').trim())
+            .filter((permissionCode) => availablePermissionSet.has(permissionCode))
+        );
       } catch (error) {
+        setPermissionCatalogAvailable([]);
         setPermissionCodesAvailable([]);
         setPermissionCodesChecked([]);
         withErrorNotice(error, '加载角色权限树失败');
@@ -366,14 +483,18 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     setRoleEditPermissionLoading(true);
     try {
       const payload = await api.getRolePermissions('sys_admin');
-      setRoleEditPermissionCodesAvailable(
-        Array.isArray(payload?.available_permission_codes)
+      const normalizedAvailablePermissions = normalizePlatformPermissionCatalogItems({
+        permissionCodes: Array.isArray(payload?.available_permission_codes)
           ? payload.available_permission_codes
+          : [],
+        permissionCatalogItems: Array.isArray(payload?.available_permissions)
+          ? payload.available_permissions
           : []
-      );
+      });
+      setRoleEditPermissionCatalogAvailable(normalizedAvailablePermissions);
       setRoleEditPermissionCodesChecked([]);
     } catch (error) {
-      setRoleEditPermissionCodesAvailable([]);
+      setRoleEditPermissionCatalogAvailable([]);
       setRoleEditPermissionCodesChecked([]);
       withErrorNotice(error, '加载角色权限目录失败');
     } finally {
@@ -385,25 +506,32 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     async (roleId) => {
       const normalizedRoleId = String(roleId || '').trim().toLowerCase();
       if (!normalizedRoleId) {
-        setRoleEditPermissionCodesAvailable([]);
+        setRoleEditPermissionCatalogAvailable([]);
         setRoleEditPermissionCodesChecked([]);
         return;
       }
       setRoleEditPermissionLoading(true);
       try {
         const payload = await api.getRolePermissions(normalizedRoleId);
-        setRoleEditPermissionCodesAvailable(
-          Array.isArray(payload?.available_permission_codes)
+        const normalizedAvailablePermissions = normalizePlatformPermissionCatalogItems({
+          permissionCodes: Array.isArray(payload?.available_permission_codes)
             ? payload.available_permission_codes
+            : [],
+          permissionCatalogItems: Array.isArray(payload?.available_permissions)
+            ? payload.available_permissions
             : []
+        });
+        const availablePermissionSet = new Set(
+          normalizedAvailablePermissions.map((item) => item.code)
         );
+        setRoleEditPermissionCatalogAvailable(normalizedAvailablePermissions);
         setRoleEditPermissionCodesChecked(
           (Array.isArray(payload?.permission_codes) ? payload.permission_codes : [])
             .map((permissionCode) => String(permissionCode || '').trim())
-            .filter((permissionCode) => permissionCode.startsWith('platform.'))
+            .filter((permissionCode) => availablePermissionSet.has(permissionCode))
         );
       } catch (error) {
-        setRoleEditPermissionCodesAvailable([]);
+        setRoleEditPermissionCatalogAvailable([]);
         setRoleEditPermissionCodesChecked([]);
         withErrorNotice(error, '加载角色权限树失败');
       } finally {
@@ -417,6 +545,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
     setRoleEditMode('create');
     setRoleEditTarget(null);
     setRoleEditModalOpen(true);
+    setRoleEditPermissionCatalogAvailable([]);
     setRoleEditPermissionCodesChecked([]);
     roleEditForm.setFieldsValue({
       code: '',
@@ -430,6 +559,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
       setRoleEditMode('edit');
       setRoleEditTarget(roleRecord);
       setRoleEditModalOpen(true);
+      setRoleEditPermissionCatalogAvailable([]);
       setRoleEditPermissionCodesChecked([]);
       roleEditForm.setFieldsValue({
         code: roleRecord.code,
@@ -785,7 +915,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
           onCancel={() => {
             setRoleEditModalOpen(false);
             setRoleEditTarget(null);
-            setRoleEditPermissionCodesAvailable([]);
+            setRoleEditPermissionCatalogAvailable([]);
             setRoleEditPermissionCodesChecked([]);
           }}
           onOk={() => {
@@ -850,7 +980,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
                 <Tree
                   data-testid={roleEditMode === 'create' ? 'platform-role-create-permission-tree' : 'platform-role-edit-permission-tree'}
                   checkable
-                  treeData={toPermissionTreeData(roleEditPermissionCodesAvailable)}
+                  treeData={toPermissionTreeData(roleEditPermissionCatalogAvailable)}
                   checkedKeys={roleEditPermissionCodesChecked}
                   onCheck={(checked) => {
                     const checkedKeys = Array.isArray(checked)
@@ -859,7 +989,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
                     setRoleEditPermissionCodesChecked(
                       checkedKeys
                         .map((key) => String(key || '').trim())
-                        .filter((code) => code.startsWith('platform.'))
+                        .filter((permissionCode) => roleEditPermissionLeafSet.has(permissionCode))
                     );
                   }}
                 />
@@ -907,6 +1037,11 @@ export default function PlatformRoleManagementPage({ accessToken }) {
           size="large"
           onClose={() => {
             setRoleDetailOpen(false);
+            setRoleDetail(null);
+            setPermissionCatalogAvailable([]);
+            setPermissionCodesAvailable([]);
+            setPermissionCodesChecked([]);
+            setPermissionLoading(false);
           }}
           destroyOnClose
         >
@@ -940,7 +1075,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
                     checkable
                     disabled
                     selectable={false}
-                    treeData={toPermissionTreeData(permissionCodesAvailable)}
+                    treeData={toPermissionTreeData(permissionCatalogAvailable)}
                     checkedKeys={permissionCodesChecked}
                     defaultExpandAll
                   />

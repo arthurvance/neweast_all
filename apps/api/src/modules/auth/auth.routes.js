@@ -35,23 +35,23 @@ const toPlatformPermissionContextResponse = (permissionContext = null) => ({
     permissionContext?.scopeLabel
     || permissionContext?.scope_label
     || '平台权限（角色并集）',
-  can_view_member_admin: Boolean(
-    permissionContext?.canViewMemberAdmin ?? permissionContext?.can_view_member_admin
+  can_view_user_management: Boolean(
+    permissionContext?.canViewUserManagement ?? permissionContext?.can_view_user_management
   ),
-  can_operate_member_admin: Boolean(
-    permissionContext?.canOperateMemberAdmin ?? permissionContext?.can_operate_member_admin
+  can_operate_user_management: Boolean(
+    permissionContext?.canOperateUserManagement ?? permissionContext?.can_operate_user_management
   ),
-  can_view_billing: Boolean(
-    permissionContext?.canViewBilling ?? permissionContext?.can_view_billing
+  can_view_organization_management: Boolean(
+    permissionContext?.canViewOrganizationManagement ?? permissionContext?.can_view_organization_management
   ),
-  can_operate_billing: Boolean(
-    permissionContext?.canOperateBilling ?? permissionContext?.can_operate_billing
+  can_operate_organization_management: Boolean(
+    permissionContext?.canOperateOrganizationManagement ?? permissionContext?.can_operate_organization_management
   ),
-  can_view_system_config: Boolean(
-    permissionContext?.canViewSystemConfig ?? permissionContext?.can_view_system_config
+  can_view_role_management: Boolean(
+    permissionContext?.canViewRoleManagement ?? permissionContext?.can_view_role_management
   ),
-  can_operate_system_config: Boolean(
-    permissionContext?.canOperateSystemConfig ?? permissionContext?.can_operate_system_config
+  can_operate_role_management: Boolean(
+    permissionContext?.canOperateRoleManagement ?? permissionContext?.can_operate_role_management
   )
 });
 

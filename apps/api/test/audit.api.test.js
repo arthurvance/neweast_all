@@ -28,10 +28,10 @@ const createHarness = () => {
             roleId: 'platform-audit-viewer',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -50,10 +50,10 @@ const createHarness = () => {
             status: 'active',
             permission: {
               scopeLabel: '组织权限（Tenant A）',
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -414,10 +414,10 @@ test('GET /platform/audit/events returns 503 when audit query capability is unav
             roleId: 'platform-audit-viewer',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]

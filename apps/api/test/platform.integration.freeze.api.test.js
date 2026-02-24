@@ -28,10 +28,10 @@ const createHarness = () => {
             roleId: 'platform-integration-freeze-admin',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -47,10 +47,10 @@ const createHarness = () => {
             roleId: 'platform-integration-freeze-read-only',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -294,7 +294,7 @@ test('platform integration freeze APIs keep conflict semantics stable', async ()
   );
 });
 
-test('platform integration freeze write routes require platform.member_admin.operate permission', async () => {
+test('platform integration freeze write routes require platform.user_management.operate permission', async () => {
   const harness = createHarness();
   const operatorLogin = await loginByPhone({
     authService: harness.authService,

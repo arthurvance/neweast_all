@@ -65,79 +65,175 @@ const normalizeRoleIdFromCode = (code) =>
     .slice(0, 64);
 
 const SETTINGS_TREE_ROOT_KEY = 'settings';
-const SETTINGS_TREE_MENU_ORDER = Object.freeze([
-  'settings/members',
-  'settings/billing'
-]);
-const TENANT_PERMISSION_MENU_MAP = Object.freeze({
-  member_admin: Object.freeze({
-    key: 'settings/members',
-    title: '成员管理'
-  }),
-  billing: Object.freeze({
-    key: 'settings/billing',
-    title: '账单管理'
-  })
+const TENANT_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
+  user_management: '用户管理',
+  role_management: '角色管理'
 });
-const toPermissionActionTitle = (permissionCode) => {
-  const sections = String(permissionCode || '').trim().split('.');
-  const action = String(sections.slice(2).join('.') || '').trim().toLowerCase();
-  if (action === 'view') {
-    return '查看';
-  }
-  if (action === 'operate') {
-    return '操作';
-  }
-  return action || String(permissionCode || '').trim();
-};
-const toPermissionTreeData = (availablePermissionCodes = []) => {
-  const menuNodes = new Map(
-    SETTINGS_TREE_MENU_ORDER.map((menuKey) => [
-      menuKey,
-      {
-        key: menuKey,
-        title: menuKey === 'settings/members' ? '成员管理' : '账单管理',
-        selectable: false,
-        children: []
-      }
-    ])
-  );
+const TENANT_PERMISSION_ACTION_LABEL_MAP = Object.freeze({
+  view: '查看',
+  operate: '操作'
+});
+const TENANT_PERMISSION_LABEL_KEY_MAP = Object.freeze({
+  'permission.tenant.user_management.view': '查看用户管理',
+  'permission.tenant.user_management.operate': '操作用户管理',
+  'permission.tenant.role_management.view': '查看角色管理',
+  'permission.tenant.role_management.operate': '操作角色管理'
+});
 
-  for (const permissionCode of availablePermissionCodes) {
-    const normalizedCode = String(permissionCode || '').trim();
-    if (!normalizedCode.startsWith('tenant.')) {
+const toPermissionCodeParts = (permissionCode) => {
+  const normalizedCode = String(permissionCode || '').trim().toLowerCase();
+  if (!normalizedCode.startsWith('tenant.')) {
+    return null;
+  }
+  const sections = normalizedCode.split('.');
+  return {
+    code: normalizedCode,
+    moduleKey: String(sections[1] || '').trim().toLowerCase(),
+    actionKey: String(sections.slice(2).join('.') || '').trim().toLowerCase()
+  };
+};
+
+const toReadableLabelFromKey = (value) => String(value || '').trim() || '其他';
+
+const normalizeTenantPermissionCatalogItems = ({
+  permissionCodes = [],
+  permissionCatalogItems = []
+} = {}) => {
+  const itemByCode = new Map();
+  const addItem = ({
+    code,
+    groupKey = '',
+    actionKey = '',
+    labelKey = '',
+    order = 0
+  }) => {
+    const parsed = toPermissionCodeParts(code);
+    if (!parsed) {
+      return;
+    }
+    if (itemByCode.has(parsed.code)) {
+      return;
+    }
+    const normalizedOrder = Number.isFinite(Number(order)) ? Number(order) : 0;
+    itemByCode.set(parsed.code, {
+      code: parsed.code,
+      group_key: String(groupKey || parsed.moduleKey || '').trim().toLowerCase(),
+      action_key: String(actionKey || parsed.actionKey || '').trim().toLowerCase(),
+      label_key: String(labelKey || '').trim(),
+      order: normalizedOrder
+    });
+  };
+
+  for (const item of Array.isArray(permissionCatalogItems) ? permissionCatalogItems : []) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
       continue;
     }
-    const sections = normalizedCode.split('.');
-    const moduleName = String(sections[1] || '').trim().toLowerCase();
-    const mappedMenu = TENANT_PERMISSION_MENU_MAP[moduleName];
-    const menuKey = mappedMenu?.key || `settings/${moduleName || 'misc'}`;
-    const menuTitle = mappedMenu?.title || (moduleName || '其他');
-    const menuNode = menuNodes.get(menuKey) || {
-      key: menuKey,
-      title: menuTitle,
-      selectable: false,
-      children: []
-    };
-    menuNode.children.push({
-      key: normalizedCode,
-      title: toPermissionActionTitle(normalizedCode)
+    addItem({
+      code: item.code,
+      groupKey: item.group_key,
+      actionKey: item.action_key,
+      labelKey: item.label_key,
+      order: item.order
     });
-    menuNodes.set(menuKey, menuNode);
   }
 
-  const orderedNodes = [...menuNodes.values()]
-    .map((node) => ({
-      ...node,
-      children: [...node.children].sort((left, right) => String(left.key).localeCompare(String(right.key)))
+  let fallbackOrder = 10000;
+  for (const permissionCode of Array.isArray(permissionCodes) ? permissionCodes : []) {
+    addItem({
+      code: permissionCode,
+      order: fallbackOrder
+    });
+    fallbackOrder += 1;
+  }
+
+  return [...itemByCode.values()].sort((left, right) => {
+    if (left.order !== right.order) {
+      return left.order - right.order;
+    }
+    return String(left.code).localeCompare(String(right.code));
+  });
+};
+
+const toTenantPermissionActionLabel = (permissionItem = {}) => {
+  const labelKey = String(permissionItem.label_key || '').trim();
+  if (labelKey && TENANT_PERMISSION_LABEL_KEY_MAP[labelKey]) {
+    return TENANT_PERMISSION_LABEL_KEY_MAP[labelKey];
+  }
+  const actionKey = String(permissionItem.action_key || '').trim().toLowerCase();
+  if (actionKey && TENANT_PERMISSION_ACTION_LABEL_MAP[actionKey]) {
+    return TENANT_PERMISSION_ACTION_LABEL_MAP[actionKey];
+  }
+  const parsed = toPermissionCodeParts(permissionItem.code);
+  if (parsed?.actionKey && TENANT_PERMISSION_ACTION_LABEL_MAP[parsed.actionKey]) {
+    return TENANT_PERMISSION_ACTION_LABEL_MAP[parsed.actionKey];
+  }
+  return toReadableLabelFromKey(actionKey || permissionItem.code);
+};
+
+const toTenantPermissionGroupLabel = (groupKey = '') => {
+  const normalizedGroupKey = String(groupKey || '').trim().toLowerCase();
+  if (normalizedGroupKey && TENANT_PERMISSION_GROUP_LABEL_MAP[normalizedGroupKey]) {
+    return TENANT_PERMISSION_GROUP_LABEL_MAP[normalizedGroupKey];
+  }
+  return toReadableLabelFromKey(normalizedGroupKey || 'misc');
+};
+
+const toPermissionTreeData = (availablePermissions = []) => {
+  const groupNodeByKey = new Map();
+  for (const permissionItem of Array.isArray(availablePermissions) ? availablePermissions : []) {
+    const permissionCode = String(permissionItem?.code || '').trim().toLowerCase();
+    if (!permissionCode.startsWith('tenant.')) {
+      continue;
+    }
+    const parsed = toPermissionCodeParts(permissionCode);
+    const groupKey = String(
+      permissionItem?.group_key || parsed?.moduleKey || 'misc'
+    ).trim().toLowerCase();
+    const menuKey = `settings/${groupKey || 'misc'}`;
+    const groupOrder = Number(permissionItem?.order || 0);
+    const currentNode = groupNodeByKey.get(menuKey) || {
+      key: menuKey,
+      title: toTenantPermissionGroupLabel(groupKey),
+      selectable: false,
+      order: Number.isFinite(groupOrder) ? groupOrder : 0,
+      children: []
+    };
+    if (Number.isFinite(groupOrder)) {
+      currentNode.order = Math.min(currentNode.order, groupOrder);
+    }
+    currentNode.children.push({
+      key: permissionCode,
+      title: toTenantPermissionActionLabel(permissionItem),
+      order: Number.isFinite(groupOrder) ? groupOrder : 0
+    });
+    groupNodeByKey.set(menuKey, currentNode);
+  }
+
+  const orderedNodes = [...groupNodeByKey.values()]
+    .map((groupNode) => ({
+      key: groupNode.key,
+      title: groupNode.title,
+      selectable: false,
+      order: groupNode.order,
+      children: [...groupNode.children]
+        .sort((left, right) => {
+          const leftOrder = Number(left?.order || 0);
+          const rightOrder = Number(right?.order || 0);
+          if (leftOrder !== rightOrder) {
+            return leftOrder - rightOrder;
+          }
+          return String(left.key).localeCompare(String(right.key));
+        })
+        .map((childNode) => ({
+          key: childNode.key,
+          title: childNode.title
+        }))
     }))
     .sort((left, right) => {
-      const leftIndex = SETTINGS_TREE_MENU_ORDER.indexOf(String(left.key));
-      const rightIndex = SETTINGS_TREE_MENU_ORDER.indexOf(String(right.key));
-      const normalizedLeftIndex = leftIndex === -1 ? Number.POSITIVE_INFINITY : leftIndex;
-      const normalizedRightIndex = rightIndex === -1 ? Number.POSITIVE_INFINITY : rightIndex;
-      if (normalizedLeftIndex !== normalizedRightIndex) {
-        return normalizedLeftIndex - normalizedRightIndex;
+      const leftOrder = Number(left?.order || 0);
+      const rightOrder = Number(right?.order || 0);
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
       }
       return String(left.key).localeCompare(String(right.key));
     });
@@ -184,11 +280,12 @@ export default function TenantRoleManagementPage({ accessToken }) {
   const [roleEditSubmitting, setRoleEditSubmitting] = useState(false);
   const [roleEditMode, setRoleEditMode] = useState('create');
   const [roleEditTarget, setRoleEditTarget] = useState(null);
-  const [roleEditPermissionCodesAvailable, setRoleEditPermissionCodesAvailable] = useState([]);
+  const [roleEditPermissionCatalogAvailable, setRoleEditPermissionCatalogAvailable] = useState([]);
   const [roleEditPermissionCodesChecked, setRoleEditPermissionCodesChecked] = useState([]);
   const [roleEditPermissionLoading, setRoleEditPermissionLoading] = useState(false);
   const [roleDetailOpen, setRoleDetailOpen] = useState(false);
   const [roleDetail, setRoleDetail] = useState(null);
+  const [permissionCatalogAvailable, setPermissionCatalogAvailable] = useState([]);
   const [permissionCodesAvailable, setPermissionCodesAvailable] = useState([]);
   const [permissionCodesChecked, setPermissionCodesChecked] = useState([]);
   const [permissionLoading, setPermissionLoading] = useState(false);
@@ -242,12 +339,31 @@ export default function TenantRoleManagementPage({ accessToken }) {
         if (rolePermissionLoadingTargetRef.current !== normalizedRoleId) {
           return;
         }
-        setPermissionCodesAvailable(payload.available_permission_codes || []);
-        setPermissionCodesChecked(payload.permission_codes || []);
+        const normalizedAvailablePermissions = normalizeTenantPermissionCatalogItems({
+          permissionCodes: Array.isArray(payload?.available_permission_codes)
+            ? payload.available_permission_codes
+            : [],
+          permissionCatalogItems: Array.isArray(payload?.available_permissions)
+            ? payload.available_permissions
+            : []
+        });
+        const availablePermissionSet = new Set(
+          normalizedAvailablePermissions.map((item) => item.code)
+        );
+        setPermissionCatalogAvailable(normalizedAvailablePermissions);
+        setPermissionCodesAvailable(
+          normalizedAvailablePermissions.map((item) => item.code)
+        );
+        setPermissionCodesChecked(
+          (Array.isArray(payload?.permission_codes) ? payload.permission_codes : [])
+            .map((permissionCode) => String(permissionCode || '').trim())
+            .filter((permissionCode) => availablePermissionSet.has(permissionCode))
+        );
       } catch (error) {
         if (rolePermissionLoadingTargetRef.current !== normalizedRoleId) {
           return;
         }
+        setPermissionCatalogAvailable([]);
         setPermissionCodesAvailable([]);
         setPermissionCodesChecked([]);
         notifyError(error, '加载角色权限树失败');
@@ -264,6 +380,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
     async (roleRecord) => {
       setRoleDetail(roleRecord);
       setRoleDetailOpen(true);
+      setPermissionCatalogAvailable([]);
       setPermissionCodesAvailable([]);
       setPermissionCodesChecked([]);
       await loadRolePermissions(roleRecord.role_id);
@@ -327,14 +444,18 @@ export default function TenantRoleManagementPage({ accessToken }) {
     setRoleEditPermissionLoading(true);
     try {
       const payload = await api.getRolePermissions('tenant_owner');
-      setRoleEditPermissionCodesAvailable(
-        Array.isArray(payload?.available_permission_codes)
+      const normalizedAvailablePermissions = normalizeTenantPermissionCatalogItems({
+        permissionCodes: Array.isArray(payload?.available_permission_codes)
           ? payload.available_permission_codes
+          : [],
+        permissionCatalogItems: Array.isArray(payload?.available_permissions)
+          ? payload.available_permissions
           : []
-      );
+      });
+      setRoleEditPermissionCatalogAvailable(normalizedAvailablePermissions);
       setRoleEditPermissionCodesChecked([]);
     } catch (error) {
-      setRoleEditPermissionCodesAvailable([]);
+      setRoleEditPermissionCatalogAvailable([]);
       setRoleEditPermissionCodesChecked([]);
       notifyError(error, '加载角色权限目录失败');
     } finally {
@@ -346,25 +467,32 @@ export default function TenantRoleManagementPage({ accessToken }) {
     async (roleId) => {
       const normalizedRoleId = String(roleId || '').trim().toLowerCase();
       if (!normalizedRoleId) {
-        setRoleEditPermissionCodesAvailable([]);
+        setRoleEditPermissionCatalogAvailable([]);
         setRoleEditPermissionCodesChecked([]);
         return;
       }
       setRoleEditPermissionLoading(true);
       try {
         const payload = await api.getRolePermissions(normalizedRoleId);
-        setRoleEditPermissionCodesAvailable(
-          Array.isArray(payload?.available_permission_codes)
+        const normalizedAvailablePermissions = normalizeTenantPermissionCatalogItems({
+          permissionCodes: Array.isArray(payload?.available_permission_codes)
             ? payload.available_permission_codes
+            : [],
+          permissionCatalogItems: Array.isArray(payload?.available_permissions)
+            ? payload.available_permissions
             : []
+        });
+        const availablePermissionSet = new Set(
+          normalizedAvailablePermissions.map((item) => item.code)
         );
+        setRoleEditPermissionCatalogAvailable(normalizedAvailablePermissions);
         setRoleEditPermissionCodesChecked(
           (Array.isArray(payload?.permission_codes) ? payload.permission_codes : [])
             .map((permissionCode) => String(permissionCode || '').trim())
-            .filter((permissionCode) => permissionCode.startsWith('tenant.'))
+            .filter((permissionCode) => availablePermissionSet.has(permissionCode))
         );
       } catch (error) {
-        setRoleEditPermissionCodesAvailable([]);
+        setRoleEditPermissionCatalogAvailable([]);
         setRoleEditPermissionCodesChecked([]);
         notifyError(error, '加载角色权限树失败');
       } finally {
@@ -378,6 +506,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
     setRoleEditMode('create');
     setRoleEditTarget(null);
     setRoleEditOpen(true);
+    setRoleEditPermissionCatalogAvailable([]);
     setRoleEditPermissionCodesChecked([]);
     roleEditForm.setFieldsValue({
       code: '',
@@ -391,6 +520,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
       setRoleEditMode('edit');
       setRoleEditTarget(roleRecord);
       setRoleEditOpen(true);
+      setRoleEditPermissionCatalogAvailable([]);
       setRoleEditPermissionCodesChecked([]);
       roleEditForm.setFieldsValue({
         role_id: roleRecord.role_id,
@@ -435,7 +565,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
           notifyError(error, `组织角色已创建，但权限保存失败（role_id: ${payload.role_id}）`);
           setRoleEditOpen(false);
           setRoleEditTarget(null);
-          setRoleEditPermissionCodesAvailable([]);
+          setRoleEditPermissionCatalogAvailable([]);
           setRoleEditPermissionCodesChecked([]);
           roleEditForm.resetFields();
           await loadRoles();
@@ -460,7 +590,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
           notifyError(error, `组织角色已更新，但权限保存失败（role_id: ${roleEditTarget?.role_id}）`);
           setRoleEditOpen(false);
           setRoleEditTarget(null);
-          setRoleEditPermissionCodesAvailable([]);
+          setRoleEditPermissionCatalogAvailable([]);
           setRoleEditPermissionCodesChecked([]);
           roleEditForm.resetFields();
           await loadRoles();
@@ -470,7 +600,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
       }
       setRoleEditOpen(false);
       setRoleEditTarget(null);
-      setRoleEditPermissionCodesAvailable([]);
+      setRoleEditPermissionCatalogAvailable([]);
       setRoleEditPermissionCodesChecked([]);
       roleEditForm.resetFields();
       await loadRoles();
@@ -543,20 +673,21 @@ export default function TenantRoleManagementPage({ accessToken }) {
 
   const roleEditPermissionLeafSet = useMemo(
     () => new Set(
-      roleEditPermissionCodesAvailable
-        .map((code) => String(code || '').trim())
+      roleEditPermissionCatalogAvailable
+        .map((item) => String(item?.code || '').trim())
         .filter((code) => code.startsWith('tenant.'))
     ),
-    [roleEditPermissionCodesAvailable]
+    [roleEditPermissionCatalogAvailable]
   );
 
   const roleDetailWithPermission = useMemo(
     () => ({
       ...(roleDetail || {}),
       permission_codes: permissionCodesChecked,
-      available_permission_codes: permissionCodesAvailable
+      available_permission_codes: permissionCodesAvailable,
+      available_permissions: permissionCatalogAvailable
     }),
-    [permissionCodesAvailable, permissionCodesChecked, roleDetail]
+    [permissionCatalogAvailable, permissionCodesAvailable, permissionCodesChecked, roleDetail]
   );
 
   const filteredRoleList = useMemo(() => {
@@ -801,7 +932,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
         onCancel={() => {
           setRoleEditOpen(false);
           setRoleEditTarget(null);
-          setRoleEditPermissionCodesAvailable([]);
+          setRoleEditPermissionCatalogAvailable([]);
           setRoleEditPermissionCodesChecked([]);
         }}
         onOk={() => {
@@ -870,7 +1001,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
               <Tree
                 data-testid={roleEditMode === 'create' ? 'tenant-role-create-permission-tree' : 'tenant-role-edit-permission-tree'}
                 checkable
-                treeData={toPermissionTreeData(roleEditPermissionCodesAvailable)}
+                treeData={toPermissionTreeData(roleEditPermissionCatalogAvailable)}
                 checkedKeys={roleEditPermissionCodesChecked}
                 onCheck={(checked) => {
                   const checkedKeys = Array.isArray(checked)
@@ -896,6 +1027,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
           rolePermissionLoadingTargetRef.current = '';
           setRoleDetailOpen(false);
           setRoleDetail(null);
+          setPermissionCatalogAvailable([]);
           setPermissionCodesAvailable([]);
           setPermissionCodesChecked([]);
           setPermissionLoading(false);
@@ -935,7 +1067,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
                   checkable
                   disabled
                   selectable={false}
-                  treeData={toPermissionTreeData(permissionCodesAvailable)}
+                  treeData={toPermissionTreeData(permissionCatalogAvailable)}
                   checkedKeys={permissionCodesChecked}
                   defaultExpandAll
                 />

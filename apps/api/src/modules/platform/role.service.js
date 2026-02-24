@@ -556,6 +556,83 @@ const normalizeStrictPlatformPermissionCodes = ({
   return normalizedPermissionCodes;
 };
 
+const normalizeStrictPlatformPermissionCatalogItems = ({
+  permissionCatalogItems,
+  minCount = 0,
+  maxCount = Number.POSITIVE_INFINITY
+} = {}) => {
+  if (!Array.isArray(permissionCatalogItems)) {
+    return null;
+  }
+  if (
+    permissionCatalogItems.length < minCount
+    || permissionCatalogItems.length > maxCount
+  ) {
+    return null;
+  }
+  const normalizedItems = [];
+  const seenPermissionCodes = new Set();
+  for (const item of permissionCatalogItems) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return null;
+    }
+    const rawCode = String(item.code || '').trim();
+    if (!rawCode || rawCode !== String(item.code || '')) {
+      return null;
+    }
+    const normalizedCode = rawCode.toLowerCase();
+    if (
+      !PLATFORM_PERMISSION_CODE_PATTERN.test(normalizedCode)
+      || CONTROL_CHAR_PATTERN.test(normalizedCode)
+      || seenPermissionCodes.has(normalizedCode)
+    ) {
+      return null;
+    }
+    const rawScope = String(item.scope || PLATFORM_ROLE_SCOPE).trim().toLowerCase();
+    if (rawScope !== PLATFORM_ROLE_SCOPE) {
+      return null;
+    }
+    const groupKey = String(item.group_key || '').trim();
+    const actionKey = String(item.action_key || '').trim();
+    const labelKey = String(item.label_key || '').trim();
+    if (
+      CONTROL_CHAR_PATTERN.test(groupKey)
+      || CONTROL_CHAR_PATTERN.test(actionKey)
+      || CONTROL_CHAR_PATTERN.test(labelKey)
+    ) {
+      return null;
+    }
+    const hasOrderField = Object.prototype.hasOwnProperty.call(item, 'order');
+    const order = hasOrderField ? item.order : 0;
+    if (
+      (hasOrderField && (typeof order !== 'number' || !Number.isFinite(order)))
+      || !Number.isInteger(Number(order))
+    ) {
+      return null;
+    }
+    seenPermissionCodes.add(normalizedCode);
+    normalizedItems.push({
+      code: normalizedCode,
+      scope: PLATFORM_ROLE_SCOPE,
+      group_key: groupKey,
+      action_key: actionKey,
+      label_key: labelKey,
+      order: Number(order)
+    });
+  }
+  return normalizedItems;
+};
+
+const sortPermissionCatalogItems = (items = []) =>
+  [...items].sort((left, right) => {
+    const leftOrder = Number(left?.order || 0);
+    const rightOrder = Number(right?.order || 0);
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return String(left?.code || '').localeCompare(String(right?.code || ''));
+  });
+
 const normalizeNonNegativeInteger = (value) => {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     return null;
@@ -769,14 +846,25 @@ const createPlatformRoleService = ({ authService } = {}) => {
     }
 
     assertAuthServiceMethod('listPlatformRolePermissionGrants');
-    assertAuthServiceMethod('listPlatformPermissionCatalog');
+    assertAuthServiceMethod('listPlatformPermissionCatalogEntries');
+    let availablePermissionCatalogItems;
     let availablePermissionCodes;
     try {
-      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
-        permissionCodes: authService.listPlatformPermissionCatalog(),
+      availablePermissionCatalogItems = normalizeStrictPlatformPermissionCatalogItems({
+        permissionCatalogItems: authService.listPlatformPermissionCatalogEntries(),
         minCount: 0,
         maxCount: Number.POSITIVE_INFINITY
       });
+      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
+        permissionCodes: Array.isArray(availablePermissionCatalogItems)
+          ? availablePermissionCatalogItems.map((item) => item.code)
+          : null,
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+      if (!availablePermissionCatalogItems || !availablePermissionCodes) {
+        throw roleErrors.dependencyUnavailable();
+      }
     } catch (_error) {
       addAuditEvent({
         type: 'platform.role.permissions.read.rejected',
@@ -839,6 +927,21 @@ const createPlatformRoleService = ({ authService } = {}) => {
       minCount: 0,
       maxCount: Number.POSITIVE_INFINITY
     });
+    const normalizedAvailablePermissions = normalizeStrictPlatformPermissionCatalogItems({
+      permissionCatalogItems: Array.isArray(grants?.available_permissions)
+        ? grants.available_permissions
+        : grants?.availablePermissions,
+      minCount: 0,
+      maxCount: Number.POSITIVE_INFINITY
+    });
+    const normalizedAvailablePermissionCodesFromMetadata =
+      normalizeStrictPlatformPermissionCodes({
+        permissionCodes: Array.isArray(normalizedAvailablePermissions)
+          ? normalizedAvailablePermissions.map((item) => item.code)
+          : null,
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
     const catalogPermissionSet = new Set(availablePermissionCodes || []);
     const hasUnknownAvailablePermission = Array.isArray(normalizedAvailablePermissionCodes)
       && normalizedAvailablePermissionCodes.some((permissionCode) =>
@@ -849,13 +952,29 @@ const createPlatformRoleService = ({ authService } = {}) => {
       && normalizedPermissionCodes.some((permissionCode) =>
         !availablePermissionSet.has(permissionCode)
       );
+    const sortedAvailablePermissionCodes = [...(normalizedAvailablePermissionCodes || [])]
+      .sort((left, right) => left.localeCompare(right));
+    const sortedAvailablePermissionCodesFromMetadata =
+      [...(normalizedAvailablePermissionCodesFromMetadata || [])]
+        .sort((left, right) => left.localeCompare(right));
+    const hasAvailablePermissionMetadataMismatch = (
+      sortedAvailablePermissionCodes.length !== sortedAvailablePermissionCodesFromMetadata.length
+      || sortedAvailablePermissionCodes.some(
+        (permissionCode, index) =>
+          permissionCode !== sortedAvailablePermissionCodesFromMetadata[index]
+      )
+    );
     if (
       !availablePermissionCodes
+      || !availablePermissionCatalogItems
       || normalizedResultRoleId !== normalizedRoleId
       || !normalizedPermissionCodes
       || !normalizedAvailablePermissionCodes
+      || !normalizedAvailablePermissions
+      || !normalizedAvailablePermissionCodesFromMetadata
       || hasUnknownAvailablePermission
       || hasUnsupportedGrantedPermission
+      || hasAvailablePermissionMetadataMismatch
     ) {
       addAuditEvent({
         type: 'platform.role.permissions.read.rejected',
@@ -885,11 +1004,15 @@ const createPlatformRoleService = ({ authService } = {}) => {
       .sort((left, right) => left.localeCompare(right));
     const resolvedSortedAvailablePermissionCodes = [...normalizedAvailablePermissionCodes]
       .sort((left, right) => left.localeCompare(right));
+    const resolvedSortedAvailablePermissions = sortPermissionCatalogItems(
+      normalizedAvailablePermissions
+    );
 
     return {
       role_id: normalizedRoleId,
       permission_codes: resolvedSortedPermissionCodes,
       available_permission_codes: resolvedSortedAvailablePermissionCodes,
+      available_permissions: resolvedSortedAvailablePermissions,
       request_id: resolvedRequestId
     };
   };
@@ -953,15 +1076,26 @@ const createPlatformRoleService = ({ authService } = {}) => {
 
     assertAuthServiceMethod('replacePlatformRolePermissionGrants');
     assertAuthServiceMethod('listPlatformRolePermissionGrants');
-    assertAuthServiceMethod('listPlatformPermissionCatalog');
+    assertAuthServiceMethod('listPlatformPermissionCatalogEntries');
 
+    let availablePermissionCatalogItems;
     let availablePermissionCodes;
     try {
-      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
-        permissionCodes: authService.listPlatformPermissionCatalog(),
+      availablePermissionCatalogItems = normalizeStrictPlatformPermissionCatalogItems({
+        permissionCatalogItems: authService.listPlatformPermissionCatalogEntries(),
         minCount: 0,
         maxCount: Number.POSITIVE_INFINITY
       });
+      availablePermissionCodes = normalizeStrictPlatformPermissionCodes({
+        permissionCodes: Array.isArray(availablePermissionCatalogItems)
+          ? availablePermissionCatalogItems.map((item) => item.code)
+          : null,
+        minCount: 0,
+        maxCount: Number.POSITIVE_INFINITY
+      });
+      if (!availablePermissionCatalogItems || !availablePermissionCodes) {
+        throw roleErrors.dependencyUnavailable();
+      }
     } catch (_error) {
       addAuditEvent({
         type: 'platform.role.permissions.update.rejected',
@@ -1101,6 +1235,7 @@ const createPlatformRoleService = ({ authService } = {}) => {
     );
     if (
       !availablePermissionCodes
+      || !availablePermissionCatalogItems
       || normalizedResultRoleId !== normalizedRoleId
       || !normalizedPermissionCodes
       || normalizedAffectedUserCount === null
@@ -1135,11 +1270,15 @@ const createPlatformRoleService = ({ authService } = {}) => {
       .sort((left, right) => left.localeCompare(right));
     const resolvedSortedAvailablePermissionCodes = [...availablePermissionCodes]
       .sort((left, right) => left.localeCompare(right));
+    const resolvedSortedAvailablePermissions = sortPermissionCatalogItems(
+      availablePermissionCatalogItems
+    );
 
     return {
       role_id: normalizedRoleId,
       permission_codes: resolvedSortedPermissionCodes,
       available_permission_codes: resolvedSortedAvailablePermissionCodes,
+      available_permissions: resolvedSortedAvailablePermissions,
       affected_user_count: normalizedAffectedUserCount,
       request_id: resolvedRequestId
     };

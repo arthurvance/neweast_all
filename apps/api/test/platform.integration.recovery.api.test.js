@@ -28,10 +28,10 @@ const createHarness = () => {
             roleId: 'platform-integration-recovery-admin',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -47,10 +47,10 @@ const createHarness = () => {
             roleId: 'platform-integration-recovery-read-only',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]

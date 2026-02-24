@@ -335,16 +335,16 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   },
   {
     method: 'GET',
-    path: '/auth/tenant/member-admin/probe',
+    path: '/auth/tenant/user-management/probe',
     access: 'protected',
-    permission_code: 'tenant.member_admin.operate',
+    permission_code: 'tenant.user_management.operate',
     scope: 'tenant'
   },
   {
     method: 'POST',
-    path: '/auth/tenant/member-admin/provision-user',
+    path: '/auth/tenant/user-management/provision-user',
     access: 'protected',
-    permission_code: 'tenant.member_admin.operate',
+    permission_code: 'tenant.user_management.operate',
     scope: 'tenant'
   },
   {
@@ -447,16 +447,16 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
   },
   {
     method: 'GET',
-    path: '/auth/platform/member-admin/probe',
+    path: '/auth/platform/user-management/probe',
     access: 'protected',
-    permission_code: 'platform.member_admin.view',
+    permission_code: 'platform.user_management.view',
     scope: 'platform'
   },
   {
     method: 'POST',
-    path: '/auth/platform/member-admin/provision-user',
+    path: '/auth/platform/user-management/provision-user',
     access: 'protected',
-    permission_code: 'platform.member_admin.operate',
+    permission_code: 'platform.user_management.operate',
     scope: 'platform'
   },
   {
@@ -722,7 +722,7 @@ const ROUTE_DEFINITIONS = createImmutableRouteDefinitions([
     method: 'POST',
     path: '/auth/platform/role-facts/replace',
     access: 'protected',
-    permission_code: 'platform.member_admin.operate',
+    permission_code: 'platform.user_management.operate',
     scope: 'platform'
   },
   {

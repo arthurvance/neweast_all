@@ -9,8 +9,8 @@ const TENANT_ROLE_DELETE_ROUTE_KEY = 'DELETE /tenant/roles/:role_id';
 const TENANT_ROLE_PERMISSION_GET_ROUTE_KEY = 'GET /tenant/roles/:role_id/permissions';
 const TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY = 'PUT /tenant/roles/:role_id/permissions';
 
-const TENANT_ROLE_VIEW_PERMISSION_CODE = 'tenant.member_admin.view';
-const TENANT_ROLE_OPERATE_PERMISSION_CODE = 'tenant.member_admin.operate';
+const TENANT_ROLE_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
+const TENANT_ROLE_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
 const TENANT_ROLE_SCOPE = 'tenant';
 
 const PROTECTED_TENANT_ROLE_IDS = Object.freeze([

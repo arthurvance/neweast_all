@@ -23,9 +23,9 @@ INSERT INTO platform_role_permission_grants (
   updated_by_user_id
 )
 VALUES
-  ('sys_admin', 'platform.member_admin.view', NULL, NULL),
-  ('sys_admin', 'platform.member_admin.operate', NULL, NULL),
-  ('sys_admin', 'platform.billing.view', NULL, NULL),
-  ('sys_admin', 'platform.billing.operate', NULL, NULL)
+  ('sys_admin', 'platform.user_management.view', NULL, NULL),
+  ('sys_admin', 'platform.user_management.operate', NULL, NULL),
+  ('sys_admin', 'platform.organization_management.view', NULL, NULL),
+  ('sys_admin', 'platform.organization_management.operate', NULL, NULL)
 ON DUPLICATE KEY UPDATE
   updated_at = CURRENT_TIMESTAMP(3);

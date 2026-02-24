@@ -43,12 +43,12 @@ JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
 WHERE catalog.scope = 'platform'
   AND COALESCE(catalog.tenant_id, '') = ''
   AND LOWER(TRIM(grants.permission_code)) IN (
-    'platform.member_admin.view',
-    'platform.member_admin.operate',
-    'platform.billing.view',
-    'platform.billing.operate',
-    'platform.system_config.view',
-    'platform.system_config.operate'
+    'platform.user_management.view',
+    'platform.user_management.operate',
+    'platform.organization_management.view',
+    'platform.organization_management.operate',
+    'platform.role_management.view',
+    'platform.role_management.operate'
   )
 GROUP BY grants.role_id, LOWER(TRIM(grants.permission_code));
 
@@ -59,12 +59,12 @@ WHERE catalog.scope = 'platform'
   AND COALESCE(catalog.tenant_id, '') = ''
   AND (
     LOWER(TRIM(grants.permission_code)) NOT IN (
-      'platform.member_admin.view',
-      'platform.member_admin.operate',
-      'platform.billing.view',
-      'platform.billing.operate',
-      'platform.system_config.view',
-      'platform.system_config.operate'
+      'platform.user_management.view',
+      'platform.user_management.operate',
+      'platform.organization_management.view',
+      'platform.organization_management.operate',
+      'platform.role_management.view',
+      'platform.role_management.operate'
     )
     OR BINARY grants.permission_code <> BINARY LOWER(TRIM(grants.permission_code))
   );
@@ -137,10 +137,10 @@ JOIN platform_role_catalog catalog ON catalog.role_id = grants.role_id
 WHERE catalog.scope = 'tenant'
   AND COALESCE(catalog.tenant_id, '') <> ''
   AND LOWER(TRIM(grants.permission_code)) IN (
-    'tenant.member_admin.view',
-    'tenant.member_admin.operate',
-    'tenant.billing.view',
-    'tenant.billing.operate'
+    'tenant.user_management.view',
+    'tenant.user_management.operate',
+    'tenant.role_management.view',
+    'tenant.role_management.operate'
   )
 GROUP BY grants.role_id, LOWER(TRIM(grants.permission_code));
 
@@ -151,10 +151,10 @@ WHERE catalog.scope = 'tenant'
   AND COALESCE(catalog.tenant_id, '') <> ''
   AND (
     LOWER(TRIM(grants.permission_code)) NOT IN (
-      'tenant.member_admin.view',
-      'tenant.member_admin.operate',
-      'tenant.billing.view',
-      'tenant.billing.operate'
+      'tenant.user_management.view',
+      'tenant.user_management.operate',
+      'tenant.role_management.view',
+      'tenant.role_management.operate'
     )
     OR BINARY grants.permission_code <> BINARY LOWER(TRIM(grants.permission_code))
   );

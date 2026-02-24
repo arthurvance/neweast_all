@@ -19,9 +19,9 @@ const PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY =
   'POST /platform/integrations/:integration_id/contracts/:contract_version/activate';
 
 const PLATFORM_INTEGRATION_CONTRACT_VIEW_PERMISSION_CODE =
-  'platform.member_admin.view';
+  'platform.user_management.view';
 const PLATFORM_INTEGRATION_CONTRACT_OPERATE_PERMISSION_CODE =
-  'platform.member_admin.operate';
+  'platform.user_management.operate';
 const PLATFORM_INTEGRATION_CONTRACT_SCOPE = 'platform';
 
 const PLATFORM_INTEGRATION_CONTRACT_TYPE_ENUM = Object.freeze([

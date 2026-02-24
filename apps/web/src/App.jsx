@@ -508,50 +508,50 @@ const readTenantPermissionState = (sessionState) => {
   if (permission && typeof permission === 'object') {
     return {
       scope_label: String(permission.scope_label || '组织权限快照（服务端）'),
-      can_view_member_admin: Boolean(permission.can_view_member_admin),
-      can_operate_member_admin: Boolean(permission.can_operate_member_admin),
-      can_view_billing: Boolean(permission.can_view_billing),
-      can_operate_billing: Boolean(permission.can_operate_billing)
+      can_view_user_management: Boolean(permission.can_view_user_management),
+      can_operate_user_management: Boolean(permission.can_operate_user_management),
+      can_view_role_management: Boolean(permission.can_view_role_management),
+      can_operate_role_management: Boolean(permission.can_operate_role_management)
     };
   }
 
   if (sessionState?.entry_domain !== 'tenant') {
     return {
       scope_label: '平台入口（无组织侧权限上下文）',
-      can_view_member_admin: false,
-      can_operate_member_admin: false,
-      can_view_billing: false,
-      can_operate_billing: false
+      can_view_user_management: false,
+      can_operate_user_management: false,
+      can_view_role_management: false,
+      can_operate_role_management: false
     };
   }
 
   return {
     scope_label: '组织权限加载中（以服务端返回为准）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: false,
+    can_operate_role_management: false
   };
 };
 
 const selectPermissionUiState = (permissionState) => {
-  const canAccessMemberAdmin = Boolean(
-    permissionState?.can_view_member_admin
-    && permissionState?.can_operate_member_admin
+  const canAccessUserManagement = Boolean(
+    permissionState?.can_view_user_management
+    && permissionState?.can_operate_user_management
   );
-  const canAccessBilling = Boolean(
-    permissionState?.can_view_billing
-    && permissionState?.can_operate_billing
+  const canAccessRoleManagement = Boolean(
+    permissionState?.can_view_role_management
+    && permissionState?.can_operate_role_management
   );
 
   return {
     menu: {
-      member_admin: canAccessMemberAdmin,
-      billing: canAccessBilling
+      user_management: canAccessUserManagement,
+      role_management: canAccessRoleManagement
     },
     action: {
-      member_admin: canAccessMemberAdmin,
-      billing: canAccessBilling
+      user_management: canAccessUserManagement,
+      role_management: canAccessRoleManagement
     }
   };
 };
@@ -1309,7 +1309,7 @@ export default function App() {
   const isTenantManagementDashboardScreen = Boolean(
     screen === 'dashboard'
     && sessionState?.entry_domain === 'tenant'
-    && permissionUiState.menu.member_admin
+    && permissionUiState.menu.user_management
   );
 
   return (
@@ -1435,7 +1435,7 @@ export default function App() {
             platformPermissionContext={sessionState?.platform_permission_context || null}
             onLogout={handleLogout}
           />
-        ) : sessionState?.entry_domain === 'tenant' && permissionUiState.menu.member_admin ? (
+        ) : sessionState?.entry_domain === 'tenant' && permissionUiState.menu.user_management ? (
           <TenantManagementLayoutPage
             accessToken={sessionState?.access_token}
             userName={sessionState?.user_name}
@@ -1530,33 +1530,33 @@ export default function App() {
                   <nav aria-label="tenant-permission-menu">
                     <p style={{ margin: 0 }}>可见菜单</p>
                     <ul style={{ margin: '4px 0 0 20px', padding: 0 }}>
-                      {permissionUiState.menu.member_admin ? (
-                        <li data-testid="menu-member-admin">成员管理</li>
+                      {permissionUiState.menu.user_management ? (
+                        <li data-testid="menu-user-management">用户管理</li>
                       ) : null}
-                      {permissionUiState.menu.billing ? (
-                        <li data-testid="menu-billing">账单配置</li>
+                      {permissionUiState.menu.role_management ? (
+                        <li data-testid="menu-role_management">角色管理</li>
                       ) : null}
-                      {!permissionUiState.menu.member_admin && !permissionUiState.menu.billing ? (
+                      {!permissionUiState.menu.user_management && !permissionUiState.menu.role_management ? (
                         <li data-testid="menu-empty">当前无可见菜单</li>
                       ) : null}
                     </ul>
                   </nav>
-                  {permissionUiState.action.member_admin ? (
+                  {permissionUiState.action.user_management ? (
                     <button
-                      data-testid="permission-member-admin-button"
+                      data-testid="permission-user-management-button"
                       type="button"
                       style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
                     >
-                      成员管理
+                      用户管理
                     </button>
                   ) : null}
-                  {permissionUiState.action.billing ? (
+                  {permissionUiState.action.role_management ? (
                     <button
-                      data-testid="permission-billing-button"
+                      data-testid="permission-role_management-button"
                       type="button"
                       style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
                     >
-                      账单配置
+                      角色管理
                     </button>
                   ) : null}
                 </section>

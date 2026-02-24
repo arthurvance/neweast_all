@@ -285,35 +285,35 @@ const createOtpApiServer = async () => {
   const tenantPermissionById = {
     'tenant-101': {
       scope_label: '组织权限（Tenant 101）',
-      can_view_member_admin: true,
-      can_operate_member_admin: true,
-      can_view_billing: true,
-      can_operate_billing: false
+      can_view_user_management: true,
+      can_operate_user_management: true,
+      can_view_organization_management: true,
+      can_operate_organization_management: false
     },
     'tenant-202': {
       scope_label: '组织权限（Tenant 202）',
-      can_view_member_admin: false,
-      can_operate_member_admin: true,
-      can_view_billing: true,
-      can_operate_billing: true
+      can_view_user_management: false,
+      can_operate_user_management: true,
+      can_view_organization_management: true,
+      can_operate_organization_management: true
     }
   };
   const currentTenantPermissionContext = () => {
     if (!activeTenantId) {
       return {
         scope_label: '组织未选择（无可操作权限）',
-        can_view_member_admin: false,
-        can_operate_member_admin: false,
-        can_view_billing: false,
-        can_operate_billing: false
+        can_view_user_management: false,
+        can_operate_user_management: false,
+        can_view_organization_management: false,
+        can_operate_organization_management: false
       };
     }
     return tenantPermissionById[activeTenantId] || {
       scope_label: `组织权限（${activeTenantId}）`,
-      can_view_member_admin: false,
-      can_operate_member_admin: false,
-      can_view_billing: false,
-      can_operate_billing: false
+      can_view_user_management: false,
+      can_operate_user_management: false,
+      can_view_organization_management: false,
+      can_operate_organization_management: false
     };
   };
   const server = http.createServer(async (req, res) => {
@@ -463,10 +463,10 @@ const createOtpApiServer = async () => {
               ? null
               : {
                 scope_label: '平台权限（角色并集）',
-                can_view_member_admin: true,
-                can_operate_member_admin: true,
-                can_view_billing: true,
-                can_operate_billing: true,
+                can_view_user_management: true,
+                can_operate_user_management: true,
+                can_view_organization_management: true,
+                can_operate_organization_management: true,
                 can_view_system_config: true,
                 can_operate_system_config: true
               },
@@ -474,10 +474,10 @@ const createOtpApiServer = async () => {
               ? currentTenantPermissionContext()
               : {
                 scope_label: '平台入口（无组织侧权限上下文）',
-                can_view_member_admin: false,
-                can_operate_member_admin: false,
-                can_view_billing: false,
-                can_operate_billing: false
+                can_view_user_management: false,
+                can_operate_user_management: false,
+                can_view_organization_management: false,
+                can_operate_organization_management: false
               },
             request_id: 'chrome-regression-password-login'
           }
@@ -813,12 +813,12 @@ const createPlatformGovernanceApiServer = async () => {
   const requests = [];
   const responses = [];
   const permissionCatalog = [
-    'platform.member_admin.view',
-    'platform.member_admin.operate',
-    'platform.billing.view',
-    'platform.billing.operate',
-    'platform.system_config.view',
-    'platform.system_config.operate'
+    'platform.user_management.view',
+    'platform.user_management.operate',
+    'platform.organization_management.view',
+    'platform.organization_management.operate',
+    'platform.role_management.view',
+    'platform.role_management.operate'
   ];
 
   let nextUserId = 3;
@@ -831,7 +831,7 @@ const createPlatformGovernanceApiServer = async () => {
         phone: '13800000011',
         name: '平台管理员甲',
         department: '平台治理',
-        role_ids: ['platform_member_admin'],
+        role_ids: ['platform_user_management'],
         status: 'active',
         created_at: new Date().toISOString(),
         deleted: false
@@ -865,10 +865,10 @@ const createPlatformGovernanceApiServer = async () => {
       }
     ],
     [
-      'platform_member_admin',
+      'platform_user_management',
       {
-        role_id: 'platform_member_admin',
-        code: 'PLATFORM_MEMBER_ADMIN',
+        role_id: 'platform_user_management',
+        code: 'PLATFORM_USER_MANAGEMENT',
         name: '平台成员治理',
         status: 'active',
         is_system: false,
@@ -879,7 +879,7 @@ const createPlatformGovernanceApiServer = async () => {
   ]);
   const rolePermissions = new Map([
     ['sys_admin', [...permissionCatalog]],
-    ['platform_member_admin', ['platform.member_admin.view', 'platform.member_admin.operate']]
+    ['platform_user_management', ['platform.user_management.view', 'platform.user_management.operate']]
   ]);
 
   const normalizeRoleIds = (roleEntries = []) => {
@@ -903,10 +903,10 @@ const createPlatformGovernanceApiServer = async () => {
     }
     return {
       scope_label: '平台权限（角色并集）',
-      can_view_member_admin: permissionSet.has('platform.member_admin.view'),
-      can_operate_member_admin: permissionSet.has('platform.member_admin.operate'),
-      can_view_billing: permissionSet.has('platform.billing.view'),
-      can_operate_billing: permissionSet.has('platform.billing.operate')
+      can_view_user_management: permissionSet.has('platform.user_management.view'),
+      can_operate_user_management: permissionSet.has('platform.user_management.operate'),
+      can_view_organization_management: permissionSet.has('platform.organization_management.view'),
+      can_operate_organization_management: permissionSet.has('platform.organization_management.operate')
     };
   };
   const toRoleReadModel = (roleId) => {
@@ -1024,10 +1024,10 @@ const createPlatformGovernanceApiServer = async () => {
           user_name: displayUserName,
           platform_permission_context: {
             scope_label: '平台权限（角色并集）',
-            can_view_member_admin: true,
-            can_operate_member_admin: true,
-            can_view_billing: true,
-            can_operate_billing: true,
+            can_view_user_management: true,
+            can_operate_user_management: true,
+            can_view_organization_management: true,
+            can_operate_organization_management: true,
             can_view_system_config: true,
             can_operate_system_config: true
           },
@@ -1327,9 +1327,9 @@ const createPlatformGovernanceApiServer = async () => {
       roles.set(roleId, createdRole);
       rolePermissions.set(
         roleId,
-        roleId.includes('billing')
-          ? ['platform.billing.view', 'platform.billing.operate']
-          : ['platform.member_admin.view']
+        roleId.includes('organization_management')
+          ? ['platform.organization_management.view', 'platform.organization_management.operate']
+          : ['platform.user_management.view']
       );
       sendJson({
         status: 200,
@@ -1558,10 +1558,10 @@ const createTenantGovernanceApiServer = async () => {
     { tenant_id: 'tenant-202', tenant_name: 'Tenant 202' }
   ];
   const permissionCatalog = [
-    'tenant.member_admin.view',
-    'tenant.member_admin.operate',
-    'tenant.billing.view',
-    'tenant.billing.operate'
+    'tenant.user_management.view',
+    'tenant.user_management.operate',
+    'tenant.role_management.view',
+    'tenant.role_management.operate'
   ];
   const protectedRoleIds = new Set(['tenant_owner', 'tenant_admin', 'tenant_member']);
   const sessionMembershipByTenantId = {
@@ -1648,11 +1648,11 @@ const createTenantGovernanceApiServer = async () => {
           }
         ],
         [
-          'tenant_member_admin',
+          'tenant_user_management',
           {
-            role_id: 'tenant_member_admin',
+            role_id: 'tenant_user_management',
             tenant_id: 'tenant-101',
-            code: 'TENANT_MEMBER_ADMIN',
+            code: 'TENANT_USER_MANAGEMENT',
             name: '组织成员治理',
             status: 'active',
             is_system: false,
@@ -1661,11 +1661,11 @@ const createTenantGovernanceApiServer = async () => {
           }
         ],
         [
-          'tenant_billing_admin',
+          'tenant_role_management_admin',
           {
-            role_id: 'tenant_billing_admin',
+            role_id: 'tenant_role_management_admin',
             tenant_id: 'tenant-101',
-            code: 'TENANT_BILLING_ADMIN',
+            code: 'TENANT_ROLE_MANAGEMENT_ADMIN',
             name: '组织账单治理',
             status: 'active',
             is_system: false,
@@ -1712,15 +1712,15 @@ const createTenantGovernanceApiServer = async () => {
       'tenant-101',
       new Map([
         ['tenant_owner', [...permissionCatalog]],
-        ['tenant_member_admin', ['tenant.member_admin.view', 'tenant.member_admin.operate']],
-        ['tenant_billing_admin', ['tenant.billing.view', 'tenant.billing.operate']]
+        ['tenant_user_management', ['tenant.user_management.view', 'tenant.user_management.operate']],
+        ['tenant_role_management_admin', ['tenant.role_management.view', 'tenant.role_management.operate']]
       ])
     ],
     [
       'tenant-202',
       new Map([
         ['tenant_owner', [...permissionCatalog]],
-        ['tenant_member', ['tenant.billing.view']]
+        ['tenant_member', ['tenant.role_management.view']]
       ])
     ]
   ]);
@@ -1728,8 +1728,8 @@ const createTenantGovernanceApiServer = async () => {
     [
       'tenant-101',
       new Map([
-        ['membership-tenant-101-admin', ['tenant_member_admin']],
-        ['membership-tenant-101-member', ['tenant_member_admin']]
+        ['membership-tenant-101-admin', ['tenant_user_management']],
+        ['membership-tenant-101-member', ['tenant_user_management']]
       ])
     ],
     [
@@ -1757,7 +1757,7 @@ const createTenantGovernanceApiServer = async () => {
         joined_at: new Date().toISOString(),
         left_at: null
       });
-      tenant101Bindings.set(membershipId, ['tenant_member_admin']);
+      tenant101Bindings.set(membershipId, ['tenant_user_management']);
     }
   }
 
@@ -1822,10 +1822,10 @@ const createTenantGovernanceApiServer = async () => {
     if (!activeTenantId) {
       return {
         scope_label: '组织未选择（无可操作权限）',
-        can_view_member_admin: false,
-        can_operate_member_admin: false,
-        can_view_billing: false,
-        can_operate_billing: false
+        can_view_user_management: false,
+        can_operate_user_management: false,
+        can_view_organization_management: false,
+        can_operate_organization_management: false
       };
     }
     const { tenantId, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
@@ -1840,10 +1840,10 @@ const createTenantGovernanceApiServer = async () => {
     }
     return {
       scope_label: `组织权限（${tenantId}）`,
-      can_view_member_admin: permissionSet.has('tenant.member_admin.view'),
-      can_operate_member_admin: permissionSet.has('tenant.member_admin.operate'),
-      can_view_billing: permissionSet.has('tenant.billing.view'),
-      can_operate_billing: permissionSet.has('tenant.billing.operate')
+      can_view_user_management: permissionSet.has('tenant.user_management.view'),
+      can_operate_user_management: permissionSet.has('tenant.user_management.operate'),
+      can_view_role_management: permissionSet.has('tenant.role_management.view'),
+      can_operate_role_management: permissionSet.has('tenant.role_management.operate')
     };
   };
 
@@ -1933,10 +1933,10 @@ const createTenantGovernanceApiServer = async () => {
               ? null
               : {
                 scope_label: '平台权限（角色并集）',
-                can_view_member_admin: true,
-                can_operate_member_admin: true,
-                can_view_billing: true,
-                can_operate_billing: true,
+                can_view_user_management: true,
+                can_operate_user_management: true,
+                can_view_organization_management: true,
+                can_operate_organization_management: true,
                 can_view_system_config: true,
                 can_operate_system_config: true
               },
@@ -2082,7 +2082,7 @@ const createTenantGovernanceApiServer = async () => {
         joined_at: new Date().toISOString(),
         left_at: null
       });
-      memberRoleBindings.set(membershipId, ['tenant_member_admin']);
+      memberRoleBindings.set(membershipId, ['tenant_user_management']);
       sendJson({
         status: 200,
         contentType: 'application/json',
@@ -2535,10 +2535,10 @@ const createRealApiServer = async () => {
             status: 'active',
             permission: {
               scopeLabel: '组织权限（Tenant A）',
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: true,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: true,
+              canOperateOrganizationManagement: false
             }
           },
           {
@@ -2547,10 +2547,10 @@ const createRealApiServer = async () => {
             status: 'active',
             permission: {
               scopeLabel: '组织权限（Tenant B）',
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: true,
-              canOperateBilling: true
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: true,
+              canOperateOrganizationManagement: true
             }
           }
         ]
@@ -3137,20 +3137,20 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
       const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
       const text = String(dashboard?.textContent || '');
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
-      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
-      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
-      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
+      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
+      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
+      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
       return (
         Boolean(dashboard) &&
         text.includes('tenant-101') &&
         message.includes('组织选择成功') &&
         message.includes('请稍后重试') === false &&
         Boolean(memberMenu) &&
-        billingMenu === null &&
+        organization_managementMenu === null &&
         Boolean(memberBtn) &&
         memberBtn.disabled === false &&
-        billingBtn === null
+        organization_managementBtn === null
       );
     })()`,
     10000,
@@ -3179,18 +3179,18 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
       const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
       const text = String(dashboard?.textContent || '');
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
-      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
-      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
-      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
+      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
+      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
+      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
       return (
         text.includes('tenant-202') &&
         message.includes('请稍后重试') === false &&
         memberMenu === null &&
-        Boolean(billingMenu) &&
+        Boolean(organization_managementMenu) &&
         memberBtn === null &&
-        Boolean(billingBtn) &&
-        billingBtn.disabled === false
+        Boolean(organization_managementBtn) &&
+        organization_managementBtn.disabled === false
       );
     })()`,
     10000,
@@ -3490,18 +3490,18 @@ test('chrome regression validates tenant permission UI against real API authoriz
     `(() => {
       const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
       const text = String(dashboard?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
-      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
-      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
-      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
+      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
+      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
+      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
       return (
         Boolean(dashboard) &&
         text.includes('${REAL_API_TEST_USER.tenantA}') &&
         Boolean(memberMenu) &&
-        billingMenu === null &&
+        organization_managementMenu === null &&
         Boolean(memberBtn) &&
         memberBtn.disabled === false &&
-        billingBtn === null
+        organization_managementBtn === null
       );
     })()`,
     10000,
@@ -3535,7 +3535,7 @@ test('chrome regression validates tenant permission UI against real API authoriz
   const probeAllowedByApi = await requestRealApi({
     baseUrl: apiBaseUrl,
     method: 'GET',
-    path: '/auth/tenant/member-admin/probe',
+    path: '/auth/tenant/user-management/probe',
     accessToken
   });
   assert.equal(probeAllowedByApi.status, 200);
@@ -3555,7 +3555,7 @@ test('chrome regression validates tenant permission UI against real API authoriz
   const probeDeniedByApi = await requestRealApi({
     baseUrl: apiBaseUrl,
     method: 'GET',
-    path: '/auth/tenant/member-admin/probe',
+    path: '/auth/tenant/user-management/probe',
     accessToken
   });
   assert.equal(probeDeniedByApi.status, 403);
@@ -3583,18 +3583,18 @@ test('chrome regression validates tenant permission UI against real API authoriz
     `(() => {
       const dashboard = document.querySelector('[data-testid="dashboard-panel"]');
       const text = String(dashboard?.textContent || '');
-      const memberMenu = document.querySelector('[data-testid="menu-member-admin"]');
-      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
-      const memberBtn = document.querySelector('[data-testid="permission-member-admin-button"]');
-      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
+      const memberMenu = document.querySelector('[data-testid="menu-user-management"]');
+      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
+      const memberBtn = document.querySelector('[data-testid="permission-user-management-button"]');
+      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
       return (
         Boolean(dashboard) &&
         text.includes('${REAL_API_TEST_USER.tenantB}') &&
         memberMenu === null &&
-        Boolean(billingMenu) &&
+        Boolean(organization_managementMenu) &&
         memberBtn === null &&
-        Boolean(billingBtn) &&
-        billingBtn.disabled === false
+        Boolean(organization_managementBtn) &&
+        organization_managementBtn.disabled === false
       );
     })()`,
     10000,
@@ -3993,7 +3993,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       const code = document.querySelector('[data-testid="platform-role-edit-code"]');
       const name = document.querySelector('[data-testid="platform-role-edit-name"]');
-      setter.call(code, 'PLATFORM_BILLING_ADMIN');
+      setter.call(code, 'PLATFORM_ORGANIZATION_MANAGEMENT_ADMIN');
       code.dispatchEvent(new Event('input', { bubbles: true }));
       code.dispatchEvent(new Event('change', { bubbles: true }));
       setter.call(name, '平台账单治理');
@@ -4034,7 +4034,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="platform-role-edit-platform_member_admin"]').click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="platform-role-edit-platform_user_management"]').click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -4084,7 +4084,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       const code = document.querySelector('[data-testid="platform-role-edit-code"]');
       const name = document.querySelector('[data-testid="platform-role-edit-name"]');
-      setter.call(code, 'PLATFORM_MEMBER_ADMIN_V2');
+      setter.call(code, 'PLATFORM_USER_MANAGEMENT_V2');
       code.dispatchEvent(new Event('input', { bubbles: true }));
       code.dispatchEvent(new Event('change', { bubbles: true }));
       setter.call(name, '平台成员治理-已编辑');
@@ -4103,7 +4103,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
     api.requests,
     (request, index) =>
       index >= editRoleRequestBaseline
-      && request.path === '/platform/roles/platform_member_admin'
+      && request.path === '/platform/roles/platform_user_management'
       && request.method === 'PATCH',
     8000,
     'platform role edit request should reach API stub'
@@ -4113,7 +4113,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
     (request, index) =>
       index >= editRoleRequestBaseline
       && request.method === 'PUT'
-      && request.path.includes('/platform/roles/platform_member_admin/permissions'),
+      && request.path.includes('/platform/roles/platform_user_management/permissions'),
     8000,
     'platform role edit permission save request should reach API stub'
   );
@@ -4121,12 +4121,12 @@ test('chrome regression validates platform governance workbench with modal/drawe
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-row-key="platform_member_admin"]')?.click(); return true; })()`
+    `(() => { document.querySelector('[data-row-key="platform_user_management"]')?.click(); return true; })()`
   );
   await waitForCondition(
     cdp,
     sessionId,
-    `(() => String(document.querySelector('.ant-drawer-title')?.textContent || '').includes('角色ID：platform_member_admin'))()`,
+    `(() => String(document.querySelector('.ant-drawer-title')?.textContent || '').includes('角色ID：platform_user_management'))()`,
     5000,
     'platform role detail drawer title should include role id'
   );
@@ -4172,13 +4172,13 @@ test('chrome regression validates platform governance workbench with modal/drawe
     (request, index) =>
       index >= roleDrawerStatusToggleRequestBaseline
       && request.method === 'PATCH'
-      && request.path === '/platform/roles/platform_member_admin',
+      && request.path === '/platform/roles/platform_user_management',
     8000,
     'platform role status toggle request should reach API stub from drawer'
   );
   const roleStatusToggleRequestFromDrawer = api.requests
     .slice(roleDrawerStatusToggleRequestBaseline)
-    .find((request) => request.method === 'PATCH' && request.path === '/platform/roles/platform_member_admin');
+    .find((request) => request.method === 'PATCH' && request.path === '/platform/roles/platform_user_management');
   assert.equal(
     roleStatusToggleRequestFromDrawer?.body?.status,
     'disabled',
@@ -4218,7 +4218,7 @@ test('chrome regression validates platform governance workbench with modal/drawe
   const createRoleRequest = api.requests.find(
     (request) => request.path === '/platform/roles' && request.method === 'POST'
   );
-  assert.equal(createRoleRequest?.body?.code, 'PLATFORM_BILLING_ADMIN');
+  assert.equal(createRoleRequest?.body?.code, 'PLATFORM_ORGANIZATION_MANAGEMENT_ADMIN');
   assert.equal(createRoleRequest?.body?.name, '平台账单治理');
 
   const reportPath = join(evidenceDir, `chrome-platform-governance-${timestamp}.json`);
@@ -4549,12 +4549,12 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
-      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
-      return billingMenu === null && billingBtn === null;
+      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
+      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
+      return organization_managementMenu === null && organization_managementBtn === null;
     })()`,
     8000,
-    'tenant permission panel should not expose billing before role assignment'
+    'tenant permission panel should not expose organization_management before role assignment'
   );
 
   await evaluate(
@@ -4866,9 +4866,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const billingMenu = document.querySelector('[data-testid="menu-billing"]');
-      const billingBtn = document.querySelector('[data-testid="permission-billing-button"]');
-      return Boolean(billingMenu) && Boolean(billingBtn) && billingBtn.disabled === false;
+      const organization_managementMenu = document.querySelector('[data-testid="menu-organization_management"]');
+      const organization_managementBtn = document.querySelector('[data-testid="permission-organization_management-button"]');
+      return Boolean(organization_managementMenu) && Boolean(organization_managementBtn) && organization_managementBtn.disabled === false;
     })()`,
     15000,
     'tenant permission panel should converge immediately after role assignment'
@@ -4894,7 +4894,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       const codeInput = document.querySelector('[data-testid="tenant-role-filter-code"]');
       const nameInput = document.querySelector('[data-testid="tenant-role-filter-name"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter.call(codeInput, 'TENANT_MEMBER_ADMIN');
+      setter.call(codeInput, 'TENANT_USER_MANAGEMENT');
       codeInput.dispatchEvent(new Event('input', { bubbles: true }));
       codeInput.dispatchEvent(new Event('change', { bubbles: true }));
       setter.call(nameInput, '');
@@ -4908,9 +4908,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const hasMemberAdmin = Boolean(document.querySelector('[data-row-key="tenant_member_admin"]'));
-      const hasBillingAdmin = Boolean(document.querySelector('[data-row-key="tenant_billing_admin"]'));
-      return hasMemberAdmin && !hasBillingAdmin;
+      const hasUserManagement = Boolean(document.querySelector('[data-row-key="tenant_user_management"]'));
+      const hasRoleManagementAdmin = Boolean(document.querySelector('[data-row-key="tenant_role_management_admin"]'));
+      return hasUserManagement && !hasRoleManagementAdmin;
     })()`,
     8000,
     'tenant role code exact filter should keep only matched code'
@@ -4936,9 +4936,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const hasMemberAdmin = Boolean(document.querySelector('[data-row-key="tenant_member_admin"]'));
-      const hasBillingAdmin = Boolean(document.querySelector('[data-row-key="tenant_billing_admin"]'));
-      return !hasMemberAdmin && hasBillingAdmin;
+      const hasUserManagement = Boolean(document.querySelector('[data-row-key="tenant_user_management"]'));
+      const hasRoleManagementAdmin = Boolean(document.querySelector('[data-row-key="tenant_role_management_admin"]'));
+      return !hasUserManagement && hasRoleManagementAdmin;
     })()`,
     8000,
     'tenant role name fuzzy filter should keep matched rows'
@@ -4963,27 +4963,27 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `(() => Boolean(document.querySelector('[data-testid="tenant-role-edit-tenant_billing_admin"]')))()`,
+    `(() => Boolean(document.querySelector('[data-testid="tenant-role-edit-tenant_role_management_admin"]')))()`,
     8000,
     'tenant role filters reset should recover full role list'
   );
   await waitForCondition(
     cdp,
     sessionId,
-    `(() => !document.querySelector('[data-testid="tenant-role-delete-tenant_member_admin"]'))()`,
+    `(() => !document.querySelector('[data-testid="tenant-role-delete-tenant_user_management"]'))()`,
     8000,
     'active tenant role should not show delete action'
   );
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-role-status-tenant_billing_admin"]')?.click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="tenant-role-status-tenant_role_management_admin"]')?.click(); return true; })()`
   );
   await waitForRequest(
     api.requests,
     (request) =>
       request.method === 'PATCH'
-      && request.path.includes('/tenant/roles/tenant_billing_admin')
+      && request.path.includes('/tenant/roles/tenant_role_management_admin')
       && request.body?.status === 'disabled',
     8000,
     'tenant role status update should allow disabling non-system roles'
@@ -5007,9 +5007,9 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const hasMemberAdmin = Boolean(document.querySelector('[data-row-key="tenant_member_admin"]'));
-      const hasBillingAdmin = Boolean(document.querySelector('[data-row-key="tenant_billing_admin"]'));
-      return !hasMemberAdmin && hasBillingAdmin;
+      const hasUserManagement = Boolean(document.querySelector('[data-row-key="tenant_user_management"]'));
+      const hasRoleManagementAdmin = Boolean(document.querySelector('[data-row-key="tenant_role_management_admin"]'));
+      return !hasUserManagement && hasRoleManagementAdmin;
     })()`,
     8000,
     'tenant role status filter should keep only disabled roles'
@@ -5017,7 +5017,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
-    `(() => Boolean(document.querySelector('[data-testid="tenant-role-delete-tenant_billing_admin"]')))()`,
+    `(() => Boolean(document.querySelector('[data-testid="tenant-role-delete-tenant_role_management_admin"]')))()`,
     8000,
     'disabled tenant role should show delete action'
   );
@@ -5047,7 +5047,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const row = document.querySelector('[data-row-key="tenant_member_admin"]');
+      const row = document.querySelector('[data-row-key="tenant_user_management"]');
       row?.focus();
       row?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       return true;
@@ -5109,7 +5109,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-role-delete-tenant_billing_admin"]')?.click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="tenant-role-delete-tenant_role_management_admin"]')?.click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -5224,7 +5224,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
-      const row = document.querySelector('[data-row-key="tenant_member_admin"]');
+      const row = document.querySelector('[data-row-key="tenant_user_management"]');
       if (!row) {
         return false;
       }
@@ -5277,7 +5277,7 @@ test('chrome regression validates tenant governance workbench with modal/drawer 
       request.method === 'PUT'
       && request.path.includes('/tenant/members/membership-tenant-101-admin/roles')
   );
-  assert.deepEqual(replaceRolesRequest?.body?.role_ids?.sort(), ['tenant_billing_admin', 'tenant_member_admin']);
+  assert.deepEqual(replaceRolesRequest?.body?.role_ids?.sort(), ['tenant_role_management_admin', 'tenant_user_management']);
 
   const tenantWriteRequests = api.requests.filter(
     (request) =>

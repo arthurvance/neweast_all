@@ -28,10 +28,10 @@ const createHarness = () => {
             roleId: 'platform-integration-admin',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -47,10 +47,10 @@ const createHarness = () => {
             roleId: 'platform-integration-read-only',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -942,7 +942,7 @@ test('platform integration create is blocked when freeze activates during an in-
   }
 });
 
-test('POST /platform/integrations requires platform.member_admin.operate permission', async () => {
+test('POST /platform/integrations requires platform.user_management.operate permission', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,

@@ -28,10 +28,10 @@ const createHarness = () => {
             roleId: 'platform-role-operator-admin',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false,
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false,
               canViewSystemConfig: true,
               canOperateSystemConfig: true
             }
@@ -1028,7 +1028,7 @@ test('PUT /platform/roles/:role_id/permissions enforces idempotency across canon
       'idempotency-key': 'idem-platform-role-permission-canonicalized-path'
     },
     body: {
-      permission_codes: ['platform.member_admin.view']
+      permission_codes: ['platform.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -1043,7 +1043,7 @@ test('PUT /platform/roles/:role_id/permissions enforces idempotency across canon
       'idempotency-key': 'idem-platform-role-permission-canonicalized-path'
     },
     body: {
-      permission_codes: ['platform.billing.view']
+      permission_codes: ['platform.organization_management.view']
     },
     handlers: harness.handlers
   });
@@ -1139,8 +1139,8 @@ test('PUT/GET /platform/roles/:role_id/permissions persists final grant codes an
     },
     body: {
       permission_codes: [
-        'platform.member_admin.view',
-        'platform.member_admin.operate'
+        'platform.user_management.view',
+        'platform.user_management.operate'
       ]
     },
     handlers: harness.handlers
@@ -1150,11 +1150,11 @@ test('PUT/GET /platform/roles/:role_id/permissions persists final grant codes an
   assert.equal(replacePayload.role_id, 'platform_permission_editor');
   assert.deepEqual(
     replacePayload.permission_codes,
-    ['platform.member_admin.operate', 'platform.member_admin.view']
+    ['platform.user_management.operate', 'platform.user_management.view']
   );
   assert.equal(replacePayload.request_id, 'req-platform-role-permission-replace-1');
   assert.ok(Array.isArray(replacePayload.available_permission_codes));
-  assert.ok(replacePayload.available_permission_codes.includes('platform.member_admin.view'));
+  assert.ok(replacePayload.available_permission_codes.includes('platform.user_management.view'));
 
   const getPermissions = await dispatchApiRoute({
     pathname: '/platform/roles/platform_permission_editor/permissions',
@@ -1170,7 +1170,7 @@ test('PUT/GET /platform/roles/:role_id/permissions persists final grant codes an
   assert.equal(getPayload.role_id, 'platform_permission_editor');
   assert.deepEqual(
     getPayload.permission_codes,
-    ['platform.member_admin.operate', 'platform.member_admin.view']
+    ['platform.user_management.operate', 'platform.user_management.view']
   );
   assert.equal(getPayload.request_id, 'req-platform-role-permission-read-1');
 });
@@ -1202,8 +1202,8 @@ test('GET /platform/roles/:role_id/permissions fails closed when downstream payl
     if (String(roleId || '').trim().toLowerCase() === 'platform_permission_read_malformed') {
       return {
         role_id: 'platform_permission_read_malformed',
-        permission_codes: [' platform.member_admin.view'],
-        available_permission_codes: ['platform.member_admin.view']
+        permission_codes: [' platform.user_management.view'],
+        available_permission_codes: ['platform.user_management.view']
       };
     }
     return originalListPlatformRolePermissionGrants({ roleId });
@@ -1257,14 +1257,48 @@ test('GET /platform/roles/:role_id/permissions returns deterministically sorted 
       return {
         role_id: 'platform_permission_read_sort_stability',
         permission_codes: [
-          'platform.member_admin.view',
-          'platform.member_admin.operate'
+          'platform.user_management.view',
+          'platform.user_management.operate'
         ],
         available_permission_codes: [
-          'platform.system_config.view',
-          'platform.member_admin.view',
-          'platform.billing.view',
-          'platform.member_admin.operate'
+          'platform.role_management.view',
+          'platform.user_management.view',
+          'platform.organization_management.view',
+          'platform.user_management.operate'
+        ],
+        available_permissions: [
+          {
+            code: 'platform.role_management.view',
+            scope: 'platform',
+            group_key: 'role_management',
+            action_key: 'view',
+            label_key: 'permission.platform.role_management.view',
+            order: 310
+          },
+          {
+            code: 'platform.user_management.view',
+            scope: 'platform',
+            group_key: 'user_management',
+            action_key: 'view',
+            label_key: 'permission.platform.user_management.view',
+            order: 110
+          },
+          {
+            code: 'platform.organization_management.view',
+            scope: 'platform',
+            group_key: 'role_management',
+            action_key: 'view',
+            label_key: 'permission.platform.organization_management.view',
+            order: 210
+          },
+          {
+            code: 'platform.user_management.operate',
+            scope: 'platform',
+            group_key: 'user_management',
+            action_key: 'operate',
+            label_key: 'permission.platform.user_management.operate',
+            order: 120
+          }
         ]
       };
     }
@@ -1284,14 +1318,14 @@ test('GET /platform/roles/:role_id/permissions returns deterministically sorted 
     assert.equal(getPermissions.status, 200);
     const payload = JSON.parse(getPermissions.body);
     assert.deepEqual(payload.permission_codes, [
-      'platform.member_admin.operate',
-      'platform.member_admin.view'
+      'platform.user_management.operate',
+      'platform.user_management.view'
     ]);
     assert.deepEqual(payload.available_permission_codes, [
-      'platform.billing.view',
-      'platform.member_admin.operate',
-      'platform.member_admin.view',
-      'platform.system_config.view'
+      'platform.organization_management.view',
+      'platform.role_management.view',
+      'platform.user_management.operate',
+      'platform.user_management.view'
     ]);
   } finally {
     harness.authService.listPlatformRolePermissionGrants =
@@ -1378,7 +1412,7 @@ test('PUT /platform/roles/:role_id/permissions fails closed when downstream writ
     harness.authService.replacePlatformRolePermissionGrants;
   harness.authService.replacePlatformRolePermissionGrants = async () => ({
     role_id: 'platform_permission_write_roleid_mismatch_other',
-    permission_codes: ['platform.member_admin.view'],
+    permission_codes: ['platform.user_management.view'],
     affected_user_count: 0
   });
   try {
@@ -1390,7 +1424,7 @@ test('PUT /platform/roles/:role_id/permissions fails closed when downstream writ
         authorization: `Bearer ${login.access_token}`
       },
       body: {
-        permission_codes: ['platform.member_admin.view']
+        permission_codes: ['platform.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -1429,7 +1463,7 @@ test('PUT /platform/roles/:role_id/permissions fails closed when downstream writ
     harness.authService.replacePlatformRolePermissionGrants;
   harness.authService.replacePlatformRolePermissionGrants = async () => ({
     role_id: 'platform_permission_write_affected_user_count_string',
-    permission_codes: ['platform.member_admin.view'],
+    permission_codes: ['platform.user_management.view'],
     affected_user_count: '1'
   });
   try {
@@ -1441,7 +1475,7 @@ test('PUT /platform/roles/:role_id/permissions fails closed when downstream writ
         authorization: `Bearer ${login.access_token}`
       },
       body: {
-        permission_codes: ['platform.member_admin.view']
+        permission_codes: ['platform.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -1476,8 +1510,9 @@ test('PUT /platform/roles/:role_id/permissions fails closed when permission cata
   });
   assert.equal(createRole.status, 200);
 
-  const originalListPlatformPermissionCatalog = harness.authService.listPlatformPermissionCatalog;
-  harness.authService.listPlatformPermissionCatalog = () => {
+  const originalListPlatformPermissionCatalogEntries =
+    harness.authService.listPlatformPermissionCatalogEntries;
+  harness.authService.listPlatformPermissionCatalogEntries = () => {
     throw new Error('catalog dependency unavailable');
   };
 
@@ -1490,7 +1525,7 @@ test('PUT /platform/roles/:role_id/permissions fails closed when permission cata
         authorization: `Bearer ${login.access_token}`
       },
       body: {
-        permission_codes: ['platform.member_admin.view']
+        permission_codes: ['platform.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -1499,7 +1534,8 @@ test('PUT /platform/roles/:role_id/permissions fails closed when permission cata
     assert.equal(payload.error_code, 'ROLE-503-DEPENDENCY-UNAVAILABLE');
     assert.equal(payload.request_id, 'req-platform-role-permission-write-catalog-dependency');
   } finally {
-    harness.authService.listPlatformPermissionCatalog = originalListPlatformPermissionCatalog;
+    harness.authService.listPlatformPermissionCatalogEntries =
+      originalListPlatformPermissionCatalogEntries;
   }
 });
 
@@ -1524,11 +1560,12 @@ test('PUT /platform/roles/:role_id/permissions fails closed before write when pe
   });
   assert.equal(createRole.status, 200);
 
-  const originalListPlatformPermissionCatalog = harness.authService.listPlatformPermissionCatalog;
+  const originalListPlatformPermissionCatalogEntries =
+    harness.authService.listPlatformPermissionCatalogEntries;
   const originalReplacePlatformRolePermissionGrants =
     harness.authService.replacePlatformRolePermissionGrants;
   let replacePlatformRolePermissionGrantsCalls = 0;
-  harness.authService.listPlatformPermissionCatalog = () => ({
+  harness.authService.listPlatformPermissionCatalogEntries = () => ({
     malformed: true
   });
   harness.authService.replacePlatformRolePermissionGrants = async ({ roleId }) => {
@@ -1559,7 +1596,8 @@ test('PUT /platform/roles/:role_id/permissions fails closed before write when pe
     assert.equal(payload.request_id, 'req-platform-role-permission-write-catalog-malformed');
     assert.equal(replacePlatformRolePermissionGrantsCalls, 0);
   } finally {
-    harness.authService.listPlatformPermissionCatalog = originalListPlatformPermissionCatalog;
+    harness.authService.listPlatformPermissionCatalogEntries =
+      originalListPlatformPermissionCatalogEntries;
     harness.authService.replacePlatformRolePermissionGrants =
       originalReplacePlatformRolePermissionGrants;
   }
@@ -1595,14 +1633,14 @@ test('PUT /platform/roles/:role_id/permissions allows disabled role definitions 
       'idempotency-key': 'idem-platform-role-permission-disabled-replace-1'
     },
     body: {
-      permission_codes: ['platform.member_admin.view']
+      permission_codes: ['platform.user_management.view']
     },
     handlers: harness.handlers
   });
   assert.equal(replacePermissions.status, 200);
   const replacePayload = JSON.parse(replacePermissions.body);
   assert.equal(replacePayload.role_id, 'platform_permission_disabled_role');
-  assert.deepEqual(replacePayload.permission_codes, ['platform.member_admin.view']);
+  assert.deepEqual(replacePayload.permission_codes, ['platform.user_management.view']);
 
   const getPermissions = await dispatchApiRoute({
     pathname: '/platform/roles/platform_permission_disabled_role/permissions',
@@ -1616,7 +1654,7 @@ test('PUT /platform/roles/:role_id/permissions allows disabled role definitions 
   assert.equal(getPermissions.status, 200);
   const getPayload = JSON.parse(getPermissions.body);
   assert.equal(getPayload.role_id, 'platform_permission_disabled_role');
-  assert.deepEqual(getPayload.permission_codes, ['platform.member_admin.view']);
+  assert.deepEqual(getPayload.permission_codes, ['platform.user_management.view']);
 });
 
 test('PUT /platform/roles/:role_id/permissions rejects non-platform or unknown permission code', async () => {
@@ -1648,7 +1686,7 @@ test('PUT /platform/roles/:role_id/permissions rejects non-platform or unknown p
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      permission_codes: ['tenant.member_admin.view']
+      permission_codes: ['tenant.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -1686,7 +1724,7 @@ test('PUT /platform/roles/:role_id/permissions rejects permission codes with lea
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      permission_codes: [' platform.member_admin.view']
+      permission_codes: [' platform.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -1725,15 +1763,15 @@ test('PUT /platform/roles/:role_id/permissions canonicalizes duplicated permissi
     },
     body: {
       permission_codes: [
-        'platform.member_admin.view',
-        'platform.Member_Admin.View'
+        'platform.user_management.view',
+        'platform.User_Management.View'
       ]
     },
     handlers: harness.handlers
   });
   assert.equal(replacePermissions.status, 200);
   const payload = JSON.parse(replacePermissions.body);
-  assert.deepEqual(payload.permission_codes, ['platform.member_admin.view']);
+  assert.deepEqual(payload.permission_codes, ['platform.user_management.view']);
 });
 
 test('PUT /platform/roles/:role_id/permissions rejects oversized permission_codes payload', async () => {
@@ -1759,7 +1797,7 @@ test('PUT /platform/roles/:role_id/permissions rejects oversized permission_code
 
   const oversizedPermissionCodes = Array.from(
     { length: 65 },
-    () => 'platform.member_admin.view'
+    () => 'platform.user_management.view'
   );
   const replacePermissions = await dispatchApiRoute({
     pathname: '/platform/roles/platform_permission_oversize_role/permissions',
@@ -1808,8 +1846,8 @@ test('PUT /platform/roles/:role_id/permissions normalizes accepted permission co
     },
     body: {
       permission_codes: [
-        'platform.Member_Admin.View',
-        'platform.MEMBER_admin.operate'
+        'platform.User_Management.View',
+        'platform.USER_management.operate'
       ]
     },
     handlers: harness.handlers
@@ -1818,7 +1856,7 @@ test('PUT /platform/roles/:role_id/permissions normalizes accepted permission co
   const replacePayload = JSON.parse(replacePermissions.body);
   assert.deepEqual(
     replacePayload.permission_codes,
-    ['platform.member_admin.operate', 'platform.member_admin.view']
+    ['platform.user_management.operate', 'platform.user_management.view']
   );
 
   const getPermissions = await dispatchApiRoute({
@@ -1833,7 +1871,7 @@ test('PUT /platform/roles/:role_id/permissions normalizes accepted permission co
   assert.equal(getPermissions.status, 200);
   assert.deepEqual(
     JSON.parse(getPermissions.body).permission_codes,
-    ['platform.member_admin.operate', 'platform.member_admin.view']
+    ['platform.user_management.operate', 'platform.user_management.view']
   );
 });
 
@@ -1882,7 +1920,7 @@ test('PUT /platform/roles/:role_id/permissions fails closed before write when re
         authorization: `Bearer ${login.access_token}`
       },
       body: {
-        permission_codes: ['platform.member_admin.view']
+        permission_codes: ['platform.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -1939,7 +1977,7 @@ test('PUT /platform/roles/:role_id/permissions maps delete-race write miss to RO
         authorization: `Bearer ${login.access_token}`
       },
       body: {
-        permission_codes: ['platform.member_admin.view']
+        permission_codes: ['platform.user_management.view']
       },
       handlers: harness.handlers
     });
@@ -1979,7 +2017,7 @@ test('role permission grants update converges affected sessions and takes effect
       authorization: `Bearer ${operatorLogin.access_token}`
     },
     body: {
-      permission_codes: ['platform.member_admin.view']
+      permission_codes: ['platform.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2006,7 +2044,7 @@ test('role permission grants update converges affected sessions and takes effect
     TARGET_PHONE
   );
   const targetProbeAllowed = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/probe',
+    pathname: '/auth/platform/user-management/probe',
     method: 'GET',
     requestId: 'req-platform-role-probe-permission-3-allowed',
     headers: {
@@ -2031,7 +2069,7 @@ test('role permission grants update converges affected sessions and takes effect
   assert.equal(revokePermission.status, 200);
 
   const targetProbeWithOldToken = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/probe',
+    pathname: '/auth/platform/user-management/probe',
     method: 'GET',
     requestId: 'req-platform-role-probe-permission-3-old-token',
     headers: {
@@ -2048,7 +2086,7 @@ test('role permission grants update converges affected sessions and takes effect
     TARGET_PHONE
   );
   const targetProbeDenied = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/probe',
+    pathname: '/auth/platform/user-management/probe',
     method: 'GET',
     requestId: 'req-platform-role-probe-permission-3-denied',
     headers: {
@@ -2092,7 +2130,7 @@ test('PATCH /platform/roles/:role_id disabling role converges affected sessions 
       authorization: `Bearer ${operatorLogin.access_token}`
     },
     body: {
-      permission_codes: ['platform.member_admin.view']
+      permission_codes: ['platform.user_management.view']
     },
     handlers: harness.handlers
   });
@@ -2119,7 +2157,7 @@ test('PATCH /platform/roles/:role_id disabling role converges affected sessions 
     TARGET_PHONE
   );
   const targetProbeAllowed = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/probe',
+    pathname: '/auth/platform/user-management/probe',
     method: 'GET',
     requestId: 'req-platform-role-disable-probe-allowed',
     headers: {
@@ -2145,7 +2183,7 @@ test('PATCH /platform/roles/:role_id disabling role converges affected sessions 
   assert.equal(JSON.parse(disableRole.body).status, 'disabled');
 
   const probeWithOldToken = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/probe',
+    pathname: '/auth/platform/user-management/probe',
     method: 'GET',
     requestId: 'req-platform-role-disable-probe-old-token',
     headers: {
@@ -2162,7 +2200,7 @@ test('PATCH /platform/roles/:role_id disabling role converges affected sessions 
     TARGET_PHONE
   );
   const targetProbeDenied = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/probe',
+    pathname: '/auth/platform/user-management/probe',
     method: 'GET',
     requestId: 'req-platform-role-disable-probe-denied',
     headers: {

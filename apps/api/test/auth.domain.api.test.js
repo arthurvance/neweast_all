@@ -7,17 +7,17 @@ const { createAuthService } = require('../src/modules/auth/auth.service');
 const config = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 const tenantPermissionA = {
   scopeLabel: '组织权限快照 A',
-  canViewMemberAdmin: true,
-  canOperateMemberAdmin: true,
-  canViewBilling: true,
-  canOperateBilling: false
+  canViewUserManagement: true,
+  canOperateUserManagement: true,
+  canViewOrganizationManagement: true,
+  canOperateOrganizationManagement: false
 };
 const tenantPermissionB = {
   scopeLabel: '组织权限快照 B',
-  canViewMemberAdmin: false,
-  canOperateMemberAdmin: false,
-  canViewBilling: true,
-  canOperateBilling: true
+  canViewUserManagement: false,
+  canOperateUserManagement: false,
+  canViewOrganizationManagement: true,
+  canOperateOrganizationManagement: true
 };
 
 const dependencyProbe = async () => ({
@@ -84,10 +84,10 @@ test('tenant login with multiple tenants requires explicit selection', async () 
   assert.equal(login.body.tenant_options.length, 2);
   assert.deepEqual(login.body.tenant_permission_context, {
     scope_label: '组织未选择（无可操作权限）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_organization_management: false,
+    can_operate_organization_management: false
   });
 
   const options = await callRoute(
@@ -118,10 +118,10 @@ test('tenant login with multiple tenants requires explicit selection', async () 
   assert.equal(select.body.active_tenant_id, 'tenant-b');
   assert.deepEqual(select.body.tenant_permission_context, {
     scope_label: '组织权限快照 B',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: true,
-    can_operate_billing: true
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_organization_management: true,
+    can_operate_organization_management: true
   });
 });
 
@@ -429,10 +429,10 @@ test('platform scoped route is blocked with AUTH-403-NO-DOMAIN in tenant entry',
           ],
           platformPermission: {
             scopeLabel: '平台权限快照',
-            canViewMemberAdmin: true,
-            canOperateMemberAdmin: true,
-            canViewBilling: true,
-            canOperateBilling: true
+            canViewUserManagement: true,
+            canOperateUserManagement: true,
+            canViewOrganizationManagement: true,
+            canOperateOrganizationManagement: true
           }
         }
       ]
@@ -456,7 +456,7 @@ test('platform scoped route is blocked with AUTH-403-NO-DOMAIN in tenant entry',
 
   const platformProbe = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/probe',
+      pathname: '/auth/platform/user-management/probe',
       method: 'GET',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
@@ -486,30 +486,30 @@ test('platform scoped route is authorized when active platform roles grant union
               roleId: 'platform-view',
               status: 'active',
               permission: {
-                canViewMemberAdmin: true,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: true,
+                canOperateUserManagement: false,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             },
             {
               roleId: 'platform-operate',
               status: 'active',
               permission: {
-                canViewMemberAdmin: false,
-                canOperateMemberAdmin: true,
-                canViewBilling: true,
-                canOperateBilling: false
+                canViewUserManagement: false,
+                canOperateUserManagement: true,
+                canViewOrganizationManagement: true,
+                canOperateOrganizationManagement: false
               }
             },
             {
               roleId: 'platform-disabled',
               status: 'disabled',
               permission: {
-                canViewMemberAdmin: false,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: false,
+                canOperateUserManagement: false,
+                canViewOrganizationManagement: false,
+                canOperateOrganizationManagement: false
               }
             }
           ]
@@ -535,7 +535,7 @@ test('platform scoped route is authorized when active platform roles grant union
 
   const platformProbe = await callRoute(
     {
-      pathname: '/auth/platform/member-admin/probe',
+      pathname: '/auth/platform/user-management/probe',
       method: 'GET',
       headers: {
         authorization: `Bearer ${login.body.access_token}`

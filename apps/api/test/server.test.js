@@ -104,10 +104,10 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/health']);
   assert.ok(payload.paths['/auth/otp/send']);
   assert.ok(payload.paths['/auth/otp/login']);
-  assert.ok(payload.paths['/auth/tenant/member-admin/probe']);
-  assert.ok(payload.paths['/auth/platform/member-admin/probe']);
-  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user']);
-  assert.ok(payload.paths['/auth/platform/member-admin/provision-user']);
+  assert.ok(payload.paths['/auth/tenant/user-management/probe']);
+  assert.ok(payload.paths['/auth/platform/user-management/probe']);
+  assert.ok(payload.paths['/auth/tenant/user-management/provision-user']);
+  assert.ok(payload.paths['/auth/platform/user-management/provision-user']);
   assert.ok(payload.paths['/tenant/audit/events']);
   assert.ok(payload.paths['/tenant/members']);
   assert.ok(payload.paths['/tenant/members/{membership_id}']);
@@ -200,12 +200,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     'string'
   );
   assert.ok(
-    payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.some(
+    payload.paths['/auth/tenant/user-management/provision-user'].post.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
   assert.ok(
-    payload.paths['/auth/platform/member-admin/provision-user'].post.parameters.some(
+    payload.paths['/auth/platform/user-management/provision-user'].post.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -331,13 +331,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     false
   );
   assert.equal(
-    payload.paths['/auth/tenant/member-admin/provision-user'].post.parameters.find(
+    payload.paths['/auth/tenant/user-management/provision-user'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
-    payload.paths['/auth/platform/member-admin/provision-user'].post.parameters.find(
+    payload.paths['/auth/platform/user-management/provision-user'].post.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
@@ -603,12 +603,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['400']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['413']);
   assert.ok(payload.paths['/auth/platform/role-facts/replace'].post.responses['503']);
-  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['413']);
-  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['409']);
-  assert.ok(payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['503']);
-  assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['413']);
-  assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409']);
-  assert.ok(payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/auth/tenant/user-management/provision-user'].post.responses['413']);
+  assert.ok(payload.paths['/auth/tenant/user-management/provision-user'].post.responses['409']);
+  assert.ok(payload.paths['/auth/tenant/user-management/provision-user'].post.responses['503']);
+  assert.ok(payload.paths['/auth/platform/user-management/provision-user'].post.responses['413']);
+  assert.ok(payload.paths['/auth/platform/user-management/provision-user'].post.responses['409']);
+  assert.ok(payload.paths['/auth/platform/user-management/provision-user'].post.responses['503']);
   assert.ok(payload.paths['/tenant/audit/events'].get.responses['200']);
   assert.ok(payload.paths['/tenant/audit/events'].get.responses['400']);
   assert.ok(payload.paths['/tenant/audit/events'].get.responses['401']);
@@ -1714,48 +1714,48 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     ['active', 'enabled']
   );
   assert.ok(
-    payload.paths['/auth/tenant/member-admin/probe'].get.responses['403'].content[
+    payload.paths['/auth/tenant/user-management/probe'].get.responses['403'].content[
       'application/problem+json'
     ].examples.no_domain
   );
   assert.equal(
-    payload.paths['/auth/tenant/member-admin/probe'].get.responses['403'].content[
+    payload.paths['/auth/tenant/user-management/probe'].get.responses['403'].content[
       'application/problem+json'
     ].examples.no_domain.value.error_code,
     'AUTH-403-NO-DOMAIN'
   );
   assert.equal(
-    payload.paths['/auth/platform/member-admin/probe'].get.responses['503'].content[
+    payload.paths['/auth/platform/user-management/probe'].get.responses['503'].content[
       'application/problem+json'
     ].examples.snapshot_sync_degraded.value.error_code,
     'AUTH-503-PLATFORM-SNAPSHOT-DEGRADED'
   );
   assert.equal(
-    payload.paths['/auth/platform/member-admin/probe'].get.responses['503'].content[
+    payload.paths['/auth/platform/user-management/probe'].get.responses['503'].content[
       'application/problem+json'
     ].examples.snapshot_sync_degraded.value.retryable,
     true
   );
   assert.equal(
-    payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['409'].content[
+    payload.paths['/auth/tenant/user-management/provision-user'].post.responses['409'].content[
       'application/problem+json'
     ].examples.idempotency_conflict.value.error_code,
     'AUTH-409-IDEMPOTENCY-CONFLICT'
   );
   assert.equal(
-    payload.paths['/auth/platform/member-admin/provision-user'].post.responses['409'].content[
+    payload.paths['/auth/platform/user-management/provision-user'].post.responses['409'].content[
       'application/problem+json'
     ].examples.idempotency_conflict.value.error_code,
     'AUTH-409-IDEMPOTENCY-CONFLICT'
   );
   assert.equal(
-    payload.paths['/auth/platform/member-admin/provision-user'].post.responses['503'].content[
+    payload.paths['/auth/platform/user-management/provision-user'].post.responses['503'].content[
       'application/problem+json'
     ].examples.default_password_config_unavailable.value.retryable,
     true
   );
   assert.equal(
-    payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['503'].content[
+    payload.paths['/auth/tenant/user-management/provision-user'].post.responses['503'].content[
       'application/problem+json'
     ].examples.default_password_config_unavailable.value.degradation_reason,
     'default-password-config-unavailable'
@@ -1786,13 +1786,13 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     60
   );
   assert.equal(
-    payload.paths['/auth/tenant/member-admin/provision-user'].post.responses['400'].content[
+    payload.paths['/auth/tenant/user-management/provision-user'].post.responses['400'].content[
       'application/problem+json'
     ].examples.invalid_idempotency_key.value.error_code,
     'AUTH-400-IDEMPOTENCY-KEY-INVALID'
   );
   assert.equal(
-    payload.paths['/auth/platform/member-admin/provision-user'].post.responses['400'].content[
+    payload.paths['/auth/platform/user-management/provision-user'].post.responses['400'].content[
       'application/problem+json'
     ].examples.invalid_idempotency_key.value.error_code,
     'AUTH-400-IDEMPOTENCY-KEY-INVALID'
@@ -2550,7 +2550,7 @@ test('dispatchApiRoute sanitizes and bounds request_id from headers', async () =
 
 test('dispatchApiRoute generates server-root traceparent when inbound traceparent is missing', async () => {
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     headers: {
       authorization: 'Bearer trace-generated-token',
@@ -2560,7 +2560,7 @@ test('dispatchApiRoute generates server-root traceparent when inbound traceparen
       phone: '13812345678'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async (
+      authPlatformUserManagementProvisionUser: async (
         requestId,
         _authorization,
         _body,
@@ -2622,7 +2622,7 @@ test('dispatchApiRoute forwards traceparent to auth login handler', async () => 
 
 test('dispatchApiRoute fail-closes invalid inbound traceparent without server-root fallback', async () => {
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     headers: {
       authorization: 'Bearer trace-invalid-token',
@@ -2633,7 +2633,7 @@ test('dispatchApiRoute fail-closes invalid inbound traceparent without server-ro
       phone: '13812345678'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async (
+      authPlatformUserManagementProvisionUser: async (
         requestId,
         _authorization,
         _body,
@@ -2663,7 +2663,7 @@ test('dispatchApiRoute fail-closes invalid inbound traceparent without server-ro
 
 test('dispatchApiRoute rejects forbidden traceparent version regardless of casing', async () => {
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     headers: {
       authorization: 'Bearer trace-invalid-version-token',
@@ -2674,7 +2674,7 @@ test('dispatchApiRoute rejects forbidden traceparent version regardless of casin
       phone: '13812345678'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async (
+      authPlatformUserManagementProvisionUser: async (
         requestId,
         _authorization,
         _body,
@@ -2731,7 +2731,7 @@ test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async (
   const calls = [];
   const dispatchProvisionRequest = (idempotencyHeaderValue) =>
     dispatchApiRoute({
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       requestId: 'req-ambiguous-idempotency',
       headers: {
@@ -2742,7 +2742,7 @@ test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async (
         phone: '13800000000'
       },
       handlers: {
-        authPlatformMemberAdminProvisionUser: async (requestId) => {
+        authPlatformUserManagementProvisionUser: async (requestId) => {
           calls.push(requestId);
           return {
             ok: true,
@@ -2779,7 +2779,7 @@ test('dispatchApiRoute rejects ambiguous Idempotency-Key header values', async (
 test('dispatchApiRoute rejects non-header-safe Idempotency-Key header values', async () => {
   const calls = [];
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-invalid-idempotency-header-char',
     headers: {
@@ -2790,7 +2790,7 @@ test('dispatchApiRoute rejects non-header-safe Idempotency-Key header values', a
       phone: '13800000000'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async (requestId) => {
+      authPlatformUserManagementProvisionUser: async (requestId) => {
         calls.push(requestId);
         return {
           ok: true,
@@ -2912,7 +2912,7 @@ test('dispatchApiRoute keeps default idempotency store isolated per handlers ins
   let firstHandlersCalls = 0;
   let secondHandlersCalls = 0;
   const buildHandlers = (counterRef) => ({
-    authPlatformMemberAdminProvisionUser: async (requestId) => {
+    authPlatformUserManagementProvisionUser: async (requestId) => {
       if (counterRef === 'first') {
         firstHandlersCalls += 1;
       } else {
@@ -2932,7 +2932,7 @@ test('dispatchApiRoute keeps default idempotency store isolated per handlers ins
   const secondHandlers = buildHandlers('second');
 
   const first = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-default-store-isolation-1',
     headers: {
@@ -2945,7 +2945,7 @@ test('dispatchApiRoute keeps default idempotency store isolated per handlers ins
     handlers: firstHandlers
   });
   const second = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-default-store-isolation-2',
     headers: {
@@ -2970,7 +2970,7 @@ test('dispatchApiRoute emits idempotency degradation audit when idempotency stor
     '00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01';
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-store-unavailable',
     headers: {
@@ -2982,7 +2982,7 @@ test('dispatchApiRoute emits idempotency degradation audit when idempotency stor
       phone: '13800000051'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when idempotency store is unavailable');
       },
       authorizeRoute: async () => ({
@@ -3014,7 +3014,7 @@ test('dispatchApiRoute emits idempotency degradation audit when idempotency stor
   );
   assert.equal(
     idempotencyEvents[0].routeKey,
-    'POST /auth/platform/member-admin/provision-user'
+    'POST /auth/platform/user-management/provision-user'
   );
   assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-store-unavailable');
   assert.equal(idempotencyEvents[0].authorizationContext.user_id, 'operator-user');
@@ -3030,7 +3030,7 @@ test('dispatchApiRoute emits idempotency degradation audit when pending replay e
   let readCalls = 0;
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-pending-missing',
     headers: {
@@ -3041,7 +3041,7 @@ test('dispatchApiRoute emits idempotency degradation audit when pending replay e
       phone: '13800000052'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when replay remains pending');
       },
       authorizeRoute: async () => ({
@@ -3087,7 +3087,7 @@ test('dispatchApiRoute emits idempotency degradation audit when pending replay e
   assert.equal(idempotencyEvents[0].metadata?.idempotency_stage, 'wait-for-resolved');
   assert.equal(
     idempotencyEvents[0].routeKey,
-    'POST /auth/platform/member-admin/provision-user'
+    'POST /auth/platform/user-management/provision-user'
   );
   assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-pending-missing');
 });
@@ -3110,7 +3110,7 @@ test('dispatchApiRoute emits idempotency degradation audit when replay remains p
     };
 
     const route = await dispatchApiRoute({
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       requestId: 'req-idempotency-pending-timeout',
       headers: {
@@ -3121,7 +3121,7 @@ test('dispatchApiRoute emits idempotency degradation audit when replay remains p
         phone: '13800000052'
       },
       handlers: {
-        authPlatformMemberAdminProvisionUser: async () => {
+        authPlatformUserManagementProvisionUser: async () => {
           assert.fail('should not execute when replay remains pending');
         },
         authorizeRoute: async () => ({
@@ -3170,7 +3170,7 @@ test('dispatchApiRoute emits idempotency degradation audit when replay remains p
     );
     assert.equal(
       idempotencyEvents[0].routeKey,
-      'POST /auth/platform/member-admin/provision-user'
+      'POST /auth/platform/user-management/provision-user'
     );
     assert.equal(idempotencyEvents[0].requestId, 'req-idempotency-pending-timeout');
   } finally {
@@ -3183,7 +3183,7 @@ test('dispatchApiRoute emits idempotency degradation audit when resolved entry p
   let releaseCalls = 0;
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-resolve-failed',
     headers: {
@@ -3194,7 +3194,7 @@ test('dispatchApiRoute emits idempotency degradation audit when resolved entry p
       phone: '13800000053'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async (requestId) => ({
+      authPlatformUserManagementProvisionUser: async (requestId) => ({
         ok: true,
         request_id: requestId
       }),
@@ -3296,7 +3296,7 @@ test('dispatchApiRoute fails closed when resolved idempotency replay entry is co
   const idempotencyEvents = [];
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-corrupted-replay',
     headers: {
@@ -3307,7 +3307,7 @@ test('dispatchApiRoute fails closed when resolved idempotency replay entry is co
       phone: '13800000055'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when resolved replay entry exists');
       },
       authorizeRoute: async () => ({
@@ -3353,7 +3353,7 @@ test('dispatchApiRoute fails closed when existing idempotency entry is corrupted
   const idempotencyEvents = [];
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-corrupted-existing-entry',
     headers: {
@@ -3364,7 +3364,7 @@ test('dispatchApiRoute fails closed when existing idempotency entry is corrupted
       phone: '13800000056'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when existing replay entry is corrupted');
       },
       authorizeRoute: async () => ({
@@ -3403,7 +3403,7 @@ test('dispatchApiRoute fails closed when existing idempotency entry has invalid 
   const idempotencyEvents = [];
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-corrupted-existing-entry-request-hash',
     headers: {
@@ -3414,7 +3414,7 @@ test('dispatchApiRoute fails closed when existing idempotency entry has invalid 
       phone: '13800000076'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when existing replay entry request hash is corrupted');
       },
       authorizeRoute: async () => ({
@@ -3457,7 +3457,7 @@ test('dispatchApiRoute fails closed when pending replay entry mutates to corrupt
   let pendingRequestHash = '';
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-corrupted-entry-after-wait',
     headers: {
@@ -3468,7 +3468,7 @@ test('dispatchApiRoute fails closed when pending replay entry mutates to corrupt
       phone: '13800000057'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when pending replay entry becomes corrupted');
       },
       authorizeRoute: async () => ({
@@ -3520,7 +3520,7 @@ test('dispatchApiRoute fails closed when pending replay entry request hash is co
   let pendingRequestHash = '';
 
   const route = await dispatchApiRoute({
-    pathname: '/auth/platform/member-admin/provision-user',
+    pathname: '/auth/platform/user-management/provision-user',
     method: 'POST',
     requestId: 'req-idempotency-corrupted-entry-request-hash-after-wait',
     headers: {
@@ -3531,7 +3531,7 @@ test('dispatchApiRoute fails closed when pending replay entry request hash is co
       phone: '13800000077'
     },
     handlers: {
-      authPlatformMemberAdminProvisionUser: async () => {
+      authPlatformUserManagementProvisionUser: async () => {
         assert.fail('should not execute when pending replay request hash becomes corrupted');
       },
       authorizeRoute: async () => ({
@@ -3583,7 +3583,7 @@ test('dispatchApiRoute does not persist idempotency replay cache for retryable 5
   let calls = 0;
   const dispatchProvisionRequest = () =>
     dispatchApiRoute({
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       requestId: `req-idempotency-5xx-${calls + 1}`,
       headers: {
@@ -3594,7 +3594,7 @@ test('dispatchApiRoute does not persist idempotency replay cache for retryable 5
         phone: '13800000001'
       },
       handlers: {
-        authPlatformMemberAdminProvisionUser: async (requestId) => {
+        authPlatformUserManagementProvisionUser: async (requestId) => {
           calls += 1;
           if (calls === 1) {
             throw new AuthProblemError({
@@ -3633,7 +3633,7 @@ test('dispatchApiRoute keeps legacy auth idempotency scope at session level', as
   let authorizeCalls = 0;
   const dispatchProvisionRequest = () =>
     dispatchApiRoute({
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       requestId: `req-idempotency-session-scope-${authorizeCalls + 1}`,
       headers: {
@@ -3644,7 +3644,7 @@ test('dispatchApiRoute keeps legacy auth idempotency scope at session level', as
         phone: '13800000009'
       },
       handlers: {
-        authPlatformMemberAdminProvisionUser: async (requestId) => {
+        authPlatformUserManagementProvisionUser: async (requestId) => {
           executionCalls += 1;
           return {
             ok: true,
@@ -3718,7 +3718,7 @@ test('dispatchApiRoute preserves legacy auth idempotency reservation for non-5xx
     requestId: 'req-legacy-idem-reservation-2',
     body: {
       user_id: 'target-user-b',
-      roles: [{ role_id: 'platform.member_admin' }]
+      roles: [{ role_id: 'platform.user_management' }]
     }
   });
 
@@ -3789,7 +3789,7 @@ test('dispatchApiRoute does not reserve idempotency key for system config versio
 test('dispatchApiRoute rebinds replayed response traceparent to current request trace context', async () => {
   let executionCalls = 0;
   const handlers = {
-    authPlatformMemberAdminProvisionUser: async (requestId, _authorization, _body, _ctx, traceparent) => {
+    authPlatformUserManagementProvisionUser: async (requestId, _authorization, _body, _ctx, traceparent) => {
       executionCalls += 1;
       return {
         ok: true,
@@ -3805,7 +3805,7 @@ test('dispatchApiRoute rebinds replayed response traceparent to current request 
 
   const dispatchProvision = ({ requestId, traceparent }) =>
     dispatchApiRoute({
-      pathname: '/auth/platform/member-admin/provision-user',
+      pathname: '/auth/platform/user-management/provision-user',
       method: 'POST',
       requestId,
       headers: {
@@ -4276,7 +4276,7 @@ test('createServer uses immutable snapshot for custom routeDefinitions at startu
   const protectedProbeRoute = customRouteDefinitions.find(
     (routeDefinition) =>
       routeDefinition.method === 'GET'
-      && routeDefinition.path === '/auth/tenant/member-admin/probe'
+      && routeDefinition.path === '/auth/tenant/user-management/probe'
   );
   assert.ok(protectedProbeRoute);
 
@@ -4293,7 +4293,7 @@ test('createServer uses immutable snapshot for custom routeDefinitions at startu
   protectedProbeRoute.scope = 'public';
 
   try {
-    const response = await fetch(`${harness.baseUrl}/auth/tenant/member-admin/probe`, {
+    const response = await fetch(`${harness.baseUrl}/auth/tenant/user-management/probe`, {
       headers: {
         accept: 'application/problem+json'
       }

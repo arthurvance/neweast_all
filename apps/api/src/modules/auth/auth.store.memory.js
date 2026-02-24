@@ -7,10 +7,10 @@ const {
 const {
   KNOWN_PLATFORM_PERMISSION_CODES,
   KNOWN_TENANT_PERMISSION_CODES,
-  TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE,
-  PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
@@ -144,8 +144,8 @@ const createInMemoryAuthStore = ({
   const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
   const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = 'sys_admin';
   const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
-    TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-    TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+    TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+    TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
   ]);
   const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
   const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
@@ -1467,21 +1467,21 @@ const createInMemoryAuthStore = ({
     }
     return {
       scopeLabel: permission.scopeLabel || permission.scope_label || fallbackScopeLabel,
-      canViewMemberAdmin: Boolean(
-        permission.canViewMemberAdmin ?? permission.can_view_member_admin
+      canViewUserManagement: Boolean(
+        permission.canViewUserManagement ?? permission.can_view_user_management
       ),
-      canOperateMemberAdmin: Boolean(
-        permission.canOperateMemberAdmin ?? permission.can_operate_member_admin
+      canOperateUserManagement: Boolean(
+        permission.canOperateUserManagement ?? permission.can_operate_user_management
       ),
-      canViewBilling: Boolean(permission.canViewBilling ?? permission.can_view_billing),
-      canOperateBilling: Boolean(
-        permission.canOperateBilling ?? permission.can_operate_billing
+      canViewOrganizationManagement: Boolean(permission.canViewOrganizationManagement ?? permission.can_view_organization_management),
+      canOperateOrganizationManagement: Boolean(
+        permission.canOperateOrganizationManagement ?? permission.can_operate_organization_management
       ),
-      canViewSystemConfig: Boolean(
-        permission.canViewSystemConfig ?? permission.can_view_system_config
+      canViewRoleManagement: Boolean(
+        permission.canViewRoleManagement ?? permission.can_view_role_management
       ),
-      canOperateSystemConfig: Boolean(
-        permission.canOperateSystemConfig ?? permission.can_operate_system_config
+      canOperateRoleManagement: Boolean(
+        permission.canOperateRoleManagement ?? permission.can_operate_role_management
       )
     };
   };
@@ -1498,28 +1498,28 @@ const createInMemoryAuthStore = ({
     }
     return {
       scopeLabel: left.scopeLabel || right.scopeLabel || '平台权限快照（服务端）',
-      canViewMemberAdmin:
-        Boolean(left.canViewMemberAdmin) || Boolean(right.canViewMemberAdmin),
-      canOperateMemberAdmin:
-        Boolean(left.canOperateMemberAdmin) || Boolean(right.canOperateMemberAdmin),
-      canViewBilling: Boolean(left.canViewBilling) || Boolean(right.canViewBilling),
-      canOperateBilling:
-        Boolean(left.canOperateBilling) || Boolean(right.canOperateBilling),
-      canViewSystemConfig:
-        Boolean(left.canViewSystemConfig) || Boolean(right.canViewSystemConfig),
-      canOperateSystemConfig:
-        Boolean(left.canOperateSystemConfig) || Boolean(right.canOperateSystemConfig)
+      canViewUserManagement:
+        Boolean(left.canViewUserManagement) || Boolean(right.canViewUserManagement),
+      canOperateUserManagement:
+        Boolean(left.canOperateUserManagement) || Boolean(right.canOperateUserManagement),
+      canViewOrganizationManagement: Boolean(left.canViewOrganizationManagement) || Boolean(right.canViewOrganizationManagement),
+      canOperateOrganizationManagement:
+        Boolean(left.canOperateOrganizationManagement) || Boolean(right.canOperateOrganizationManagement),
+      canViewRoleManagement:
+        Boolean(left.canViewRoleManagement) || Boolean(right.canViewRoleManagement),
+      canOperateRoleManagement:
+        Boolean(left.canOperateRoleManagement) || Boolean(right.canOperateRoleManagement)
     };
   };
 
   const buildEmptyPlatformPermission = (scopeLabel = '平台权限（角色并集）') => ({
     scopeLabel,
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false,
-    canViewSystemConfig: false,
-    canOperateSystemConfig: false
+    canViewUserManagement: false,
+    canOperateUserManagement: false,
+    canViewOrganizationManagement: false,
+    canOperateOrganizationManagement: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   });
 
   const normalizePlatformPermissionCodes = (permissionCodes = []) => {
@@ -1718,10 +1718,10 @@ const createInMemoryAuthStore = ({
   };
   const buildEmptyTenantPermission = (scopeLabel = '组织权限（角色并集）') => ({
     scopeLabel,
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: false,
-    canViewBilling: false,
-    canOperateBilling: false
+    canViewUserManagement: false,
+    canOperateUserManagement: false,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: false
   });
   const resolveTenantPermissionFromGrantCodes = (permissionCodes = []) => {
     return {
@@ -1776,13 +1776,13 @@ const createInMemoryAuthStore = ({
     const normalizedLeft = left || buildEmptyPlatformPermission();
     const normalizedRight = right || buildEmptyPlatformPermission();
     return (
-      Boolean(normalizedLeft.canViewMemberAdmin) === Boolean(normalizedRight.canViewMemberAdmin)
-      && Boolean(normalizedLeft.canOperateMemberAdmin) === Boolean(normalizedRight.canOperateMemberAdmin)
-      && Boolean(normalizedLeft.canViewBilling) === Boolean(normalizedRight.canViewBilling)
-      && Boolean(normalizedLeft.canOperateBilling) === Boolean(normalizedRight.canOperateBilling)
-      && Boolean(normalizedLeft.canViewSystemConfig) === Boolean(normalizedRight.canViewSystemConfig)
-      && Boolean(normalizedLeft.canOperateSystemConfig)
-        === Boolean(normalizedRight.canOperateSystemConfig)
+      Boolean(normalizedLeft.canViewUserManagement) === Boolean(normalizedRight.canViewUserManagement)
+      && Boolean(normalizedLeft.canOperateUserManagement) === Boolean(normalizedRight.canOperateUserManagement)
+      && Boolean(normalizedLeft.canViewOrganizationManagement) === Boolean(normalizedRight.canViewOrganizationManagement)
+      && Boolean(normalizedLeft.canOperateOrganizationManagement) === Boolean(normalizedRight.canOperateOrganizationManagement)
+      && Boolean(normalizedLeft.canViewRoleManagement) === Boolean(normalizedRight.canViewRoleManagement)
+      && Boolean(normalizedLeft.canOperateRoleManagement)
+        === Boolean(normalizedRight.canOperateRoleManagement)
     );
   };
 
@@ -1794,14 +1794,14 @@ const createInMemoryAuthStore = ({
     const permissionSource = role?.permission || role;
     const hasExplicitPermissionPayload = Boolean(
       role?.permission
-      || permissionSource?.canViewMemberAdmin !== undefined
-      || permissionSource?.can_view_member_admin !== undefined
-      || permissionSource?.canOperateMemberAdmin !== undefined
-      || permissionSource?.can_operate_member_admin !== undefined
-      || permissionSource?.canViewBilling !== undefined
-      || permissionSource?.can_view_billing !== undefined
-      || permissionSource?.canOperateBilling !== undefined
-      || permissionSource?.can_operate_billing !== undefined
+      || permissionSource?.canViewUserManagement !== undefined
+      || permissionSource?.can_view_user_management !== undefined
+      || permissionSource?.canOperateUserManagement !== undefined
+      || permissionSource?.can_operate_user_management !== undefined
+      || permissionSource?.canViewOrganizationManagement !== undefined
+      || permissionSource?.can_view_organization_management !== undefined
+      || permissionSource?.canOperateOrganizationManagement !== undefined
+      || permissionSource?.can_operate_organization_management !== undefined
     );
     const rolePermissionFromPayload = normalizePlatformPermission(
       permissionSource,
@@ -2177,10 +2177,10 @@ const createInMemoryAuthStore = ({
           permission: tenant.permission
             ? {
               scopeLabel: tenant.permission.scopeLabel || null,
-              canViewMemberAdmin: Boolean(tenant.permission.canViewMemberAdmin),
-              canOperateMemberAdmin: Boolean(tenant.permission.canOperateMemberAdmin),
-              canViewBilling: Boolean(tenant.permission.canViewBilling),
-              canOperateBilling: Boolean(tenant.permission.canOperateBilling)
+              canViewUserManagement: Boolean(tenant.permission.canViewUserManagement),
+              canOperateUserManagement: Boolean(tenant.permission.canOperateUserManagement),
+              canViewRoleManagement: Boolean(tenant.permission.canViewRoleManagement),
+              canOperateRoleManagement: Boolean(tenant.permission.canOperateRoleManagement)
             }
             : null
         }))
@@ -3875,8 +3875,8 @@ const createInMemoryAuthStore = ({
         }
         const effectivePermission = syncResult?.permission || {};
         if (
-          !Boolean(effectivePermission.canViewMemberAdmin)
-          || !Boolean(effectivePermission.canOperateMemberAdmin)
+          !Boolean(effectivePermission.canViewUserManagement)
+          || !Boolean(effectivePermission.canOperateUserManagement)
         ) {
           const permissionInsufficientError = new Error(
             'owner transfer takeover permission insufficient'
@@ -4041,8 +4041,8 @@ const createInMemoryAuthStore = ({
         requiredPermissionCodes
       );
       const missingRequiredPermissionCodes = [
-        TENANT_MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-        TENANT_MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+        TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+        TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
       ].filter(
         (permissionCode) =>
           !normalizedRequiredPermissionCodes.includes(permissionCode)
@@ -4356,8 +4356,8 @@ const createInMemoryAuthStore = ({
           throw syncError;
         }
         if (
-          !Boolean(syncResult?.permission?.canViewMemberAdmin)
-          || !Boolean(syncResult?.permission?.canOperateMemberAdmin)
+          !Boolean(syncResult?.permission?.canViewUserManagement)
+          || !Boolean(syncResult?.permission?.canOperateUserManagement)
         ) {
           const permissionInsufficientError = new Error(
             'owner transfer takeover permission insufficient'
@@ -5064,10 +5064,10 @@ const createInMemoryAuthStore = ({
         existingMembership.joinedAt = new Date().toISOString();
         existingMembership.permission = {
           scopeLabel: `组织权限（${normalizedTenantName || normalizedTenantId}）`,
-          canViewMemberAdmin: false,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: false,
+          canOperateUserManagement: false,
+          canViewRoleManagement: false,
+          canOperateRoleManagement: false
         };
         if (previousMembershipId) {
           tenantMembershipRolesByMembershipId.delete(previousMembershipId);
@@ -5092,10 +5092,10 @@ const createInMemoryAuthStore = ({
         leftAt: null,
         permission: {
           scopeLabel: `组织权限（${normalizedTenantName || normalizedTenantId}）`,
-          canViewMemberAdmin: false,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: false,
+          canOperateUserManagement: false,
+          canViewRoleManagement: false,
+          canOperateRoleManagement: false
         }
       });
       tenantMembershipRolesByMembershipId.set(membershipId, []);
@@ -5555,10 +5555,10 @@ const createInMemoryAuthStore = ({
             if (targetMembership.permission) {
               targetMembership.permission = {
                 ...targetMembership.permission,
-                canViewMemberAdmin: false,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: false,
+                canOperateUserManagement: false,
+                canViewRoleManagement: false,
+                canOperateRoleManagement: false
               };
             }
             if (previousMembershipId) {
@@ -5582,10 +5582,10 @@ const createInMemoryAuthStore = ({
             if (targetMembership.permission) {
               targetMembership.permission = {
                 ...targetMembership.permission,
-                canViewMemberAdmin: false,
-                canOperateMemberAdmin: false,
-                canViewBilling: false,
-                canOperateBilling: false
+                canViewUserManagement: false,
+                canOperateUserManagement: false,
+                canViewRoleManagement: false,
+                canOperateRoleManagement: false
               };
             }
             const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
@@ -5914,10 +5914,10 @@ const createInMemoryAuthStore = ({
       if (tenant.permission) {
         return {
           scopeLabel: tenant.permission.scopeLabel || `组织权限（${tenant.tenantName || tenant.tenantId}）`,
-          canViewMemberAdmin: Boolean(tenant.permission.canViewMemberAdmin),
-          canOperateMemberAdmin: Boolean(tenant.permission.canOperateMemberAdmin),
-          canViewBilling: Boolean(tenant.permission.canViewBilling),
-          canOperateBilling: Boolean(tenant.permission.canOperateBilling)
+          canViewUserManagement: Boolean(tenant.permission.canViewUserManagement),
+          canOperateUserManagement: Boolean(tenant.permission.canOperateUserManagement),
+          canViewRoleManagement: Boolean(tenant.permission.canViewRoleManagement),
+          canOperateRoleManagement: Boolean(tenant.permission.canOperateRoleManagement)
         };
       }
       return null;
@@ -5942,20 +5942,20 @@ const createInMemoryAuthStore = ({
         !normalizedUserId
         || !normalizedPermissionCode
         || (
-          normalizedPermissionCode !== PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE
-          && normalizedPermissionCode !== PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
+          normalizedPermissionCode !== PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
+          && normalizedPermissionCode !== PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
         )
       ) {
         return {
-          canViewSystemConfig: false,
-          canOperateSystemConfig: false,
+          canViewRoleManagement: false,
+          canOperateRoleManagement: false,
           granted: false
         };
       }
 
       const roles = platformRolesByUserId.get(normalizedUserId) || [];
-      let canViewSystemConfig = false;
-      let canOperateSystemConfig = false;
+      let canViewRoleManagement = false;
+      let canOperateRoleManagement = false;
 
       for (const role of roles) {
         if (!role || !isActiveLikeStatus(role.status)) {
@@ -5983,33 +5983,33 @@ const createInMemoryAuthStore = ({
           }
         }
         const permission = role.permission || {};
-        if (Boolean(permission.canViewSystemConfig ?? permission.can_view_system_config)) {
-          canViewSystemConfig = true;
+        if (Boolean(permission.canViewRoleManagement ?? permission.can_view_role_management)) {
+          canViewRoleManagement = true;
         }
-        if (Boolean(permission.canOperateSystemConfig ?? permission.can_operate_system_config)) {
-          canOperateSystemConfig = true;
-          canViewSystemConfig = true;
+        if (Boolean(permission.canOperateRoleManagement ?? permission.can_operate_role_management)) {
+          canOperateRoleManagement = true;
+          canViewRoleManagement = true;
         }
 
         const grantCodes = listPlatformRolePermissionGrantsForRoleId(role.roleId);
-        if (grantCodes.includes(PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE)) {
-          canOperateSystemConfig = true;
-          canViewSystemConfig = true;
-        } else if (grantCodes.includes(PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE)) {
-          canViewSystemConfig = true;
+        if (grantCodes.includes(PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE)) {
+          canOperateRoleManagement = true;
+          canViewRoleManagement = true;
+        } else if (grantCodes.includes(PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE)) {
+          canViewRoleManagement = true;
         }
 
-        if (canViewSystemConfig && canOperateSystemConfig) {
+        if (canViewRoleManagement && canOperateRoleManagement) {
           break;
         }
       }
 
-      const granted = normalizedPermissionCode === PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
-        ? canOperateSystemConfig
-        : canViewSystemConfig;
+      const granted = normalizedPermissionCode === PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+        ? canOperateRoleManagement
+        : canViewRoleManagement;
       return {
-        canViewSystemConfig,
-        canOperateSystemConfig,
+        canViewRoleManagement,
+        canOperateRoleManagement,
         granted
       };
     },

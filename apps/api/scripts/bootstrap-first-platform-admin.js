@@ -9,7 +9,7 @@ const PASSWORD_MIN_LENGTH = 6;
 const PBKDF2_ITERATIONS = 150000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
-const PLATFORM_ADMIN_OPERATE_PERMISSION = 'platform.member_admin.operate';
+const PLATFORM_ADMIN_OPERATE_PERMISSION = 'platform.user_management.operate';
 const SYS_ADMIN_ROLE_ID = 'sys_admin';
 
 const normalizeNonEmptyText = (value) => {
@@ -162,24 +162,24 @@ const loadSysAdminPermissionFlags = async (queryClient) => {
       .map((row) => normalizeNonEmptyText(row?.permission_code).toLowerCase())
       .filter((code) => code.length > 0)
   );
-  const canOperateMemberAdmin = permissionCodes.has('platform.member_admin.operate');
-  const canViewMemberAdmin =
-    canOperateMemberAdmin || permissionCodes.has('platform.member_admin.view');
-  const canOperateBilling = permissionCodes.has('platform.billing.operate');
-  const canViewBilling =
-    canOperateBilling || permissionCodes.has('platform.billing.view');
+  const canOperateUserManagement = permissionCodes.has('platform.user_management.operate');
+  const canViewUserManagement =
+    canOperateUserManagement || permissionCodes.has('platform.user_management.view');
+  const canOperateOrganizationManagement = permissionCodes.has('platform.organization_management.operate');
+  const canViewOrganizationManagement =
+    canOperateOrganizationManagement || permissionCodes.has('platform.organization_management.view');
 
-  if (!canOperateMemberAdmin) {
+  if (!canOperateUserManagement) {
     throw new Error(
       `${SYS_ADMIN_ROLE_ID} lacks ${PLATFORM_ADMIN_OPERATE_PERMISSION}; run DB migrations first`
     );
   }
 
   return {
-    canViewMemberAdmin,
-    canOperateMemberAdmin,
-    canViewBilling,
-    canOperateBilling
+    canViewUserManagement,
+    canOperateUserManagement,
+    canViewOrganizationManagement,
+    canOperateOrganizationManagement
   };
 };
 
@@ -217,27 +217,27 @@ const upsertPlatformAdminRole = async (tx, { userId, permissionFlags }) => {
         user_id,
         role_id,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, ?, 'active', ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         status = 'active',
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
       userId,
       SYS_ADMIN_ROLE_ID,
-      Number(permissionFlags.canViewMemberAdmin),
-      Number(permissionFlags.canOperateMemberAdmin),
-      Number(permissionFlags.canViewBilling),
-      Number(permissionFlags.canOperateBilling)
+      Number(permissionFlags.canViewUserManagement),
+      Number(permissionFlags.canOperateUserManagement),
+      Number(permissionFlags.canViewOrganizationManagement),
+      Number(permissionFlags.canOperateOrganizationManagement)
     ]
   );
 };
@@ -249,26 +249,26 @@ const upsertPlatformDomainAccess = async (tx, { userId, permissionFlags }) => {
         user_id,
         domain,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, 'platform', 'active', ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         status = 'active',
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
       userId,
-      Number(permissionFlags.canViewMemberAdmin),
-      Number(permissionFlags.canOperateMemberAdmin),
-      Number(permissionFlags.canViewBilling),
-      Number(permissionFlags.canOperateBilling)
+      Number(permissionFlags.canViewUserManagement),
+      Number(permissionFlags.canOperateUserManagement),
+      Number(permissionFlags.canViewOrganizationManagement),
+      Number(permissionFlags.canOperateOrganizationManagement)
     ]
   );
 };

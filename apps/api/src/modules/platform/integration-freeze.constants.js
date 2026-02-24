@@ -10,9 +10,9 @@ const PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY =
   'POST /platform/integrations/freeze/release';
 
 const PLATFORM_INTEGRATION_FREEZE_VIEW_PERMISSION_CODE =
-  'platform.member_admin.view';
+  'platform.user_management.view';
 const PLATFORM_INTEGRATION_FREEZE_OPERATE_PERMISSION_CODE =
-  'platform.member_admin.operate';
+  'platform.user_management.operate';
 const PLATFORM_INTEGRATION_FREEZE_SCOPE = 'platform';
 
 const PLATFORM_INTEGRATION_FREEZE_STATUS_ENUM = Object.freeze([

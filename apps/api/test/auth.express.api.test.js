@@ -76,10 +76,10 @@ const AUTH_DOMAIN_ACCESS_REQUIRED_COLUMNS = [
   'user_id',
   'domain',
   'status',
-  'can_view_member_admin',
-  'can_operate_member_admin',
-  'can_view_billing',
-  'can_operate_billing',
+  'can_view_user_management',
+  'can_operate_user_management',
+  'can_view_organization_management',
+  'can_operate_organization_management',
   'updated_at'
 ];
 const AUTH_DOMAIN_ACCESS_REQUIRED_COLUMN_ROWS = AUTH_DOMAIN_ACCESS_REQUIRED_COLUMNS.map((columnName) => ({
@@ -100,10 +100,10 @@ const AUTH_USER_TENANTS_REQUIRED_COLUMNS = [
   'department_name',
   'joined_at',
   'left_at',
-  'can_view_member_admin',
-  'can_operate_member_admin',
-  'can_view_billing',
-  'can_operate_billing'
+  'can_view_user_management',
+  'can_operate_user_management',
+  'can_view_organization_management',
+  'can_operate_organization_management'
 ];
 const AUTH_USER_TENANTS_REQUIRED_COLUMN_ROWS = AUTH_USER_TENANTS_REQUIRED_COLUMNS.map(
   (columnName) => ({
@@ -136,10 +136,10 @@ const AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMNS = [
   'user_id',
   'role_id',
   'status',
-  'can_view_member_admin',
-  'can_operate_member_admin',
-  'can_view_billing',
-  'can_operate_billing',
+  'can_view_user_management',
+  'can_operate_user_management',
+  'can_view_organization_management',
+  'can_operate_organization_management',
   'updated_at'
 ];
 const AUTH_PLATFORM_ROLE_FACTS_REQUIRED_COLUMN_ROWS =
@@ -192,9 +192,9 @@ const ROUTE_DEFINITIONS_WITH_UNKNOWN_PERMISSION_CODE = [
   },
   {
     method: 'GET',
-    path: '/auth/tenant/member-admin/probe',
+    path: '/auth/tenant/user-management/probe',
     access: 'protected',
-    permission_code: 'tenant.member_admin.operat',
+    permission_code: 'tenant.user_management.operat',
     scope: 'tenant'
   }
 ];
@@ -224,9 +224,9 @@ const ROUTE_DEFINITIONS_WITH_INCOMPATIBLE_PERMISSION_SCOPE = [
   },
   {
     method: 'GET',
-    path: '/auth/tenant/member-admin/probe',
+    path: '/auth/tenant/user-management/probe',
     access: 'protected',
-    permission_code: 'tenant.member_admin.operate',
+    permission_code: 'tenant.user_management.operate',
     scope: 'session'
   }
 ];
@@ -383,10 +383,10 @@ const ensureTables = async () => {
         user_id VARCHAR(64) NOT NULL,
         domain VARCHAR(16) NOT NULL,
         status VARCHAR(16) NOT NULL DEFAULT 'active',
-        can_view_member_admin TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_member_admin TINYINT(1) NOT NULL DEFAULT 0,
-        can_view_billing TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_billing TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_user_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_user_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_organization_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_organization_management TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         PRIMARY KEY (id),
@@ -403,19 +403,19 @@ const ensureTables = async () => {
       WHERE table_schema = DATABASE()
         AND table_name = 'auth_user_domain_access'
         AND column_name IN (
-          'can_view_member_admin',
-          'can_operate_member_admin',
-          'can_view_billing',
-          'can_operate_billing'
+          'can_view_user_management',
+          'can_operate_user_management',
+          'can_view_organization_management',
+          'can_operate_organization_management'
         )
     `
   );
   const existingDomainColumns = new Set(domainPermissionColumns.map((row) => row.column_name));
   const missingDomainColumnDefinitions = [
-    ['can_view_member_admin', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_member_admin', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_view_billing', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_billing', 'TINYINT(1) NOT NULL DEFAULT 0']
+    ['can_view_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_operate_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_view_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_operate_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0']
   ].filter(([columnName]) => !existingDomainColumns.has(columnName));
 
   for (const [columnName, columnDefinition] of missingDomainColumnDefinitions) {
@@ -431,10 +431,10 @@ const ensureTables = async () => {
         user_id VARCHAR(64) NOT NULL,
         tenant_id VARCHAR(64) NOT NULL,
         tenant_name VARCHAR(128) NULL,
-        can_view_member_admin TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_member_admin TINYINT(1) NOT NULL DEFAULT 0,
-        can_view_billing TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_billing TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_user_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_user_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_organization_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_organization_management TINYINT(1) NOT NULL DEFAULT 0,
         status VARCHAR(16) NOT NULL DEFAULT 'active',
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -452,20 +452,20 @@ const ensureTables = async () => {
       WHERE table_schema = DATABASE()
         AND table_name = 'auth_user_tenants'
         AND column_name IN (
-          'can_view_member_admin',
-          'can_operate_member_admin',
-          'can_view_billing',
-          'can_operate_billing'
+          'can_view_user_management',
+          'can_operate_user_management',
+          'can_view_organization_management',
+          'can_operate_organization_management'
         )
     `
   );
 
   const existingColumns = new Set(tenantPermissionColumns.map((row) => row.column_name));
   const missingColumnDefinitions = [
-    ['can_view_member_admin', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_member_admin', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_view_billing', 'TINYINT(1) NOT NULL DEFAULT 0'],
-    ['can_operate_billing', 'TINYINT(1) NOT NULL DEFAULT 0']
+    ['can_view_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_operate_user_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_view_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['can_operate_organization_management', 'TINYINT(1) NOT NULL DEFAULT 0']
   ].filter(([columnName]) => !existingColumns.has(columnName));
 
   for (const [columnName, columnDefinition] of missingColumnDefinitions) {
@@ -481,10 +481,10 @@ const ensureTables = async () => {
         user_id VARCHAR(64) NOT NULL,
         role_id VARCHAR(64) NOT NULL,
         status VARCHAR(16) NOT NULL DEFAULT 'active',
-        can_view_member_admin TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_member_admin TINYINT(1) NOT NULL DEFAULT 0,
-        can_view_billing TINYINT(1) NOT NULL DEFAULT 0,
-        can_operate_billing TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_user_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_user_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_view_organization_management TINYINT(1) NOT NULL DEFAULT 0,
+        can_operate_organization_management TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         PRIMARY KEY (id),
@@ -652,10 +652,10 @@ const seedTenantOptions = async () => {
         tenant_id,
         tenant_name,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES
         (?, ?, 'tenant-a', 'Tenant A', 'active', 1, 1, 1, 0),
@@ -663,10 +663,10 @@ const seedTenantOptions = async () => {
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
       `,
     [
@@ -681,10 +681,10 @@ const seedTenantOptions = async () => {
 const seedPlatformRoleFacts = async ({
   roleId = 'platform-role-default',
   status = 'active',
-  canViewMemberAdmin = 0,
-  canOperateMemberAdmin = 0,
-  canViewBilling = 0,
-  canOperateBilling = 0
+  canViewUserManagement = 0,
+  canOperateUserManagement = 0,
+  canViewOrganizationManagement = 0,
+  canOperateOrganizationManagement = 0
 } = {}) => {
   await adminConnection.execute(
     `
@@ -692,28 +692,28 @@ const seedPlatformRoleFacts = async ({
         user_id,
         role_id,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         status = VALUES(status),
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
       TEST_USER.id,
       roleId,
       status,
-      Number(canViewMemberAdmin),
-      Number(canOperateMemberAdmin),
-      Number(canViewBilling),
-      Number(canOperateBilling)
+      Number(canViewUserManagement),
+      Number(canOperateUserManagement),
+      Number(canViewOrganizationManagement),
+      Number(canOperateOrganizationManagement)
     ]
   );
 };
@@ -982,10 +982,10 @@ test('express platform provision-user creates user with hashed default credentia
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-member-admin-provision',
+    roleId: 'platform-user-management-provision',
     status: 'active',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const defaultPassword = 'InitPass!2026';
@@ -1024,7 +1024,7 @@ test('express platform provision-user creates user with hashed default credentia
 
     const provisioned = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/platform/member-admin/provision-user',
+      path: '/auth/platform/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1064,7 +1064,7 @@ test('express platform provision-user creates user with hashed default credentia
 
     const duplicateProvision = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/platform/member-admin/provision-user',
+      path: '/auth/platform/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1102,10 +1102,10 @@ test('express platform provision-user rejects tenant_name payload with AUTH-400-
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-member-admin-provision-tenant-name-invalid',
+    roleId: 'platform-user-management-provision-tenant-name-invalid',
     status: 'active',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const defaultPassword = 'InitPass!2026';
@@ -1140,7 +1140,7 @@ test('express platform provision-user rejects tenant_name payload with AUTH-400-
 
     const provisioned = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/platform/member-admin/provision-user',
+      path: '/auth/platform/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1169,19 +1169,19 @@ test('express tenant provision-user reuses existing user without mutating passwo
         tenant_id,
         tenant_name,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, ?, 'tenant-provision-a', 'Tenant Provision A', 'active', 1, 1, 0, 0)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     ['membership-tenant-provision-a', TEST_USER.id]
@@ -1243,7 +1243,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
 
     const provisioned = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/tenant/member-admin/provision-user',
+      path: '/auth/tenant/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1272,7 +1272,7 @@ test('express tenant provision-user reuses existing user without mutating passwo
 
     const duplicateProvision = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/tenant/member-admin/provision-user',
+      path: '/auth/tenant/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1326,19 +1326,19 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
         tenant_id,
         tenant_name,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, ?, 'tenant-provision-b', 'Tenant Provision B', 'active', 1, 1, 0, 0)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     ['membership-tenant-provision-b', TEST_USER.id]
@@ -1379,7 +1379,7 @@ test('express tenant provision-user rejects oversized tenant_name with AUTH-400-
 
     const provisioned = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/tenant/member-admin/provision-user',
+      path: '/auth/tenant/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1411,10 +1411,10 @@ test('express platform provision-user is fail-closed when default password secur
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-member-admin-provision-config-fail',
+    roleId: 'platform-user-management-provision-config-fail',
     status: 'active',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const invalidProvisionConfig = readConfig({
@@ -1442,7 +1442,7 @@ test('express platform provision-user is fail-closed when default password secur
 
     const provisionFailed = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/platform/member-admin/provision-user',
+      path: '/auth/platform/user-management/provision-user',
       headers: {
         authorization: `Bearer ${operatorLogin.body.access_token}`
       },
@@ -1585,8 +1585,8 @@ test('express critical password change bumps session_version and invalidates old
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-view-member-admin',
-    canViewMemberAdmin: 1
+    roleId: 'platform-view-user-management',
+    canViewUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1604,7 +1604,7 @@ test('express critical password change bumps session_version and invalidates old
 
     const preChangeProbe = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
       }
@@ -1633,7 +1633,7 @@ test('express critical password change bumps session_version and invalidates old
 
     const oldAccessProbe = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
       }
@@ -1665,7 +1665,7 @@ test('express critical password change bumps session_version and invalidates old
 
     const postChangeProbe = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${relogin.body.access_token}`
       }
@@ -1681,9 +1681,9 @@ test('express platform role-facts replace converges session and invalidates old 
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1717,10 +1717,12 @@ test('express platform role-facts replace converges session and invalidates old 
     assert.equal(replaceRoleFacts.body.reason, 'ok');
     assert.deepEqual(replaceRoleFacts.body.platform_permission_context, {
       scope_label: '平台权限（角色并集）',
-      can_view_member_admin: true,
-      can_operate_member_admin: true,
-      can_view_billing: true,
-      can_operate_billing: true
+      can_view_user_management: true,
+      can_operate_user_management: true,
+      can_view_organization_management: true,
+      can_operate_organization_management: true,
+      can_view_system_config: false,
+      can_operate_system_config: false
     });
 
     const sessionVersionAfter = await readUserSessionVersion(TEST_USER.id);
@@ -1728,7 +1730,7 @@ test('express platform role-facts replace converges session and invalidates old 
 
     const oldAccessProbe = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
       }
@@ -1759,7 +1761,7 @@ test('express platform role-facts replace converges session and invalidates old 
 
     const postReplaceProbe = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${relogin.body.access_token}`
       }
@@ -1775,9 +1777,9 @@ test('express platform role-facts replace rejects unknown user id with AUTH-400-
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1817,9 +1819,9 @@ test('express platform role-facts replace rejects missing roles field with AUTH-
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1858,9 +1860,9 @@ test('express platform role-facts replace rejects role item missing role_id with
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1900,9 +1902,9 @@ test('express platform role-facts replace rejects unsupported role status with A
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1928,7 +1930,7 @@ test('express platform role-facts replace rejects unsupported role status with A
         user_id: TEST_USER.id,
         roles: [
           {
-            role_id: 'platform-operate-member-admin',
+            role_id: 'platform-operate-user-management',
             status: 'pending-approval'
           }
         ]
@@ -1947,9 +1949,9 @@ test('express platform role-facts replace rejects blank role status with AUTH-40
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -1975,7 +1977,7 @@ test('express platform role-facts replace rejects blank role status with AUTH-40
         user_id: TEST_USER.id,
         roles: [
           {
-            role_id: 'platform-operate-member-admin',
+            role_id: 'platform-operate-user-management',
             status: '   '
           }
         ]
@@ -1994,9 +1996,9 @@ test('express platform role-facts replace rejects role_id longer than 64 chars',
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2036,9 +2038,9 @@ test('express platform role-facts replace rejects non-boolean permission flags',
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2064,10 +2066,10 @@ test('express platform role-facts replace rejects non-boolean permission flags',
         user_id: TEST_USER.id,
         roles: [
           {
-            role_id: 'platform-operate-member-admin',
+            role_id: 'platform-operate-user-management',
             status: 'active',
             permission: {
-              can_operate_member_admin: 'true'
+              can_operate_user_management: 'true'
             }
           }
         ]
@@ -2086,9 +2088,9 @@ test('express platform role-facts replace rejects non-object permission payload'
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2114,7 +2116,7 @@ test('express platform role-facts replace rejects non-object permission payload'
         user_id: TEST_USER.id,
         roles: [
           {
-            role_id: 'platform-operate-member-admin',
+            role_id: 'platform-operate-user-management',
             permission: 'invalid'
           }
         ]
@@ -2133,9 +2135,9 @@ test('express platform role-facts replace rejects top-level permission fields', 
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2161,8 +2163,8 @@ test('express platform role-facts replace rejects top-level permission fields', 
         user_id: TEST_USER.id,
         roles: [
           {
-            role_id: 'platform-operate-member-admin',
-            can_view_member_admin: true
+            role_id: 'platform-operate-user-management',
+            can_view_user_management: true
           }
         ]
       }
@@ -2180,9 +2182,9 @@ test('express platform role-facts replace rejects payload with more than 5 role 
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2229,9 +2231,9 @@ test('express platform role-facts replace rejects duplicate role_id entries', as
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2274,9 +2276,9 @@ test('express platform role-facts replace rejects duplicate role_id entries rega
     return;
   }
   await seedPlatformRoleFacts({
-    roleId: 'platform-operate-member-admin',
-    canViewMemberAdmin: 1,
-    canOperateMemberAdmin: 1
+    roleId: 'platform-operate-user-management',
+    canViewUserManagement: 1,
+    canOperateUserManagement: 1
   });
 
   const harness = await createExpressHarness();
@@ -2339,10 +2341,10 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     assert.equal(login.body.active_tenant_id, null);
     assert.deepEqual(login.body.tenant_permission_context, {
       scope_label: '组织未选择（无可操作权限）',
-      can_view_member_admin: false,
-      can_operate_member_admin: false,
-      can_view_billing: false,
-      can_operate_billing: false
+      can_view_user_management: false,
+      can_operate_user_management: false,
+      can_view_organization_management: false,
+      can_operate_organization_management: false
     });
     assert.equal(typeof login.body.access_token, 'string');
 
@@ -2361,10 +2363,10 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     assert.equal(optionsBeforeSelect.body.tenant_options.length, 2);
     assert.deepEqual(optionsBeforeSelect.body.tenant_permission_context, {
       scope_label: '组织未选择（无可操作权限）',
-      can_view_member_admin: false,
-      can_operate_member_admin: false,
-      can_view_billing: false,
-      can_operate_billing: false
+      can_view_user_management: false,
+      can_operate_user_management: false,
+      can_view_organization_management: false,
+      can_operate_organization_management: false
     });
 
     const selected = await invokeRoute(harness, {
@@ -2380,21 +2382,21 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     assert.equal(selected.body.tenant_selection_required, false);
     assert.deepEqual(selected.body.tenant_permission_context, {
       scope_label: '组织权限（Tenant A）',
-      can_view_member_admin: true,
-      can_operate_member_admin: true,
-      can_view_billing: true,
-      can_operate_billing: false
+      can_view_user_management: true,
+      can_operate_user_management: true,
+      can_view_organization_management: true,
+      can_operate_organization_management: false
     });
-    const memberAdminProbeAllowed = await invokeRoute(harness, {
+    const userManagementProbeAllowed = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/tenant/member-admin/probe',
+      path: '/auth/tenant/user-management/probe',
       headers: {
         authorization: `Bearer ${accessToken}`
       }
     });
-    assert.equal(memberAdminProbeAllowed.status, 200);
-    assert.equal(memberAdminProbeAllowed.body.ok, true);
-    assert.equal(typeof memberAdminProbeAllowed.body.request_id, 'string');
+    assert.equal(userManagementProbeAllowed.status, 200);
+    assert.equal(userManagementProbeAllowed.body.ok, true);
+    assert.equal(typeof userManagementProbeAllowed.body.request_id, 'string');
 
     const switched = await invokeRoute(harness, {
       method: 'post',
@@ -2409,21 +2411,21 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     assert.equal(switched.body.tenant_selection_required, false);
     assert.deepEqual(switched.body.tenant_permission_context, {
       scope_label: '组织权限（Tenant B）',
-      can_view_member_admin: false,
-      can_operate_member_admin: false,
-      can_view_billing: true,
-      can_operate_billing: true
+      can_view_user_management: false,
+      can_operate_user_management: false,
+      can_view_organization_management: true,
+      can_operate_organization_management: true
     });
-    const memberAdminProbeDenied = await invokeRoute(harness, {
+    const userManagementProbeDenied = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/tenant/member-admin/probe',
+      path: '/auth/tenant/user-management/probe',
       headers: {
         authorization: `Bearer ${accessToken}`
       }
     });
-    assert.equal(memberAdminProbeDenied.status, 403);
-    assert.equal(memberAdminProbeDenied.body.error_code, 'AUTH-403-FORBIDDEN');
-    assert.equal(typeof memberAdminProbeDenied.body.request_id, 'string');
+    assert.equal(userManagementProbeDenied.status, 403);
+    assert.equal(userManagementProbeDenied.body.error_code, 'AUTH-403-FORBIDDEN');
+    assert.equal(typeof userManagementProbeDenied.body.request_id, 'string');
 
     const optionsAfterSwitch = await invokeRoute(harness, {
       method: 'get',
@@ -2437,10 +2439,10 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     assert.equal(optionsAfterSwitch.body.tenant_selection_required, false);
     assert.deepEqual(optionsAfterSwitch.body.tenant_permission_context, {
       scope_label: '组织权限（Tenant B）',
-      can_view_member_admin: false,
-      can_operate_member_admin: false,
-      can_view_billing: true,
-      can_operate_billing: true
+      can_view_user_management: false,
+      can_operate_user_management: false,
+      can_view_organization_management: true,
+      can_operate_organization_management: true
     });
 
     const switchDenied = await invokeRoute(harness, {
@@ -2467,16 +2469,16 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
     assert.equal(platformLogin.body.entry_domain, 'platform');
     assert.equal(typeof platformLogin.body.access_token, 'string');
 
-    const memberAdminProbeNoDomain = await invokeRoute(harness, {
+    const userManagementProbeNoDomain = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/tenant/member-admin/probe',
+      path: '/auth/tenant/user-management/probe',
       headers: {
         authorization: `Bearer ${platformLogin.body.access_token}`
       }
     });
-    assert.equal(memberAdminProbeNoDomain.status, 403);
-    assert.equal(memberAdminProbeNoDomain.body.error_code, 'AUTH-403-NO-DOMAIN');
-    assert.equal(typeof memberAdminProbeNoDomain.body.request_id, 'string');
+    assert.equal(userManagementProbeNoDomain.status, 403);
+    assert.equal(userManagementProbeNoDomain.body.error_code, 'AUTH-403-NO-DOMAIN');
+    assert.equal(typeof userManagementProbeNoDomain.body.request_id, 'string');
   } finally {
     await harness.close();
   }
@@ -2544,19 +2546,19 @@ test('express platform login rejects users with disabled tenant relationships an
         tenant_id,
         tenant_name,
         status,
-        can_view_member_admin,
-        can_operate_member_admin,
-        can_view_billing,
-        can_operate_billing
+        can_view_user_management,
+        can_operate_user_management,
+        can_view_organization_management,
+        can_operate_organization_management
       )
       VALUES (?, ?, ?, ?, 'disabled', 1, 0, 0, 0)
       ON DUPLICATE KEY UPDATE
         tenant_name = VALUES(tenant_name),
         status = VALUES(status),
-        can_view_member_admin = VALUES(can_view_member_admin),
-        can_operate_member_admin = VALUES(can_operate_member_admin),
-        can_view_billing = VALUES(can_view_billing),
-        can_operate_billing = VALUES(can_operate_billing),
+        can_view_user_management = VALUES(can_view_user_management),
+        can_operate_user_management = VALUES(can_operate_user_management),
+        can_view_organization_management = VALUES(can_view_organization_management),
+        can_operate_organization_management = VALUES(can_operate_organization_management),
         updated_at = CURRENT_TIMESTAMP(3)
     `,
     [
@@ -2597,7 +2599,7 @@ test('express platform login rejects users with disabled tenant relationships an
   }
 });
 
-test('express platform member-admin probe enforces no-domain, forbidden, and allow paths with mysql persistent auth store', async () => {
+test('express platform user-management probe enforces no-domain, forbidden, and allow paths with mysql persistent auth store', async () => {
   if (!(await prepareMySqlState())) {
     return;
   }
@@ -2619,7 +2621,7 @@ test('express platform member-admin probe enforces no-domain, forbidden, and all
 
     const platformProbeNoDomain = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${tenantLogin.body.access_token}`
       }
@@ -2641,7 +2643,7 @@ test('express platform member-admin probe enforces no-domain, forbidden, and all
 
     const platformProbeForbidden = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${platformLogin.body.access_token}`
       }
@@ -2651,12 +2653,12 @@ test('express platform member-admin probe enforces no-domain, forbidden, and all
     assert.equal(typeof platformProbeForbidden.body.request_id, 'string');
 
     await seedPlatformRoleFacts({
-      roleId: 'platform-view-member-admin',
-      canViewMemberAdmin: 1
+      roleId: 'platform-view-user-management',
+      canViewUserManagement: 1
     });
     const platformProbeAllowed = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${platformLogin.body.access_token}`
       }
@@ -2669,7 +2671,7 @@ test('express platform member-admin probe enforces no-domain, forbidden, and all
   }
 });
 
-test('express platform member-admin probe revokes access after platform role facts are removed', async () => {
+test('express platform user-management probe revokes access after platform role facts are removed', async () => {
   if (!(await prepareMySqlState())) {
     return;
   }
@@ -2688,13 +2690,13 @@ test('express platform member-admin probe revokes access after platform role fac
     assert.equal(platformLogin.status, 200);
 
     await seedPlatformRoleFacts({
-      roleId: 'platform-view-member-admin',
-      canViewMemberAdmin: 1
+      roleId: 'platform-view-user-management',
+      canViewUserManagement: 1
     });
 
     const allowed = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${platformLogin.body.access_token}`
       }
@@ -2704,7 +2706,7 @@ test('express platform member-admin probe revokes access after platform role fac
     await clearPlatformRoleFacts();
     const revoked = await invokeRoute(harness, {
       method: 'get',
-      path: '/auth/platform/member-admin/probe',
+      path: '/auth/platform/user-management/probe',
       headers: {
         authorization: `Bearer ${platformLogin.body.access_token}`
       }
@@ -3380,7 +3382,7 @@ test('createApiApp fails fast when protected route permission code is unknown to
         dependencyProbe,
         routeDefinitions: ROUTE_DEFINITIONS_WITH_UNKNOWN_PERMISSION_CODE
       }),
-    /Route permission preflight failed: unknown permission codes: GET \/auth\/tenant\/member-admin\/probe \(unknown permission_code: tenant\.member_admin\.operat\)/
+    /Route permission preflight failed: unknown permission codes: GET \/auth\/tenant\/user-management\/probe \(unknown permission_code: tenant\.user_management\.operat\)/
   );
 });
 
@@ -3399,13 +3401,13 @@ test('createApiApp accepts preflight permission capability overrides from option
       },
       {
         method: 'GET',
-        path: '/auth/tenant/member-admin/probe',
+        path: '/auth/tenant/user-management/probe',
         access: 'protected',
         permission_code: 'tenant.custom.read',
         scope: 'tenant'
       }
     ],
-    executableRouteKeys: ['GET /health', 'GET /auth/tenant/member-admin/probe'],
+    executableRouteKeys: ['GET /health', 'GET /auth/tenant/user-management/probe'],
     supportedPermissionCodes: ['tenant.custom.read'],
     supportedPermissionScopes: {
       'tenant.custom.read': ['tenant']
@@ -3437,7 +3439,7 @@ test('createApiApp fails fast when protected route permission scope is incompati
         dependencyProbe,
         routeDefinitions: ROUTE_DEFINITIONS_WITH_INCOMPATIBLE_PERMISSION_SCOPE
       }),
-    /Route permission preflight failed: incompatible permission scope declarations: GET \/auth\/tenant\/member-admin\/probe \(permission_code tenant\.member_admin\.operate incompatible with scope session; allowed scopes: tenant\)/
+    /Route permission preflight failed: incompatible permission scope declarations: GET \/auth\/tenant\/user-management\/probe \(permission_code tenant\.user_management\.operate incompatible with scope session; allowed scopes: tenant\)/
   );
 });
 
@@ -3469,7 +3471,7 @@ test('createApiApp uses immutable snapshot for custom routeDefinitions at startu
   const protectedProbeRoute = customRouteDefinitions.find(
     (routeDefinition) =>
       routeDefinition.method === 'GET'
-      && routeDefinition.path === '/auth/tenant/member-admin/probe'
+      && routeDefinition.path === '/auth/tenant/user-management/probe'
   );
   assert.ok(protectedProbeRoute);
 
@@ -3488,7 +3490,7 @@ test('createApiApp uses immutable snapshot for custom routeDefinitions at startu
   protectedProbeRoute.scope = 'public';
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/auth/tenant/member-admin/probe`, {
+    const response = await fetch(`http://127.0.0.1:${port}/auth/tenant/user-management/probe`, {
       headers: {
         accept: 'application/problem+json'
       }
@@ -3538,8 +3540,8 @@ test('createApiApp fails fast when auth_user_tenants permission columns are miss
                   { column_name: 'tenant_id' },
                   { column_name: 'tenant_name' },
                   { column_name: 'status' },
-                  { column_name: 'can_view_member_admin' },
-                  { column_name: 'can_operate_member_admin' }
+                  { column_name: 'can_view_user_management' },
+                  { column_name: 'can_operate_user_management' }
                 ];
               }
               if (tableName === 'auth_user_platform_roles') {
@@ -3685,7 +3687,7 @@ test('createApiApp fails fast when auth_user_domain_access required columns are 
           }
         })
       }),
-    /Auth schema preflight failed: auth_user_domain_access missing columns: can_view_member_admin/
+    /Auth schema preflight failed: auth_user_domain_access missing columns: can_view_user_management/
   );
 
   assert.equal(dbCloseCalls, 1);

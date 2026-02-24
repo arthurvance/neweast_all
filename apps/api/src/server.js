@@ -181,8 +181,8 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT = new Set([
   409
 ]);
 const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
-  'POST /auth/tenant/member-admin/provision-user',
-  'POST /auth/platform/member-admin/provision-user',
+  'POST /auth/tenant/user-management/provision-user',
+  'POST /auth/platform/user-management/provision-user',
   TENANT_MEMBER_CREATE_ROUTE_KEY,
   TENANT_MEMBER_PROFILE_ROUTE_KEY,
   TENANT_MEMBER_STATUS_ROUTE_KEY,
@@ -2239,18 +2239,18 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    'GET /auth/tenant/member-admin/probe': async () =>
+    'GET /auth/tenant/user-management/probe': async () =>
       runAuthRouteWithTrace(
-        () => handlers.authTenantMemberAdminProbe(requestId, headers.authorization),
+        () => handlers.authTenantUserManagementProbe(requestId, headers.authorization),
         requestId
       ),
-    'POST /auth/tenant/member-admin/provision-user': async () =>
+    'POST /auth/tenant/user-management/provision-user': async () =>
       executeIdempotentAuthRoute({
-        routeKey: 'POST /auth/tenant/member-admin/provision-user',
+        routeKey: 'POST /auth/tenant/user-management/provision-user',
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.authTenantMemberAdminProvisionUser(
+              handlers.authTenantUserManagementProvisionUser(
                 requestId,
                 headers.authorization,
                 body || {},
@@ -2455,18 +2455,18 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    'GET /auth/platform/member-admin/probe': async () =>
+    'GET /auth/platform/user-management/probe': async () =>
       runAuthRouteWithTrace(
-        () => handlers.authPlatformMemberAdminProbe(requestId, headers.authorization),
+        () => handlers.authPlatformUserManagementProbe(requestId, headers.authorization),
         requestId
       ),
-    'POST /auth/platform/member-admin/provision-user': async () =>
+    'POST /auth/platform/user-management/provision-user': async () =>
       executeIdempotentAuthRoute({
-        routeKey: 'POST /auth/platform/member-admin/provision-user',
+        routeKey: 'POST /auth/platform/user-management/provision-user',
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.authPlatformMemberAdminProvisionUser(
+              handlers.authPlatformUserManagementProvisionUser(
                 requestId,
                 headers.authorization,
                 body || {},

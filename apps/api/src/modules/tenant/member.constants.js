@@ -13,8 +13,8 @@ const TENANT_MEMBER_PROFILE_ROUTE_KEY = 'PATCH /tenant/members/:membership_id/pr
 const TENANT_MEMBER_ROLE_BINDING_GET_ROUTE_KEY = 'GET /tenant/members/:membership_id/roles';
 const TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY = 'PUT /tenant/members/:membership_id/roles';
 
-const TENANT_MEMBER_VIEW_PERMISSION_CODE = 'tenant.member_admin.view';
-const TENANT_MEMBER_OPERATE_PERMISSION_CODE = 'tenant.member_admin.operate';
+const TENANT_MEMBER_VIEW_PERMISSION_CODE = 'tenant.user_management.view';
+const TENANT_MEMBER_OPERATE_PERMISSION_CODE = 'tenant.user_management.operate';
 const TENANT_MEMBER_SCOPE = 'tenant';
 
 module.exports = {

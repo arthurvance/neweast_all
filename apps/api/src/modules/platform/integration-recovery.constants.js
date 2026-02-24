@@ -9,9 +9,9 @@ const PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY =
   'POST /platform/integrations/:integration_id/recovery/queue/:recovery_id/replay';
 
 const PLATFORM_INTEGRATION_RECOVERY_VIEW_PERMISSION_CODE =
-  'platform.member_admin.view';
+  'platform.user_management.view';
 const PLATFORM_INTEGRATION_RECOVERY_OPERATE_PERMISSION_CODE =
-  'platform.member_admin.operate';
+  'platform.user_management.operate';
 const PLATFORM_INTEGRATION_RECOVERY_SCOPE = 'platform';
 
 const PLATFORM_INTEGRATION_RECOVERY_STATUS_ENUM = Object.freeze([

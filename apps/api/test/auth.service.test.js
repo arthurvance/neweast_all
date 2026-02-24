@@ -31,18 +31,18 @@ const seedUsers = [
 
 const tenantPermissionA = {
   scopeLabel: '组织权限快照 A',
-  canViewMemberAdmin: true,
-  canOperateMemberAdmin: true,
-  canViewBilling: true,
-  canOperateBilling: false
+  canViewUserManagement: true,
+  canOperateUserManagement: true,
+  canViewRoleManagement: true,
+  canOperateRoleManagement: false
 };
 
 const tenantPermissionB = {
   scopeLabel: '组织权限快照 B',
-  canViewMemberAdmin: false,
-  canOperateMemberAdmin: false,
-  canViewBilling: true,
-  canOperateBilling: true
+  canViewUserManagement: false,
+  canOperateUserManagement: false,
+  canViewRoleManagement: true,
+  canOperateRoleManagement: true
 };
 
 const createService = () => createAuthService({ seedUsers });
@@ -75,10 +75,10 @@ const createTenantGrantSyncFailureService = () => {
             tenantName: 'Tenant Grant Sync Failure',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -96,10 +96,10 @@ const createTenantGrantSyncFailureService = () => {
             tenantName: 'Tenant Grant Sync Failure',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -117,10 +117,10 @@ const createTenantGrantSyncFailureService = () => {
             tenantName: 'Tenant Grant Sync Failure',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -166,7 +166,7 @@ const setupTenantGrantSyncFailureScenario = async () => {
     requestId: 'req-tenant-grant-sync-prime-grants',
     tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
     roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
     operatorSessionId: 'tenant-grant-sync-operator-session'
   });
@@ -212,10 +212,10 @@ const buildPlatformRoleFactsOperatorSeed = () => ({
       roleId: 'platform-role-facts-operate',
       status: 'active',
       permission: {
-        canViewMemberAdmin: true,
-        canOperateMemberAdmin: true,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: true,
+        canOperateUserManagement: true,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ]
@@ -393,10 +393,10 @@ test('login success returns token pair and session metadata', async () => {
   assert.ok(result.session_id);
   assert.deepEqual(result.tenant_permission_context, {
     scope_label: '平台入口（无组织侧权限上下文）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: false,
+    can_operate_role_management: false
   });
 });
 
@@ -428,7 +428,7 @@ test('platform login includes system config menu flags from role permission gran
   });
   await service._internals.authStore.replacePlatformRolePermissionGrants({
     roleId: 'platform-system-config-menu-role',
-    permissionCodes: ['platform.system_config.view']
+    permissionCodes: ['platform.role_management.view']
   });
 
   const login = await service.login({
@@ -440,11 +440,11 @@ test('platform login includes system config menu flags from role permission gran
 
   assert.equal(login.entry_domain, 'platform');
   assert.equal(
-    Boolean(login.platform_permission_context?.can_view_system_config),
+    Boolean(login.platform_permission_context?.can_view_role_management),
     true
   );
   assert.equal(
-    Boolean(login.platform_permission_context?.can_operate_system_config),
+    Boolean(login.platform_permission_context?.can_operate_role_management),
     false
   );
 });
@@ -788,10 +788,10 @@ test('tenant entry with multiple options requires selection and persists active 
   assert.equal(login.tenant_options.length, 2);
   assert.deepEqual(login.tenant_permission_context, {
     scope_label: '组织未选择（无可操作权限）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: false,
+    can_operate_role_management: false
   });
 
   const beforeSelect = await service.tenantOptions({
@@ -803,10 +803,10 @@ test('tenant entry with multiple options requires selection and persists active 
   assert.equal(beforeSelect.active_tenant_id, null);
   assert.deepEqual(beforeSelect.tenant_permission_context, {
     scope_label: '组织未选择（无可操作权限）',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: false,
+    can_operate_role_management: false
   });
 
   const selected = await service.selectTenant({
@@ -820,10 +820,10 @@ test('tenant entry with multiple options requires selection and persists active 
   assert.equal(selected.user_name, '租户成员乙');
   assert.deepEqual(selected.tenant_permission_context, {
     scope_label: '组织权限快照 B',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: true,
-    can_operate_billing: true
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: true,
+    can_operate_role_management: true
   });
 
   const afterSelect = await service.tenantOptions({
@@ -835,10 +835,10 @@ test('tenant entry with multiple options requires selection and persists active 
   assert.equal(afterSelect.tenant_selection_required, false);
   assert.deepEqual(afterSelect.tenant_permission_context, {
     scope_label: '组织权限快照 B',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: true,
-    can_operate_billing: true
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: true,
+    can_operate_role_management: true
   });
 });
 
@@ -857,10 +857,10 @@ test('tenant entry with single option binds active tenant directly', async () =>
           displayName: '单租户成员',
           permission: {
             scopeLabel: '组织权限快照 Single',
-            canViewMemberAdmin: true,
-            canOperateMemberAdmin: false,
-            canViewBilling: false,
-            canOperateBilling: false
+            canViewUserManagement: true,
+            canOperateUserManagement: false,
+            canViewOrganizationManagement: false,
+            canOperateOrganizationManagement: false
           }
         }]
       }
@@ -895,10 +895,10 @@ test('tenant entry accepts enabled tenant membership in in-memory auth store', a
           status: 'enabled',
           permission: {
             scopeLabel: '组织权限快照 Enabled',
-            canViewMemberAdmin: true,
-            canOperateMemberAdmin: false,
-            canViewBilling: false,
-            canOperateBilling: false
+            canViewUserManagement: true,
+            canOperateUserManagement: false,
+            canViewOrganizationManagement: false,
+            canOperateOrganizationManagement: false
           }
         }]
       }
@@ -918,10 +918,10 @@ test('tenant entry accepts enabled tenant membership in in-memory auth store', a
   assert.equal(login.tenant_options.length, 1);
   assert.deepEqual(login.tenant_permission_context, {
     scope_label: '组织权限快照 Enabled',
-    can_view_member_admin: true,
-    can_operate_member_admin: false,
-    can_view_billing: false,
-    can_operate_billing: false
+    can_view_user_management: true,
+    can_operate_user_management: false,
+    can_view_role_management: false,
+    can_operate_role_management: false
   });
 });
 
@@ -1013,10 +1013,10 @@ test('tenant options reconciles stale active_tenant_id against latest tenant opt
   assert.equal(reconciled.tenant_selection_required, false);
   assert.deepEqual(reconciled.tenant_permission_context, {
     scope_label: '组织权限快照 B',
-    can_view_member_admin: false,
-    can_operate_member_admin: false,
-    can_view_billing: true,
-    can_operate_billing: true
+    can_view_user_management: false,
+    can_operate_user_management: false,
+    can_view_role_management: true,
+    can_operate_role_management: true
   });
 
   const session = await authStore.findSessionById(login.session_id);
@@ -1755,13 +1755,13 @@ test('platform role facts critical change bumps session version, rejects old acc
     userId: 'platform-role-converge-user',
     roles: [
       {
-        roleId: 'platform-view-member-admin',
+        roleId: 'platform-view-user-management',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -1840,13 +1840,13 @@ test('platform role facts unchanged does not bump session version or invalidate 
         domains: ['platform'],
         platformRoles: [
           {
-            roleId: 'platform-view-member-admin',
+            roleId: 'platform-view-user-management',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -1872,13 +1872,13 @@ test('platform role facts unchanged does not bump session version or invalidate 
     userId: 'platform-role-noop-user',
     roles: [
       {
-        roleId: 'platform-view-member-admin',
+        roleId: 'platform-view-user-management',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -2107,7 +2107,7 @@ test('platform role facts replace rejects unsupported role status', async () => 
         userId: 'platform-role-invalid-status-user',
         roles: [
           {
-            role_id: 'platform-member-admin',
+            role_id: 'platform-user-management',
             status: 'pending-approval'
           }
         ]
@@ -2148,7 +2148,7 @@ test('platform role facts replace rejects blank role status', async () => {
         userId: 'platform-role-blank-status-user',
         roles: [
           {
-            role_id: 'platform-member-admin',
+            role_id: 'platform-user-management',
             status: '   '
           }
         ]
@@ -2273,10 +2273,10 @@ test('platform role facts replace rejects non-boolean permission flags', async (
         userId: 'platform-role-invalid-permission-user',
         roles: [
           {
-            role_id: 'platform-member-admin',
+            role_id: 'platform-user-management',
             status: 'active',
             permission: {
-              can_operate_member_admin: 'true'
+              can_operate_user_management: 'true'
             }
           }
         ]
@@ -2317,7 +2317,7 @@ test('platform role facts replace rejects non-object permission payload', async 
         userId: 'platform-role-invalid-permission-shape-user',
         roles: [
           {
-            role_id: 'platform-member-admin',
+            role_id: 'platform-user-management',
             status: 'active',
             permission: 'invalid'
           }
@@ -2359,8 +2359,8 @@ test('platform role facts replace rejects top-level permission fields outside pe
         userId: 'platform-role-top-level-permission-user',
         roles: [
           {
-            role_id: 'platform-member-admin',
-            can_view_member_admin: true
+            role_id: 'platform-user-management',
+            can_view_user_management: true
           }
         ]
       }),
@@ -2505,13 +2505,13 @@ test('platform role facts replace audit includes actor and target identifiers', 
         domains: ['platform'],
         platformRoles: [
           {
-            roleId: 'platform-operate-member-admin',
+            roleId: 'platform-operate-user-management',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -2524,13 +2524,13 @@ test('platform role facts replace audit includes actor and target identifiers', 
         domains: ['platform'],
         platformRoles: [
           {
-            roleId: 'platform-view-member-admin',
+            roleId: 'platform-view-user-management',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -2564,7 +2564,7 @@ test('platform role facts replace audit includes actor and target identifiers', 
   assert.equal(roleFactsAudit.target_user_id, 'platform-role-audit-target-user');
 });
 
-test('platform role facts replace rejects caller without platform.member_admin.operate', async () => {
+test('platform role facts replace rejects caller without platform.user_management.operate', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -2614,7 +2614,7 @@ test('platform role facts replace rejects caller without platform.member_admin.o
   );
   assert.ok(forbiddenAudit);
   assert.equal(forbiddenAudit.type, 'auth.route.forbidden');
-  assert.equal(forbiddenAudit.permission_code, 'platform.member_admin.operate');
+  assert.equal(forbiddenAudit.permission_code, 'platform.user_management.operate');
 });
 
 test('platform role facts replace rejects authorizationContext mismatch when accessToken is provided', async () => {
@@ -3091,20 +3091,20 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
             roleId: 'role_alpha',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           },
           {
             roleId: 'role_beta',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3125,7 +3125,7 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-stale-prime-role-beta',
     roleId: 'role_beta',
-    permissionCodes: ['platform.billing.view'],
+    permissionCodes: ['platform.organization_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3149,20 +3149,20 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
           roleId: 'role_alpha',
           status: 'active',
           permission: {
-            canViewMemberAdmin: true,
-            canOperateMemberAdmin: false,
-            canViewBilling: false,
-            canOperateBilling: false
+            canViewUserManagement: true,
+            canOperateUserManagement: false,
+            canViewOrganizationManagement: false,
+            canOperateOrganizationManagement: false
           }
         },
         {
           roleId: 'role_beta',
           status: 'active',
           permission: {
-            canViewMemberAdmin: false,
-            canOperateMemberAdmin: false,
-            canViewBilling: false,
-            canOperateBilling: false
+            canViewUserManagement: false,
+            canOperateUserManagement: false,
+            canViewOrganizationManagement: false,
+            canOperateOrganizationManagement: false
           }
         }
       ];
@@ -3172,20 +3172,20 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
         roleId: 'role_alpha',
         status: 'active',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: false,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       },
       {
         roleId: 'role_beta',
         status: 'active',
         permission: {
-          canViewMemberAdmin: false,
-          canOperateMemberAdmin: false,
-          canViewBilling: true,
-          canOperateBilling: false
+          canViewUserManagement: false,
+          canOperateUserManagement: false,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: false
         }
       }
     ];
@@ -3202,7 +3202,7 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
     const result = await service.replacePlatformRolePermissionGrants({
       requestId: 'req-role-permission-grants-stale-refresh',
       roleId: 'role_alpha',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-grants-operator',
       operatorSessionId: 'platform-role-grants-operator-session'
     });
@@ -3213,7 +3213,7 @@ test('replacePlatformRolePermissionGrants re-loads user role facts after write t
     assert.ok(Array.isArray(capturedSyncedRoles));
     const roleBeta = capturedSyncedRoles.find((role) => role.roleId === 'role_beta');
     assert.ok(roleBeta);
-    assert.equal(roleBeta.permission.canViewBilling, true);
+    assert.equal(roleBeta.permission.canViewOrganizationManagement, true);
   } finally {
     authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
     authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
@@ -3235,20 +3235,20 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
             roleId: 'role_alpha',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           },
           {
             roleId: 'role_beta',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3270,7 +3270,7 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-source-beta',
     roleId: 'role_beta',
-    permissionCodes: ['platform.billing.view'],
+    permissionCodes: ['platform.organization_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3290,20 +3290,20 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
       roleId: 'role_alpha',
       status: 'active',
       permission: {
-        canViewMemberAdmin: true,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: true,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     },
     {
       roleId: 'role_beta',
       status: 'active',
       permission: {
-        canViewMemberAdmin: false,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: false,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ];
@@ -3319,7 +3319,7 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
     const result = await service.replacePlatformRolePermissionGrants({
       requestId: 'req-role-permission-grants-source-alpha',
       roleId: 'role_alpha',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-grants-operator',
       operatorSessionId: 'platform-role-grants-operator-session'
     });
@@ -3329,7 +3329,7 @@ test('replacePlatformRolePermissionGrants re-computes non-target role permission
     assert.ok(Array.isArray(capturedSyncedRoles));
     const roleBeta = capturedSyncedRoles.find((role) => role.roleId === 'role_beta');
     assert.ok(roleBeta);
-    assert.equal(roleBeta.permission.canViewBilling, true);
+    assert.equal(roleBeta.permission.canViewOrganizationManagement, true);
   } finally {
     authStore.listUserIdsByPlatformRoleId = originalListUserIdsByPlatformRoleId;
     authStore.listPlatformRoleFactsByUserId = originalListPlatformRoleFactsByUserId;
@@ -3351,10 +3351,10 @@ test('replacePlatformRolePermissionGrants maps invalid stored role facts to snap
             roleId: 'role_alpha',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3380,10 +3380,10 @@ test('replacePlatformRolePermissionGrants maps invalid stored role facts to snap
       roleId: '',
       status: 'active',
       permission: {
-        canViewMemberAdmin: false,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: false,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ];
@@ -3394,7 +3394,7 @@ test('replacePlatformRolePermissionGrants maps invalid stored role facts to snap
         service.replacePlatformRolePermissionGrants({
           requestId: 'req-role-permission-grants-invalid-role-facts',
           roleId: 'role_alpha',
-          permissionCodes: ['platform.member_admin.view'],
+          permissionCodes: ['platform.user_management.view'],
           operatorUserId: 'platform-role-grants-operator',
           operatorSessionId: 'platform-role-grants-operator-session'
         }),
@@ -3429,10 +3429,10 @@ test('replacePlatformRolePermissionGrants accepts snake_case stored role_id when
             roleId: 'role_alpha',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3462,10 +3462,10 @@ test('replacePlatformRolePermissionGrants accepts snake_case stored role_id when
       role_id: 'role_alpha',
       status: 'active',
       permission: {
-        canViewMemberAdmin: true,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: true,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ];
@@ -3478,7 +3478,7 @@ test('replacePlatformRolePermissionGrants accepts snake_case stored role_id when
     const result = await service.replacePlatformRolePermissionGrants({
       requestId: 'req-role-permission-grants-shadow-role-id',
       roleId: 'role_alpha',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-grants-operator',
       operatorSessionId: 'platform-role-grants-operator-session'
     });
@@ -3503,7 +3503,7 @@ test('listPlatformRolePermissionGrants fails closed when grants dependency retur
     authStore.listPlatformRolePermissionGrantsByRoleIds;
   authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
     {
-      permissionCodes: ['platform.member_admin.view']
+      permissionCodes: ['platform.user_management.view']
     }
   ];
 
@@ -3579,7 +3579,7 @@ test('listPlatformRolePermissionGrants fails closed when grants dependency retur
   authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: 'platform_role_permission_unexpected',
-      permissionCodes: ['platform.member_admin.view']
+      permissionCodes: ['platform.user_management.view']
     }
   ];
 
@@ -3617,7 +3617,7 @@ test('listPlatformRolePermissionGrants fails closed when grants dependency retur
   authStore.listPlatformRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: 'sys_admin',
-      permissionCodes: ['PLATFORM.MEMBER_ADMIN.VIEW']
+      permissionCodes: ['PLATFORM.USER_MANAGEMENT.VIEW']
     }
   ];
 
@@ -3673,10 +3673,10 @@ test('replacePlatformRolePermissionGrants re-loads affected users after write an
       roleId: 'role_gamma',
       status: 'active',
       permission: {
-        canViewMemberAdmin: false,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: false,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ];
@@ -3692,7 +3692,7 @@ test('replacePlatformRolePermissionGrants re-loads affected users after write an
     const result = await service.replacePlatformRolePermissionGrants({
       requestId: 'req-role-permission-grants-reload-affected-users',
       roleId: 'role_gamma',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-grants-operator',
       operatorSessionId: 'platform-role-grants-operator-session'
     });
@@ -3724,10 +3724,10 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
             roleId: 'role_delta',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3743,10 +3743,10 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
             roleId: 'role_delta',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3762,7 +3762,7 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-rollback-prime',
     roleId: 'role_delta',
-    permissionCodes: ['platform.member_admin.view'],
+    permissionCodes: ['platform.user_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3786,10 +3786,10 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
       roleId: 'role_delta',
       status: 'active',
       permission: {
-        canViewMemberAdmin: true,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: true,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ];
@@ -3818,7 +3818,7 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
         service.replacePlatformRolePermissionGrants({
           requestId: 'req-role-permission-grants-rollback-failed',
           roleId: 'role_delta',
-          permissionCodes: ['platform.billing.view'],
+          permissionCodes: ['platform.organization_management.view'],
           operatorUserId: 'platform-role-grants-operator',
           operatorSessionId: 'platform-role-grants-operator-session'
         }),
@@ -3836,7 +3836,7 @@ test('replacePlatformRolePermissionGrants rolls back grants and synced users whe
     });
     assert.deepEqual(
       grantsAfterRollback.permission_codes,
-      ['platform.member_admin.view']
+      ['platform.user_management.view']
     );
     assert.deepEqual(
       syncCallUserIds,
@@ -3867,20 +3867,20 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
             roleId: 'role_epsilon',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           },
           {
             roleId: 'role_zeta',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3896,20 +3896,20 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
             roleId: 'role_epsilon',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           },
           {
             roleId: 'role_zeta',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -3930,7 +3930,7 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
   await service.replacePlatformRolePermissionGrants({
     requestId: 'req-role-permission-grants-batch-prime-zeta',
     roleId: 'role_zeta',
-    permissionCodes: ['platform.billing.view'],
+    permissionCodes: ['platform.organization_management.view'],
     operatorUserId: 'platform-role-grants-operator',
     operatorSessionId: 'platform-role-grants-operator-session'
   });
@@ -3959,20 +3959,20 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
       roleId: 'role_epsilon',
       status: 'active',
       permission: {
-        canViewMemberAdmin: false,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: false,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     },
     {
       roleId: 'role_zeta',
       status: 'active',
       permission: {
-        canViewMemberAdmin: false,
-        canOperateMemberAdmin: false,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: false,
+        canOperateUserManagement: false,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ];
@@ -3985,7 +3985,7 @@ test('replacePlatformRolePermissionGrants loads grants in batch for affected use
     const result = await service.replacePlatformRolePermissionGrants({
       requestId: 'req-role-permission-grants-batch-epsilon',
       roleId: 'role_epsilon',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-grants-operator',
       operatorSessionId: 'platform-role-grants-operator-session'
     });
@@ -4013,7 +4013,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
 
   service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'platform_atomic_role_mismatch_other',
-    permissionCodes: ['platform.member_admin.view'],
+    permissionCodes: ['platform.user_management.view'],
     affectedUserIds: [],
     affectedUserCount: 0
   });
@@ -4023,7 +4023,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
       service.replacePlatformRolePermissionGrants({
         requestId: 'req-platform-role-permission-atomic-role-mismatch',
         roleId: 'platform_atomic_role_mismatch_target',
-        permissionCodes: ['platform.member_admin.view'],
+        permissionCodes: ['platform.user_management.view'],
         operatorUserId: 'platform-role-grants-operator',
         operatorSessionId: 'platform-role-grants-operator-session'
       }),
@@ -4058,7 +4058,7 @@ test('replacePlatformRolePermissionGrants accepts snake_case atomic write fields
     roleId: undefined,
     role_id: 'platform_atomic_shadow_fields_target',
     permissionCodes: undefined,
-    permission_codes: ['platform.member_admin.view'],
+    permission_codes: ['platform.user_management.view'],
     affectedUserIds: undefined,
     affected_user_ids: [],
     affectedUserCount: undefined,
@@ -4069,13 +4069,13 @@ test('replacePlatformRolePermissionGrants accepts snake_case atomic write fields
     const result = await service.replacePlatformRolePermissionGrants({
       requestId: 'req-platform-role-permission-atomic-shadow-fields',
       roleId: 'platform_atomic_shadow_fields_target',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-grants-operator',
       operatorSessionId: 'platform-role-grants-operator-session'
     });
 
     assert.equal(result.role_id, 'platform_atomic_shadow_fields_target');
-    assert.deepEqual(result.permission_codes, ['platform.member_admin.view']);
+    assert.deepEqual(result.permission_codes, ['platform.user_management.view']);
     assert.equal(result.affected_user_count, 0);
   } finally {
     authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots =
@@ -4096,7 +4096,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
 
   service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'platform_atomic_permission_whitespace_target',
-    permissionCodes: [' platform.member_admin.view'],
+    permissionCodes: [' platform.user_management.view'],
     affectedUserIds: [],
     affectedUserCount: 0
   });
@@ -4106,7 +4106,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
       service.replacePlatformRolePermissionGrants({
         requestId: 'req-platform-role-permission-atomic-permission-whitespace',
         roleId: 'platform_atomic_permission_whitespace_target',
-        permissionCodes: ['platform.member_admin.view'],
+        permissionCodes: ['platform.user_management.view'],
         operatorUserId: 'platform-role-grants-operator',
         operatorSessionId: 'platform-role-grants-operator-session'
       }),
@@ -4136,7 +4136,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
 
   service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'platform_atomic_missing_affected_metadata_target',
-    permissionCodes: ['platform.member_admin.view']
+    permissionCodes: ['platform.user_management.view']
   });
 
   await assert.rejects(
@@ -4144,7 +4144,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
       service.replacePlatformRolePermissionGrants({
         requestId: 'req-platform-role-permission-atomic-affected-metadata-missing',
         roleId: 'platform_atomic_missing_affected_metadata_target',
-        permissionCodes: ['platform.member_admin.view'],
+        permissionCodes: ['platform.user_management.view'],
         operatorUserId: 'platform-role-grants-operator',
         operatorSessionId: 'platform-role-grants-operator-session'
       }),
@@ -4174,7 +4174,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
 
   service._internals.authStore.replacePlatformRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'platform_atomic_affected_count_mismatch_target',
-    permissionCodes: ['platform.member_admin.view'],
+    permissionCodes: ['platform.user_management.view'],
     affectedUserIds: ['platform-role-grants-user-a'],
     affectedUserCount: 2
   });
@@ -4184,7 +4184,7 @@ test('replacePlatformRolePermissionGrants fails closed when atomic write result 
       service.replacePlatformRolePermissionGrants({
         requestId: 'req-platform-role-permission-atomic-affected-count-mismatch',
         roleId: 'platform_atomic_affected_count_mismatch_target',
-        permissionCodes: ['platform.member_admin.view'],
+        permissionCodes: ['platform.user_management.view'],
         operatorUserId: 'platform-role-grants-operator',
         operatorSessionId: 'platform-role-grants-operator-session'
       }),
@@ -4222,7 +4222,7 @@ test('replacePlatformRolePermissionGrants skips out-of-transaction audit fallbac
     auditContext
   }) => {
     assert.equal(roleId, 'platform_atomic_audit_recorded_target');
-    assert.deepEqual(permissionCodes, ['platform.member_admin.view']);
+    assert.deepEqual(permissionCodes, ['platform.user_management.view']);
     assert.equal(typeof auditContext, 'object');
     assert.equal(
       String(auditContext?.requestId || ''),
@@ -4232,7 +4232,7 @@ test('replacePlatformRolePermissionGrants skips out-of-transaction audit fallbac
     assert.equal(String(auditContext?.actorSessionId || ''), 'platform-role-facts-session');
     return {
       roleId: 'platform_atomic_audit_recorded_target',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       affectedUserIds: [],
       affectedUserCount: 0,
       audit_recorded: true
@@ -4247,14 +4247,14 @@ test('replacePlatformRolePermissionGrants skips out-of-transaction audit fallbac
       requestId: 'req-platform-role-permission-atomic-audit-recorded',
       traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
       roleId: 'platform_atomic_audit_recorded_target',
-      permissionCodes: ['platform.member_admin.view'],
+      permissionCodes: ['platform.user_management.view'],
       operatorUserId: 'platform-role-facts-operator',
       operatorSessionId: 'platform-role-facts-session'
     });
 
     assert.deepEqual(result, {
       role_id: 'platform_atomic_audit_recorded_target',
-      permission_codes: ['platform.member_admin.view'],
+      permission_codes: ['platform.user_management.view'],
       affected_user_count: 0
     });
   } finally {
@@ -4286,7 +4286,7 @@ test('replacePlatformRolePermissionGrants maps ERR_AUDIT_WRITE_FAILED from atomi
       service.replacePlatformRolePermissionGrants({
         requestId: 'req-platform-role-permission-atomic-audit-failed',
         roleId: 'platform_atomic_audit_failed_target',
-        permissionCodes: ['platform.member_admin.view'],
+        permissionCodes: ['platform.user_management.view'],
         operatorUserId: 'platform-role-facts-operator',
         operatorSessionId: 'platform-role-facts-session'
       }),
@@ -4556,7 +4556,7 @@ test('authorizeRoute returns AUTH-403-FORBIDDEN when tenant permission snapshot 
       service.authorizeRoute({
         requestId: 'req-route-authz-forbidden',
         accessToken: login.access_token,
-        permissionCode: 'tenant.member_admin.operate',
+        permissionCode: 'tenant.user_management.operate',
         scope: 'tenant'
       }),
     (error) => {
@@ -4568,13 +4568,13 @@ test('authorizeRoute returns AUTH-403-FORBIDDEN when tenant permission snapshot 
   );
 });
 
-test('authorizeRoute returns AUTH-403-FORBIDDEN when operate=true but view=false (operate implies view)', async () => {
+test('authorizeRoute allows operate permission when operate=true and view=false in legacy snapshot (operate implies view)', async () => {
   const operateWithoutViewPermission = {
     scopeLabel: '组织权限 operate-no-view',
-    canViewMemberAdmin: false,
-    canOperateMemberAdmin: true,
-    canViewBilling: false,
-    canOperateBilling: true
+    canViewUserManagement: false,
+    canOperateUserManagement: true,
+    canViewRoleManagement: false,
+    canOperateRoleManagement: true
   };
 
   const service = createAuthService({
@@ -4599,37 +4599,21 @@ test('authorizeRoute returns AUTH-403-FORBIDDEN when operate=true but view=false
     entryDomain: 'tenant'
   });
 
-  await assert.rejects(
-    () =>
-      service.authorizeRoute({
-        requestId: 'req-ov-member-admin',
-        accessToken: login.access_token,
-        permissionCode: 'tenant.member_admin.operate',
-        scope: 'tenant'
-      }),
-    (error) => {
-      assert.ok(error instanceof AuthProblemError);
-      assert.equal(error.status, 403);
-      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
-      return true;
-    }
-  );
+  const userManagementAuthorized = await service.authorizeRoute({
+    requestId: 'req-ov-user-management',
+    accessToken: login.access_token,
+    permissionCode: 'tenant.user_management.operate',
+    scope: 'tenant'
+  });
+  assert.equal(userManagementAuthorized.user_id, 'route-authz-ov-user');
 
-  await assert.rejects(
-    () =>
-      service.authorizeRoute({
-        requestId: 'req-ov-billing',
-        accessToken: login.access_token,
-        permissionCode: 'tenant.billing.operate',
-        scope: 'tenant'
-      }),
-    (error) => {
-      assert.ok(error instanceof AuthProblemError);
-      assert.equal(error.status, 403);
-      assert.equal(error.errorCode, 'AUTH-403-FORBIDDEN');
-      return true;
-    }
-  );
+  const organization_managementAuthorized = await service.authorizeRoute({
+    requestId: 'req-ov-organization_management',
+    accessToken: login.access_token,
+    permissionCode: 'tenant.role_management.operate',
+    scope: 'tenant'
+  });
+  assert.equal(organization_managementAuthorized.user_id, 'route-authz-ov-user');
 });
 
 test('authorizeRoute returns AUTH-403-NO-DOMAIN for tenant scoped route in platform entry', async () => {
@@ -4701,7 +4685,7 @@ test('authorizeRoute returns AUTH-403-NO-DOMAIN for tenant scoped route when act
       service.authorizeRoute({
         requestId: 'req-route-authz-tenant-unselected-no-domain',
         accessToken: login.access_token,
-        permissionCode: 'tenant.member_admin.view',
+        permissionCode: 'tenant.user_management.view',
         scope: 'tenant'
       }),
     (error) => {
@@ -4763,10 +4747,10 @@ test('authorizeRoute returns AUTH-403-NO-DOMAIN for platform scoped route in ten
         ],
         platformPermission: {
           scopeLabel: '平台权限快照',
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: true,
-          canOperateBilling: true
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: true
         }
       }
     ]
@@ -4784,7 +4768,7 @@ test('authorizeRoute returns AUTH-403-NO-DOMAIN for platform scoped route in ten
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-no-domain',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -4821,7 +4805,7 @@ test('authorizeRoute is fail-closed for platform scope when platform role facts 
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-missing-snapshot',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -4835,10 +4819,10 @@ test('authorizeRoute is fail-closed for platform scope when platform role facts 
   const forbidden = service._internals.auditTrail.find(
     (event) =>
       event.type === 'auth.route.forbidden'
-      && event.detail === 'permission denied: platform.member_admin.view'
+      && event.detail === 'permission denied: platform.user_management.view'
   );
   assert.ok(forbidden);
-  assert.equal(forbidden.permission_code, 'platform.member_admin.view');
+  assert.equal(forbidden.permission_code, 'platform.user_management.view');
 });
 
 test('authorizeRoute clears stale platform snapshot when role facts are empty', async () => {
@@ -4852,10 +4836,10 @@ test('authorizeRoute clears stale platform snapshot when role facts are empty', 
         domains: ['platform'],
         platformPermission: {
           scopeLabel: '平台权限快照（历史）',
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -4873,7 +4857,7 @@ test('authorizeRoute clears stale platform snapshot when role facts are empty', 
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-stale-snapshot',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -4887,8 +4871,8 @@ test('authorizeRoute clears stale platform snapshot when role facts are empty', 
   const forbidden = service._internals.auditTrail.find(
     (event) =>
       event.type === 'auth.route.forbidden'
-      && event.permission_code === 'platform.member_admin.view'
-      && event.detail === 'permission denied: platform.member_admin.view'
+      && event.permission_code === 'platform.user_management.view'
+      && event.detail === 'permission denied: platform.user_management.view'
   );
   assert.ok(forbidden);
 });
@@ -4904,10 +4888,10 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reports d
         domains: ['platform'],
         platformPermission: {
           scopeLabel: '平台权限快照',
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: true,
-          canOperateBilling: true
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: true
         }
       }
     ]
@@ -4931,7 +4915,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reports d
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-deadlock',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -4946,7 +4930,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reports d
   const degraded = service._internals.auditTrail.find(
     (event) =>
       event.type === 'auth.platform.snapshot.degraded'
-      && event.permission_code === 'platform.member_admin.view'
+      && event.permission_code === 'platform.user_management.view'
       && event.degradation_reason === 'db-deadlock'
   );
   assert.ok(degraded);
@@ -4963,10 +4947,10 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync remains c
         domains: ['platform'],
         platformPermission: {
           scopeLabel: '平台权限快照',
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       }
     ]
@@ -4994,7 +4978,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync remains c
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-concurrent',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -5010,7 +4994,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync remains c
   const degraded = service._internals.auditTrail.find(
     (event) =>
       event.type === 'auth.platform.snapshot.degraded'
-      && event.permission_code === 'platform.member_admin.view'
+      && event.permission_code === 'platform.user_management.view'
       && event.degradation_reason === 'concurrent-role-facts-update'
   );
   assert.ok(degraded);
@@ -5027,10 +5011,10 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync returns u
         domains: ['platform'],
         platformPermission: {
           scopeLabel: '平台权限快照',
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: true,
-          canOperateBilling: true
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: true
         }
       }
     ]
@@ -5054,7 +5038,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync returns u
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-unknown-sync',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -5069,7 +5053,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync returns u
   const degraded = service._internals.auditTrail.find(
     (event) =>
       event.type === 'auth.platform.snapshot.degraded'
-      && event.permission_code === 'platform.member_admin.view'
+      && event.permission_code === 'platform.user_management.view'
       && event.degradation_reason === 'unexpected-sync-state'
   );
   assert.ok(degraded);
@@ -5086,10 +5070,10 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reason is
         domains: ['platform'],
         platformPermission: {
           scopeLabel: '平台权限快照',
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: true,
-          canOperateBilling: true
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: true,
+          canOperateOrganizationManagement: true
         }
       }
     ]
@@ -5113,7 +5097,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reason is
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-empty-sync',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -5128,7 +5112,7 @@ test('authorizeRoute fails closed with 503 when platform snapshot sync reason is
   const degraded = service._internals.auditTrail.find(
     (event) =>
       event.type === 'auth.platform.snapshot.degraded'
-      && event.permission_code === 'platform.member_admin.view'
+      && event.permission_code === 'platform.user_management.view'
       && event.degradation_reason === 'unknown'
   );
   assert.ok(degraded);
@@ -5148,31 +5132,31 @@ test('authorizeRoute uses platform role union and ignores explicit deny flags', 
             roleId: 'platform-view',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           },
           {
             roleId: 'platform-operate',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: true,
-              canViewBilling: true,
-              canOperateBilling: false,
-              denyMemberAdminOperate: true
+              canViewUserManagement: false,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: true,
+              canOperateOrganizationManagement: false,
+              denyUserManagementOperate: true
             }
           },
           {
             roleId: 'platform-disabled',
             status: 'disabled',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -5190,7 +5174,7 @@ test('authorizeRoute uses platform role union and ignores explicit deny flags', 
   const result = await service.authorizeRoute({
     requestId: 'req-route-authz-platform-union',
     accessToken: login.access_token,
-    permissionCode: 'platform.member_admin.operate',
+    permissionCode: 'platform.user_management.operate',
     scope: 'platform'
   });
 
@@ -5212,20 +5196,20 @@ test('authorizeRoute deduplicates duplicate platform role_id facts using latest 
             roleId: 'platform-dup',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           },
           {
             roleId: 'platform-dup',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -5245,7 +5229,7 @@ test('authorizeRoute deduplicates duplicate platform role_id facts using latest 
       service.authorizeRoute({
         requestId: 'req-route-authz-platform-duplicate-role',
         accessToken: login.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -5271,10 +5255,10 @@ test('authorizeRoute rejects system config view when bound role catalog entry is
             roleId: 'system-config-disabled-role',
             status: 'active',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false,
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false,
               canViewSystemConfig: true,
               canOperateSystemConfig: true
             }
@@ -5293,7 +5277,7 @@ test('authorizeRoute rejects system config view when bound role catalog entry is
   });
   await service._internals.authStore.replacePlatformRolePermissionGrants({
     roleId: 'system-config-disabled-role',
-    permissionCodes: ['platform.system_config.operate']
+    permissionCodes: ['platform.role_management.operate']
   });
 
   const login = await service.login({
@@ -5308,7 +5292,7 @@ test('authorizeRoute rejects system config view when bound role catalog entry is
       service.authorizeRoute({
         requestId: 'req-route-authz-system-config-disabled-role-authorize',
         accessToken: login.access_token,
-        permissionCode: 'platform.system_config.view',
+        permissionCode: 'platform.role_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -5735,10 +5719,10 @@ test('provisionTenantUserByPhone creates tenant relationship and rejects duplica
             tenantId: 'tenant-provision-a',
             tenantName: 'Tenant Provision A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -5812,10 +5796,10 @@ test('provisionTenantUserByPhone returns conflict when tenant domain access rema
             tenantId: 'tenant-provision-domain-disabled-a',
             tenantName: 'Tenant Provision Domain Disabled A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -5902,10 +5886,10 @@ test('provisionTenantUserByPhone rolls back membership when tenant domain access
             tenantId: 'tenant-provision-domain-throw-a',
             tenantName: 'Tenant Provision Domain Throw A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -5984,10 +5968,10 @@ test('provisionTenantUserByPhone rolls back tenant membership and tenant domain 
             tenantId: 'tenant-provision-domain-verify-a',
             tenantName: 'Tenant Provision Domain Verify A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6077,10 +6061,10 @@ test('provisionTenantUserByPhone reuses existing user without mutating password 
             tenantId: 'tenant-provision-reuse-a',
             tenantName: 'Tenant Provision Reuse A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6142,10 +6126,10 @@ test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active 
             tenantId: 'tenant-provision-rejoin-name-a',
             tenantName: 'Tenant Provision Rejoin Name A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6163,10 +6147,10 @@ test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active 
             tenantName: 'Tenant Provision Rejoin Name OLD',
             status: 'left',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: true,
-              canOperateBilling: true
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: true,
+              canOperateOrganizationManagement: true
             }
           }
         ]
@@ -6435,10 +6419,10 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
             displayName: '成员甲',
             departmentName: '研发一部',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6477,10 +6461,10 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when in-memory 
             displayName: ' 成员甲',
             departmentName: '研发一部',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6794,10 +6778,10 @@ test('updateTenantMemberProfile fails closed without mutation when existing depa
             displayName: '成员甲',
             departmentName: '研发一部 ',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6855,10 +6839,10 @@ test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even
             tenantId: 'tenant-provision-inactive-a',
             tenantName: 'Tenant Provision Inactive A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6875,10 +6859,10 @@ test('provisionTenantUserByPhone rejects duplicate user-tenant relationship even
             tenantName: 'Tenant Provision Inactive A',
             status: 'disabled',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6934,10 +6918,10 @@ test('provisionTenantUserByPhone heals tenant domain access when active relation
             tenantId: 'tenant-provision-domain-heal-a',
             tenantName: 'Tenant Provision Domain Heal A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -6953,10 +6937,10 @@ test('provisionTenantUserByPhone heals tenant domain access when active relation
             tenantId: 'tenant-provision-domain-heal-a',
             tenantName: 'Tenant Provision Domain Heal A',
             permission: {
-              canViewMemberAdmin: false,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: false,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7011,10 +6995,10 @@ test('provisionTenantUserByPhone rejects oversized tenant_name with AUTH-400-INV
             tenantId: 'tenant-provision-name-validation-a',
             tenantName: 'Tenant Provision Name Validation A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7070,10 +7054,10 @@ test('provisionTenantUserByPhone rejects tenant_name whose raw payload length ex
             tenantId: 'tenant-provision-raw-length-a',
             tenantName: 'Tenant Provision Raw Length A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7130,10 +7114,10 @@ test('provisionTenantUserByPhone rejects blank tenant_name with AUTH-400-INVALID
             tenantId: 'tenant-provision-name-blank-validation-a',
             tenantName: 'Tenant Provision Name Blank Validation A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7189,10 +7173,10 @@ test('provisionTenantUserByPhone rejects unknown payload fields with AUTH-400-IN
             tenantId: 'tenant-provision-unknown-field-a',
             tenantName: 'Tenant Provision Unknown Field A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7251,10 +7235,10 @@ test('provisionTenantUserByPhone rejects tenant_name that mismatches active tena
             tenantId: 'tenant-provision-name-canonical-a',
             tenantName: 'Tenant Provision Name Canonical A',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7312,10 +7296,10 @@ test('provisionTenantUserByPhone rejects caller tenant_name when active tenant c
             tenantId: 'tenant-provision-name-missing-canonical-a',
             tenantName: null,
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7373,10 +7357,10 @@ test('provisionTenantUserByPhone rejects request when active tenant canonical na
             tenantId: 'tenant-provision-name-missing-canonical-implicit-a',
             tenantName: null,
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7508,13 +7492,13 @@ test('in-memory auth store deleteUserById clears platform role facts and snapsho
         domains: ['platform'],
         platformRoles: [
           {
-            roleId: 'platform-member-admin-cleanup',
+            roleId: 'platform-user-management-cleanup',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -7950,10 +7934,10 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
             roleId: 'org-status-owner-platform-view',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ],
@@ -7989,7 +7973,7 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
   const tenantAuthorizedBeforeDisable = await service.authorizeRoute({
     requestId: 'req-org-status-tenant-authorize-before-disable',
     accessToken: ownerLogin.access_token,
-    permissionCode: 'tenant.member_admin.view',
+    permissionCode: 'tenant.user_management.view',
     scope: 'tenant'
   });
   assert.equal(tenantAuthorizedBeforeDisable.user_id, 'org-status-owner-user');
@@ -8025,7 +8009,7 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
       service.authorizeRoute({
         requestId: 'req-org-status-tenant-authorize-after-disable',
         accessToken: ownerLogin.access_token,
-        permissionCode: 'tenant.member_admin.view',
+        permissionCode: 'tenant.user_management.view',
         scope: 'tenant'
       }),
     (error) => {
@@ -8069,7 +8053,7 @@ test('updateOrganizationStatus treats disabled as soft-delete and keeps tenant a
   const authorizedPlatformAfterDisable = await service.authorizeRoute({
     requestId: 'req-org-status-platform-authorize-after-disable',
     accessToken: ownerPlatformLogin.access_token,
-    permissionCode: 'platform.member_admin.view',
+    permissionCode: 'platform.user_management.view',
     scope: 'platform'
   });
   assert.equal(authorizedPlatformAfterDisable.user_id, 'org-status-owner-user');
@@ -8438,7 +8422,7 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     requestId: 'req-owner-transfer-execute-old-role-grants',
     tenantId: orgId,
     roleId: 'owner_transfer_execute_old_role',
-    permissionCodes: ['tenant.member_admin.operate'],
+    permissionCodes: ['tenant.user_management.operate'],
     operatorUserId: 'platform-role-facts-operator',
     operatorSessionId: 'platform-role-facts-session'
   });
@@ -8455,8 +8439,8 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     userId: 'owner-transfer-execute-old-owner',
     tenantId: orgId
   });
-  assert.equal(oldPermissionBefore.canViewMemberAdmin, true);
-  assert.equal(oldPermissionBefore.canOperateMemberAdmin, true);
+  assert.equal(oldPermissionBefore.canViewUserManagement, true);
+  assert.equal(oldPermissionBefore.canOperateUserManagement, true);
 
   const takeoverResult = await service.executeOwnerTransferTakeover({
     requestId: 'req-owner-transfer-execute-success',
@@ -8493,10 +8477,10 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
       roleId: takeoverRoleId
     });
   assert.ok(
-    tenantOwnerRolePermissionCodes.includes('tenant.member_admin.view')
+    tenantOwnerRolePermissionCodes.includes('tenant.user_management.view')
   );
   assert.ok(
-    tenantOwnerRolePermissionCodes.includes('tenant.member_admin.operate')
+    tenantOwnerRolePermissionCodes.includes('tenant.user_management.operate')
   );
 
   const newMembership = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
@@ -8514,8 +8498,8 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     userId: 'owner-transfer-execute-new-owner',
     tenantId: orgId
   });
-  assert.equal(newPermission.canViewMemberAdmin, true);
-  assert.equal(newPermission.canOperateMemberAdmin, true);
+  assert.equal(newPermission.canViewUserManagement, true);
+  assert.equal(newPermission.canOperateUserManagement, true);
 
   const oldMembershipAfter = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
     userId: 'owner-transfer-execute-old-owner',
@@ -8526,8 +8510,8 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     userId: 'owner-transfer-execute-old-owner',
     tenantId: orgId
   });
-  assert.equal(oldPermissionAfter.canViewMemberAdmin, true);
-  assert.equal(oldPermissionAfter.canOperateMemberAdmin, true);
+  assert.equal(oldPermissionAfter.canViewUserManagement, true);
+  assert.equal(oldPermissionAfter.canOperateUserManagement, true);
   const ownerTransferAuditEvents = await service.listAuditEvents({
     domain: 'tenant',
     tenantId: orgId,
@@ -8734,7 +8718,7 @@ test('executeOwnerTransferTakeover fails closed when takeover role definition is
     roleId: takeoverRoleId,
     scope: 'tenant',
     tenantId: orgId,
-    code: 'TENANT_BILLING_GUARD',
+    code: 'TENANT_ROLE_MANAGEMENT_GUARD',
     name: '异常接管角色定义',
     status: 'active',
     operatorUserId: 'platform-role-facts-operator',
@@ -9673,10 +9657,10 @@ test('updatePlatformUserStatus disables platform-domain access immediately and r
             roleId: 'platform-status-target-view',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -9698,7 +9682,7 @@ test('updatePlatformUserStatus disables platform-domain access immediately and r
   const authorizedBeforeDisable = await service.authorizeRoute({
     requestId: 'req-platform-status-authorize-before-disable',
     accessToken: targetLogin.access_token,
-    permissionCode: 'platform.member_admin.view',
+    permissionCode: 'platform.user_management.view',
     scope: 'platform'
   });
   assert.equal(authorizedBeforeDisable.user_id, 'platform-status-target-user');
@@ -9722,7 +9706,7 @@ test('updatePlatformUserStatus disables platform-domain access immediately and r
       service.authorizeRoute({
         requestId: 'req-platform-status-authorize-after-disable',
         accessToken: targetLogin.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -9772,7 +9756,7 @@ test('updatePlatformUserStatus disables platform-domain access immediately and r
   const authorizedAfterEnable = await service.authorizeRoute({
     requestId: 'req-platform-status-authorize-after-enable',
     accessToken: loginAfterEnable.access_token,
-    permissionCode: 'platform.member_admin.view',
+    permissionCode: 'platform.user_management.view',
     scope: 'platform'
   });
   assert.equal(authorizedAfterEnable.user_id, 'platform-status-target-user');
@@ -9793,10 +9777,10 @@ test('updatePlatformUserStatus disabled only affects platform domain and keeps t
             roleId: 'platform-status-scope-view',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ],
@@ -9847,7 +9831,7 @@ test('updatePlatformUserStatus disabled only affects platform domain and keeps t
       service.authorizeRoute({
         requestId: 'req-platform-status-scope-platform-authorize-after-disable',
         accessToken: platformLogin.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -9877,7 +9861,7 @@ test('updatePlatformUserStatus disabled only affects platform domain and keeps t
   const tenantAuthorized = await service.authorizeRoute({
     requestId: 'req-platform-status-scope-tenant-authorize-after-disable',
     accessToken: tenantLogin.access_token,
-    permissionCode: 'tenant.member_admin.view',
+    permissionCode: 'tenant.user_management.view',
     scope: 'tenant'
   });
   assert.equal(tenantAuthorized.user_id, 'platform-status-scope-user');
@@ -9908,10 +9892,10 @@ test('updatePlatformUserStatus treats same-status update as no-op and keeps curr
             roleId: 'platform-status-noop-view',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -10156,10 +10140,10 @@ test('softDeleteUser revokes platform/tenant sessions and refresh tokens and rem
             roleId: 'platform-soft-delete-target-view',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ],
@@ -10209,7 +10193,7 @@ test('softDeleteUser revokes platform/tenant sessions and refresh tokens and rem
       service.authorizeRoute({
         requestId: 'req-platform-soft-delete-platform-authorize-after-delete',
         accessToken: platformLogin.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -10224,7 +10208,7 @@ test('softDeleteUser revokes platform/tenant sessions and refresh tokens and rem
       service.authorizeRoute({
         requestId: 'req-platform-soft-delete-tenant-authorize-after-delete',
         accessToken: tenantLogin.access_token,
-        permissionCode: 'tenant.member_admin.view',
+        permissionCode: 'tenant.user_management.view',
         scope: 'tenant'
       }),
     (error) => {
@@ -10349,10 +10333,10 @@ test('softDeleteUser still revokes stale active sessions and refresh tokens when
             roleId: 'platform-soft-delete-disabled-stale-role',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ],
@@ -10543,7 +10527,7 @@ test('authorizeRoute fails closed for disabled user even when stale access sessi
       service.authorizeRoute({
         requestId: 'req-platform-soft-delete-access-fail-closed-authorize',
         accessToken: targetLogin.access_token,
-        permissionCode: 'platform.member_admin.view',
+        permissionCode: 'platform.user_management.view',
         scope: 'platform'
       }),
     (error) => {
@@ -11617,14 +11601,14 @@ test('recordIdempotencyEvent records degraded outcomes with dedicated audit meta
     requestId: 'req-idempotency-store-unavailable-audit',
     traceparent,
     outcome: 'store_unavailable',
-    routeKey: 'POST /auth/platform/member-admin/provision-user',
+    routeKey: 'POST /auth/platform/user-management/provision-user',
     idempotencyKey: 'idem-store-unavailable-audit',
     authorizationContext
   });
   await service.recordIdempotencyEvent({
     requestId: 'req-idempotency-pending-timeout-audit',
     outcome: 'pending_timeout',
-    routeKey: 'POST /auth/platform/member-admin/provision-user',
+    routeKey: 'POST /auth/platform/user-management/provision-user',
     idempotencyKey: 'idem-pending-timeout-audit',
     authorizationContext
   });
@@ -11755,10 +11739,10 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
             tenantName: 'Tenant Permission Restore',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -11776,10 +11760,10 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
             tenantName: 'Tenant Permission Restore',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: true,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: true,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -11800,8 +11784,8 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
     tenantId: 'tenant-permission-restore',
     roleId: 'tenant_permission_restore_role',
     permissionCodes: [
-      'tenant.member_admin.view',
-      'tenant.billing.view'
+      'tenant.user_management.view',
+      'tenant.role_management.view'
     ],
     operatorUserId: 'tenant-status-operator',
     operatorSessionId: 'tenant-status-session'
@@ -11855,10 +11839,10 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
     tenantId: 'tenant-permission-restore'
   });
   assert.ok(restoredPermission);
-  assert.equal(restoredPermission.canViewMemberAdmin, true);
-  assert.equal(restoredPermission.canOperateMemberAdmin, false);
-  assert.equal(restoredPermission.canViewBilling, true);
-  assert.equal(restoredPermission.canOperateBilling, false);
+  assert.equal(restoredPermission.canViewUserManagement, true);
+  assert.equal(restoredPermission.canOperateUserManagement, false);
+  assert.equal(restoredPermission.canViewRoleManagement, true);
+  assert.equal(restoredPermission.canOperateRoleManagement, false);
 });
 
 test('updateTenantMemberStatus clears tenant permission snapshot across left-to-active rejoin transition', async () => {
@@ -11878,10 +11862,10 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
             tenantName: 'Tenant Permission Rejoin',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -11899,10 +11883,10 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
             tenantName: 'Tenant Permission Rejoin',
             status: 'left',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: true,
-              canOperateBilling: true
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: true,
+              canOperateOrganizationManagement: true
             }
           }
         ]
@@ -11931,10 +11915,10 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
     tenantId: 'tenant-permission-rejoin'
   });
   assert.ok(restoredPermission);
-  assert.equal(restoredPermission.canViewMemberAdmin, false);
-  assert.equal(restoredPermission.canOperateMemberAdmin, false);
-  assert.equal(restoredPermission.canViewBilling, false);
-  assert.equal(restoredPermission.canOperateBilling, false);
+  assert.equal(restoredPermission.canViewUserManagement, false);
+  assert.equal(restoredPermission.canOperateUserManagement, false);
+  assert.equal(restoredPermission.canViewRoleManagement, false);
+  assert.equal(restoredPermission.canOperateRoleManagement, false);
 });
 
 test('updateTenantMemberStatus fails closed when rejoin result reuses original membership_id', async () => {
@@ -12071,10 +12055,10 @@ test('updateTenantMemberStatus persists audit event with request_id and tracepar
             tenantName: 'Tenant Status Audit',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false
             }
           }
         ]
@@ -12174,10 +12158,10 @@ const buildTenantRoleBindingSeed = ({ membershipStatus = 'active' } = {}) => ({
       tenantName: 'Tenant Role Binding',
       status: membershipStatus,
       permission: {
-        canViewMemberAdmin: true,
-        canOperateMemberAdmin: true,
-        canViewBilling: false,
-        canOperateBilling: false
+        canViewUserManagement: true,
+        canOperateUserManagement: true,
+        canViewOrganizationManagement: false,
+        canOperateOrganizationManagement: false
       }
     }
   ]
@@ -12612,7 +12596,7 @@ test('listTenantRolePermissionGrants fails closed when grants dependency contain
   service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: 'tenant_role_binding_list_permission_whitespace_target',
-      permissionCodes: [' tenant.member_admin.view']
+      permissionCodes: [' tenant.user_management.view']
     }
   ];
 
@@ -12810,7 +12794,7 @@ test('listTenantRolePermissionGrants fails closed when grants dependency role id
   service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: ' tenant_role_binding_grant_role_whitespace_target',
-      permissionCodes: ['tenant.member_admin.view']
+      permissionCodes: ['tenant.user_management.view']
     }
   ];
 
@@ -12846,11 +12830,11 @@ test('listTenantRolePermissionGrants fails closed when grants dependency returns
   service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: 'tenant_role_binding_grant_duplicate_target',
-      permissionCodes: ['tenant.member_admin.view']
+      permissionCodes: ['tenant.user_management.view']
     },
     {
       roleId: 'tenant_role_binding_grant_duplicate_target',
-      permissionCodes: ['tenant.billing.view']
+      permissionCodes: ['tenant.role_management.view']
     }
   ];
 
@@ -12886,7 +12870,7 @@ test('listTenantRolePermissionGrants fails closed when grants dependency returns
   service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: 'TENANT_ROLE_BINDING_GRANT_CASE_TARGET',
-      permissionCodes: ['tenant.member_admin.view']
+      permissionCodes: ['tenant.user_management.view']
     }
   ];
 
@@ -12922,7 +12906,7 @@ test('listTenantRolePermissionGrants fails closed when grants dependency returns
   service._internals.authStore.listTenantRolePermissionGrantsByRoleIds = async () => [
     {
       roleId: 'tenant_role_binding_grant_permission_case_target',
-      permissionCodes: ['TENANT.MEMBER_ADMIN.VIEW']
+      permissionCodes: ['TENANT.USER_MANAGEMENT.VIEW']
     }
   ];
 
@@ -13304,7 +13288,7 @@ test('replaceTenantRolePermissionGrants rolls back grants and snapshots when syn
         requestId: 'req-tenant-grant-sync-failure-write',
         tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
         roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
-        permissionCodes: ['tenant.member_admin.operate'],
+        permissionCodes: ['tenant.user_management.operate'],
         operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
         operatorSessionId: 'tenant-grant-sync-operator-session'
       }),
@@ -13320,7 +13304,7 @@ test('replaceTenantRolePermissionGrants rolls back grants and snapshots when syn
     tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
     roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID
   });
-  assert.deepEqual(grants.permission_codes, ['tenant.member_admin.view']);
+  assert.deepEqual(grants.permission_codes, ['tenant.user_management.view']);
 
   const permissionA = await authStore.findTenantPermissionByUserAndTenantId({
     userId: TENANT_GRANT_SYNC_FAILURE_USER_A,
@@ -13332,10 +13316,10 @@ test('replaceTenantRolePermissionGrants rolls back grants and snapshots when syn
   });
   assert.ok(permissionA);
   assert.ok(permissionB);
-  assert.equal(permissionA.canViewMemberAdmin, true);
-  assert.equal(permissionA.canOperateMemberAdmin, false);
-  assert.equal(permissionB.canViewMemberAdmin, true);
-  assert.equal(permissionB.canOperateMemberAdmin, false);
+  assert.equal(permissionA.canViewUserManagement, true);
+  assert.equal(permissionA.canOperateUserManagement, false);
+  assert.equal(permissionB.canViewUserManagement, true);
+  assert.equal(permissionB.canOperateUserManagement, false);
 });
 
 test('replaceTenantRolePermissionGrants failed rollback keeps tenant session active', async () => {
@@ -13356,7 +13340,7 @@ test('replaceTenantRolePermissionGrants failed rollback keeps tenant session act
         requestId: 'req-tenant-grant-sync-failure-session-write',
         tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
         roleId: TENANT_GRANT_SYNC_FAILURE_ROLE_ID,
-        permissionCodes: ['tenant.member_admin.operate'],
+        permissionCodes: ['tenant.user_management.operate'],
         operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
         operatorSessionId: 'tenant-grant-sync-operator-session'
       }),
@@ -13389,7 +13373,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result mis
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.billing.view'],
+    permissionCodes: ['tenant.role_management.view'],
     affectedUserIds: [],
     affectedUserCount: 0
   });
@@ -13400,7 +13384,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result mis
         requestId: 'req-tenant-role-permission-write-mismatch-result',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -13434,7 +13418,7 @@ test('replaceTenantRolePermissionGrants accepts snake_case write result fields w
     roleId: undefined,
     role_id: 'tenant_role_permission_shadow_fallback_target',
     permissionCodes: undefined,
-    permission_codes: ['tenant.member_admin.view'],
+    permission_codes: ['tenant.user_management.view'],
     affectedUserIds: undefined,
     affected_user_ids: ['tenant-role-binding-user'],
     affectedUserCount: undefined,
@@ -13446,13 +13430,13 @@ test('replaceTenantRolePermissionGrants accepts snake_case write result fields w
       requestId: 'req-tenant-role-permission-write-shadow-fallback',
       tenantId: 'tenant-role-binding',
       roleId: 'tenant_role_permission_shadow_fallback_target',
-      permissionCodes: ['tenant.member_admin.view'],
+      permissionCodes: ['tenant.user_management.view'],
       operatorUserId: 'tenant-role-binding-user',
       operatorSessionId: 'tenant-role-binding-session'
     });
 
     assert.equal(result.role_id, 'tenant_role_permission_shadow_fallback_target');
-    assert.deepEqual(result.permission_codes, ['tenant.member_admin.view']);
+    assert.deepEqual(result.permission_codes, ['tenant.user_management.view']);
     assert.equal(result.affected_user_count, 1);
   } finally {
     authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots =
@@ -13476,7 +13460,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result con
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_whitespace_target',
-    permissionCodes: [' tenant.member_admin.view'],
+    permissionCodes: [' tenant.user_management.view'],
     affectedUserIds: [],
     affectedUserCount: 0
   });
@@ -13487,7 +13471,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result con
         requestId: 'req-tenant-role-permission-write-permission-whitespace',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_whitespace_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -13526,7 +13510,7 @@ test('replaceTenantRolePermissionGrants skips out-of-transaction audit fallback 
   }) => {
     assert.equal(tenantId, 'tenant-role-binding');
     assert.equal(roleId, 'tenant_role_permission_atomic_audit_recorded_target');
-    assert.deepEqual(permissionCodes, ['tenant.member_admin.view']);
+    assert.deepEqual(permissionCodes, ['tenant.user_management.view']);
     assert.equal(typeof auditContext, 'object');
     assert.equal(
       String(auditContext?.requestId || ''),
@@ -13536,7 +13520,7 @@ test('replaceTenantRolePermissionGrants skips out-of-transaction audit fallback 
     assert.equal(String(auditContext?.actorSessionId || ''), 'tenant-role-binding-session');
     return {
       roleId: 'tenant_role_permission_atomic_audit_recorded_target',
-      permissionCodes: ['tenant.member_admin.view'],
+      permissionCodes: ['tenant.user_management.view'],
       affectedUserIds: ['tenant-role-binding-user'],
       affectedUserCount: 1,
       audit_recorded: true
@@ -13552,14 +13536,14 @@ test('replaceTenantRolePermissionGrants skips out-of-transaction audit fallback 
       traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
       tenantId: 'tenant-role-binding',
       roleId: 'tenant_role_permission_atomic_audit_recorded_target',
-      permissionCodes: ['tenant.member_admin.view'],
+      permissionCodes: ['tenant.user_management.view'],
       operatorUserId: 'tenant-role-binding-user',
       operatorSessionId: 'tenant-role-binding-session'
     });
 
     assert.deepEqual(result, {
       role_id: 'tenant_role_permission_atomic_audit_recorded_target',
-      permission_codes: ['tenant.member_admin.view'],
+      permission_codes: ['tenant.user_management.view'],
       affected_user_count: 1
     });
   } finally {
@@ -13595,7 +13579,7 @@ test('replaceTenantRolePermissionGrants maps ERR_AUDIT_WRITE_FAILED from atomic 
         requestId: 'req-tenant-role-permission-atomic-audit-failed',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_atomic_audit_failed_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14046,7 +14030,7 @@ test('replaceTenantRolePermissionGrants fails closed when role catalog lookup re
           requestId: 'req-tenant-role-permission-catalog-roleid-whitespace-write',
           tenantId: 'tenant-role-binding',
           roleId: 'tenant_role_permission_catalog_whitespace_target',
-          permissionCodes: ['tenant.member_admin.view'],
+          permissionCodes: ['tenant.user_management.view'],
           operatorUserId: 'tenant-role-binding-user',
           operatorSessionId: 'tenant-role-binding-session'
         }),
@@ -14096,7 +14080,7 @@ test('replaceTenantRolePermissionGrants fails closed when role catalog lookup re
           requestId: 'req-tenant-role-permission-catalog-tenantid-whitespace-write',
           tenantId: 'tenant-role-binding',
           roleId: 'tenant_role_permission_catalog_tenant_whitespace_target',
-          permissionCodes: ['tenant.member_admin.view'],
+          permissionCodes: ['tenant.user_management.view'],
           operatorUserId: 'tenant-role-binding-user',
           operatorSessionId: 'tenant-role-binding-session'
         }),
@@ -14129,7 +14113,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result mis
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_other',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: [],
     affectedUserCount: 0
   });
@@ -14140,7 +14124,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result mis
         requestId: 'req-tenant-role-permission-write-role-mismatch',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14169,7 +14153,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result rol
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: ' tenant_role_permission_roleid_whitespace_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: [],
     affectedUserCount: 0
   });
@@ -14180,7 +14164,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result rol
         requestId: 'req-tenant-role-permission-write-role-whitespace',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_roleid_whitespace_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14209,7 +14193,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result has
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: ['tenant-role-binding-user', 123],
     affectedUserCount: 2
   });
@@ -14220,7 +14204,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result has
         requestId: 'req-tenant-role-permission-write-affected-user-ids-invalid',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14249,7 +14233,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result aff
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: [' tenant-role-binding-user'],
     affectedUserCount: 1
   });
@@ -14260,7 +14244,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result aff
         requestId: 'req-tenant-role-permission-write-affected-user-ids-whitespace',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14289,7 +14273,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result has
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: ['tenant-role-binding-user'],
     affectedUserCount: -1
   });
@@ -14300,7 +14284,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result has
         requestId: 'req-tenant-role-permission-write-affected-user-count-invalid',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14329,7 +14313,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result omi
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view']
+    permissionCodes: ['tenant.user_management.view']
   });
 
   await assert.rejects(
@@ -14338,7 +14322,7 @@ test('replaceTenantRolePermissionGrants fails closed when store write result omi
         requestId: 'req-tenant-role-permission-write-affected-user-metadata-missing',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14367,7 +14351,7 @@ test('replaceTenantRolePermissionGrants fails closed when affected user ids are 
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: null,
     affectedUserCount: 0
   });
@@ -14378,7 +14362,7 @@ test('replaceTenantRolePermissionGrants fails closed when affected user ids are 
         requestId: 'req-tenant-role-permission-write-affected-user-ids-null',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14407,7 +14391,7 @@ test('replaceTenantRolePermissionGrants fails closed when affected user count is
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: ['tenant-role-binding-user'],
     affectedUserCount: null
   });
@@ -14418,7 +14402,7 @@ test('replaceTenantRolePermissionGrants fails closed when affected user count is
         requestId: 'req-tenant-role-permission-write-affected-user-count-null',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14447,7 +14431,7 @@ test('replaceTenantRolePermissionGrants fails closed when affected user count mi
 
   service._internals.authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots = async () => ({
     roleId: 'tenant_role_permission_target',
-    permissionCodes: ['tenant.member_admin.view'],
+    permissionCodes: ['tenant.user_management.view'],
     affectedUserIds: ['tenant-role-binding-user'],
     affectedUserCount: 2
   });
@@ -14458,7 +14442,7 @@ test('replaceTenantRolePermissionGrants fails closed when affected user count mi
         requestId: 'req-tenant-role-permission-write-affected-user-count-mismatch',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant_role_permission_target',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),
@@ -14502,7 +14486,7 @@ test('replaceTenantRolePermissionGrants rejects malformed role_id as invalid pay
         requestId: 'req-tenant-role-permission-write-invalid-role-id',
         tenantId: 'tenant-role-binding',
         roleId: 'tenant role invalid',
-        permissionCodes: ['tenant.member_admin.view'],
+        permissionCodes: ['tenant.user_management.view'],
         operatorUserId: 'tenant-role-binding-user',
         operatorSessionId: 'tenant-role-binding-session'
       }),

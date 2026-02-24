@@ -109,10 +109,10 @@ const createHarness = ({
     synced: true,
     reason: 'ok',
     permission: {
-      canViewMemberAdmin: false,
-      canOperateMemberAdmin: false,
-      canViewBilling: false,
-      canOperateBilling: false
+      canViewUserManagement: false,
+      canOperateUserManagement: false,
+      canViewOrganizationManagement: false,
+      canOperateOrganizationManagement: false
     }
   }),
   recordIdempotencyEvent = async () => {},
@@ -498,10 +498,10 @@ test('PATCH /platform/users/:user_id updates platform user profile and roles', a
         synced: true,
         reason: 'ok',
         permission: {
-          canViewMemberAdmin: true,
-          canOperateMemberAdmin: true,
-          canViewBilling: false,
-          canOperateBilling: false
+          canViewUserManagement: true,
+          canOperateUserManagement: true,
+          canViewOrganizationManagement: false,
+          canOperateOrganizationManagement: false
         }
       };
     }

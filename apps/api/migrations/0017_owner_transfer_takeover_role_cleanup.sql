@@ -121,15 +121,15 @@ JOIN (
   FROM tenant_role_permission_grants
   WHERE role_id = 'tenant_owner'
     AND LOWER(TRIM(permission_code)) IN (
-      'tenant.member_admin.view',
-      'tenant.member_admin.operate',
-      'tenant.billing.view',
-      'tenant.billing.operate'
+      'tenant.user_management.view',
+      'tenant.user_management.operate',
+      'tenant.role_management.view',
+      'tenant.role_management.operate'
     )
   UNION
-  SELECT 'tenant.member_admin.view'
+  SELECT 'tenant.user_management.view'
   UNION
-  SELECT 'tenant.member_admin.operate'
+  SELECT 'tenant.user_management.operate'
 ) legacy_and_required_grants;
 
 INSERT IGNORE INTO auth_tenant_membership_roles (
@@ -159,35 +159,35 @@ JOIN (
     MAX(
       CASE
         WHEN prc.status IN ('active', 'enabled')
-             AND grants.permission_code = 'tenant.member_admin.view'
+             AND grants.permission_code = 'tenant.user_management.view'
           THEN 1
         ELSE 0
       END
-    ) AS can_view_member_admin,
+    ) AS can_view_user_management,
     MAX(
       CASE
         WHEN prc.status IN ('active', 'enabled')
-             AND grants.permission_code = 'tenant.member_admin.operate'
+             AND grants.permission_code = 'tenant.user_management.operate'
           THEN 1
         ELSE 0
       END
-    ) AS can_operate_member_admin,
+    ) AS can_operate_user_management,
     MAX(
       CASE
         WHEN prc.status IN ('active', 'enabled')
-             AND grants.permission_code = 'tenant.billing.view'
+             AND grants.permission_code = 'tenant.role_management.view'
           THEN 1
         ELSE 0
       END
-    ) AS can_view_billing,
+    ) AS can_view_organization_management,
     MAX(
       CASE
         WHEN prc.status IN ('active', 'enabled')
-             AND grants.permission_code = 'tenant.billing.operate'
+             AND grants.permission_code = 'tenant.role_management.operate'
           THEN 1
         ELSE 0
       END
-    ) AS can_operate_billing
+    ) AS can_operate_organization_management
   FROM tmp_owner_takeover_legacy_membership_targets migration_memberships
   LEFT JOIN auth_tenant_membership_roles mr
     ON mr.membership_id = migration_memberships.membership_id
@@ -200,10 +200,10 @@ JOIN (
   GROUP BY migration_memberships.membership_id
 ) membership_snapshot
   ON membership_snapshot.membership_id = ut.membership_id
-SET ut.can_view_member_admin = membership_snapshot.can_view_member_admin,
-    ut.can_operate_member_admin = membership_snapshot.can_operate_member_admin,
-    ut.can_view_billing = membership_snapshot.can_view_billing,
-    ut.can_operate_billing = membership_snapshot.can_operate_billing,
+SET ut.can_view_user_management = membership_snapshot.can_view_user_management,
+    ut.can_operate_user_management = membership_snapshot.can_operate_user_management,
+    ut.can_view_organization_management = membership_snapshot.can_view_organization_management,
+    ut.can_operate_organization_management = membership_snapshot.can_operate_organization_management,
     ut.updated_at = CURRENT_TIMESTAMP(3);
 
 SET @legacy_tenant_owner_binding_count = (

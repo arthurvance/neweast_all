@@ -10,8 +10,10 @@ const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ROLE_MENU_KEY = 'settings/roles';
 
-const MEMBER_ADMIN_VIEW_PERMISSION_CODE = 'tenant.member_admin.view';
-const MEMBER_ADMIN_OPERATE_PERMISSION_CODE = 'tenant.member_admin.operate';
+const USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.user_management.view';
+const USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.user_management.operate';
+const ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
+const ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
 
 const TENANT_MENU_ORDER = Object.freeze([
   USER_MENU_KEY,
@@ -26,26 +28,43 @@ export const TENANT_NAV_GROUP_FALLBACK = Object.freeze({
 
 export const TENANT_MENU_PERMISSION_REGISTRY = Object.freeze({
   [SETTINGS_MENU_KEY]: '',
-  [USER_MENU_KEY]: MEMBER_ADMIN_VIEW_PERMISSION_CODE,
-  [ROLE_MENU_KEY]: MEMBER_ADMIN_VIEW_PERMISSION_CODE
+  [USER_MENU_KEY]: USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  [ROLE_MENU_KEY]: ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
 });
 
 const readPermissionFlag = (permissionContext, snakeCase, camelCase) =>
   Boolean(permissionContext?.[snakeCase] || permissionContext?.[camelCase]);
 
-const hasTenantMemberAdminAccess = (permissionContext = null) => {
+const hasTenantUserManagementAccess = (permissionContext = null) => {
   if (!permissionContext || typeof permissionContext !== 'object') {
     return false;
   }
   const canView = readPermissionFlag(
     permissionContext,
-    'can_view_member_admin',
-    'canViewMemberAdmin'
+    'can_view_user_management',
+    'canViewUserManagement'
   );
   const canOperate = readPermissionFlag(
     permissionContext,
-    'can_operate_member_admin',
-    'canOperateMemberAdmin'
+    'can_operate_user_management',
+    'canOperateUserManagement'
+  );
+  return canView && canOperate;
+};
+
+const hasTenantRoleManagementAccess = (permissionContext = null) => {
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return false;
+  }
+  const canView = readPermissionFlag(
+    permissionContext,
+    'can_view_role_management',
+    'canViewRoleManagement'
+  );
+  const canOperate = readPermissionFlag(
+    permissionContext,
+    'can_operate_role_management',
+    'canOperateRoleManagement'
   );
   return canView && canOperate;
 };
@@ -61,10 +80,16 @@ export const hasTenantMenuAccess = ({ menuKey, permissionContext = null }) => {
     return true;
   }
   if (
-    permissionCode === MEMBER_ADMIN_VIEW_PERMISSION_CODE
-    || permissionCode === MEMBER_ADMIN_OPERATE_PERMISSION_CODE
+    permissionCode === USER_MANAGEMENT_VIEW_PERMISSION_CODE
+    || permissionCode === USER_MANAGEMENT_OPERATE_PERMISSION_CODE
   ) {
-    return hasTenantMemberAdminAccess(permissionContext);
+    return hasTenantUserManagementAccess(permissionContext);
+  }
+  if (
+    permissionCode === ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
+    || permissionCode === ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+  ) {
+    return hasTenantRoleManagementAccess(permissionContext);
   }
   return false;
 };

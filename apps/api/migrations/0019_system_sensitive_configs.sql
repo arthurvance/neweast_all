@@ -23,7 +23,7 @@ INSERT INTO platform_role_permission_grants (
   updated_by_user_id
 )
 VALUES
-  ('sys_admin', 'platform.system_config.view', NULL, NULL),
-  ('sys_admin', 'platform.system_config.operate', NULL, NULL)
+  ('sys_admin', 'platform.role_management.view', NULL, NULL),
+  ('sys_admin', 'platform.role_management.operate', NULL, NULL)
 ON DUPLICATE KEY UPDATE
   updated_at = CURRENT_TIMESTAMP(3);

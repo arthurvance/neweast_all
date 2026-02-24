@@ -12,9 +12,9 @@ const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ORG_MENU_KEY = 'settings/orgs';
 const ROLE_MENU_KEY = 'settings/roles';
-const USER_VIEW_PERMISSION_CODE = 'platform.member_admin.view';
-const ROLE_VIEW_PERMISSION_CODE = 'platform.system_config.view';
-const ORG_VIEW_PERMISSION_CODE = 'platform.billing.view';
+const USER_VIEW_PERMISSION_CODE = 'platform.user_management.view';
+const ROLE_VIEW_PERMISSION_CODE = 'platform.role_management.view';
+const ORG_VIEW_PERMISSION_CODE = 'platform.organization_management.view';
 const PLATFORM_MENU_ORDER = Object.freeze([
   USER_MENU_KEY,
   ROLE_MENU_KEY,
@@ -36,22 +36,22 @@ export const PLATFORM_MENU_PERMISSION_REGISTRY = Object.freeze({
 
 const PLATFORM_PERMISSION_FLAG_REGISTRY = Object.freeze({
   [USER_VIEW_PERMISSION_CODE]: Object.freeze([
-    'can_view_member_admin',
-    'canViewMemberAdmin',
-    'can_operate_member_admin',
-    'canOperateMemberAdmin'
+    'can_view_user_management',
+    'canViewUserManagement',
+    'can_operate_user_management',
+    'canOperateUserManagement'
   ]),
   [ROLE_VIEW_PERMISSION_CODE]: Object.freeze([
-    'can_view_system_config',
-    'canViewSystemConfig',
-    'can_operate_system_config',
-    'canOperateSystemConfig'
+    'can_view_role_management',
+    'canViewRoleManagement',
+    'can_operate_role_management',
+    'canOperateRoleManagement'
   ]),
   [ORG_VIEW_PERMISSION_CODE]: Object.freeze([
-    'can_view_billing',
-    'canViewBilling',
-    'can_operate_billing',
-    'canOperateBilling'
+    'can_view_organization_management',
+    'canViewOrganizationManagement',
+    'can_operate_organization_management',
+    'canOperateOrganizationManagement'
   ])
 });
 

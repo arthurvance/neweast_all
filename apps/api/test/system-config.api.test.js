@@ -36,7 +36,7 @@ const buildEncryptedSensitiveConfigValue = ({
 
 const OPERATOR_PHONE = '13837770001';
 const VIEWER_PHONE = '13837770002';
-const MEMBER_ADMIN_ONLY_PHONE = '13837770003';
+const USER_MANAGEMENT_ONLY_PHONE = '13837770003';
 
 const createHarness = () => {
   const authService = createAuthService({
@@ -52,10 +52,10 @@ const createHarness = () => {
             roleId: 'system-config-operate',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false,
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false,
               canViewSystemConfig: true,
               canOperateSystemConfig: true
             }
@@ -73,10 +73,10 @@ const createHarness = () => {
             roleId: 'system-config-view-only',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: false,
-              canViewBilling: false,
-              canOperateBilling: false,
+              canViewUserManagement: true,
+              canOperateUserManagement: false,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false,
               canViewSystemConfig: true,
               canOperateSystemConfig: false
             }
@@ -84,20 +84,20 @@ const createHarness = () => {
         ]
       },
       {
-        id: 'system-config-member-admin-only',
-        phone: MEMBER_ADMIN_ONLY_PHONE,
+        id: 'system-config-user-management-only',
+        phone: USER_MANAGEMENT_ONLY_PHONE,
         password: 'Passw0rd!',
         status: 'active',
         domains: ['platform'],
         platformRoles: [
           {
-            roleId: 'member-admin-only',
+            roleId: 'user-management-only',
             status: 'active',
             permission: {
-              canViewMemberAdmin: true,
-              canOperateMemberAdmin: true,
-              canViewBilling: false,
-              canOperateBilling: false,
+              canViewUserManagement: true,
+              canOperateUserManagement: true,
+              canViewOrganizationManagement: false,
+              canOperateOrganizationManagement: false,
               canViewSystemConfig: false,
               canOperateSystemConfig: false
             }
@@ -294,18 +294,18 @@ test('PUT /platform/system-configs/:config_key rejects unauthorized operator', a
   assert.equal(payload.error_code, 'AUTH-403-FORBIDDEN');
 });
 
-test('GET /platform/system-configs/:config_key rejects member-admin without system-config grant', async () => {
+test('GET /platform/system-configs/:config_key rejects user-management without system-config grant', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,
-    phone: MEMBER_ADMIN_ONLY_PHONE,
-    requestId: 'req-system-config-login-member-admin-only'
+    phone: USER_MANAGEMENT_ONLY_PHONE,
+    requestId: 'req-system-config-login-user-management-only'
   });
 
   const route = await dispatchApiRoute({
     pathname: '/platform/system-configs/auth.default_password',
     method: 'GET',
-    requestId: 'req-system-config-member-admin-only-forbidden',
+    requestId: 'req-system-config-user-management-only-forbidden',
     headers: {
       authorization: `Bearer ${login.access_token}`
     },
