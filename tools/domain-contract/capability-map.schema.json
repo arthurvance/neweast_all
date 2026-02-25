@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neweast.local/schema/domain-contract/capability-map.schema.json",
+  "title": "Domain Capability Map Schema v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "capabilities"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "2.0.0"
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "canonical_term",
+        "module",
+        "domain",
+        "capability",
+        "owner",
+        "review_at",
+        "parity_key",
+        "symmetry",
+        "applications"
+      ],
+      "properties": {
+        "capability_id": {
+          "type": "string",
+          "pattern": "^(platform|tenant)\\.[a-z0-9-]+\\.[a-z0-9-]+$"
+        },
+        "canonical_term": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "domain": {
+          "type": "string",
+          "enum": ["platform", "tenant"]
+        },
+        "capability": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:/[a-z0-9-]+)*$"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "review_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "parity_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+\\.[a-z0-9-]+$"
+        },
+        "symmetry": {
+          "type": "string",
+          "enum": ["required", "extension", "placeholder"]
+        },
+        "applications": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["api", "web"]
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

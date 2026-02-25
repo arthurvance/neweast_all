@@ -1,0 +1,19 @@
+{
+  "generated": "2026-02-25",
+  "entries": [
+    {
+      "change_id": "20260225-baseline-contracts",
+      "status": "accepted",
+      "justification_file": "docs/spec-diff-justifications/20260225-baseline-contracts.md",
+      "affected_files": [
+        "apps/api/test/contracts/platform.route-manifest.snapshot.json",
+        "apps/api/test/contracts/tenant.route-manifest.snapshot.json",
+        "apps/api/test/fixtures/golden-data-side.json",
+        "apps/api/test/fixtures/golden-user-side.json"
+      ],
+      "responsible_engineer": "platform-tenant-refactor",
+      "reviewer": "architecture-reviewer",
+      "signed_at": "2026-02-25"
+    }
+  ]
+}

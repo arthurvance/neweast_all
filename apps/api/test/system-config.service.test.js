@@ -8,7 +8,7 @@ const {
 const { AuthProblemError } = require('../src/modules/auth/auth.service');
 const {
   createPlatformSystemConfigService
-} = require('../src/modules/platform/system-config.service');
+} = require('../src/domains/platform/config/system-config/service');
 
 const deriveSensitiveConfigKey = (decryptionKey) =>
   pbkdf2Sync(String(decryptionKey || ''), 'auth.default_password', 210000, 32, 'sha256');

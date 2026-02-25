@@ -1,0 +1,46 @@
+{
+  "baseline_version": "2026-02-25",
+  "owner": "platform-tenant-refactor",
+  "description": "Data-side invariants for critical write chains and audit continuity.",
+  "write_chain_invariants": [
+    {
+      "invariant_id": "platform.org.lifecycle",
+      "operations": [
+        "create_organization_with_owner",
+        "update_organization_status",
+        "transfer_organization_owner"
+      ],
+      "must_keep": [
+        "status transitions remain canonical (active|disabled)",
+        "owner transfer conflict semantics remain retryable",
+        "audit records include operator_user_id + request_id"
+      ]
+    },
+    {
+      "invariant_id": "platform.role.permission",
+      "operations": [
+        "create_platform_role",
+        "replace_platform_role_permission_grants",
+        "soft_delete_platform_role"
+      ],
+      "must_keep": [
+        "protected role ids cannot be mutated",
+        "permission catalog compatibility checks remain strict",
+        "authorization sync degradation remains fail-closed"
+      ]
+    },
+    {
+      "invariant_id": "tenant.user.role",
+      "operations": [
+        "create_tenant_member",
+        "replace_tenant_member_roles",
+        "update_tenant_member_status"
+      ],
+      "must_keep": [
+        "tenant_id boundary cannot be bypassed",
+        "membership status transitions remain canonical (active|disabled|left)",
+        "role permission snapshots converge with role grant writes"
+      ]
+    }
+  ]
+}

@@ -2085,7 +2085,7 @@ const createTenantManagementApiServer = async () => {
     }
     const { tenantId, members, roles, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
 
-    if (method === 'GET' && pathname === '/tenant/members') {
+    if (method === 'GET' && pathname === '/tenant/users') {
       const page = Number(url.searchParams.get('page') || 1);
       const pageSize = Number(url.searchParams.get('page_size') || 20);
       const listedMembers = [...members.values()];
@@ -2105,7 +2105,7 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
-    if (method === 'POST' && pathname === '/tenant/members') {
+    if (method === 'POST' && pathname === '/tenant/users') {
       const phone = String(body.phone || '').trim();
       if (!/^1\d{10}$/.test(phone)) {
         sendProblem({
@@ -2148,7 +2148,7 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
-    const memberMatch = pathname.match(/^\/tenant\/members\/([^/]+)$/);
+    const memberMatch = pathname.match(/^\/tenant\/users\/([^/]+)$/);
     if (memberMatch && method === 'GET') {
       const membershipId = decodeURIComponent(memberMatch[1] || '');
       const member = members.get(membershipId);
@@ -2172,7 +2172,7 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
-    const memberStatusMatch = pathname.match(/^\/tenant\/members\/([^/]+)\/status$/);
+    const memberStatusMatch = pathname.match(/^\/tenant\/users\/([^/]+)\/status$/);
     if (memberStatusMatch && method === 'PATCH') {
       const membershipId = decodeURIComponent(memberStatusMatch[1] || '');
       const member = members.get(membershipId);
@@ -2212,7 +2212,7 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
-    const memberProfileMatch = pathname.match(/^\/tenant\/members\/([^/]+)\/profile$/);
+    const memberProfileMatch = pathname.match(/^\/tenant\/users\/([^/]+)\/profile$/);
     if (memberProfileMatch && method === 'PATCH') {
       const membershipId = decodeURIComponent(memberProfileMatch[1] || '');
       const member = members.get(membershipId);
@@ -2257,7 +2257,7 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
-    const memberRolesMatch = pathname.match(/^\/tenant\/members\/([^/]+)\/roles$/);
+    const memberRolesMatch = pathname.match(/^\/tenant\/users\/([^/]+)\/roles$/);
     if (memberRolesMatch && method === 'GET') {
       const membershipId = decodeURIComponent(memberRolesMatch[1] || '');
       if (!members.has(membershipId)) {
@@ -3179,12 +3179,16 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
       const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
       const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      const configTab = document.querySelector('[data-testid="tenant-tab-config"]');
+      const configMenu = document.querySelector('[data-testid="tenant-menu-config"]');
       const membersModule = document.querySelector('[data-testid="tenant-members-module"]');
       return (
         Boolean(tenantPanel) &&
         Boolean(membersModule) &&
         Boolean(userTab) &&
         roleTab === null &&
+        configTab === null &&
+        configMenu === null &&
         message.includes('请稍后重试') === false
       );
     })()`,
@@ -3242,6 +3246,8 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
       const userModule = document.querySelector('[data-testid="tenant-members-module"]');
       const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
       const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      const configTab = document.querySelector('[data-testid="tenant-tab-config"]');
+      const configMenu = document.querySelector('[data-testid="tenant-menu-config"]');
       const message = String(document.querySelector('[data-testid="message-global"]')?.textContent || '');
       return (
         Boolean(tenantPanel) &&
@@ -3249,6 +3255,8 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
         userModule === null &&
         userTab === null &&
         Boolean(roleTab) &&
+        configTab === null &&
+        configMenu === null &&
         message.includes('请稍后重试') === false &&
         message.includes('组织切换成功')
       );
@@ -3545,11 +3553,15 @@ test('chrome regression validates tenant permission UI against real API authoriz
       const membersModule = document.querySelector('[data-testid="tenant-members-module"]');
       const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
       const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      const configTab = document.querySelector('[data-testid="tenant-tab-config"]');
+      const configMenu = document.querySelector('[data-testid="tenant-menu-config"]');
       return (
         Boolean(tenantPanel) &&
         Boolean(membersModule) &&
         Boolean(userTab) &&
-        roleTab === null
+        roleTab === null &&
+        configTab === null &&
+        configMenu === null
       );
     })()`,
     10000,
@@ -3660,12 +3672,16 @@ test('chrome regression validates tenant permission UI against real API authoriz
       const roleModule = document.querySelector('[data-testid="tenant-roles-module"]');
       const userTab = document.querySelector('[data-testid="tenant-tab-users"]');
       const roleTab = document.querySelector('[data-testid="tenant-tab-roles"]');
+      const configTab = document.querySelector('[data-testid="tenant-tab-config"]');
+      const configMenu = document.querySelector('[data-testid="tenant-menu-config"]');
       return (
         Boolean(tenantPanel) &&
         membersModule === null &&
         Boolean(roleModule) &&
         userTab === null &&
-        Boolean(roleTab)
+        Boolean(roleTab) &&
+        configTab === null &&
+        configMenu === null
       );
     })()`,
     10000,
@@ -4536,7 +4552,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-user-id-tenant-user-admin"]'))`,
     12000,
-    'tenant member table should load initial records'
+    'tenant user table should load initial records'
   );
   await evaluate(
     cdp,
@@ -4558,14 +4574,14 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       );
     })()`,
     8000,
-    'tenant member row click should open detail drawer'
+    'tenant user row click should open detail drawer'
   );
   await waitForCondition(
     cdp,
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-detail-edit"]')) && Boolean(document.querySelector('[data-testid="tenant-member-detail-status"]'))`,
     8000,
-    'tenant member detail drawer should show edit and status actions'
+    'tenant user detail drawer should show edit and status actions'
   );
   await evaluate(
     cdp,
@@ -4579,11 +4595,11 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     api.requests,
     (request) =>
       request.method === 'GET'
-      && request.path.includes('/tenant/members?')
+      && request.path.includes('/tenant/users?')
       && request.path.includes('page=1')
       && request.path.includes('page_size=10'),
     8000,
-    'tenant member list should request first page with page/page_size semantics'
+    'tenant user list should request first page with page/page_size semantics'
   );
   await waitForCondition(
     cdp,
@@ -4593,7 +4609,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       return Boolean(nextButton) && !nextButton.disabled;
     })()`,
     8000,
-    'tenant member list should expose next page when more records exist'
+    'tenant user list should expose next page when more records exist'
   );
   await evaluate(
     cdp,
@@ -4607,18 +4623,18 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     api.requests,
     (request) =>
       request.method === 'GET'
-      && request.path.includes('/tenant/members?')
+      && request.path.includes('/tenant/users?')
       && request.path.includes('page=2')
       && request.path.includes('page_size=10'),
     8000,
-    'tenant member pagination should request second page'
+    'tenant user pagination should request second page'
   );
   await waitForCondition(
     cdp,
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-user-id-tenant-user-extra-9"]'))`,
     8000,
-    'tenant member second page should render paged records'
+    'tenant user second page should render paged records'
   );
   await evaluate(
     cdp,
@@ -4632,18 +4648,18 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     api.requests,
     (request) =>
       request.method === 'GET'
-      && request.path.includes('/tenant/members?')
+      && request.path.includes('/tenant/users?')
       && request.path.includes('page=1')
       && request.path.includes('page_size=10')
       && api.requests.filter(
         (entry) =>
           entry.method === 'GET'
-          && entry.path.includes('/tenant/members?')
+          && entry.path.includes('/tenant/users?')
           && entry.path.includes('page=1')
           && entry.path.includes('page_size=10')
       ).length >= 2,
     8000,
-    'tenant member pagination should support navigating back to first page'
+    'tenant user pagination should support navigating back to first page'
   );
   await waitForCondition(
     cdp,
@@ -4671,7 +4687,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-filter-name"]'))`,
     8000,
-    'tenant member filter name field should be available'
+    'tenant user filter name field should be available'
   );
   await evaluate(
     cdp,
@@ -4739,7 +4755,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-create-phone"]'))`,
     8000,
-    'tenant member create modal should be visible'
+    'tenant user create modal should be visible'
   );
   await evaluate(
     cdp,
@@ -4769,13 +4785,13 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   );
   await waitForRequest(
     api.requests,
-    (request) => request.path === '/tenant/members' && request.method === 'POST',
+    (request) => request.path === '/tenant/users' && request.method === 'POST',
     8000,
-    'tenant member create request should reach API stub'
+    'tenant user create request should reach API stub'
   );
   await sleep(500);
   assert.equal(
-    api.requests.filter((request) => request.path === '/tenant/members' && request.method === 'POST').length,
+    api.requests.filter((request) => request.path === '/tenant/users' && request.method === 'POST').length,
     1,
     'loading lock should prevent duplicate create submissions'
   );
@@ -4786,10 +4802,10 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       return !document.querySelector('[data-testid="tenant-member-detail-drawer"]');
     })()`,
     8000,
-    'tenant member create save should not auto-open detail drawer'
+    'tenant user create save should not auto-open detail drawer'
   );
 
-  const tenantMemberStatusToggleRequestBaseline = api.requests.length;
+  const tenantUserStatusToggleRequestBaseline = api.requests.length;
   await evaluate(
     cdp,
     sessionId,
@@ -4800,42 +4816,42 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     `!Boolean(document.querySelector('[data-testid="tenant-member-status-reason"]'))`,
     8000,
-    'tenant member status modal should not be visible'
+    'tenant user status modal should not be visible'
   );
   await waitForRequest(
     api.requests,
     (request, index) =>
-      index >= tenantMemberStatusToggleRequestBaseline
+      index >= tenantUserStatusToggleRequestBaseline
       && request.method === 'PATCH'
-      && request.path.includes('/tenant/members/membership-tenant-101-admin/status'),
+      && request.path.includes('/tenant/users/membership-tenant-101-admin/status'),
     8000,
-    'tenant member status patch should reach API stub'
+    'tenant user status patch should reach API stub'
   );
-  const tenantMemberStatusToggleRequest = api.requests
-    .slice(tenantMemberStatusToggleRequestBaseline)
+  const tenantUserStatusToggleRequest = api.requests
+    .slice(tenantUserStatusToggleRequestBaseline)
     .find(
       (request) =>
         request.method === 'PATCH'
-        && request.path.includes('/tenant/members/membership-tenant-101-admin/status')
+        && request.path.includes('/tenant/users/membership-tenant-101-admin/status')
     );
   assert.equal(
-    tenantMemberStatusToggleRequest?.body?.status,
+    tenantUserStatusToggleRequest?.body?.status,
     'disabled',
-    'tenant member status toggle should submit disabled for active member'
+    'tenant user status toggle should submit disabled for active member'
   );
   assert.equal(
-    Object.prototype.hasOwnProperty.call(tenantMemberStatusToggleRequest?.body || {}, 'reason'),
+    Object.prototype.hasOwnProperty.call(tenantUserStatusToggleRequest?.body || {}, 'reason'),
     false,
-    'tenant member status toggle should not include reason'
+    'tenant user status toggle should not include reason'
   );
   await waitForRequest(
     api.responses,
     (response) =>
       response.method === 'PATCH'
-      && response.path.includes('/tenant/members/membership-tenant-101-admin/status')
+      && response.path.includes('/tenant/users/membership-tenant-101-admin/status')
       && response.status === 200,
     8000,
-    'tenant member status patch should return success'
+    'tenant user status patch should return success'
   );
   await evaluate(
     cdp,
@@ -4847,7 +4863,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-profile-display-name"]'))`,
     8000,
-    'tenant member profile modal should be visible'
+    'tenant user profile modal should be visible'
   );
   await evaluate(
     cdp,
@@ -4866,7 +4882,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     'tenant-member-profile-confirm',
     10000,
-    'tenant member profile confirm should be enabled before dependency failure submission'
+    'tenant user profile confirm should be enabled before dependency failure submission'
   );
   await evaluate(
     cdp,
@@ -4877,10 +4893,10 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     api.responses,
     (response) =>
       response.method === 'PATCH'
-      && response.path.includes('/tenant/members/membership-tenant-101-admin/profile')
+      && response.path.includes('/tenant/users/membership-tenant-101-admin/profile')
       && response.status === 503,
     8000,
-    'tenant member profile dependency failure should be observable'
+    'tenant user profile dependency failure should be observable'
   );
   await evaluate(
     cdp,
@@ -4903,7 +4919,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     'tenant-member-profile-confirm',
     10000,
-    'tenant member profile confirm should be enabled before retry submission'
+    'tenant user profile confirm should be enabled before retry submission'
   );
   await evaluate(
     cdp,
@@ -4914,17 +4930,17 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     api.responses,
     (response) =>
       response.method === 'PATCH'
-      && response.path.includes('/tenant/members/membership-tenant-101-admin/profile')
+      && response.path.includes('/tenant/users/membership-tenant-101-admin/profile')
       && response.status === 200,
     8000,
-    'tenant member profile update should succeed after retry'
+    'tenant user profile update should succeed after retry'
   );
   await waitForCondition(
     cdp,
     sessionId,
     `(() => !document.querySelector('[data-testid="tenant-member-detail-drawer"]'))()`,
     5000,
-    'tenant member profile save should not auto-open detail drawer'
+    'tenant user profile save should not auto-open detail drawer'
   );
 
   await evaluate(
@@ -4937,7 +4953,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-member-profile-role-ids"]'))`,
     8000,
-    'tenant member edit modal should be visible for role update'
+    'tenant user edit modal should be visible for role update'
   );
   await evaluate(
     cdp,
@@ -4958,7 +4974,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       return Boolean(targetOption);
     })()`,
     8000,
-    'tenant member role select should expose role option'
+    'tenant user role select should expose role option'
   );
   await evaluate(
     cdp,
@@ -4979,7 +4995,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     sessionId,
     'tenant-member-profile-confirm',
     10000,
-    'tenant member profile confirm should be enabled before role assignment submission'
+    'tenant user profile confirm should be enabled before role assignment submission'
   );
   await evaluate(
     cdp,
@@ -4990,18 +5006,18 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     api.requests,
     (request) =>
       request.method === 'PUT'
-      && request.path.includes('/tenant/members/membership-tenant-101-admin/roles'),
+      && request.path.includes('/tenant/users/membership-tenant-101-admin/roles'),
     8000,
-    'tenant member edit should submit role replacement request'
+    'tenant user edit should submit role replacement request'
   );
   await waitForRequest(
     api.responses,
     (response) =>
       response.method === 'PUT'
-      && response.path.includes('/tenant/members/membership-tenant-101-admin/roles')
+      && response.path.includes('/tenant/users/membership-tenant-101-admin/roles')
       && response.status === 200,
     8000,
-    'tenant member roles replace request should return success before permission refresh'
+    'tenant user roles replace request should return success before permission refresh'
   );
   await waitForRequest(
     api.requests,
@@ -5472,22 +5488,22 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     entry_domain: 'tenant'
   });
 
-  const createMemberRequest = api.requests.find(
-    (request) => request.path === '/tenant/members' && request.method === 'POST'
+  const createUserRequest = api.requests.find(
+    (request) => request.path === '/tenant/users' && request.method === 'POST'
   );
-  assert.equal(createMemberRequest?.body?.phone, '13800000029');
-  const createMemberProfileRequest = api.requests.find(
+  assert.equal(createUserRequest?.body?.phone, '13800000029');
+  const createUserProfileRequest = api.requests.find(
     (request) =>
       request.method === 'PATCH'
-      && request.path.includes('/tenant/members/membership-tenant-101-3/profile')
+      && request.path.includes('/tenant/users/membership-tenant-101-3/profile')
   );
-  assert.equal(createMemberProfileRequest?.body?.display_name, '新建成员甲');
-  assert.equal(createMemberProfileRequest?.body?.department_name, null);
+  assert.equal(createUserProfileRequest?.body?.display_name, '新建成员甲');
+  assert.equal(createUserProfileRequest?.body?.department_name, null);
 
   const replaceRolesRequest = [...api.requests].reverse().find(
     (request) =>
       request.method === 'PUT'
-      && request.path.includes('/tenant/members/membership-tenant-101-admin/roles')
+      && request.path.includes('/tenant/users/membership-tenant-101-admin/roles')
   );
   assert.deepEqual(replaceRolesRequest?.body?.role_ids?.sort(), ['tenant_role_management_admin', 'tenant_user_management']);
 

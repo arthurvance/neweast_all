@@ -4,24 +4,22 @@ const {
   TENANT_AUDIT_SCOPE
 } = require('../modules/audit/audit.constants');
 const {
-  TENANT_MEMBER_LIST_PATH,
-  TENANT_MEMBER_CREATE_PATH,
-  TENANT_MEMBER_DETAIL_PATH,
-  TENANT_MEMBER_STATUS_PATH,
-  TENANT_MEMBER_PROFILE_PATH,
-  TENANT_MEMBER_ROLE_BINDING_PATH,
-  TENANT_MEMBER_VIEW_PERMISSION_CODE,
-  TENANT_MEMBER_OPERATE_PERMISSION_CODE,
-  TENANT_MEMBER_SCOPE
-} = require('../modules/tenant/member.constants');
-const {
+  TENANT_USER_LIST_PATH,
+  TENANT_USER_CREATE_PATH,
+  TENANT_USER_DETAIL_PATH,
+  TENANT_USER_STATUS_PATH,
+  TENANT_USER_PROFILE_PATH,
+  TENANT_USER_ROLE_BINDING_PATH,
+  TENANT_USER_VIEW_PERMISSION_CODE,
+  TENANT_USER_OPERATE_PERMISSION_CODE,
+  TENANT_USER_SCOPE,
   TENANT_ROLE_BASE_PATH,
   TENANT_ROLE_ITEM_PATH,
   TENANT_ROLE_PERMISSION_PATH,
   TENANT_ROLE_VIEW_PERMISSION_CODE,
   TENANT_ROLE_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_SCOPE
-} = require('../modules/tenant/role.constants');
+} = require('../domains/tenant');
 
 const TENANT_ROUTE_MANIFEST = Object.freeze([
   {
@@ -61,52 +59,52 @@ const TENANT_ROUTE_MANIFEST = Object.freeze([
   },
   {
     method: 'GET',
-    path: TENANT_MEMBER_LIST_PATH,
+    path: TENANT_USER_LIST_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_VIEW_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_VIEW_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'POST',
-    path: TENANT_MEMBER_CREATE_PATH,
+    path: TENANT_USER_CREATE_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'GET',
-    path: TENANT_MEMBER_DETAIL_PATH,
+    path: TENANT_USER_DETAIL_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_VIEW_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_VIEW_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'PATCH',
-    path: TENANT_MEMBER_STATUS_PATH,
+    path: TENANT_USER_STATUS_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'PATCH',
-    path: TENANT_MEMBER_PROFILE_PATH,
+    path: TENANT_USER_PROFILE_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'GET',
-    path: TENANT_MEMBER_ROLE_BINDING_PATH,
+    path: TENANT_USER_ROLE_BINDING_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_VIEW_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_VIEW_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'PUT',
-    path: TENANT_MEMBER_ROLE_BINDING_PATH,
+    path: TENANT_USER_ROLE_BINDING_PATH,
     access: 'protected',
-    permission_code: TENANT_MEMBER_OPERATE_PERMISSION_CODE,
-    scope: TENANT_MEMBER_SCOPE
+    permission_code: TENANT_USER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_USER_SCOPE
   },
   {
     method: 'GET',

@@ -1,9 +1,9 @@
 const { log } = require('../../common/logger');
 const { normalizeTraceparent } = require('../../common/trace-context');
-const { AuthProblemError } = require('../auth/auth.service');
+const { AuthProblemError } = require('../../shared-kernel/auth/auth-problem-error');
 const {
   resolveRoutePreauthorizedContext
-} = require('../auth/route-preauthorization');
+} = require('../../shared-kernel/auth/route-authz');
 const {
   PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
   TENANT_AUDIT_VIEW_PERMISSION_CODE,

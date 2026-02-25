@@ -1,14 +1,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createRouteHandlers } = require('../src/http-routes');
-const { createPlatformOrgHandlers } = require('../src/modules/platform/org.routes');
-const { createPlatformOrgService } = require('../src/modules/platform/org.service');
+const {
+  createPlatformOrgHandlers
+} = require('../src/domains/platform/settings/org/org.routes');
+const {
+  createPlatformOrgService
+} = require('../src/domains/platform/settings/org/service');
 const { dispatchApiRoute } = require('../src/server');
 const { readConfig } = require('../src/config/env');
-const { AuthProblemError } = require('../src/modules/auth/auth.routes');
+const {
+  AuthProblemError
+} = require('../src/shared-kernel/auth/auth-problem-error');
 const {
   markRoutePreauthorizedContext
-} = require('../src/modules/auth/route-preauthorization');
+} = require('../src/shared-kernel/auth/route-authz');
 
 const config = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 const dependencyProbe = async () => ({

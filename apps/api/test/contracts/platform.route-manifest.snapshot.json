@@ -1,0 +1,268 @@
+[
+  {
+    "method": "GET",
+    "path": "/auth/platform/options",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/auth/platform/user-management/probe",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/platform/user-management/provision-user",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/orgs",
+    "access": "protected",
+    "permission_code": "platform.tenant_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/orgs",
+    "access": "protected",
+    "permission_code": "platform.tenant_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/orgs/status",
+    "access": "protected",
+    "permission_code": "platform.tenant_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/orgs/owner-transfer",
+    "access": "protected",
+    "permission_code": "platform.tenant_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/audit/events",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/system-configs/:config_key",
+    "access": "protected",
+    "permission_code": "platform.role_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "PUT",
+    "path": "/platform/system-configs/:config_key",
+    "access": "protected",
+    "permission_code": "platform.role_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/integrations",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/integrations/:integration_id",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "PATCH",
+    "path": "/platform/integrations/:integration_id",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/:integration_id/lifecycle",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/integrations/:integration_id/contracts",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/:integration_id/contracts",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/:integration_id/contracts/compatibility-check",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/:integration_id/contracts/consistency-check",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/:integration_id/contracts/:contract_version/activate",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/integrations/:integration_id/recovery/queue",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/:integration_id/recovery/queue/:recovery_id/replay",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/integrations/freeze",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/freeze",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/integrations/freeze/release",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/roles",
+    "access": "protected",
+    "permission_code": "platform.role_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/roles",
+    "access": "protected",
+    "permission_code": "platform.role_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "PATCH",
+    "path": "/platform/roles/:role_id",
+    "access": "protected",
+    "permission_code": "platform.role_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "DELETE",
+    "path": "/platform/roles/:role_id",
+    "access": "protected",
+    "permission_code": "platform.role_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/roles/:role_id/permissions",
+    "access": "protected",
+    "permission_code": "platform.role_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "PUT",
+    "path": "/platform/roles/:role_id/permissions",
+    "access": "protected",
+    "permission_code": "platform.role_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/users",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "GET",
+    "path": "/platform/users/:user_id",
+    "access": "protected",
+    "permission_code": "platform.user_management.view",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/users",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "PATCH",
+    "path": "/platform/users/:user_id",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "DELETE",
+    "path": "/platform/users/:user_id",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/platform/users/status",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/platform/role-facts/replace",
+    "access": "protected",
+    "permission_code": "platform.user_management.operate",
+    "scope": "platform"
+  }
+]

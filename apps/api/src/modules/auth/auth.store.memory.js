@@ -17,8 +17,8 @@ const {
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
 const {
-  createMemoryRepositoryMethods
-} = require('./store-methods/memory-repository-methods');
+  createMemoryAuthStoreCapabilities
+} = require('./store-methods/auth-store-memory-capabilities');
 
 const createInMemoryAuthStore = ({
   seedUsers = [],
@@ -48,10 +48,10 @@ const createInMemoryAuthStore = ({
   let nextPlatformIntegrationContractCheckId = 1;
   const platformRolePermissionGrantsByRoleId = new Map();
   const tenantRolePermissionGrantsByRoleId = new Map();
-  const tenantMembershipRolesByMembershipId = new Map();
+  const tenantUsershipRolesByMembershipId = new Map();
   const systemSensitiveConfigsByKey = new Map();
   const orgsById = new Map();
-  const tenantMembershipHistoryByPair = new Map();
+  const tenantUsershipHistoryByPair = new Map();
   const ownerTransferLocksByOrgId = new Map();
   const orgIdByName = new Map();
   const membershipsByOrgId = new Map();
@@ -142,8 +142,8 @@ const createInMemoryAuthStore = ({
   const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set(['auth.default_password']);
   const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
   const MAX_ORG_NAME_LENGTH = 128;
-  const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
-  const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
+  const MAX_TENANT_USER_DISPLAY_NAME_LENGTH = 64;
+  const MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH = 128;
   const OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX = 'sys_admin__';
   const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
   const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
@@ -207,7 +207,7 @@ const createInMemoryAuthStore = ({
     }
     return normalizedStatus;
   };
-  const normalizeTenantMembershipStatus = (status) => {
+  const normalizeTenantUsershipStatus = (status) => {
     const normalizedStatus = String(status ?? '').trim().toLowerCase();
     if (!normalizedStatus) {
       return 'active';
@@ -219,7 +219,7 @@ const createInMemoryAuthStore = ({
       ? normalizedStatus
       : '';
   };
-  const normalizeTenantMembershipStatusForRead = (status) => {
+  const normalizeTenantUsershipStatusForRead = (status) => {
     const normalizedStatus = String(status ?? '').trim().toLowerCase();
     if (!normalizedStatus) {
       return '';
@@ -242,7 +242,7 @@ const createInMemoryAuthStore = ({
       .slice(0, OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH);
     return `${OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX}${digest}`;
   };
-  const normalizeOptionalTenantMemberProfileField = ({
+  const normalizeOptionalTenantUserProfileField = ({
     value,
     maxLength
   } = {}) => {
@@ -262,7 +262,7 @@ const createInMemoryAuthStore = ({
     }
     return normalized;
   };
-  const resolveOptionalTenantMemberProfileField = (value) =>
+  const resolveOptionalTenantUserProfileField = (value) =>
     value === null || value === undefined
       ? null
       : value;
@@ -271,7 +271,7 @@ const createInMemoryAuthStore = ({
     maxLength,
     fieldName
   } = {}) => {
-    const normalized = normalizeOptionalTenantMemberProfileField({
+    const normalized = normalizeOptionalTenantUserProfileField({
       value,
       maxLength
     });
@@ -295,7 +295,7 @@ const createInMemoryAuthStore = ({
     if (!trimmed) {
       return null;
     }
-    const normalized = normalizeOptionalTenantMemberProfileField({
+    const normalized = normalizeOptionalTenantUserProfileField({
       value: trimmed,
       maxLength
     });
@@ -304,24 +304,24 @@ const createInMemoryAuthStore = ({
     }
     return normalized;
   };
-  const isStrictOptionalTenantMemberProfileField = ({
+  const isStrictOptionalTenantUserProfileField = ({
     value,
     maxLength
   } = {}) => {
-    const resolvedRawValue = resolveOptionalTenantMemberProfileField(value);
+    const resolvedRawValue = resolveOptionalTenantUserProfileField(value);
     if (resolvedRawValue === null) {
       return true;
     }
     if (typeof resolvedRawValue !== 'string') {
       return false;
     }
-    const normalized = normalizeOptionalTenantMemberProfileField({
+    const normalized = normalizeOptionalTenantUserProfileField({
       value: resolvedRawValue,
       maxLength
     });
     return normalized !== null && normalized === resolvedRawValue;
   };
-  const appendTenantMembershipHistory = ({
+  const appendTenantUsershipHistory = ({
     membership = null,
     reason = null,
     operatorUserId = null
@@ -336,7 +336,7 @@ const createInMemoryAuthStore = ({
       return;
     }
     const pairKey = `${normalizedTenantId}::${normalizedUserId}`;
-    const history = tenantMembershipHistoryByPair.get(pairKey) || [];
+    const history = tenantUsershipHistoryByPair.get(pairKey) || [];
     history.push({
       membershipId: String(
         membership?.membershipId || membership?.membership_id || ''
@@ -347,7 +347,7 @@ const createInMemoryAuthStore = ({
         membership?.tenantName === null || membership?.tenantName === undefined
           ? null
           : String(membership.tenantName || '').trim() || null,
-      status: normalizeTenantMembershipStatusForRead(membership?.status),
+      status: normalizeTenantUsershipStatusForRead(membership?.status),
       archivedReason: reason ? String(reason).trim() : null,
       archivedByUserId:
         operatorUserId === null || operatorUserId === undefined
@@ -355,14 +355,14 @@ const createInMemoryAuthStore = ({
           : String(operatorUserId).trim() || null,
       archivedAt: new Date().toISOString()
     });
-    tenantMembershipHistoryByPair.set(pairKey, history);
+    tenantUsershipHistoryByPair.set(pairKey, history);
   };
-  const isTenantMembershipActiveForAuth = (tenantMembership) => {
-    if (!isActiveLikeStatus(normalizeTenantMembershipStatusForRead(tenantMembership?.status))) {
+  const isTenantUsershipActiveForAuth = (tenantUsership) => {
+    if (!isActiveLikeStatus(normalizeTenantUsershipStatusForRead(tenantUsership?.status))) {
       return false;
     }
     const tenantId = String(
-      tenantMembership?.tenantId || tenantMembership?.tenant_id || ''
+      tenantUsership?.tenantId || tenantUsership?.tenant_id || ''
     ).trim();
     if (!tenantId) {
       return false;
@@ -1678,22 +1678,22 @@ const createInMemoryAuthStore = ({
     }
     return normalizedIdentity;
   };
-  const createTenantMembershipRoleBindingDataError = (
+  const createTenantUsershipRoleBindingDataError = (
     reason = 'tenant-membership-role-bindings-invalid'
   ) => {
-    const error = new Error('tenant membership role bindings invalid');
+    const error = new Error('tenant usership role bindings invalid');
     error.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID';
     error.reason = String(reason || 'tenant-membership-role-bindings-invalid')
       .trim()
       .toLowerCase();
     return error;
   };
-  const normalizeStrictTenantMembershipRoleIdFromBindingRow = (
+  const normalizeStrictTenantUsershipRoleIdFromBindingRow = (
     roleId,
     reason = 'tenant-membership-role-bindings-invalid-role-id'
   ) => {
     if (typeof roleId !== 'string') {
-      throw createTenantMembershipRoleBindingDataError(reason);
+      throw createTenantUsershipRoleBindingDataError(reason);
     }
     const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
     if (
@@ -1702,16 +1702,16 @@ const createInMemoryAuthStore = ({
       || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
       || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
     ) {
-      throw createTenantMembershipRoleBindingDataError(reason);
+      throw createTenantUsershipRoleBindingDataError(reason);
     }
     return normalizedRoleId;
   };
-  const normalizeStrictTenantMembershipRoleBindingIdentity = (
+  const normalizeStrictTenantUsershipRoleBindingIdentity = (
     identityValue,
     reason = 'tenant-membership-role-bindings-invalid-identity'
   ) => {
     if (typeof identityValue !== 'string') {
-      throw createTenantMembershipRoleBindingDataError(reason);
+      throw createTenantUsershipRoleBindingDataError(reason);
     }
     const normalizedIdentity = identityValue.trim();
     if (
@@ -1719,7 +1719,7 @@ const createInMemoryAuthStore = ({
       || identityValue !== normalizedIdentity
       || CONTROL_CHAR_PATTERN.test(normalizedIdentity)
     ) {
-      throw createTenantMembershipRoleBindingDataError(reason);
+      throw createTenantUsershipRoleBindingDataError(reason);
     }
     return normalizedIdentity;
   };
@@ -2167,16 +2167,16 @@ const createInMemoryAuthStore = ({
       rawTenants
         .filter((tenant) => tenant && tenant.tenantId)
         .map((tenant) => ({
-          membershipId: tenant.membershipId
-            ? String(tenant.membershipId)
+          membershipId: tenant.usershipId
+            ? String(tenant.usershipId)
             : randomUUID(),
           tenantId: String(tenant.tenantId),
           tenantName: tenant.tenantName ? String(tenant.tenantName) : null,
-          status: normalizeTenantMembershipStatus(tenant.status || 'active'),
-          displayName: resolveOptionalTenantMemberProfileField(
+          status: normalizeTenantUsershipStatus(tenant.status || 'active'),
+          displayName: resolveOptionalTenantUserProfileField(
             tenant.displayName ?? tenant.display_name ?? null
           ),
-          departmentName: resolveOptionalTenantMemberProfileField(
+          departmentName: resolveOptionalTenantUserProfileField(
             tenant.departmentName ?? tenant.department_name ?? null
           ),
           joinedAt: tenant.joinedAt || tenant.joined_at || new Date().toISOString(),
@@ -2199,13 +2199,13 @@ const createInMemoryAuthStore = ({
         ? (user.platformProfile || user.platform_profile)
         : null;
     if (rawPlatformProfile) {
-      const normalizedProfileName = normalizeOptionalTenantMemberProfileField({
+      const normalizedProfileName = normalizeOptionalTenantUserProfileField({
         value: rawPlatformProfile.name,
-        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+        maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
       });
-      const normalizedProfileDepartment = normalizeOptionalTenantMemberProfileField({
+      const normalizedProfileDepartment = normalizeOptionalTenantUserProfileField({
         value: rawPlatformProfile.department,
-        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+        maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
       });
       platformProfilesByUserId.set(normalizedUser.id, {
         name: normalizedProfileName,
@@ -2512,7 +2512,7 @@ const createInMemoryAuthStore = ({
       activeTenantId
     });
 
-  const findTenantMembershipStateByMembershipId = (membershipId) => {
+  const findTenantUsershipStateByMembershipId = (membershipId) => {
     const normalizedMembershipId = String(membershipId || '').trim();
     if (!normalizedMembershipId) {
       return null;
@@ -2532,7 +2532,7 @@ const createInMemoryAuthStore = ({
     return null;
   };
 
-  const listTenantMembershipRoleBindingsForMembershipId = ({
+  const listTenantUsershipRoleBindingsForMembershipId = ({
     membershipId,
     tenantId = undefined
   } = {}) => {
@@ -2540,7 +2540,7 @@ const createInMemoryAuthStore = ({
     if (!normalizedMembershipId) {
       return [];
     }
-    const membershipState = findTenantMembershipStateByMembershipId(normalizedMembershipId);
+    const membershipState = findTenantUsershipStateByMembershipId(normalizedMembershipId);
     if (!membershipState) {
       return [];
     }
@@ -2555,13 +2555,13 @@ const createInMemoryAuthStore = ({
     }
     const normalizedRoleIds = [];
     const seenRoleIds = new Set();
-    for (const rawRoleId of tenantMembershipRolesByMembershipId.get(normalizedMembershipId) || []) {
-      const normalizedRoleId = normalizeStrictTenantMembershipRoleIdFromBindingRow(
+    for (const rawRoleId of tenantUsershipRolesByMembershipId.get(normalizedMembershipId) || []) {
+      const normalizedRoleId = normalizeStrictTenantUsershipRoleIdFromBindingRow(
         rawRoleId,
         'tenant-membership-role-bindings-invalid-role-id'
       );
       if (seenRoleIds.has(normalizedRoleId)) {
-        throw createTenantMembershipRoleBindingDataError(
+        throw createTenantUsershipRoleBindingDataError(
           'tenant-membership-role-bindings-duplicate-role-id'
         );
       }
@@ -2571,26 +2571,26 @@ const createInMemoryAuthStore = ({
     return normalizedRoleIds.sort((left, right) => left.localeCompare(right));
   };
 
-  const replaceTenantMembershipRoleBindingsForMembershipId = ({
+  const replaceTenantUsershipRoleBindingsForMembershipId = ({
     membershipId,
     roleIds = []
   } = {}) => {
     const normalizedMembershipId = String(membershipId || '').trim();
     if (!normalizedMembershipId) {
-      throw new Error('replaceTenantMembershipRoleBindings requires membershipId');
+      throw new Error('replaceTenantUsershipRoleBindings requires membershipId');
     }
     const normalizedRoleIds = [...new Set(
       (Array.isArray(roleIds) ? roleIds : [])
         .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
         .filter((roleId) => roleId.length > 0)
     )].sort((left, right) => left.localeCompare(right));
-    tenantMembershipRolesByMembershipId.set(normalizedMembershipId, normalizedRoleIds);
-    return listTenantMembershipRoleBindingsForMembershipId({
+    tenantUsershipRolesByMembershipId.set(normalizedMembershipId, normalizedRoleIds);
+    return listTenantUsershipRoleBindingsForMembershipId({
       membershipId: normalizedMembershipId
     });
   };
 
-  const toTenantMembershipScopeLabel = (membership = null) => {
+  const toTenantUsershipScopeLabel = (membership = null) => {
     const tenantId = String(
       membership?.tenantId || membership?.tenant_id || ''
     ).trim();
@@ -2604,8 +2604,8 @@ const createInMemoryAuthStore = ({
     membership = null,
     roleIds = []
   } = {}) => {
-    const scopeLabel = toTenantMembershipScopeLabel(membership);
-    if (!membership || !isTenantMembershipActiveForAuth(membership)) {
+    const scopeLabel = toTenantUsershipScopeLabel(membership);
+    if (!membership || !isTenantUsershipActiveForAuth(membership)) {
       return buildEmptyTenantPermission(scopeLabel);
     }
     const membershipTenantId = String(
@@ -2651,7 +2651,7 @@ const createInMemoryAuthStore = ({
     };
   };
 
-  const syncTenantMembershipPermissionSnapshot = ({
+  const syncTenantUsershipPermissionSnapshot = ({
     membershipState = null,
     reason = 'tenant-membership-permission-changed',
     revokeSessions = true
@@ -2675,14 +2675,14 @@ const createInMemoryAuthStore = ({
     const membershipId = String(membership.membershipId || '').trim();
     const tenantId = String(membership.tenantId || '').trim();
     const userId = String(targetMembershipState.userId || '').trim();
-    const roleIds = listTenantMembershipRoleBindingsForMembershipId({
+    const roleIds = listTenantUsershipRoleBindingsForMembershipId({
       membershipId,
       tenantId
     });
     const previousPermission = normalizePlatformPermission(
       membership.permission,
-      toTenantMembershipScopeLabel(membership)
-    ) || buildEmptyTenantPermission(toTenantMembershipScopeLabel(membership));
+      toTenantUsershipScopeLabel(membership)
+    ) || buildEmptyTenantPermission(toTenantUsershipScopeLabel(membership));
     const nextPermission = resolveEffectiveTenantPermissionForMembership({
       membership,
       roleIds
@@ -2851,13 +2851,13 @@ const createInMemoryAuthStore = ({
     const profile = platformProfilesByUserId.get(String(userId || '').trim()) || null;
     if (profile && typeof profile === 'object') {
       return {
-        name: normalizeOptionalTenantMemberProfileField({
+        name: normalizeOptionalTenantUserProfileField({
           value: profile.name ?? null,
-          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+          maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
         }),
-        department: normalizeOptionalTenantMemberProfileField({
+        department: normalizeOptionalTenantUserProfileField({
           value: profile.department ?? null,
-          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+          maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
         })
       };
     }
@@ -2866,7 +2866,7 @@ const createInMemoryAuthStore = ({
       department: null
     };
   };
-  const resolveLatestTenantMemberProfileByUserId = (userId) => {
+  const resolveLatestTenantUserProfileByUserId = (userId) => {
     const memberships = Array.isArray(tenantsByUserId.get(userId))
       ? tenantsByUserId.get(userId)
       : [];
@@ -2886,13 +2886,13 @@ const createInMemoryAuthStore = ({
       return rightJoinedAt - leftJoinedAt;
     });
     for (const membership of sortedMemberships) {
-      const resolvedName = normalizeOptionalTenantMemberProfileField({
+      const resolvedName = normalizeOptionalTenantUserProfileField({
         value: membership?.displayName ?? membership?.display_name ?? null,
-        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+        maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
       });
-      const resolvedDepartment = normalizeOptionalTenantMemberProfileField({
+      const resolvedDepartment = normalizeOptionalTenantUserProfileField({
         value: membership?.departmentName ?? membership?.department_name ?? null,
-        maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+        maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
       });
       if (resolvedName !== null || resolvedDepartment !== null) {
         return {
@@ -2974,7 +2974,7 @@ const createInMemoryAuthStore = ({
     };
   };
 
-  const repositoryMethods = createMemoryRepositoryMethods({
+  const repositoryMethods = createMemoryAuthStoreCapabilities({
     clone,
     usersByPhone,
     usersById,
@@ -2991,10 +2991,10 @@ const createInMemoryAuthStore = ({
     platformPermissionsByUserId,
     cloneSystemSensitiveConfigRecord,
     clonePlatformRoleCatalogRecord,
-    isTenantMembershipActiveForAuth,
+    isTenantUsershipActiveForAuth,
     isActiveLikeStatus,
     resolvePlatformUserReadModel,
-    resolveLatestTenantMemberProfileByUserId,
+    resolveLatestTenantUserProfileByUserId,
     normalizeSystemSensitiveConfigKey,
     normalizeSystemSensitiveConfigStatus,
     normalizeOrgStatus,
@@ -3014,8 +3014,8 @@ const createInMemoryAuthStore = ({
     MAINLAND_PHONE_PATTERN,
     CONTROL_CHAR_PATTERN,
     ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS,
-    MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-    MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+    MAX_TENANT_USER_DISPLAY_NAME_LENGTH,
+    MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH,
     VALID_ORG_STATUS,
     VALID_PLATFORM_USER_STATUS,
     PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
@@ -3197,10 +3197,10 @@ const createInMemoryAuthStore = ({
         orgIdByName: structuredClone(orgIdByName),
         membershipsByOrgId: structuredClone(membershipsByOrgId),
         tenantsByUserId: structuredClone(tenantsByUserId),
-        tenantMembershipRolesByMembershipId: structuredClone(
-          tenantMembershipRolesByMembershipId
+        tenantUsershipRolesByMembershipId: structuredClone(
+          tenantUsershipRolesByMembershipId
         ),
-        tenantMembershipHistoryByPair: structuredClone(tenantMembershipHistoryByPair),
+        tenantUsershipHistoryByPair: structuredClone(tenantUsershipHistoryByPair),
         domainsByUserId: structuredClone(domainsByUserId),
         platformRoleCatalogById: structuredClone(platformRoleCatalogById),
         platformRoleCatalogCodeIndex: structuredClone(platformRoleCatalogCodeIndex),
@@ -3214,9 +3214,9 @@ const createInMemoryAuthStore = ({
       try {
         const normalizedOrgId = String(orgId || '').trim() || randomUUID();
         const normalizedOrgName = String(orgName || '').trim();
-        const normalizedOwnerDisplayName = normalizeOptionalTenantMemberProfileField({
+        const normalizedOwnerDisplayName = normalizeOptionalTenantUserProfileField({
           value: ownerDisplayName,
-          maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+          maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
         });
         const normalizedOwnerUserId = String(ownerUserId || '').trim();
         const normalizedOperatorUserId = String(operatorUserId || '').trim();
@@ -3285,10 +3285,10 @@ const createInMemoryAuthStore = ({
           throw new Error('org-owner-takeover-role-invalid');
         }
 
-        const tenantMemberships = Array.isArray(tenantsByUserId.get(normalizedOwnerUserId))
+        const tenantUserships = Array.isArray(tenantsByUserId.get(normalizedOwnerUserId))
           ? tenantsByUserId.get(normalizedOwnerUserId)
           : [];
-        let membership = tenantMemberships.find(
+        let membership = tenantUserships.find(
           (tenant) => String(tenant?.tenantId || '').trim() === normalizedOrgId
         ) || null;
         if (!membership) {
@@ -3305,13 +3305,13 @@ const createInMemoryAuthStore = ({
               `组织权限（${normalizedOrgName || normalizedOrgId}）`
             )
           };
-          tenantMemberships.push(membership);
-          tenantMembershipRolesByMembershipId.set(
+          tenantUserships.push(membership);
+          tenantUsershipRolesByMembershipId.set(
             String(membership.membershipId || '').trim(),
             []
           );
         } else {
-          const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+          const normalizedMembershipStatus = normalizeTenantUsershipStatusForRead(
             membership.status
           );
           if (
@@ -3323,7 +3323,7 @@ const createInMemoryAuthStore = ({
           }
           membership.tenantName = normalizedOrgName;
           if (normalizedMembershipStatus === 'left') {
-            appendTenantMembershipHistory({
+            appendTenantUsershipHistory({
               membership: {
                 ...membership,
                 userId: normalizedOwnerUserId,
@@ -3338,14 +3338,14 @@ const createInMemoryAuthStore = ({
             membership.membershipId = randomUUID();
             membership.status = 'active';
             membership.permission = buildEmptyTenantPermission(
-              toTenantMembershipScopeLabel(membership)
+              toTenantUsershipScopeLabel(membership)
             );
             membership.joinedAt = nowIso;
             membership.leftAt = null;
             if (previousMembershipId) {
-              tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+              tenantUsershipRolesByMembershipId.delete(previousMembershipId);
             }
-            tenantMembershipRolesByMembershipId.set(
+            tenantUsershipRolesByMembershipId.set(
               String(membership.membershipId || '').trim(),
               []
             );
@@ -3360,7 +3360,7 @@ const createInMemoryAuthStore = ({
             membership.joinedAt = nowIso;
           }
         }
-        tenantsByUserId.set(normalizedOwnerUserId, tenantMemberships);
+        tenantsByUserId.set(normalizedOwnerUserId, tenantUserships);
 
         const resolvedMembershipId = String(membership?.membershipId || '').trim();
         if (!resolvedMembershipId) {
@@ -3455,7 +3455,7 @@ const createInMemoryAuthStore = ({
           permissionCodes: [...grantCodes]
         });
 
-        const existingRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+        const existingRoleIds = listTenantUsershipRoleBindingsForMembershipId({
           membershipId: resolvedMembershipId,
           tenantId: normalizedOrgId
         });
@@ -3471,15 +3471,15 @@ const createInMemoryAuthStore = ({
             'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_BINDINGS_INVALID';
           throw roleBindingError;
         }
-        replaceTenantMembershipRoleBindingsForMembershipId({
+        replaceTenantUsershipRoleBindingsForMembershipId({
           membershipId: resolvedMembershipId,
           roleIds: nextRoleIds
         });
 
-        const membershipState = findTenantMembershipStateByMembershipId(
+        const membershipState = findTenantUsershipStateByMembershipId(
           resolvedMembershipId
         );
-        const syncResult = syncTenantMembershipPermissionSnapshot({
+        const syncResult = syncTenantUsershipPermissionSnapshot({
           membershipState,
           reason: 'org-owner-bootstrap'
         });
@@ -3553,12 +3553,12 @@ const createInMemoryAuthStore = ({
         restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
         restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
         restoreMapFromSnapshot(
-          tenantMembershipRolesByMembershipId,
-          snapshot.tenantMembershipRolesByMembershipId
+          tenantUsershipRolesByMembershipId,
+          snapshot.tenantUsershipRolesByMembershipId
         );
         restoreMapFromSnapshot(
-          tenantMembershipHistoryByPair,
-          snapshot.tenantMembershipHistoryByPair
+          tenantUsershipHistoryByPair,
+          snapshot.tenantUsershipHistoryByPair
         );
         restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
         restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
@@ -3700,10 +3700,10 @@ const createInMemoryAuthStore = ({
         tenantRolePermissionGrantsByRoleId: structuredClone(
           tenantRolePermissionGrantsByRoleId
         ),
-        tenantMembershipRolesByMembershipId: structuredClone(
-          tenantMembershipRolesByMembershipId
+        tenantUsershipRolesByMembershipId: structuredClone(
+          tenantUsershipRolesByMembershipId
         ),
-        tenantMembershipHistoryByPair: structuredClone(tenantMembershipHistoryByPair),
+        tenantUsershipHistoryByPair: structuredClone(tenantUsershipHistoryByPair),
         sessionsById: structuredClone(sessionsById),
         refreshTokensByHash: structuredClone(refreshTokensByHash)
       };
@@ -3849,8 +3849,8 @@ const createInMemoryAuthStore = ({
           newOwnerUserId: normalizedNewOwnerUserId
         });
 
-        const tenantMemberships = tenantsByUserId.get(normalizedNewOwnerUserId) || [];
-        let membership = tenantMemberships.find(
+        const tenantUserships = tenantsByUserId.get(normalizedNewOwnerUserId) || [];
+        let membership = tenantUserships.find(
           (item) => String(item?.tenantId || '').trim() === normalizedOrgId
         ) || null;
         if (!membership) {
@@ -3867,13 +3867,13 @@ const createInMemoryAuthStore = ({
               `组织权限（${normalizedOrgId}）`
             )
           };
-          tenantMemberships.push(membership);
-          tenantMembershipRolesByMembershipId.set(
+          tenantUserships.push(membership);
+          tenantUsershipRolesByMembershipId.set(
             String(membership.membershipId || '').trim(),
             []
           );
         } else {
-          const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+          const normalizedMembershipStatus = normalizeTenantUsershipStatusForRead(
             membership.status
           );
           if (
@@ -3889,7 +3889,7 @@ const createInMemoryAuthStore = ({
             throw membershipInvalidError;
           }
           if (normalizedMembershipStatus === 'left') {
-            appendTenantMembershipHistory({
+            appendTenantUsershipHistory({
               membership: {
                 ...membership,
                 userId: normalizedNewOwnerUserId,
@@ -3906,12 +3906,12 @@ const createInMemoryAuthStore = ({
             membership.leftAt = null;
             membership.joinedAt = new Date().toISOString();
             membership.permission = buildEmptyTenantPermission(
-              toTenantMembershipScopeLabel(membership)
+              toTenantUsershipScopeLabel(membership)
             );
             if (previousMembershipId) {
-              tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+              tenantUsershipRolesByMembershipId.delete(previousMembershipId);
             }
-            tenantMembershipRolesByMembershipId.set(
+            tenantUsershipRolesByMembershipId.set(
               String(membership.membershipId || '').trim(),
               []
             );
@@ -3919,11 +3919,11 @@ const createInMemoryAuthStore = ({
             membership.status = 'active';
             membership.leftAt = null;
             membership.permission = buildEmptyTenantPermission(
-              toTenantMembershipScopeLabel(membership)
+              toTenantUsershipScopeLabel(membership)
             );
           }
         }
-        tenantsByUserId.set(normalizedNewOwnerUserId, tenantMemberships);
+        tenantsByUserId.set(normalizedNewOwnerUserId, tenantUserships);
 
         const membershipId = String(membership?.membershipId || '').trim();
         if (!membershipId) {
@@ -3939,7 +3939,7 @@ const createInMemoryAuthStore = ({
         userDomains.add('tenant');
         domainsByUserId.set(normalizedNewOwnerUserId, userDomains);
 
-        const existingRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+        const existingRoleIds = listTenantUsershipRoleBindingsForMembershipId({
           membershipId,
           tenantId: normalizedOrgId
         });
@@ -3955,15 +3955,15 @@ const createInMemoryAuthStore = ({
             'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_BINDINGS_INVALID';
           throw roleBindingError;
         }
-        replaceTenantMembershipRoleBindingsForMembershipId({
+        replaceTenantUsershipRoleBindingsForMembershipId({
           membershipId,
           roleIds: nextRoleIds
         });
 
-        const membershipState = findTenantMembershipStateByMembershipId(
+        const membershipState = findTenantUsershipStateByMembershipId(
           membershipId
         );
-        const syncResult = syncTenantMembershipPermissionSnapshot({
+        const syncResult = syncTenantUsershipPermissionSnapshot({
           membershipState,
           reason: 'owner-transfer-takeover'
         });
@@ -4060,12 +4060,12 @@ const createInMemoryAuthStore = ({
           snapshot.tenantRolePermissionGrantsByRoleId
         );
         restoreMap(
-          tenantMembershipRolesByMembershipId,
-          snapshot.tenantMembershipRolesByMembershipId
+          tenantUsershipRolesByMembershipId,
+          snapshot.tenantUsershipRolesByMembershipId
         );
         restoreMap(
-          tenantMembershipHistoryByPair,
-          snapshot.tenantMembershipHistoryByPair
+          tenantUsershipHistoryByPair,
+          snapshot.tenantUsershipHistoryByPair
         );
         restoreMap(sessionsById, snapshot.sessionsById);
         restoreMap(refreshTokensByHash, snapshot.refreshTokensByHash);
@@ -4101,8 +4101,8 @@ const createInMemoryAuthStore = ({
           orgsById: structuredClone(orgsById),
           membershipsByOrgId: structuredClone(membershipsByOrgId),
           tenantsByUserId: structuredClone(tenantsByUserId),
-          tenantMembershipRolesByMembershipId: structuredClone(
-            tenantMembershipRolesByMembershipId
+          tenantUsershipRolesByMembershipId: structuredClone(
+            tenantUsershipRolesByMembershipId
           ),
           platformRoleCatalogById: structuredClone(platformRoleCatalogById),
           sessionsById: structuredClone(sessionsById),
@@ -4141,43 +4141,43 @@ const createInMemoryAuthStore = ({
               affectedUserIds.add(membershipUserId);
             }
 
-            const tenantMembershipIdsByOrg = new Set();
-            for (const [userId, tenantMemberships] of tenantsByUserId.entries()) {
+            const tenantUsershipIdsByOrg = new Set();
+            for (const [userId, tenantUserships] of tenantsByUserId.entries()) {
               const normalizedUserId = String(userId || '').trim();
               let hasMutation = false;
-              for (const membership of Array.isArray(tenantMemberships) ? tenantMemberships : []) {
+              for (const membership of Array.isArray(tenantUserships) ? tenantUserships : []) {
                 const membershipTenantId = String(membership?.tenantId || '').trim();
                 if (membershipTenantId !== normalizedOrgId) {
                   continue;
                 }
                 const membershipId = String(membership?.membershipId || '').trim();
                 if (membershipId) {
-                  tenantMembershipIdsByOrg.add(membershipId);
+                  tenantUsershipIdsByOrg.add(membershipId);
                 }
                 if (
                   !isActiveLikeStatus(
-                    normalizeTenantMembershipStatusForRead(membership?.status)
+                    normalizeTenantUsershipStatusForRead(membership?.status)
                   )
                 ) {
                   continue;
                 }
                 membership.status = 'disabled';
                 membership.permission = buildEmptyTenantPermission(
-                  toTenantMembershipScopeLabel(membership)
+                  toTenantUsershipScopeLabel(membership)
                 );
                 affectedMembershipUserIds.add(normalizedUserId);
                 affectedUserIds.add(normalizedUserId);
                 hasMutation = true;
               }
               if (hasMutation) {
-                tenantsByUserId.set(normalizedUserId, tenantMemberships);
+                tenantsByUserId.set(normalizedUserId, tenantUserships);
               }
             }
 
-            for (const membershipId of tenantMembershipIdsByOrg) {
-              const existingRoleIds = tenantMembershipRolesByMembershipId.get(membershipId) || [];
+            for (const membershipId of tenantUsershipIdsByOrg) {
+              const existingRoleIds = tenantUsershipRolesByMembershipId.get(membershipId) || [];
               affectedRoleBindingCount += existingRoleIds.length;
-              tenantMembershipRolesByMembershipId.delete(membershipId);
+              tenantUsershipRolesByMembershipId.delete(membershipId);
             }
 
             for (const [roleId, roleCatalogEntry] of platformRoleCatalogById.entries()) {
@@ -4221,7 +4221,7 @@ const createInMemoryAuthStore = ({
 
               const userDomains = domainsByUserId.get(userId) || new Set();
               const hasAnyActiveMembership = (tenantsByUserId.get(userId) || []).some(
-                (membership) => isTenantMembershipActiveForAuth(membership)
+                (membership) => isTenantUsershipActiveForAuth(membership)
               );
               if (!hasAnyActiveMembership) {
                 userDomains.delete('tenant');
@@ -4288,8 +4288,8 @@ const createInMemoryAuthStore = ({
           restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
           restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
           restoreMapFromSnapshot(
-            tenantMembershipRolesByMembershipId,
-            snapshot.tenantMembershipRolesByMembershipId
+            tenantUsershipRolesByMembershipId,
+            snapshot.tenantUsershipRolesByMembershipId
           );
           restoreMapFromSnapshot(platformRoleCatalogById, snapshot.platformRoleCatalogById);
           restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
@@ -4431,8 +4431,8 @@ const createInMemoryAuthStore = ({
           platformDomainKnownByUserId: structuredClone(platformDomainKnownByUserId),
           tenantsByUserId: structuredClone(tenantsByUserId),
           membershipsByOrgId: structuredClone(membershipsByOrgId),
-          tenantMembershipRolesByMembershipId: structuredClone(
-            tenantMembershipRolesByMembershipId
+          tenantUsershipRolesByMembershipId: structuredClone(
+            tenantUsershipRolesByMembershipId
           ),
           platformRolesByUserId: structuredClone(platformRolesByUserId),
           platformPermissionsByUserId: structuredClone(platformPermissionsByUserId),
@@ -4459,7 +4459,7 @@ const createInMemoryAuthStore = ({
         const memberships = tenantsByUserId.get(normalizedUserId) || [];
         const updatedMemberships = [];
         for (const membership of memberships) {
-          const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+          const normalizedMembershipStatus = normalizeTenantUsershipStatusForRead(
             membership?.status
           );
           const normalizedMembership = {
@@ -4472,7 +4472,7 @@ const createInMemoryAuthStore = ({
             membership?.membershipId || membership?.membership_id || ''
           ).trim();
           if (membershipId) {
-            tenantMembershipRolesByMembershipId.delete(membershipId);
+            tenantUsershipRolesByMembershipId.delete(membershipId);
           }
           updatedMemberships.push(normalizedMembership);
         }
@@ -4487,7 +4487,7 @@ const createInMemoryAuthStore = ({
               nextOrgMemberships.push(orgMembership);
               continue;
             }
-            const normalizedOrgMembershipStatus = normalizeTenantMembershipStatusForRead(
+            const normalizedOrgMembershipStatus = normalizeTenantUsershipStatusForRead(
               orgMembership?.status
             );
             nextOrgMemberships.push({
@@ -4589,8 +4589,8 @@ const createInMemoryAuthStore = ({
           restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
           restoreMapFromSnapshot(membershipsByOrgId, snapshot.membershipsByOrgId);
           restoreMapFromSnapshot(
-            tenantMembershipRolesByMembershipId,
-            snapshot.tenantMembershipRolesByMembershipId
+            tenantUsershipRolesByMembershipId,
+            snapshot.tenantUsershipRolesByMembershipId
           );
           restoreMapFromSnapshot(platformRolesByUserId, snapshot.platformRolesByUserId);
           restoreMapFromSnapshot(
@@ -4627,7 +4627,7 @@ const createInMemoryAuthStore = ({
         if (!membershipId) {
           continue;
         }
-        tenantMembershipRolesByMembershipId.delete(membershipId);
+        tenantUsershipRolesByMembershipId.delete(membershipId);
       }
       tenantsByUserId.delete(normalizedUserId);
       platformRolesByUserId.delete(normalizedUserId);
@@ -4647,11 +4647,11 @@ const createInMemoryAuthStore = ({
       return { deleted: true };
     },
 
-    createTenantMembershipForUser: async ({ userId, tenantId, tenantName = null }) => {
+    createTenantUsershipForUser: async ({ userId, tenantId, tenantName = null }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedUserId || !normalizedTenantId) {
-        throw new Error('createTenantMembershipForUser requires userId and tenantId');
+        throw new Error('createTenantUsershipForUser requires userId and tenantId');
       }
       if (!usersById.has(normalizedUserId)) {
         return { created: false };
@@ -4660,19 +4660,19 @@ const createInMemoryAuthStore = ({
         ? null
         : String(tenantName).trim() || null;
 
-      const tenantMemberships = tenantsByUserId.get(normalizedUserId) || [];
-      const existingMembership = tenantMemberships.find(
+      const tenantUserships = tenantsByUserId.get(normalizedUserId) || [];
+      const existingMembership = tenantUserships.find(
         (tenant) => String(tenant?.tenantId || '').trim() === normalizedTenantId
       );
       if (existingMembership) {
-        const currentStatus = normalizeTenantMembershipStatusForRead(existingMembership.status);
+        const currentStatus = normalizeTenantUsershipStatusForRead(existingMembership.status);
         if (!VALID_TENANT_MEMBERSHIP_STATUS.has(currentStatus)) {
-          throw new Error('createTenantMembershipForUser encountered unsupported existing status');
+          throw new Error('createTenantUsershipForUser encountered unsupported existing status');
         }
         if (currentStatus !== 'left') {
           return { created: false };
         }
-        appendTenantMembershipHistory({
+        appendTenantUsershipHistory({
           membership: {
             ...existingMembership,
             userId: normalizedUserId,
@@ -4695,18 +4695,18 @@ const createInMemoryAuthStore = ({
           canOperateRoleManagement: false
         };
         if (previousMembershipId) {
-          tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+          tenantUsershipRolesByMembershipId.delete(previousMembershipId);
         }
-        tenantMembershipRolesByMembershipId.set(
+        tenantUsershipRolesByMembershipId.set(
           String(existingMembership.membershipId || '').trim(),
           []
         );
-        tenantsByUserId.set(normalizedUserId, tenantMemberships);
+        tenantsByUserId.set(normalizedUserId, tenantUserships);
         return { created: true };
       }
 
       const membershipId = randomUUID();
-      tenantMemberships.push({
+      tenantUserships.push({
         membershipId,
         tenantId: normalizedTenantId,
         tenantName: normalizedTenantName,
@@ -4723,27 +4723,27 @@ const createInMemoryAuthStore = ({
           canOperateRoleManagement: false
         }
       });
-      tenantMembershipRolesByMembershipId.set(membershipId, []);
-      tenantsByUserId.set(normalizedUserId, tenantMemberships);
+      tenantUsershipRolesByMembershipId.set(membershipId, []);
+      tenantsByUserId.set(normalizedUserId, tenantUserships);
       return { created: true };
     },
 
-    removeTenantMembershipForUser: async ({ userId, tenantId }) => {
+    removeTenantUsershipForUser: async ({ userId, tenantId }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedUserId || !normalizedTenantId) {
-        throw new Error('removeTenantMembershipForUser requires userId and tenantId');
+        throw new Error('removeTenantUsershipForUser requires userId and tenantId');
       }
-      const tenantMemberships = tenantsByUserId.get(normalizedUserId);
-      if (!Array.isArray(tenantMemberships) || tenantMemberships.length === 0) {
+      const tenantUserships = tenantsByUserId.get(normalizedUserId);
+      if (!Array.isArray(tenantUserships) || tenantUserships.length === 0) {
         return { removed: false };
       }
-      const retainedMemberships = tenantMemberships.filter(
+      const retainedMemberships = tenantUserships.filter(
         (tenant) => String(tenant?.tenantId || '').trim() !== normalizedTenantId
       );
-      const removed = retainedMemberships.length !== tenantMemberships.length;
+      const removed = retainedMemberships.length !== tenantUserships.length;
       if (removed) {
-        for (const membership of tenantMemberships) {
+        for (const membership of tenantUserships) {
           if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
             continue;
           }
@@ -4751,7 +4751,7 @@ const createInMemoryAuthStore = ({
           if (!membershipId) {
             continue;
           }
-          tenantMembershipRolesByMembershipId.delete(membershipId);
+          tenantUsershipRolesByMembershipId.delete(membershipId);
         }
         tenantsByUserId.set(normalizedUserId, retainedMemberships);
       }
@@ -4768,10 +4768,10 @@ const createInMemoryAuthStore = ({
         domainsByUserId.set(normalizedUserId, userDomains);
         return { removed: false };
       }
-      const hasActiveTenantMembership = (tenantsByUserId.get(normalizedUserId) || []).some(
-        (tenant) => isTenantMembershipActiveForAuth(tenant)
+      const hasActiveTenantUsership = (tenantsByUserId.get(normalizedUserId) || []).some(
+        (tenant) => isTenantUsershipActiveForAuth(tenant)
       );
-      if (hasActiveTenantMembership) {
+      if (hasActiveTenantUsership) {
         domainsByUserId.set(normalizedUserId, userDomains);
         return { removed: false };
       }
@@ -4794,7 +4794,7 @@ const createInMemoryAuthStore = ({
 
     listTenantOptionsByUserId: repositoryMethods.listTenantOptionsByUserId,
 
-    findTenantMembershipByUserAndTenantId: async ({ userId, tenantId }) => {
+    findTenantUsershipByUserAndTenantId: async ({ userId, tenantId }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedUserId || !normalizedTenantId) {
@@ -4813,9 +4813,9 @@ const createInMemoryAuthStore = ({
         tenant_id: normalizedTenantId,
         tenant_name: membership.tenantName ? String(membership.tenantName) : null,
         phone: user?.phone ? String(user.phone) : '',
-        status: normalizeTenantMembershipStatusForRead(membership.status),
-        display_name: resolveOptionalTenantMemberProfileField(membership.displayName),
-        department_name: resolveOptionalTenantMemberProfileField(
+        status: normalizeTenantUsershipStatusForRead(membership.status),
+        display_name: resolveOptionalTenantUserProfileField(membership.displayName),
+        department_name: resolveOptionalTenantUserProfileField(
           membership.departmentName
         ),
         joined_at: membership.joinedAt || null,
@@ -4823,7 +4823,7 @@ const createInMemoryAuthStore = ({
       };
     },
 
-    findTenantMembershipByMembershipIdAndTenantId: async ({
+    findTenantUsershipByMembershipIdAndTenantId: async ({
       membershipId,
       tenantId
     }) => {
@@ -4832,7 +4832,7 @@ const createInMemoryAuthStore = ({
       if (!normalizedMembershipId || !normalizedTenantId) {
         return null;
       }
-      const membershipState = findTenantMembershipStateByMembershipId(
+      const membershipState = findTenantUsershipStateByMembershipId(
         normalizedMembershipId
       );
       if (!membershipState) {
@@ -4850,11 +4850,11 @@ const createInMemoryAuthStore = ({
         tenant_id: normalizedTenantId,
         tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
         phone: user?.phone ? String(user.phone) : '',
-        status: normalizeTenantMembershipStatusForRead(membership?.status),
-        display_name: resolveOptionalTenantMemberProfileField(
+        status: normalizeTenantUsershipStatusForRead(membership?.status),
+        display_name: resolveOptionalTenantUserProfileField(
           membership?.displayName
         ),
-        department_name: resolveOptionalTenantMemberProfileField(
+        department_name: resolveOptionalTenantUserProfileField(
           membership?.departmentName
         ),
         joined_at: membership?.joinedAt || null,
@@ -4862,7 +4862,7 @@ const createInMemoryAuthStore = ({
       };
     },
 
-    listTenantMembersByTenantId: async ({ tenantId, page = 1, pageSize = 50 }) => {
+    listTenantUsersByTenantId: async ({ tenantId, page = 1, pageSize = 50 }) => {
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedTenantId) {
         return [];
@@ -4891,11 +4891,11 @@ const createInMemoryAuthStore = ({
             tenant_id: normalizedTenantId,
             tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
             phone: String(user.phone || ''),
-            status: normalizeTenantMembershipStatusForRead(membership?.status),
-            display_name: resolveOptionalTenantMemberProfileField(
+            status: normalizeTenantUsershipStatusForRead(membership?.status),
+            display_name: resolveOptionalTenantUserProfileField(
               membership?.displayName
             ),
-            department_name: resolveOptionalTenantMemberProfileField(
+            department_name: resolveOptionalTenantUserProfileField(
               membership?.departmentName
             ),
             joined_at: membership?.joinedAt || null,
@@ -4919,7 +4919,7 @@ const createInMemoryAuthStore = ({
       return members.slice(offset, offset + resolvedPageSize);
     },
 
-    updateTenantMembershipProfile: async ({
+    updateTenantUsershipProfile: async ({
       membershipId,
       tenantId,
       displayName,
@@ -4928,9 +4928,9 @@ const createInMemoryAuthStore = ({
     }) => {
       const normalizedMembershipId = String(membershipId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
-      const normalizedDisplayName = normalizeOptionalTenantMemberProfileField({
+      const normalizedDisplayName = normalizeOptionalTenantUserProfileField({
         value: displayName,
-        maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+        maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
       });
       if (
         !normalizedMembershipId
@@ -4938,7 +4938,7 @@ const createInMemoryAuthStore = ({
         || normalizedDisplayName === null
       ) {
         throw new Error(
-          'updateTenantMembershipProfile requires membershipId, tenantId and displayName'
+          'updateTenantUsershipProfile requires membershipId, tenantId and displayName'
         );
       }
       const shouldUpdateDepartmentName = departmentNameProvided === true;
@@ -4947,17 +4947,17 @@ const createInMemoryAuthStore = ({
         if (departmentName === null) {
           normalizedDepartmentName = null;
         } else {
-          normalizedDepartmentName = normalizeOptionalTenantMemberProfileField({
+          normalizedDepartmentName = normalizeOptionalTenantUserProfileField({
             value: departmentName,
-            maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+            maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
           });
           if (normalizedDepartmentName === null) {
-            throw new Error('updateTenantMembershipProfile departmentName is invalid');
+            throw new Error('updateTenantUsershipProfile departmentName is invalid');
           }
         }
       }
 
-      const membershipState = findTenantMembershipStateByMembershipId(
+      const membershipState = findTenantUsershipStateByMembershipId(
         normalizedMembershipId
       );
       if (!membershipState) {
@@ -4979,7 +4979,7 @@ const createInMemoryAuthStore = ({
         || !MAINLAND_PHONE_PATTERN.test(normalizedUserPhone)
       ) {
         const dependencyError = new Error(
-          'updateTenantMembershipProfile dependency unavailable: user-profile-missing'
+          'updateTenantUsershipProfile dependency unavailable: user-profile-missing'
         );
         dependencyError.code =
           'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
@@ -4987,13 +4987,13 @@ const createInMemoryAuthStore = ({
       }
       if (
         !shouldUpdateDepartmentName
-        && !isStrictOptionalTenantMemberProfileField({
+        && !isStrictOptionalTenantUserProfileField({
           value: membership?.departmentName,
-          maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+          maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
         })
       ) {
         const dependencyError = new Error(
-          'updateTenantMembershipProfile dependency unavailable: membership-profile-invalid'
+          'updateTenantUsershipProfile dependency unavailable: membership-profile-invalid'
         );
         dependencyError.code =
           'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
@@ -5009,11 +5009,11 @@ const createInMemoryAuthStore = ({
         tenant_id: normalizedTenantId,
         tenant_name: membership?.tenantName ? String(membership.tenantName) : null,
         phone: normalizedUserPhone,
-        status: normalizeTenantMembershipStatusForRead(membership?.status),
-        display_name: resolveOptionalTenantMemberProfileField(
+        status: normalizeTenantUsershipStatusForRead(membership?.status),
+        display_name: resolveOptionalTenantUserProfileField(
           membership?.displayName
         ),
-        department_name: resolveOptionalTenantMemberProfileField(
+        department_name: resolveOptionalTenantUserProfileField(
           membership?.departmentName
         ),
         joined_at: membership?.joinedAt || null,
@@ -5021,7 +5021,7 @@ const createInMemoryAuthStore = ({
       };
     },
 
-    updateTenantMembershipStatus: async ({
+    updateTenantUsershipStatus: async ({
       membershipId,
       tenantId,
       nextStatus,
@@ -5031,24 +5031,24 @@ const createInMemoryAuthStore = ({
     }) => {
       const normalizedMembershipId = String(membershipId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
-      const normalizedNextStatus = normalizeTenantMembershipStatusForRead(nextStatus);
+      const normalizedNextStatus = normalizeTenantUsershipStatusForRead(nextStatus);
       if (
         !normalizedMembershipId
         || !normalizedTenantId
         || !VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedNextStatus)
       ) {
         throw new Error(
-          'updateTenantMembershipStatus requires membershipId, tenantId and supported nextStatus'
+          'updateTenantUsershipStatus requires membershipId, tenantId and supported nextStatus'
         );
       }
       const shouldRecordAudit = auditContext && typeof auditContext === 'object';
       const snapshot = shouldRecordAudit
         ? {
           tenantsByUserId: structuredClone(tenantsByUserId),
-          tenantMembershipRolesByMembershipId: structuredClone(
-            tenantMembershipRolesByMembershipId
+          tenantUsershipRolesByMembershipId: structuredClone(
+            tenantUsershipRolesByMembershipId
           ),
-          tenantMembershipHistoryByPair: structuredClone(tenantMembershipHistoryByPair),
+          tenantUsershipHistoryByPair: structuredClone(tenantUsershipHistoryByPair),
           domainsByUserId: structuredClone(domainsByUserId),
           sessionsById: structuredClone(sessionsById),
           refreshTokensByHash: structuredClone(refreshTokensByHash),
@@ -5057,11 +5057,11 @@ const createInMemoryAuthStore = ({
         : null;
       try {
         let targetUserId = '';
-        const tenantMembershipsByUser = [...tenantsByUserId.entries()];
+        const tenantUsershipsByUser = [...tenantsByUserId.entries()];
         let targetMembership = null;
         let targetMemberships = null;
 
-        for (const [userId, memberships] of tenantMembershipsByUser) {
+        for (const [userId, memberships] of tenantUsershipsByUser) {
           if (!Array.isArray(memberships)) {
             continue;
           }
@@ -5086,14 +5086,14 @@ const createInMemoryAuthStore = ({
           return null;
         }
 
-        const previousStatus = normalizeTenantMembershipStatusForRead(targetMembership.status);
+        const previousStatus = normalizeTenantUsershipStatusForRead(targetMembership.status);
         if (!VALID_TENANT_MEMBERSHIP_STATUS.has(previousStatus)) {
-          throw new Error('updateTenantMembershipStatus encountered unsupported existing status');
+          throw new Error('updateTenantUsershipStatus encountered unsupported existing status');
         }
         if (previousStatus !== normalizedNextStatus) {
           let previousMembershipId = '';
           if (previousStatus === 'left' && normalizedNextStatus === 'active') {
-            appendTenantMembershipHistory({
+            appendTenantUsershipHistory({
               membership: {
                 ...targetMembership,
                 userId: targetUserId,
@@ -5116,14 +5116,14 @@ const createInMemoryAuthStore = ({
               };
             }
             if (previousMembershipId) {
-              tenantMembershipRolesByMembershipId.delete(previousMembershipId);
+              tenantUsershipRolesByMembershipId.delete(previousMembershipId);
             }
-            tenantMembershipRolesByMembershipId.set(
+            tenantUsershipRolesByMembershipId.set(
               String(targetMembership.membershipId || '').trim(),
               []
             );
           } else if (normalizedNextStatus === 'left') {
-            appendTenantMembershipHistory({
+            appendTenantUsershipHistory({
               membership: {
                 ...targetMembership,
                 userId: targetUserId,
@@ -5144,7 +5144,7 @@ const createInMemoryAuthStore = ({
             }
             const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
             if (resolvedMembershipId) {
-              tenantMembershipRolesByMembershipId.delete(resolvedMembershipId);
+              tenantUsershipRolesByMembershipId.delete(resolvedMembershipId);
             }
           } else if (normalizedNextStatus === 'active') {
             targetMembership.leftAt = null;
@@ -5165,7 +5165,7 @@ const createInMemoryAuthStore = ({
             });
             const userDomains = domainsByUserId.get(targetUserId) || new Set();
             const hasAnyActiveMembership = (tenantsByUserId.get(targetUserId) || []).some(
-              (membership) => isTenantMembershipActiveForAuth(membership)
+              (membership) => isTenantUsershipActiveForAuth(membership)
             );
             if (!hasAnyActiveMembership) {
               userDomains.delete('tenant');
@@ -5174,7 +5174,7 @@ const createInMemoryAuthStore = ({
           }
 
           if (normalizedNextStatus === 'active') {
-            syncTenantMembershipPermissionSnapshot({
+            syncTenantUsershipPermissionSnapshot({
               membershipState: {
                 userId: targetUserId,
                 memberships: targetMemberships,
@@ -5186,7 +5186,7 @@ const createInMemoryAuthStore = ({
         }
 
         const resolvedMembershipId = String(targetMembership.membershipId || '').trim();
-        const currentStatus = normalizeTenantMembershipStatusForRead(targetMembership.status);
+        const currentStatus = normalizeTenantUsershipStatusForRead(targetMembership.status);
         let auditRecorded = false;
         if (shouldRecordAudit) {
           const normalizedAuditReason =
@@ -5199,7 +5199,7 @@ const createInMemoryAuthStore = ({
               tenantId: normalizedTenantId,
               requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
               traceparent: auditContext.traceparent,
-              eventType: 'auth.tenant.member.status.updated',
+              eventType: 'auth.tenant.user.status.updated',
               actorUserId: auditContext.actorUserId || operatorUserId || null,
               actorSessionId: auditContext.actorSessionId || null,
               targetType: 'membership',
@@ -5221,7 +5221,7 @@ const createInMemoryAuthStore = ({
               }
             });
           } catch (error) {
-            const auditWriteError = new Error('tenant membership status audit write failed');
+            const auditWriteError = new Error('tenant usership status audit write failed');
             auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
             auditWriteError.cause = error;
             throw auditWriteError;
@@ -5241,12 +5241,12 @@ const createInMemoryAuthStore = ({
         if (snapshot) {
           restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
           restoreMapFromSnapshot(
-            tenantMembershipRolesByMembershipId,
-            snapshot.tenantMembershipRolesByMembershipId
+            tenantUsershipRolesByMembershipId,
+            snapshot.tenantUsershipRolesByMembershipId
           );
           restoreMapFromSnapshot(
-            tenantMembershipHistoryByPair,
-            snapshot.tenantMembershipHistoryByPair
+            tenantUsershipHistoryByPair,
+            snapshot.tenantUsershipHistoryByPair
           );
           restoreMapFromSnapshot(domainsByUserId, snapshot.domainsByUserId);
           restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
@@ -5257,16 +5257,16 @@ const createInMemoryAuthStore = ({
       }
     },
 
-    listTenantMembershipRoleBindings: async ({
+    listTenantUsershipRoleBindings: async ({
       membershipId,
       tenantId
     } = {}) =>
-      listTenantMembershipRoleBindingsForMembershipId({
+      listTenantUsershipRoleBindingsForMembershipId({
         membershipId,
         tenantId
       }),
 
-    replaceTenantMembershipRoleBindingsAndSyncSnapshot: async ({
+    replaceTenantUsershipRoleBindingsAndSyncSnapshot: async ({
       tenantId,
       membershipId,
       roleIds = [],
@@ -5275,13 +5275,13 @@ const createInMemoryAuthStore = ({
       const normalizedTenantId = String(tenantId || '').trim();
       const normalizedMembershipId = String(membershipId || '').trim();
       if (!normalizedTenantId || !normalizedMembershipId) {
-        throw new Error('replaceTenantMembershipRoleBindingsAndSyncSnapshot requires tenantId and membershipId');
+        throw new Error('replaceTenantUsershipRoleBindingsAndSyncSnapshot requires tenantId and membershipId');
       }
       const shouldRecordAudit = auditContext && typeof auditContext === 'object';
       const snapshot = shouldRecordAudit
         ? {
-          tenantMembershipRolesByMembershipId: structuredClone(
-            tenantMembershipRolesByMembershipId
+          tenantUsershipRolesByMembershipId: structuredClone(
+            tenantUsershipRolesByMembershipId
           ),
           tenantsByUserId: structuredClone(tenantsByUserId),
           sessionsById: structuredClone(sessionsById),
@@ -5290,7 +5290,7 @@ const createInMemoryAuthStore = ({
         }
         : null;
       try {
-        const membershipState = findTenantMembershipStateByMembershipId(
+        const membershipState = findTenantUsershipStateByMembershipId(
           normalizedMembershipId
         );
         if (!membershipState) {
@@ -5304,20 +5304,20 @@ const createInMemoryAuthStore = ({
         }
         if (
           !isActiveLikeStatus(
-            normalizeTenantMembershipStatusForRead(
+            normalizeTenantUsershipStatusForRead(
               membershipState.membership?.status
             )
           )
         ) {
           const membershipStatusError = new Error(
-            'tenant membership role bindings membership not active'
+            'tenant usership role bindings membership not active'
           );
           membershipStatusError.code =
             'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE';
           throw membershipStatusError;
         }
         const normalizedAffectedUserId =
-          normalizeStrictTenantMembershipRoleBindingIdentity(
+          normalizeStrictTenantUsershipRoleBindingIdentity(
             membershipState?.userId,
             'tenant-membership-role-bindings-invalid-affected-user-id'
           );
@@ -5349,7 +5349,7 @@ const createInMemoryAuthStore = ({
             || !isActiveLikeStatus(normalizedCatalogStatus)
           ) {
             const roleBindingError = new Error(
-              'tenant membership role bindings role invalid'
+              'tenant usership role bindings role invalid'
             );
             roleBindingError.code =
               'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID';
@@ -5357,22 +5357,22 @@ const createInMemoryAuthStore = ({
             throw roleBindingError;
           }
         }
-        const previousRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+        const previousRoleIds = listTenantUsershipRoleBindingsForMembershipId({
           membershipId: normalizedMembershipId,
           tenantId: normalizedTenantId
         });
-        const resolvedRoleIds = replaceTenantMembershipRoleBindingsForMembershipId({
+        const resolvedRoleIds = replaceTenantUsershipRoleBindingsForMembershipId({
           membershipId: normalizedMembershipId,
           roleIds: normalizedRoleIds
         });
         const rollbackRoleBindings = () =>
-          replaceTenantMembershipRoleBindingsForMembershipId({
+          replaceTenantUsershipRoleBindingsForMembershipId({
             membershipId: normalizedMembershipId,
             roleIds: previousRoleIds
           });
         let syncResult;
         try {
-          syncResult = syncTenantMembershipPermissionSnapshot({
+          syncResult = syncTenantUsershipPermissionSnapshot({
             membershipState,
             reason: 'tenant-membership-role-bindings-changed'
           });
@@ -5386,7 +5386,7 @@ const createInMemoryAuthStore = ({
         if (syncReason !== 'ok') {
           rollbackRoleBindings();
           const syncError = new Error(
-            `tenant membership role bindings sync failed: ${syncReason || 'unknown'}`
+            `tenant usership role bindings sync failed: ${syncReason || 'unknown'}`
           );
           syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
           syncError.syncReason = syncReason || 'unknown';
@@ -5418,7 +5418,7 @@ const createInMemoryAuthStore = ({
             });
           } catch (error) {
             const auditWriteError = new Error(
-              'tenant membership role bindings audit write failed'
+              'tenant usership role bindings audit write failed'
             );
             auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
             auditWriteError.cause = error;
@@ -5436,8 +5436,8 @@ const createInMemoryAuthStore = ({
       } catch (error) {
         if (snapshot) {
           restoreMapFromSnapshot(
-            tenantMembershipRolesByMembershipId,
-            snapshot.tenantMembershipRolesByMembershipId
+            tenantUsershipRolesByMembershipId,
+            snapshot.tenantUsershipRolesByMembershipId
           );
           restoreMapFromSnapshot(tenantsByUserId, snapshot.tenantsByUserId);
           restoreMapFromSnapshot(sessionsById, snapshot.sessionsById);
@@ -7656,14 +7656,14 @@ const createInMemoryAuthStore = ({
           if (String(membership?.tenantId || '').trim() !== normalizedTenantId) {
             continue;
           }
-          if (!isTenantMembershipActiveForAuth(membership)) {
+          if (!isTenantUsershipActiveForAuth(membership)) {
             continue;
           }
           const membershipId = normalizeStrictTenantRolePermissionGrantIdentity(
             membership?.membershipId || membership?.membership_id,
             'tenant-role-permission-grants-invalid-membership-id'
           );
-          const boundRoleIds = listTenantMembershipRoleBindingsForMembershipId({
+          const boundRoleIds = listTenantUsershipRoleBindingsForMembershipId({
             membershipId,
             tenantId: normalizedTenantId
           });
@@ -7727,7 +7727,7 @@ const createInMemoryAuthStore = ({
             membershipId,
             userId: resolvedUserId
           });
-          const syncResult = syncTenantMembershipPermissionSnapshot({
+          const syncResult = syncTenantUsershipPermissionSnapshot({
             membershipState,
             reason: 'tenant-role-permission-grants-changed',
             revokeSessions: false

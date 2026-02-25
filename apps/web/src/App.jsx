@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from 'antd';
 import AuthApp from './features/auth/AuthApp';
-import PlatformApp from './features/platform-management/PlatformApp';
-import TenantApp from './features/tenant-management/TenantApp';
+import { createApiRequest } from './shared-kernel/http/request-json.mjs';
+import { PlatformApp } from './domains/platform/index.mjs';
+import {
+  TenantApp,
+  readTenantPermissionState,
+  selectPermissionUiState,
+  useTenantSessionFlow
+} from './domains/tenant/index.mjs';
 import {
   APP_SCREEN_DASHBOARD,
   APP_SCREEN_LOGIN,
@@ -12,67 +18,14 @@ import {
   resolvePreferredScreenFromPathname
 } from './features/app-shell/app-screen';
 import {
-  readTenantPermissionState,
-  selectPermissionUiState
-} from './features/tenant-management/tenant-permission-state';
-import { useTenantSessionFlow } from './features/tenant-management/useTenantSessionFlow';
-import {
   clearPersistedAuthSession,
   persistAuthSession,
   readEntryDomainFromLocation,
   readPersistedAuthSession
 } from './features/auth/auth-session-storage';
 
-const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const GLOBAL_TOAST_DURATION_SECONDS = 3;
-
-const readJsonSafely = async (response) => {
-  const contentType = response.headers.get('content-type') || '';
-  if (
-    contentType.includes('application/json') ||
-    contentType.includes('application/problem+json')
-  ) {
-    try {
-      return await response.json();
-    } catch (_error) {
-      return {};
-    }
-  }
-
-  const text = await response.text();
-  return {
-    detail: text || '请求失败'
-  };
-};
-
-const requestJson = async ({ path, method = 'POST', payload, accessToken }) => {
-  const headers = {
-    Accept: 'application/json, application/problem+json'
-  };
-
-  if (payload !== undefined) {
-    headers['Content-Type'] = 'application/json';
-  }
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
-  }
-
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    body: payload === undefined ? undefined : JSON.stringify(payload)
-  });
-
-  const body = await readJsonSafely(response);
-  if (response.ok) {
-    return body;
-  }
-
-  const error = new Error(body?.detail || '请求失败');
-  error.status = response.status;
-  error.payload = body || {};
-  throw error;
-};
+const requestJson = createApiRequest();
 
 const postJson = async (path, payload) => requestJson({ path, payload, method: 'POST' });
 

@@ -4,85 +4,69 @@ const { readConfig } = require('./config/env');
 const { createRouteHandlers } = require('./http-routes');
 const { checkDependencies } = require('./infrastructure/connectivity');
 const { buildProblemDetails } = require('./common/problem-details');
-const { AuthProblemError } = require('./modules/auth/auth.routes');
+const { AuthProblemError } = require('./shared-kernel/auth/auth-problem-error');
 const {
   markRoutePreauthorizedContext
-} = require('./modules/auth/route-preauthorization');
+} = require('./shared-kernel/auth/route-authz');
 const {
   PLATFORM_ORG_LIST_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
-  PLATFORM_ORG_OWNER_TRANSFER_PATH
-} = require('./modules/platform/org.constants');
-const {
+  PLATFORM_ORG_OWNER_TRANSFER_PATH,
   PLATFORM_ROLE_LIST_ROUTE_KEY,
   PLATFORM_ROLE_CREATE_ROUTE_KEY,
   PLATFORM_ROLE_UPDATE_ROUTE_KEY,
   PLATFORM_ROLE_DELETE_ROUTE_KEY,
   PLATFORM_ROLE_PERMISSION_GET_ROUTE_KEY,
-  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY
-} = require('./modules/platform/role.constants');
-const {
+  PLATFORM_ROLE_PERMISSION_PUT_ROUTE_KEY,
   PLATFORM_USER_LIST_ROUTE_KEY,
   PLATFORM_USER_GET_ROUTE_KEY,
   PLATFORM_USER_CREATE_ROUTE_KEY,
   PLATFORM_USER_UPDATE_ROUTE_KEY,
   PLATFORM_USER_SOFT_DELETE_ROUTE_KEY,
-  PLATFORM_USER_STATUS_ROUTE_KEY
-} = require('./modules/platform/user.constants');
-const {
+  PLATFORM_USER_STATUS_ROUTE_KEY,
   PLATFORM_SYSTEM_CONFIG_GET_ROUTE_KEY,
-  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
-} = require('./modules/platform/system-config.constants');
-const {
+  PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY,
   PLATFORM_INTEGRATION_LIST_ROUTE_KEY,
   PLATFORM_INTEGRATION_GET_ROUTE_KEY,
   PLATFORM_INTEGRATION_CREATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_UPDATE_ROUTE_KEY,
-  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY
-} = require('./modules/platform/integration.constants');
-const {
+  PLATFORM_INTEGRATION_LIFECYCLE_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_LIST_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CREATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_COMPATIBILITY_CHECK_ROUTE_KEY,
   PLATFORM_INTEGRATION_CONTRACT_CONSISTENCY_CHECK_ROUTE_KEY,
-  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY
-} = require('./modules/platform/integration-contract.constants');
-const {
+  PLATFORM_INTEGRATION_CONTRACT_ACTIVATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_RECOVERY_QUEUE_ROUTE_KEY,
-  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY
-} = require('./modules/platform/integration-recovery.constants');
-const {
+  PLATFORM_INTEGRATION_RECOVERY_REPLAY_ROUTE_KEY,
   PLATFORM_INTEGRATION_FREEZE_STATUS_ROUTE_KEY,
   PLATFORM_INTEGRATION_FREEZE_ACTIVATE_ROUTE_KEY,
   PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
-} = require('./modules/platform/integration-freeze.constants');
+} = require('./domains/platform');
 const {
   PLATFORM_AUDIT_EVENTS_ROUTE_KEY,
   TENANT_AUDIT_EVENTS_ROUTE_KEY
 } = require('./modules/audit/audit.constants');
 const {
-  TENANT_MEMBER_LIST_ROUTE_KEY,
-  TENANT_MEMBER_CREATE_ROUTE_KEY,
-  TENANT_MEMBER_DETAIL_ROUTE_KEY,
-  TENANT_MEMBER_STATUS_ROUTE_KEY,
-  TENANT_MEMBER_PROFILE_ROUTE_KEY,
-  TENANT_MEMBER_ROLE_BINDING_GET_ROUTE_KEY,
-  TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY
-} = require('./modules/tenant/member.constants');
-const {
+  TENANT_USER_LIST_ROUTE_KEY,
+  TENANT_USER_CREATE_ROUTE_KEY,
+  TENANT_USER_DETAIL_ROUTE_KEY,
+  TENANT_USER_STATUS_ROUTE_KEY,
+  TENANT_USER_PROFILE_ROUTE_KEY,
+  TENANT_USER_ROLE_BINDING_GET_ROUTE_KEY,
+  TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY,
   TENANT_ROLE_LIST_ROUTE_KEY,
   TENANT_ROLE_CREATE_ROUTE_KEY,
   TENANT_ROLE_UPDATE_ROUTE_KEY,
   TENANT_ROLE_DELETE_ROUTE_KEY,
   TENANT_ROLE_PERMISSION_GET_ROUTE_KEY,
   TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY
-} = require('./modules/tenant/role.constants');
+} = require('./domains/tenant');
 const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
-} = require('./modules/auth/auth.service');
+} = require('./shared-kernel/auth/auth-capabilities');
 const {
   ROUTE_DEFINITIONS,
   toRouteDefinitionsSnapshot,
@@ -183,10 +167,10 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT = new Set([
 const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   'POST /auth/tenant/user-management/provision-user',
   'POST /auth/platform/user-management/provision-user',
-  TENANT_MEMBER_CREATE_ROUTE_KEY,
-  TENANT_MEMBER_PROFILE_ROUTE_KEY,
-  TENANT_MEMBER_STATUS_ROUTE_KEY,
-  TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY,
+  TENANT_USER_CREATE_ROUTE_KEY,
+  TENANT_USER_PROFILE_ROUTE_KEY,
+  TENANT_USER_STATUS_ROUTE_KEY,
+  TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY,
   TENANT_ROLE_CREATE_ROUTE_KEY,
   TENANT_ROLE_UPDATE_ROUTE_KEY,
   TENANT_ROLE_DELETE_ROUTE_KEY,
@@ -216,10 +200,10 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
-  TENANT_MEMBER_CREATE_ROUTE_KEY,
-  TENANT_MEMBER_PROFILE_ROUTE_KEY,
-  TENANT_MEMBER_STATUS_ROUTE_KEY,
-  TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY,
+  TENANT_USER_CREATE_ROUTE_KEY,
+  TENANT_USER_PROFILE_ROUTE_KEY,
+  TENANT_USER_STATUS_ROUTE_KEY,
+  TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY,
   TENANT_ROLE_CREATE_ROUTE_KEY,
   TENANT_ROLE_UPDATE_ROUTE_KEY,
   TENANT_ROLE_DELETE_ROUTE_KEY,
@@ -272,10 +256,10 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS_IGNORE_TENANT = new Set([
   PLATFORM_INTEGRATION_FREEZE_RELEASE_ROUTE_KEY
 ]);
 const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
-  [TENANT_MEMBER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
-  [TENANT_MEMBER_PROFILE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
-  [TENANT_MEMBER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
-  [TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [TENANT_USER_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_USER_PROFILE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_USER_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [TENANT_ROLE_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [TENANT_ROLE_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [TENANT_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
@@ -873,9 +857,9 @@ const normalizeRouteParamsForIdempotency = ({
     routeParams
   });
   if (
-    routeKey === TENANT_MEMBER_STATUS_ROUTE_KEY
-    || routeKey === TENANT_MEMBER_PROFILE_ROUTE_KEY
-    || routeKey === TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY
+    routeKey === TENANT_USER_STATUS_ROUTE_KEY
+    || routeKey === TENANT_USER_PROFILE_ROUTE_KEY
+    || routeKey === TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY
   ) {
     normalizedRouteParams.membership_id = String(
       normalizedRouteParams.membership_id || ''
@@ -1035,9 +1019,9 @@ const shouldPersistIdempotencyResponse = ({
   );
   const normalizedRouteKey = String(routeKey || '').trim();
   if (
-    (normalizedRouteKey === TENANT_MEMBER_CREATE_ROUTE_KEY
-      || normalizedRouteKey === TENANT_MEMBER_PROFILE_ROUTE_KEY
-      || normalizedRouteKey === TENANT_MEMBER_STATUS_ROUTE_KEY)
+    (normalizedRouteKey === TENANT_USER_CREATE_ROUTE_KEY
+      || normalizedRouteKey === TENANT_USER_PROFILE_ROUTE_KEY
+      || normalizedRouteKey === TENANT_USER_STATUS_ROUTE_KEY)
     && resolvedStatusCode === 409
   ) {
     return parseProblemRetryableFromResponse(response) !== true;
@@ -2269,10 +2253,10 @@ const createRouteTable = ({
             requestId
           )
       }),
-    [TENANT_MEMBER_LIST_ROUTE_KEY]: async () =>
+    [TENANT_USER_LIST_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>
-          handlers.tenantListMembers(
+          handlers.tenantListUsers(
             requestId,
             headers.authorization,
             getRouteQuery(),
@@ -2280,13 +2264,13 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    [TENANT_MEMBER_CREATE_ROUTE_KEY]: async () =>
+    [TENANT_USER_CREATE_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
-        routeKey: TENANT_MEMBER_CREATE_ROUTE_KEY,
+        routeKey: TENANT_USER_CREATE_ROUTE_KEY,
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.tenantCreateMember(
+              handlers.tenantCreateUser(
                 requestId,
                 headers.authorization,
                 body || {},
@@ -2295,10 +2279,10 @@ const createRouteTable = ({
             requestId
           )
       }),
-    [TENANT_MEMBER_DETAIL_ROUTE_KEY]: async () =>
+    [TENANT_USER_DETAIL_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>
-          handlers.tenantGetMemberDetail(
+          handlers.tenantGetUserDetail(
             requestId,
             headers.authorization,
             getRouteParams(),
@@ -2306,13 +2290,13 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    [TENANT_MEMBER_STATUS_ROUTE_KEY]: async () =>
+    [TENANT_USER_STATUS_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
-        routeKey: TENANT_MEMBER_STATUS_ROUTE_KEY,
+        routeKey: TENANT_USER_STATUS_ROUTE_KEY,
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.tenantUpdateMemberStatus(
+              handlers.tenantUpdateUserStatus(
                 requestId,
                 headers.authorization,
                 getRouteParams(),
@@ -2323,13 +2307,13 @@ const createRouteTable = ({
             requestId
           )
       }),
-    [TENANT_MEMBER_PROFILE_ROUTE_KEY]: async () =>
+    [TENANT_USER_PROFILE_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
-        routeKey: TENANT_MEMBER_PROFILE_ROUTE_KEY,
+        routeKey: TENANT_USER_PROFILE_ROUTE_KEY,
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.tenantUpdateMemberProfile(
+              handlers.tenantUpdateUserProfile(
                 requestId,
                 headers.authorization,
                 getRouteParams(),
@@ -2339,10 +2323,10 @@ const createRouteTable = ({
             requestId
           )
       }),
-    [TENANT_MEMBER_ROLE_BINDING_GET_ROUTE_KEY]: async () =>
+    [TENANT_USER_ROLE_BINDING_GET_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>
-          handlers.tenantGetMemberRoles(
+          handlers.tenantGetUserRoles(
             requestId,
             headers.authorization,
             getRouteParams(),
@@ -2350,13 +2334,13 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    [TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY]: async () =>
+    [TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
-        routeKey: TENANT_MEMBER_ROLE_BINDING_PUT_ROUTE_KEY,
+        routeKey: TENANT_USER_ROLE_BINDING_PUT_ROUTE_KEY,
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.tenantReplaceMemberRoles(
+              handlers.tenantReplaceUserRoles(
                 requestId,
                 headers.authorization,
                 getRouteParams(),

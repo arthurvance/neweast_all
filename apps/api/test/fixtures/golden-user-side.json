@@ -1,0 +1,49 @@
+{
+  "baseline_version": "2026-02-25",
+  "owner": "platform-tenant-refactor",
+  "description": "User-visible behavior baseline for critical auth and governance flows.",
+  "flows": [
+    {
+      "flow_id": "auth.login",
+      "required_steps": [
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "POST /auth/logout"
+      ],
+      "must_keep": [
+        "Problem Details error_code contract",
+        "request_id + traceparent response headers",
+        "session scope semantics"
+      ]
+    },
+    {
+      "flow_id": "platform.governance",
+      "required_steps": [
+        "POST /platform/orgs",
+        "POST /platform/orgs/status",
+        "POST /platform/orgs/owner-transfer",
+        "POST /platform/roles",
+        "PUT /platform/roles/:role_id/permissions"
+      ],
+      "must_keep": [
+        "permission boundary enforcement",
+        "idempotency replay semantics",
+        "audit event visibility"
+      ]
+    },
+    {
+      "flow_id": "tenant.governance",
+      "required_steps": [
+        "POST /tenant/users",
+        "PATCH /tenant/users/:membership_id/status",
+        "POST /tenant/roles",
+        "PUT /tenant/roles/:role_id/permissions"
+      ],
+      "must_keep": [
+        "tenant isolation semantics",
+        "protected role guardrails",
+        "audit event visibility"
+      ]
+    }
+  ]
+}

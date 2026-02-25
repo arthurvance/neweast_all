@@ -84,6 +84,29 @@ const loginByPhone = async (authService, requestId, phone) =>
     entryDomain: 'tenant'
   });
 
+const resolveMembershipIdByUserAndTenant = async ({
+  authService,
+  requestId,
+  operatorUserId,
+  targetUserId,
+  tenantId
+}) => {
+  const users = await authService.listTenantUsers({
+    requestId,
+    operatorUserId,
+    tenantId,
+    page: 1,
+    pageSize: 100,
+    entryDomain: 'tenant'
+  });
+  assert.ok(Array.isArray(users));
+  const target = users.find((user) => String(user?.user_id || '') === String(targetUserId || ''));
+  assert.ok(target);
+  const membershipId = String(target?.membership_id || '').trim();
+  assert.ok(membershipId.length > 0);
+  return membershipId;
+};
+
 test('POST /tenant/roles creates role and GET /tenant/roles returns tenant-scoped catalog entries', async () => {
   const harness = createHarness();
   const login = await loginByPhone(
@@ -1726,8 +1749,16 @@ test('PATCH /tenant/roles/:role_id disabling role converges affected sessions an
   });
   assert.equal(replacePermission.status, 200);
 
+  const targetMembershipId = await resolveMembershipIdByUserAndTenant({
+    authService: harness.authService,
+    requestId: 'req-tenant-role-disable-target-membership-resolve',
+    operatorUserId: 'tenant-role-operator-a',
+    targetUserId: 'tenant-role-operator-a',
+    tenantId: 'tenant-a'
+  });
+
   const replaceRoleBindings = await dispatchApiRoute({
-    pathname: '/tenant/members/membership-tenant-role-a/roles',
+    pathname: `/tenant/users/${targetMembershipId}/roles`,
     method: 'PUT',
     requestId: 'req-tenant-role-disable-bindings-replace',
     headers: operatorHeaders,
@@ -1798,8 +1829,8 @@ test('PATCH /tenant/roles/:role_id disabling role converges affected sessions an
   assert.equal(targetProbeDenied.status, 403);
   assert.equal(JSON.parse(targetProbeDenied.body).error_code, 'AUTH-403-FORBIDDEN');
 
-  const roleBindings = await harness.authService._internals.authStore.listTenantMembershipRoleBindings({
-    membershipId: 'membership-tenant-role-a',
+  const roleBindings = await harness.authService._internals.authStore.listTenantUsershipRoleBindings({
+    membershipId: targetMembershipId,
     tenantId: 'tenant-a'
   });
   assert.ok(Array.isArray(roleBindings));

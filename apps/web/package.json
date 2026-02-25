@@ -8,9 +8,12 @@
     "prebuild": "pnpm run sync:permission-catalog",
     "predev": "pnpm run sync:permission-catalog",
     "pretest": "pnpm run sync:permission-catalog",
-    "lint": "node ../../tools/lint.js src test",
+    "lint": "node ../../tools/lint.js src test scripts && pnpm run check:domain-symmetry",
     "build": "vite build --config vite.config.js",
     "test": "node --test test/server.test.js && node --test test/chrome.playwright.test.js",
+    "test:shared-kernel-http": "node --test test/shared-kernel-http.test.mjs",
+    "test:deterministic": "node --test test/helpers/*.test.mjs",
+    "check:domain-symmetry": "node scripts/check-domain-symmetry.cjs",
     "smoke": "node --test test/chrome.playwright.test.js",
     "dev": "vite --host 0.0.0.0 --port 4173 --config vite.config.js",
     "start": "node server.js"

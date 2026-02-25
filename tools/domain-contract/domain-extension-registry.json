@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "extensions": [
+    {
+      "capability_id": "platform.settings.org",
+      "domain": "platform",
+      "module": "settings",
+      "capability": "org",
+      "owner": "platform-core",
+      "reason": "Platform owns organization governance. Tenant only keeps switch-org session flow.",
+      "exit_condition": "Remove this record when tenant org governance reaches parity.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "platform.config.password-policy",
+      "domain": "platform",
+      "module": "config",
+      "capability": "password-policy",
+      "owner": "platform-core",
+      "reason": "Password policy is currently a platform-only governance capability.",
+      "exit_condition": "Remove when tenant exposes a dedicated password-policy capability.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "platform.config.system-config",
+      "domain": "platform",
+      "module": "config",
+      "capability": "system-config",
+      "owner": "platform-core",
+      "reason": "System config management is currently platform-only.",
+      "exit_condition": "Remove when tenant config module gains parity.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "platform.config.integration",
+      "domain": "platform",
+      "module": "config",
+      "capability": "integration",
+      "owner": "platform-core",
+      "reason": "Integration governance is currently operated by the platform domain.",
+      "exit_condition": "Remove when tenant integration governance is introduced.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "tenant.config.domain-extension-registry",
+      "domain": "tenant",
+      "module": "config",
+      "capability": "domain-extension/registry",
+      "owner": "tenant-core",
+      "reason": "Tenant config is in placeholder mode and only keeps extension registry.",
+      "exit_condition": "Remove when tenant config exposes user-visible capabilities.",
+      "review_at": "2026-06-30"
+    }
+  ]
+}

@@ -75,8 +75,8 @@ const AUDIT_EVENT_REDACTION_KEY_PATTERN =
 const MAX_AUDIT_QUERY_PAGE_SIZE = 200;
 const MAX_TENANT_MEMBERSHIP_ID_LENGTH = 64;
 const MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS = 5;
-const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
-const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
+const MAX_TENANT_USER_DISPLAY_NAME_LENGTH = 64;
+const MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH = 128;
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 const MYSQL_DATA_TOO_LONG_ERRNO = 1406;
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
@@ -115,8 +115,8 @@ const PLATFORM_ROLE_ASSIGNMENT_ALLOWED_FIELDS = new Set([
   'roleId',
   'status'
 ]);
-const UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD = Symbol(
-  'unsetExpectedTenantMemberProfileField'
+const UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD = Symbol(
+  'unsetExpectedTenantUserProfileField'
 );
 
 const DEFAULT_SEED_USERS = [];
@@ -664,7 +664,7 @@ const errors = {
       errorCode: 'AUTH-409-PROVISION-CONFLICT'
     }),
 
-  tenantMembershipNotFound: () =>
+  tenantUsershipNotFound: () =>
     authError({
       status: 404,
       title: 'Not Found',
@@ -675,7 +675,7 @@ const errors = {
       }
     }),
 
-  tenantMemberDependencyUnavailable: ({ reason = 'dependency-unavailable' } = {}) =>
+  tenantUserDependencyUnavailable: ({ reason = 'dependency-unavailable' } = {}) =>
     authError({
       status: 503,
       title: 'Service Unavailable',
@@ -1031,7 +1031,7 @@ const normalizeOrgStatus = (status) => {
   }
   return '';
 };
-const normalizeTenantMembershipStatus = (status) => {
+const normalizeTenantUsershipStatus = (status) => {
   const normalizedStatus = String(status || '').trim().toLowerCase();
   if (normalizedStatus === 'enabled') {
     return 'active';
@@ -1045,16 +1045,16 @@ const normalizeTenantMembershipStatus = (status) => {
   }
   return '';
 };
-const isValidTenantMembershipId = (membershipId) =>
+const isValidTenantUsershipId = (membershipId) =>
   TENANT_MEMBERSHIP_ID_PATTERN.test(String(membershipId || ''))
   && String(membershipId || '').length <= MAX_TENANT_MEMBERSHIP_ID_LENGTH;
-const normalizeStrictTenantMembershipIdFromInput = (membershipId) => {
+const normalizeStrictTenantUsershipIdFromInput = (membershipId) => {
   const normalizedMembershipId = normalizeStrictRequiredStringField(membershipId)
     .toLowerCase();
   if (
     !normalizedMembershipId
     || CONTROL_CHAR_PATTERN.test(normalizedMembershipId)
-    || !isValidTenantMembershipId(normalizedMembershipId)
+    || !isValidTenantUsershipId(normalizedMembershipId)
   ) {
     throw errors.invalidPayload();
   }
@@ -1117,7 +1117,7 @@ const parseOptionalTenantName = (tenantName) => {
   }
   return { valid: true, value: normalized };
 };
-const parseOptionalTenantMemberProfileField = ({
+const parseOptionalTenantUserProfileField = ({
   value,
   maxLength
 } = {}) => {
@@ -1138,13 +1138,13 @@ const parseOptionalTenantMemberProfileField = ({
   }
   return { valid: true, value: normalized };
 };
-const normalizeTenantMembershipRecordFromStore = ({
+const normalizeTenantUsershipRecordFromStore = ({
   membership = null,
   expectedMembershipId = '',
   expectedUserId = '',
   expectedTenantId = '',
-  expectedDisplayName = UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD,
-  expectedDepartmentName = UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD
+  expectedDisplayName = UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD,
+  expectedDepartmentName = UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD
 } = {}) => {
   if (!membership || typeof membership !== 'object') {
     return null;
@@ -1161,7 +1161,7 @@ const normalizeTenantMembershipRecordFromStore = ({
   const normalizedPhone = normalizeStrictRequiredStringField(
     resolveRawCamelSnakeField(membership, 'phone', 'phone')
   );
-  const normalizedStatus = normalizeTenantMembershipStatus(
+  const normalizedStatus = normalizeTenantUsershipStatus(
     normalizeStrictRequiredStringField(
       resolveRawCamelSnakeField(membership, 'status', 'status')
     )
@@ -1178,16 +1178,16 @@ const normalizeTenantMembershipRecordFromStore = ({
   const parsedTenantName = parseOptionalTenantName(
     resolveRawCamelSnakeField(membership, 'tenantName', 'tenant_name')
   );
-  const parsedDisplayName = parseOptionalTenantMemberProfileField({
+  const parsedDisplayName = parseOptionalTenantUserProfileField({
     value: resolveRawCamelSnakeField(membership, 'displayName', 'display_name'),
-    maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+    maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
   });
-  const parsedDepartmentName = parseOptionalTenantMemberProfileField({
+  const parsedDepartmentName = parseOptionalTenantUserProfileField({
     value: resolveRawCamelSnakeField(membership, 'departmentName', 'department_name'),
-    maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+    maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
   });
   if (
-    !isValidTenantMembershipId(normalizedMembershipId)
+    !isValidTenantUsershipId(normalizedMembershipId)
     || !normalizedUserId
     || !normalizedTenantId
     || !normalizePhone(normalizedPhone)
@@ -1210,23 +1210,23 @@ const normalizeTenantMembershipRecordFromStore = ({
   ) {
     return null;
   }
-  if (expectedDisplayName !== UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD) {
+  if (expectedDisplayName !== UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD) {
     const normalizedExpectedDisplayName = normalizeStrictRequiredStringField(
       expectedDisplayName
     );
     if (
       !normalizedExpectedDisplayName
-      || normalizedExpectedDisplayName.length > MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      || normalizedExpectedDisplayName.length > MAX_TENANT_USER_DISPLAY_NAME_LENGTH
       || CONTROL_CHAR_PATTERN.test(normalizedExpectedDisplayName)
       || parsedDisplayName.value !== normalizedExpectedDisplayName
     ) {
       return null;
     }
   }
-  if (expectedDepartmentName !== UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD) {
-    const parsedExpectedDepartmentName = parseOptionalTenantMemberProfileField({
+  if (expectedDepartmentName !== UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD) {
+    const parsedExpectedDepartmentName = parseOptionalTenantUserProfileField({
       value: expectedDepartmentName,
-      maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+      maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
     });
     if (
       !parsedExpectedDepartmentName.valid
@@ -1361,7 +1361,7 @@ const createAuthService = (options = {}) => {
     userRepository,
     sessionRepository,
     domainAccessRepository,
-    tenantMembershipRepository,
+    tenantUsershipRepository,
     permissionRepository
   } = createAuthRepositories({ authStore });
   const hasExternalAuthStore = Boolean(options.authStore);
@@ -1736,7 +1736,7 @@ const createAuthService = (options = {}) => {
 
   const tenantContextService = createTenantContextService({
     sessionRepository,
-    tenantMembershipRepository,
+    tenantUsershipRepository,
     normalizeTenantId,
     addAuditEvent,
     invalidateSessionCacheBySessionId
@@ -1802,15 +1802,15 @@ const createAuthService = (options = {}) => {
       if (!normalizedTenantId) {
         return null;
       }
-      if (typeof authStore.findTenantMembershipByUserAndTenantId !== 'function') {
+      if (typeof authStore.findTenantUsershipByUserAndTenantId !== 'function') {
         return null;
       }
       try {
-        const membership = await authStore.findTenantMembershipByUserAndTenantId({
+        const membership = await authStore.findTenantUsershipByUserAndTenantId({
           userId: normalizedUserId,
           tenantId: normalizedTenantId
         });
-        const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+        const normalizedMembership = normalizeTenantUsershipRecordFromStore({
           membership,
           expectedUserId: normalizedUserId,
           expectedTenantId: normalizedTenantId
@@ -2713,7 +2713,7 @@ const createAuthService = (options = {}) => {
       );
       const roleId = normalizeStrictRequiredStringField(rawRoleId).toLowerCase();
       if (!roleId) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-catalog-invalid'
         });
       }
@@ -2722,7 +2722,7 @@ const createAuthService = (options = {}) => {
         continue;
       }
       if (seenRequestedRoleIdKeys.has(roleIdKey)) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-catalog-duplicate'
         });
       }
@@ -2740,7 +2740,7 @@ const createAuthService = (options = {}) => {
         catalogEntry?.status
       ).toLowerCase();
       if (!VALID_PLATFORM_ROLE_CATALOG_STATUS.has(normalizedStatusCandidate)) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-catalog-invalid'
         });
       }
@@ -2751,7 +2751,7 @@ const createAuthService = (options = {}) => {
         catalogEntry?.scope
       ).toLowerCase();
       if (!VALID_PLATFORM_ROLE_CATALOG_SCOPE.has(normalizedScope)) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-catalog-invalid'
         });
       }
@@ -2766,7 +2766,7 @@ const createAuthService = (options = {}) => {
         !normalizedCatalogTenantId
         || CONTROL_CHAR_PATTERN.test(normalizedCatalogTenantId)
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-catalog-invalid'
         });
       }
@@ -2813,7 +2813,7 @@ const createAuthService = (options = {}) => {
           }))
         );
       } else {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-unsupported'
         });
       }
@@ -2821,7 +2821,7 @@ const createAuthService = (options = {}) => {
       if (error instanceof AuthProblemError) {
         throw error;
       }
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-permission-grants-query-failed'
       });
     }
@@ -2845,18 +2845,18 @@ const createAuthService = (options = {}) => {
         || CONTROL_CHAR_PATTERN.test(strictRoleId)
         || !ROLE_ID_ADDRESSABLE_PATTERN.test(roleId)
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-invalid'
         });
       }
       const roleIdKey = normalizePlatformRoleIdKey(roleId);
       if (!grantsByRoleIdKey.has(roleIdKey)) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-invalid'
         });
       }
       if (seenGrantEntriesByRoleIdKey.has(roleIdKey)) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-duplicate-role'
         });
       }
@@ -2866,7 +2866,7 @@ const createAuthService = (options = {}) => {
         || Array.isArray(grantEntry?.permission_codes)
       );
       if (!hasPermissionCodes) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-invalid'
         });
       }
@@ -2879,17 +2879,17 @@ const createAuthService = (options = {}) => {
           normalizeStrictRequiredStringField(permissionCode);
         const permissionCodeKey = toTenantPermissionCodeKey(normalizedPermissionCode);
         if (!normalizedPermissionCode) {
-          throw errors.tenantMemberDependencyUnavailable({
+          throw errors.tenantUserDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
         }
         if (normalizedPermissionCode !== permissionCodeKey) {
-          throw errors.tenantMemberDependencyUnavailable({
+          throw errors.tenantUserDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
         }
         if (CONTROL_CHAR_PATTERN.test(normalizedPermissionCode)) {
-          throw errors.tenantMemberDependencyUnavailable({
+          throw errors.tenantUserDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
         }
@@ -2897,12 +2897,12 @@ const createAuthService = (options = {}) => {
           !isTenantPermissionCode(normalizedPermissionCode)
           || !SUPPORTED_TENANT_PERMISSION_CODE_SET.has(permissionCodeKey)
         ) {
-          throw errors.tenantMemberDependencyUnavailable({
+          throw errors.tenantUserDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
         }
         if (dedupedCodes.has(permissionCodeKey)) {
-          throw errors.tenantMemberDependencyUnavailable({
+          throw errors.tenantUserDependencyUnavailable({
             reason: 'tenant-role-permission-grants-invalid'
           });
         }
@@ -3675,7 +3675,7 @@ const createAuthService = (options = {}) => {
       ? null
       : String(ownerDisplayName || '').trim();
     const normalizedOwnerDisplayName = ownerDisplayNameCandidate
-      && ownerDisplayNameCandidate.length <= MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      && ownerDisplayNameCandidate.length <= MAX_TENANT_USER_DISPLAY_NAME_LENGTH
       && !CONTROL_CHAR_PATTERN.test(ownerDisplayNameCandidate)
       ? ownerDisplayNameCandidate
       : null;
@@ -4002,7 +4002,7 @@ const createAuthService = (options = {}) => {
       || !validatedOldOwnerUserId
       || !validatedNewOwnerUserId
     ) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'owner-transfer-validation-result-invalid'
       });
     }
@@ -4010,7 +4010,7 @@ const createAuthService = (options = {}) => {
       orgId: validatedOrgId
     });
     if (!takeoverRoleId) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'owner-transfer-takeover-role-id-invalid'
       });
     }
@@ -4074,7 +4074,7 @@ const createAuthService = (options = {}) => {
         });
       }
       if (normalizedStoreErrorCode === 'ERR_OWNER_TRANSFER_TAKEOVER_ROLE_INVALID') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'owner-transfer-takeover-role-invalid'
         });
       }
@@ -4086,11 +4086,11 @@ const createAuthService = (options = {}) => {
         });
       }
       if (normalizedStoreErrorCode === 'ERR_AUDIT_WRITE_FAILED') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'audit-write-failed'
         });
       }
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: normalizedStoreErrorCode
           || String(error?.message || 'owner-transfer-takeover-write-failed').trim()
           || 'owner-transfer-takeover-write-failed'
@@ -4112,7 +4112,7 @@ const createAuthService = (options = {}) => {
       || resolvedOldOwnerUserId !== validatedOldOwnerUserId
       || resolvedNewOwnerUserId !== validatedNewOwnerUserId
     ) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'owner-transfer-takeover-result-invalid'
       });
     }
@@ -5030,7 +5030,7 @@ const createAuthService = (options = {}) => {
     dependencyReason = 'tenant-role-permission-grants-update-affected-user-ids-invalid'
   } = {}) => {
     if (!Array.isArray(userIds)) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: dependencyReason
       });
     }
@@ -5038,7 +5038,7 @@ const createAuthService = (options = {}) => {
     const seenUserIds = new Set();
     for (const userId of userIds) {
       if (typeof userId !== 'string') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: dependencyReason
         });
       }
@@ -5048,7 +5048,7 @@ const createAuthService = (options = {}) => {
         || !normalizedUserId
         || CONTROL_CHAR_PATTERN.test(normalizedUserId)
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: dependencyReason
         });
       }
@@ -5066,7 +5066,7 @@ const createAuthService = (options = {}) => {
     dependencyReason = 'tenant-role-permission-grants-update-affected-user-count-invalid'
   } = {}) => {
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: dependencyReason
       });
     }
@@ -5085,7 +5085,7 @@ const createAuthService = (options = {}) => {
       || !Number.isInteger(value)
       || value < 0
     ) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: dependencyReason
       });
     }
@@ -5382,7 +5382,7 @@ const createAuthService = (options = {}) => {
       throw errors.invalidPayload();
     }
     if (typeof authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots !== 'function') {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-status-resync-unsupported'
       });
     }
@@ -5398,7 +5398,7 @@ const createAuthService = (options = {}) => {
       if (error instanceof AuthProblemError) {
         throw error;
       }
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-status-permission-grants-query-failed'
       });
     }
@@ -5421,16 +5421,16 @@ const createAuthService = (options = {}) => {
         String(error?.code || '').trim()
         === 'ERR_TENANT_ROLE_PERMISSION_AFFECTED_MEMBERSHIPS_OVER_LIMIT'
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-status-affected-memberships-over-limit'
         });
       }
       if (String(error?.code || '').trim() === 'ERR_TENANT_ROLE_PERMISSION_SYNC_FAILED') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: String(error?.syncReason || 'tenant-role-status-resync-failed')
         });
       }
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-status-resync-failed'
       });
     }
@@ -6149,7 +6149,7 @@ const createAuthService = (options = {}) => {
     }
 
     if (typeof authStore.replaceTenantRolePermissionGrantsAndSyncSnapshots !== 'function') {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-permission-grants-unsupported'
       });
     }
@@ -6176,24 +6176,24 @@ const createAuthService = (options = {}) => {
       }
       if (String(error?.code || '').trim()
         === 'ERR_TENANT_ROLE_PERMISSION_AFFECTED_MEMBERSHIPS_OVER_LIMIT') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-affected-memberships-over-limit'
         });
       }
       if (String(error?.code || '').trim() === 'ERR_TENANT_ROLE_PERMISSION_SYNC_FAILED') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: String(error?.syncReason || 'tenant-role-permission-resync-failed')
         });
       }
       if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'audit-write-failed'
         });
       }
       const normalizedErrorMessage = String(error?.message || '')
         .trim()
         .toLowerCase();
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: normalizedErrorMessage.includes('deadlock')
           ? 'db-deadlock'
           : 'tenant-role-permission-atomic-write-failed'
@@ -6214,7 +6214,7 @@ const createAuthService = (options = {}) => {
     const resolvedRoleId = normalizeStrictRequiredStringField(rawResolvedRoleId)
       .toLowerCase();
     if (!resolvedRoleId || resolvedRoleId !== normalizedRoleId) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-permission-grants-update-role-mismatch'
       });
     }
@@ -6237,7 +6237,7 @@ const createAuthService = (options = {}) => {
         || !isTenantPermissionCode(normalizedPermissionCode)
         || !SUPPORTED_TENANT_PERMISSION_CODE_SET.has(permissionCodeKey)
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-update-invalid'
         });
       }
@@ -6254,7 +6254,7 @@ const createAuthService = (options = {}) => {
       )
     );
     if (hasPermissionCodesMismatch) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-permission-grants-update-mismatch'
       });
     }
@@ -6267,7 +6267,7 @@ const createAuthService = (options = {}) => {
       || hasOwnProperty(atomicWriteResult, 'affected_user_count')
     );
     if (!hasAffectedUserIds || !hasExplicitAffectedUserCount) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-permission-grants-update-affected-user-metadata-missing'
       });
     }
@@ -6290,7 +6290,7 @@ const createAuthService = (options = {}) => {
       hasExplicitAffectedUserCount
       && affectedUserCount !== affectedUserIds.length
     ) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-role-permission-grants-update-affected-user-count-invalid'
       });
     }
@@ -6348,19 +6348,19 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const normalizeStrictTenantMembershipRoleIds = ({
+  const normalizeStrictTenantUsershipRoleIds = ({
     roleIds,
     minCount = 0,
     maxCount = MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS,
     dependencyReason = 'tenant-membership-role-bindings-invalid'
   } = {}) => {
     if (!Array.isArray(roleIds)) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: dependencyReason
       });
     }
     if (roleIds.length < minCount || roleIds.length > maxCount) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: `${dependencyReason}-count-out-of-range`
       });
     }
@@ -6379,7 +6379,7 @@ const createAuthService = (options = {}) => {
         || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
         || seenRoleIds.has(normalizedRoleId)
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: dependencyReason
         });
       }
@@ -6389,7 +6389,7 @@ const createAuthService = (options = {}) => {
     return normalizedRoleIds.sort((left, right) => left.localeCompare(right));
   };
 
-  const assertTenantMembershipRoleBindingsMatchTenantCatalog = async ({
+  const assertTenantUsershipRoleBindingsMatchTenantCatalog = async ({
     tenantId,
     roleIds,
     dependencyReason = 'tenant-membership-role-bindings-invalid'
@@ -6408,7 +6408,7 @@ const createAuthService = (options = {}) => {
         error instanceof AuthProblemError
         && error.errorCode === 'AUTH-404-ROLE-NOT-FOUND'
       ) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: dependencyReason
         });
       }
@@ -6416,7 +6416,7 @@ const createAuthService = (options = {}) => {
     }
   };
 
-  const listTenantMemberRoleBindings = async ({
+  const listTenantUserRoleBindings = async ({
     tenantId,
     membershipId
   }) => {
@@ -6426,43 +6426,43 @@ const createAuthService = (options = {}) => {
       allowEmptyForPlatform: false
     });
     const normalizedMembershipId =
-      normalizeStrictTenantMembershipIdFromInput(membershipId);
+      normalizeStrictTenantUsershipIdFromInput(membershipId);
     assertStoreMethod(
       authStore,
-      'findTenantMembershipByMembershipIdAndTenantId',
+      'findTenantUsershipByMembershipIdAndTenantId',
       'authStore'
     );
-    assertStoreMethod(authStore, 'listTenantMembershipRoleBindings', 'authStore');
+    assertStoreMethod(authStore, 'listTenantUsershipRoleBindings', 'authStore');
 
-    const membership = await authStore.findTenantMembershipByMembershipIdAndTenantId({
+    const membership = await authStore.findTenantUsershipByMembershipIdAndTenantId({
       membershipId: normalizedMembershipId,
       tenantId: normalizedTenantId
     });
     if (!membership) {
-      throw errors.tenantMembershipNotFound();
+      throw errors.tenantUsershipNotFound();
     }
-    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+    const normalizedMembership = normalizeTenantUsershipRecordFromStore({
       membership,
       expectedMembershipId: normalizedMembershipId,
       expectedTenantId: normalizedTenantId
     });
     if (!normalizedMembership) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-record-invalid'
       });
     }
 
-    let roleIds = await authStore.listTenantMembershipRoleBindings({
+    let roleIds = await authStore.listTenantUsershipRoleBindings({
       membershipId: normalizedMembershipId,
       tenantId: normalizedTenantId
     });
-    roleIds = normalizeStrictTenantMembershipRoleIds({
+    roleIds = normalizeStrictTenantUsershipRoleIds({
       roleIds,
       minCount: 0,
       maxCount: MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS,
       dependencyReason: 'tenant-membership-role-bindings-invalid'
     });
-    await assertTenantMembershipRoleBindingsMatchTenantCatalog({
+    await assertTenantUsershipRoleBindingsMatchTenantCatalog({
       tenantId: normalizedTenantId,
       roleIds,
       dependencyReason: 'tenant-membership-role-bindings-invalid'
@@ -6474,7 +6474,7 @@ const createAuthService = (options = {}) => {
     };
   };
 
-  const replaceTenantMemberRoleBindings = async ({
+  const replaceTenantUserRoleBindings = async ({
     requestId,
     traceparent = null,
     tenantId,
@@ -6489,7 +6489,7 @@ const createAuthService = (options = {}) => {
       allowEmptyForPlatform: false
     });
     const normalizedMembershipId =
-      normalizeStrictTenantMembershipIdFromInput(membershipId);
+      normalizeStrictTenantUsershipIdFromInput(membershipId);
     if (!Array.isArray(roleIds)) {
       throw errors.invalidPayload();
     }
@@ -6522,31 +6522,31 @@ const createAuthService = (options = {}) => {
 
     assertStoreMethod(
       authStore,
-      'findTenantMembershipByMembershipIdAndTenantId',
+      'findTenantUsershipByMembershipIdAndTenantId',
       'authStore'
     );
-    const membership = await authStore.findTenantMembershipByMembershipIdAndTenantId({
+    const membership = await authStore.findTenantUsershipByMembershipIdAndTenantId({
       membershipId: normalizedMembershipId,
       tenantId: normalizedTenantId
     });
     if (!membership) {
-      throw errors.tenantMembershipNotFound();
+      throw errors.tenantUsershipNotFound();
     }
-    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+    const normalizedMembership = normalizeTenantUsershipRecordFromStore({
       membership,
       expectedMembershipId: normalizedMembershipId,
       expectedTenantId: normalizedTenantId
     });
     if (!normalizedMembership) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-record-invalid'
       });
     }
-    const normalizedMembershipStatus = normalizeTenantMembershipStatus(
+    const normalizedMembershipStatus = normalizeTenantUsershipStatus(
       normalizedMembership.status
     );
     if (normalizedMembershipStatus !== 'active') {
-      throw errors.tenantMembershipNotFound();
+      throw errors.tenantUsershipNotFound();
     }
 
     await loadValidatedTenantRoleCatalogEntries({
@@ -6555,13 +6555,13 @@ const createAuthService = (options = {}) => {
       allowDisabledRoles: false
     });
 
-    if (typeof authStore.listTenantMembershipRoleBindings === 'function') {
+    if (typeof authStore.listTenantUsershipRoleBindings === 'function') {
       try {
-        const existingRoleIds = await authStore.listTenantMembershipRoleBindings({
+        const existingRoleIds = await authStore.listTenantUsershipRoleBindings({
           membershipId: normalizedMembershipId,
           tenantId: normalizedTenantId
         });
-        previousRoleIdsForAudit = normalizeStrictTenantMembershipRoleIds({
+        previousRoleIdsForAudit = normalizeStrictTenantUsershipRoleIds({
           roleIds: existingRoleIds,
           minCount: 0,
           maxCount: MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS,
@@ -6572,15 +6572,15 @@ const createAuthService = (options = {}) => {
       }
     }
 
-    if (typeof authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot !== 'function') {
-      throw errors.tenantMemberDependencyUnavailable({
+    if (typeof authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot !== 'function') {
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-role-bindings-unsupported'
       });
     }
 
     let writeResult;
     try {
-      writeResult = await authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+      writeResult = await authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot({
         requestId,
         tenantId: normalizedTenantId,
         membershipId: normalizedMembershipId,
@@ -6603,7 +6603,7 @@ const createAuthService = (options = {}) => {
         normalizedErrorCode
         === 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE'
       ) {
-        throw errors.tenantMembershipNotFound();
+        throw errors.tenantUsershipNotFound();
       }
       if (
         normalizedErrorCode
@@ -6612,21 +6612,21 @@ const createAuthService = (options = {}) => {
         throw errors.roleNotFound();
       }
       if (normalizedErrorCode === 'ERR_AUDIT_WRITE_FAILED') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'audit-write-failed'
         });
       }
       const normalizedErrorMessage = String(error?.message || '')
         .trim()
         .toLowerCase();
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: normalizedErrorMessage.includes('deadlock')
           ? 'db-deadlock'
           : 'tenant-membership-role-bindings-update-failed'
       });
     }
     if (!writeResult) {
-      throw errors.tenantMembershipNotFound();
+      throw errors.tenantUsershipNotFound();
     }
 
     const rawResolvedMembershipId = (
@@ -6638,7 +6638,7 @@ const createAuthService = (options = {}) => {
     );
     const resolvedMembershipId = normalizeStrictRequiredStringField(rawResolvedMembershipId);
     if (!resolvedMembershipId || resolvedMembershipId !== normalizedMembershipId) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-role-bindings-update-membership-mismatch'
       });
     }
@@ -6648,13 +6648,13 @@ const createAuthService = (options = {}) => {
       : Array.isArray(writeResult?.role_ids)
         ? writeResult.role_ids
         : null;
-    const resolvedRoleIds = normalizeStrictTenantMembershipRoleIds({
+    const resolvedRoleIds = normalizeStrictTenantUsershipRoleIds({
       roleIds: rawResolvedRoleIds,
       minCount: 1,
       maxCount: MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS,
       dependencyReason: 'tenant-membership-role-bindings-update-invalid'
     });
-    await assertTenantMembershipRoleBindingsMatchTenantCatalog({
+    await assertTenantUsershipRoleBindingsMatchTenantCatalog({
       tenantId: normalizedTenantId,
       roleIds: resolvedRoleIds,
       dependencyReason: 'tenant-membership-role-bindings-update-invalid'
@@ -6668,7 +6668,7 @@ const createAuthService = (options = {}) => {
       )
     );
     if (hasRoleBindingsMismatch) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-role-bindings-update-mismatch'
       });
     }
@@ -6681,7 +6681,7 @@ const createAuthService = (options = {}) => {
       || hasOwnProperty(writeResult, 'affected_user_count')
     );
     if (!hasAffectedUserIds || !hasExplicitAffectedUserCount) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-role-bindings-update-affected-user-metadata-missing'
       });
     }
@@ -6705,7 +6705,7 @@ const createAuthService = (options = {}) => {
       hasExplicitAffectedUserCount
       && affectedUserCount !== affectedUserIds.length
     ) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-role-bindings-update-affected-user-count-invalid'
       });
     }
@@ -6718,7 +6718,7 @@ const createAuthService = (options = {}) => {
       requestId,
       userId: operatorUserId || 'unknown',
       sessionId: operatorSessionId || 'unknown',
-      detail: 'tenant membership role bindings replaced and permission snapshot synced',
+      detail: 'tenant usership role bindings replaced and permission snapshot synced',
       metadata: {
         tenant_id: normalizedTenantId,
         membership_id: normalizedMembershipId,
@@ -7337,7 +7337,7 @@ const createAuthService = (options = {}) => {
       strict: true
     });
 
-  const rollbackProvisionedTenantMembership = async ({
+  const rollbackProvisionedTenantUsership = async ({
     requestId,
     userId,
     tenantId
@@ -7347,17 +7347,17 @@ const createAuthService = (options = {}) => {
     if (
       !normalizedUserId
       || !normalizedTenantId
-      || typeof authStore.removeTenantMembershipForUser !== 'function'
+      || typeof authStore.removeTenantUsershipForUser !== 'function'
     ) {
       return;
     }
     try {
-      await authStore.removeTenantMembershipForUser({
+      await authStore.removeTenantUsershipForUser({
         userId: normalizedUserId,
         tenantId: normalizedTenantId
       });
     } catch (rollbackError) {
-      log('warn', 'Failed to rollback provisioned tenant membership after conflict', {
+      log('warn', 'Failed to rollback provisioned tenant usership after conflict', {
         request_id: requestId || 'request_id_unset',
         user_id: normalizedUserId,
         tenant_id: normalizedTenantId,
@@ -7428,10 +7428,10 @@ const createAuthService = (options = {}) => {
       return normalizedTenantId;
     }
 
-    assertStoreMethod(authStore, 'createTenantMembershipForUser', 'authStore');
+    assertStoreMethod(authStore, 'createTenantUsershipForUser', 'authStore');
     let createdMembership = null;
     try {
-      createdMembership = await authStore.createTenantMembershipForUser({
+      createdMembership = await authStore.createTenantUsershipForUser({
         userId: String(userId),
         tenantId: normalizedTenantId,
         tenantName
@@ -7457,7 +7457,7 @@ const createAuthService = (options = {}) => {
         throw errors.provisionConflict();
       }
     } catch (error) {
-      await rollbackProvisionedTenantMembership({
+      await rollbackProvisionedTenantUsership({
         requestId,
         userId,
         tenantId: normalizedTenantId
@@ -7787,7 +7787,7 @@ const createAuthService = (options = {}) => {
       authorizedRoute
     });
 
-  const findTenantMembershipByUserAndTenantId = async ({
+  const findTenantUsershipByUserAndTenantId = async ({
     userId,
     tenantId
   }) => {
@@ -7797,35 +7797,35 @@ const createAuthService = (options = {}) => {
       return null;
     }
 
-    assertStoreMethod(authStore, 'findTenantMembershipByUserAndTenantId', 'authStore');
+    assertStoreMethod(authStore, 'findTenantUsershipByUserAndTenantId', 'authStore');
     let membership = null;
     try {
-      membership = await authStore.findTenantMembershipByUserAndTenantId({
+      membership = await authStore.findTenantUsershipByUserAndTenantId({
         userId: normalizedUserId,
         tenantId: normalizedTenantId
       });
     } catch (error) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: String(error?.code || error?.message || 'query-failed')
       });
     }
     if (!membership) {
       return null;
     }
-    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+    const normalizedMembership = normalizeTenantUsershipRecordFromStore({
       membership,
       expectedUserId: normalizedUserId,
       expectedTenantId: normalizedTenantId
     });
     if (!normalizedMembership) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-record-invalid'
       });
     }
     return normalizedMembership;
   };
 
-  const listTenantMembers = async ({
+  const listTenantUsers = async ({
     requestId,
     tenantId,
     page = 1,
@@ -7847,32 +7847,32 @@ const createAuthService = (options = {}) => {
       min: 1,
       max: 200
     });
-    assertStoreMethod(authStore, 'listTenantMembersByTenantId', 'authStore');
+    assertStoreMethod(authStore, 'listTenantUsersByTenantId', 'authStore');
     let members = [];
     try {
-      members = await authStore.listTenantMembersByTenantId({
+      members = await authStore.listTenantUsersByTenantId({
         tenantId: normalizedTenantId,
         page: normalizedPage,
         pageSize: normalizedPageSize
       });
     } catch (error) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: String(error?.code || error?.message || 'query-failed')
       });
     }
     if (!Array.isArray(members)) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-members-list-shape-invalid'
       });
     }
     const normalizedMembers = [];
     for (const member of members) {
-      const normalizedMember = normalizeTenantMembershipRecordFromStore({
+      const normalizedMember = normalizeTenantUsershipRecordFromStore({
         membership: member,
         expectedTenantId: normalizedTenantId
       });
       if (!normalizedMember) {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-membership-record-invalid'
         });
       }
@@ -7881,12 +7881,12 @@ const createAuthService = (options = {}) => {
     return normalizedMembers;
   };
 
-  const findTenantMembershipByMembershipIdAndTenantId = async ({
+  const findTenantUsershipByMembershipIdAndTenantId = async ({
     membershipId,
     tenantId
   }) => {
     const normalizedMembershipId =
-      normalizeStrictTenantMembershipIdFromInput(membershipId);
+      normalizeStrictTenantUsershipIdFromInput(membershipId);
     const normalizedTenantId = normalizeTenantId(tenantId);
     if (!normalizedMembershipId || !normalizedTenantId) {
       return null;
@@ -7894,17 +7894,17 @@ const createAuthService = (options = {}) => {
 
     assertStoreMethod(
       authStore,
-      'findTenantMembershipByMembershipIdAndTenantId',
+      'findTenantUsershipByMembershipIdAndTenantId',
       'authStore'
     );
     let membership = null;
     try {
-      membership = await authStore.findTenantMembershipByMembershipIdAndTenantId({
+      membership = await authStore.findTenantUsershipByMembershipIdAndTenantId({
         membershipId: normalizedMembershipId,
         tenantId: normalizedTenantId
       });
     } catch (error) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: String(error?.code || error?.message || 'query-failed')
       });
     }
@@ -7912,22 +7912,22 @@ const createAuthService = (options = {}) => {
       return null;
     }
 
-    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+    const normalizedMembership = normalizeTenantUsershipRecordFromStore({
       membership,
       expectedMembershipId: normalizedMembershipId,
       expectedTenantId: normalizedTenantId
     });
     if (!normalizedMembership) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-record-invalid'
       });
     }
     return normalizedMembership;
   };
 
-  const updateTenantMemberProfile = async (input = {}) => {
+  const updateTenantUserProfile = async (input = {}) => {
     const normalizedMembershipId =
-      normalizeStrictTenantMembershipIdFromInput(
+      normalizeStrictTenantUsershipIdFromInput(
         resolveRawCamelSnakeField(input, 'membershipId', 'membership_id')
       );
     const requestedTenantId = normalizeTenantId(
@@ -7944,7 +7944,7 @@ const createAuthService = (options = {}) => {
     const normalizedDisplayName = normalizeStrictRequiredStringField(rawDisplayName);
     if (
       !normalizedDisplayName
-      || normalizedDisplayName.length > MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+      || normalizedDisplayName.length > MAX_TENANT_USER_DISPLAY_NAME_LENGTH
       || CONTROL_CHAR_PATTERN.test(normalizedDisplayName)
     ) {
       throw errors.invalidPayload();
@@ -7976,7 +7976,7 @@ const createAuthService = (options = {}) => {
         normalizedDepartmentName = normalizeStrictRequiredStringField(rawDepartmentName);
         if (
           !normalizedDepartmentName
-          || normalizedDepartmentName.length > MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+          || normalizedDepartmentName.length > MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
           || CONTROL_CHAR_PATTERN.test(normalizedDepartmentName)
         ) {
           throw errors.invalidPayload();
@@ -8039,10 +8039,10 @@ const createAuthService = (options = {}) => {
       throw errors.invalidPayload();
     }
 
-    assertStoreMethod(authStore, 'updateTenantMembershipProfile', 'authStore');
+    assertStoreMethod(authStore, 'updateTenantUsershipProfile', 'authStore');
     let result = null;
     try {
-      result = await authStore.updateTenantMembershipProfile({
+      result = await authStore.updateTenantUsershipProfile({
         membershipId: normalizedMembershipId,
         tenantId: activeTenantId,
         displayName: normalizedDisplayName,
@@ -8051,35 +8051,35 @@ const createAuthService = (options = {}) => {
         operatorUserId
       });
     } catch (error) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: String(error?.code || error?.message || 'write-failed')
       });
     }
     if (!result) {
-      throw errors.tenantMembershipNotFound();
+      throw errors.tenantUsershipNotFound();
     }
 
-    const normalizedMembership = normalizeTenantMembershipRecordFromStore({
+    const normalizedMembership = normalizeTenantUsershipRecordFromStore({
       membership: result,
       expectedMembershipId: normalizedMembershipId,
       expectedTenantId: activeTenantId,
       expectedDisplayName: normalizedDisplayName,
       expectedDepartmentName: hasDepartmentNameCandidate
         ? normalizedDepartmentName
-        : UNSET_EXPECTED_TENANT_MEMBER_PROFILE_FIELD
+        : UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD
     });
     if (!normalizedMembership) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-record-invalid'
       });
     }
 
     addAuditEvent({
-      type: 'auth.tenant.member.profile.updated',
+      type: 'auth.tenant.user.profile.updated',
       requestId: input.requestId,
       userId: operatorUserId || 'unknown',
       sessionId: operatorSessionId || 'unknown',
-      detail: 'tenant member profile updated',
+      detail: 'tenant user profile updated',
       metadata: {
         membership_id: normalizedMembershipId,
         tenant_id: activeTenantId,
@@ -8092,7 +8092,7 @@ const createAuthService = (options = {}) => {
     return normalizedMembership;
   };
 
-  const updateTenantMemberStatus = async ({
+  const updateTenantUserStatus = async ({
     requestId,
     traceparent = null,
     accessToken,
@@ -8103,8 +8103,8 @@ const createAuthService = (options = {}) => {
     authorizedRoute = null
   }) => {
     const normalizedMembershipId =
-      normalizeStrictTenantMembershipIdFromInput(membershipId);
-    const normalizedNextStatus = normalizeTenantMembershipStatus(nextStatus);
+      normalizeStrictTenantUsershipIdFromInput(membershipId);
+    const normalizedNextStatus = normalizeTenantUsershipStatus(nextStatus);
     let normalizedReason = null;
     if (reason !== null && reason !== undefined) {
       if (typeof reason !== 'string') {
@@ -8123,7 +8123,7 @@ const createAuthService = (options = {}) => {
     if (
       !normalizedMembershipId
       || !normalizedNextStatus
-      || !isValidTenantMembershipId(normalizedMembershipId)
+      || !isValidTenantUsershipId(normalizedMembershipId)
     ) {
       throw errors.invalidPayload();
     }
@@ -8180,10 +8180,10 @@ const createAuthService = (options = {}) => {
       throw errors.noDomainAccess();
     }
 
-    assertStoreMethod(authStore, 'updateTenantMembershipStatus', 'authStore');
+    assertStoreMethod(authStore, 'updateTenantUsershipStatus', 'authStore');
     let result = null;
     try {
-      result = await authStore.updateTenantMembershipStatus({
+      result = await authStore.updateTenantUsershipStatus({
         membershipId: normalizedMembershipId,
         tenantId: activeTenantId,
         nextStatus: normalizedNextStatus,
@@ -8199,22 +8199,22 @@ const createAuthService = (options = {}) => {
       });
     } catch (error) {
       if (String(error?.code || '').trim() === 'ERR_AUDIT_WRITE_FAILED') {
-        throw errors.tenantMemberDependencyUnavailable({
+        throw errors.tenantUserDependencyUnavailable({
           reason: 'audit-write-failed'
         });
       }
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: String(error?.code || error?.message || 'write-failed')
       });
     }
     if (!result) {
-      throw errors.tenantMembershipNotFound();
+      throw errors.tenantUsershipNotFound();
     }
 
-    const previousStatus = normalizeTenantMembershipStatus(result.previous_status);
-    const currentStatus = normalizeTenantMembershipStatus(result.current_status);
+    const previousStatus = normalizeTenantUsershipStatus(result.previous_status);
+    const currentStatus = normalizeTenantUsershipStatus(result.current_status);
     if (!previousStatus || !currentStatus) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-status-result-invalid'
       });
     }
@@ -8233,13 +8233,13 @@ const createAuthService = (options = {}) => {
       && currentStatus === 'active';
     const hasMembershipIdMismatch = resolvedMembershipId !== normalizedMembershipId;
     if (
-      !isValidTenantMembershipId(resolvedMembershipId)
+      !isValidTenantUsershipId(resolvedMembershipId)
       || !resolvedTenantId
       || resolvedTenantId !== activeTenantId
       || (isRejoinTransition && !hasMembershipIdMismatch)
       || (!isRejoinTransition && hasMembershipIdMismatch)
     ) {
-      throw errors.tenantMemberDependencyUnavailable({
+      throw errors.tenantUserDependencyUnavailable({
         reason: 'tenant-membership-result-shape-invalid'
       });
     }
@@ -8247,13 +8247,13 @@ const createAuthService = (options = {}) => {
       invalidateSessionCacheByUserId(String(result.user_id || '').trim());
     }
     addAuditEvent({
-      type: 'auth.tenant.member.status.updated',
+      type: 'auth.tenant.user.status.updated',
       requestId: normalizedRequestId,
       userId: operatorUserId || 'unknown',
       sessionId: operatorSessionId || 'unknown',
       detail: previousStatus === currentStatus
-        ? 'tenant membership status update treated as no-op'
-        : 'tenant membership status updated',
+        ? 'tenant usership status update treated as no-op'
+        : 'tenant usership status updated',
       metadata: {
         membership_id: resolvedMembershipId,
         target_user_id: String(result.user_id || '').trim() || null,
@@ -8273,7 +8273,7 @@ const createAuthService = (options = {}) => {
         tenantId: resolvedTenantId,
         requestId: normalizedRequestId,
         traceparent: normalizedTraceparent,
-        eventType: 'auth.tenant.member.status.updated',
+        eventType: 'auth.tenant.user.status.updated',
         actorUserId: normalizeAuditStringOrNull(operatorUserId, 64),
         actorSessionId: normalizeAuditStringOrNull(operatorSessionId, 128),
         targetType: 'membership',
@@ -8450,11 +8450,11 @@ const createAuthService = (options = {}) => {
     changePassword,
     provisionPlatformUserByPhone,
     provisionTenantUserByPhone,
-    findTenantMembershipByUserAndTenantId,
-    findTenantMembershipByMembershipIdAndTenantId,
-    listTenantMembers,
-    updateTenantMemberProfile,
-    updateTenantMemberStatus,
+    findTenantUsershipByUserAndTenantId,
+    findTenantUsershipByMembershipIdAndTenantId,
+    listTenantUsers,
+    updateTenantUserProfile,
+    updateTenantUserStatus,
     getOrCreateUserIdentityByPhone,
     createOrganizationWithOwner,
     acquireOwnerTransferLock,
@@ -8477,8 +8477,8 @@ const createAuthService = (options = {}) => {
     replaceTenantRolePermissionGrants,
     listTenantPermissionCatalog,
     listTenantPermissionCatalogEntries,
-    listTenantMemberRoleBindings,
-    replaceTenantMemberRoleBindings,
+    listTenantUserRoleBindings,
+    replaceTenantUserRoleBindings,
     updateOrganizationStatus,
     updatePlatformUserStatus,
     softDeleteUser,

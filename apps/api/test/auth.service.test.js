@@ -170,7 +170,7 @@ const setupTenantGrantSyncFailureScenario = async () => {
     operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
     operatorSessionId: 'tenant-grant-sync-operator-session'
   });
-  await service.replaceTenantMemberRoleBindings({
+  await service.replaceTenantUserRoleBindings({
     requestId: 'req-tenant-grant-sync-prime-bindings-a',
     tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
     membershipId: TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_A,
@@ -178,7 +178,7 @@ const setupTenantGrantSyncFailureScenario = async () => {
     operatorUserId: TENANT_GRANT_SYNC_FAILURE_OPERATOR_USER_ID,
     operatorSessionId: 'tenant-grant-sync-operator-session'
   });
-  await service.replaceTenantMemberRoleBindings({
+  await service.replaceTenantUserRoleBindings({
     requestId: 'req-tenant-grant-sync-prime-bindings-b',
     tenantId: TENANT_GRANT_SYNC_FAILURE_TENANT_ID,
     membershipId: TENANT_GRANT_SYNC_FAILURE_MEMBERSHIP_B,
@@ -943,7 +943,7 @@ test('tenant entry surfaces owner fields when tenant options include owner metad
   ]);
 });
 
-test('tenant entry accepts enabled tenant membership in in-memory auth store', async () => {
+test('tenant entry accepts enabled tenant usership in in-memory auth store', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -6116,7 +6116,7 @@ test('provisionTenantUserByPhone rolls back membership when tenant domain access
   );
 });
 
-test('provisionTenantUserByPhone rolls back tenant membership and tenant domain access when post-grant verification reports conflict', async () => {
+test('provisionTenantUserByPhone rolls back tenant usership and tenant domain access when post-grant verification reports conflict', async () => {
   const defaultPassword = 'InitPass!2026';
   const decryptionKey = 'provision-tenant-domain-verify-rollback-key';
   const encryptedDefaultPassword = buildEncryptedSensitiveConfigValue({
@@ -6346,7 +6346,7 @@ test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active 
   assert.equal(provisioned.created_user, false);
   assert.equal(provisioned.reused_existing_user, true);
 
-  const membership = await service.findTenantMembershipByUserAndTenantId({
+  const membership = await service.findTenantUsershipByUserAndTenantId({
     userId: 'tenant-provision-rejoin-name-target',
     tenantId: 'tenant-provision-rejoin-name-a'
   });
@@ -6356,12 +6356,12 @@ test('provisionTenantUserByPhone rejoin updates tenant_name to canonical active 
   assert.equal(membership.tenant_name, 'Tenant Provision Rejoin Name A');
 });
 
-test('findTenantMembershipByUserAndTenantId fails closed when store returns unsupported membership status', async () => {
+test('findTenantUsershipByUserAndTenantId fails closed when store returns unsupported membership status', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.findTenantMembershipByUserAndTenantId = async () => ({
+  authStore.findTenantUsershipByUserAndTenantId = async () => ({
     membership_id: 'membership-invalid-status',
     user_id: 'tenant-user-invalid-status',
     tenant_id: 'tenant-invalid-status',
@@ -6374,7 +6374,7 @@ test('findTenantMembershipByUserAndTenantId fails closed when store returns unsu
 
   await assert.rejects(
     () =>
-      service.findTenantMembershipByUserAndTenantId({
+      service.findTenantUsershipByUserAndTenantId({
         userId: 'tenant-user-invalid-status',
         tenantId: 'tenant-invalid-status'
       }),
@@ -6387,12 +6387,12 @@ test('findTenantMembershipByUserAndTenantId fails closed when store returns unsu
   );
 });
 
-test('findTenantMembershipByUserAndTenantId fails closed when store returns malformed membership identity', async () => {
+test('findTenantUsershipByUserAndTenantId fails closed when store returns malformed membership identity', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.findTenantMembershipByUserAndTenantId = async () => ({
+  authStore.findTenantUsershipByUserAndTenantId = async () => ({
     membership_id: 'membership-bad\u0000',
     user_id: 'tenant-user-malformed-find',
     tenant_id: 'tenant-malformed-find',
@@ -6405,7 +6405,7 @@ test('findTenantMembershipByUserAndTenantId fails closed when store returns malf
 
   await assert.rejects(
     () =>
-      service.findTenantMembershipByUserAndTenantId({
+      service.findTenantUsershipByUserAndTenantId({
         userId: 'tenant-user-malformed-find',
         tenantId: 'tenant-malformed-find'
       }),
@@ -6418,12 +6418,12 @@ test('findTenantMembershipByUserAndTenantId fails closed when store returns malf
   );
 });
 
-test('listTenantMembers fails closed when store returns unsupported membership status', async () => {
+test('listTenantUsers fails closed when store returns unsupported membership status', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.listTenantMembersByTenantId = async () => ([
+  authStore.listTenantUsersByTenantId = async () => ([
     {
       membership_id: 'membership-invalid-status-list',
       user_id: 'tenant-user-invalid-status-list',
@@ -6438,7 +6438,7 @@ test('listTenantMembers fails closed when store returns unsupported membership s
 
   await assert.rejects(
     () =>
-      service.listTenantMembers({
+      service.listTenantUsers({
         tenantId: 'tenant-invalid-status-list'
       }),
     (error) => {
@@ -6450,12 +6450,12 @@ test('listTenantMembers fails closed when store returns unsupported membership s
   );
 });
 
-test('listTenantMembers fails closed when store returns membership_id with control characters', async () => {
+test('listTenantUsers fails closed when store returns membership_id with control characters', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.listTenantMembersByTenantId = async () => ([
+  authStore.listTenantUsersByTenantId = async () => ([
     {
       membership_id: 'membership-invalid\u0000id',
       user_id: 'tenant-user-invalid-membership-id',
@@ -6470,7 +6470,7 @@ test('listTenantMembers fails closed when store returns membership_id with contr
 
   await assert.rejects(
     () =>
-      service.listTenantMembers({
+      service.listTenantUsers({
         tenantId: 'tenant-invalid-membership-id'
       }),
     (error) => {
@@ -6482,12 +6482,12 @@ test('listTenantMembers fails closed when store returns membership_id with contr
   );
 });
 
-test('listTenantMembers fails closed when store returns malformed membership record', async () => {
+test('listTenantUsers fails closed when store returns malformed membership record', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.listTenantMembersByTenantId = async () => ([
+  authStore.listTenantUsersByTenantId = async () => ([
     {
       membership_id: '',
       user_id: 'tenant-user-malformed',
@@ -6502,7 +6502,7 @@ test('listTenantMembers fails closed when store returns malformed membership rec
 
   await assert.rejects(
     () =>
-      service.listTenantMembers({
+      service.listTenantUsers({
         tenantId: 'tenant-malformed'
       }),
     (error) => {
@@ -6514,12 +6514,12 @@ test('listTenantMembers fails closed when store returns malformed membership rec
   );
 });
 
-test('listTenantMembers fails closed when store returns cross-tenant record', async () => {
+test('listTenantUsers fails closed when store returns cross-tenant record', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.listTenantMembersByTenantId = async () => ([
+  authStore.listTenantUsersByTenantId = async () => ([
     {
       membership_id: 'membership-cross-tenant',
       user_id: 'tenant-user-cross-tenant',
@@ -6534,7 +6534,7 @@ test('listTenantMembers fails closed when store returns cross-tenant record', as
 
   await assert.rejects(
     () =>
-      service.listTenantMembers({
+      service.listTenantUsers({
         tenantId: 'tenant-cross-tenant'
       }),
     (error) => {
@@ -6546,18 +6546,18 @@ test('listTenantMembers fails closed when store returns cross-tenant record', as
   );
 });
 
-test('listTenantMembers fails closed when store returns non-array payload', async () => {
+test('listTenantUsers fails closed when store returns non-array payload', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.listTenantMembersByTenantId = async () => ({
+  authStore.listTenantUsersByTenantId = async () => ({
     membership_id: 'membership-invalid-shape'
   });
 
   await assert.rejects(
     () =>
-      service.listTenantMembers({
+      service.listTenantUsers({
         tenantId: 'tenant-invalid-shape'
       }),
     (error) => {
@@ -6569,7 +6569,7 @@ test('listTenantMembers fails closed when store returns non-array payload', asyn
   );
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId returns membership projection from in-memory store', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId returns membership projection from in-memory store', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -6598,7 +6598,7 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
     ]
   });
 
-  const membership = await service.findTenantMembershipByMembershipIdAndTenantId({
+  const membership = await service.findTenantUsershipByMembershipIdAndTenantId({
     membershipId: 'membership-profile-read-success',
     tenantId: 'tenant-profile-read-success'
   });
@@ -6611,7 +6611,7 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
   assert.equal(membership.department_name, '研发一部');
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId fails closed when in-memory seed profile contains surrounding whitespace', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId fails closed when in-memory seed profile contains surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -6642,7 +6642,7 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when in-memory 
 
   await assert.rejects(
     () =>
-      service.findTenantMembershipByMembershipIdAndTenantId({
+      service.findTenantUsershipByMembershipIdAndTenantId({
         membershipId: 'membership-profile-read-seed-whitespace',
         tenantId: 'tenant-profile-read-seed-whitespace'
       }),
@@ -6655,12 +6655,12 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when in-memory 
   );
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId fails closed when store returns profile fields with surrounding whitespace', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId fails closed when store returns profile fields with surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+  authStore.findTenantUsershipByMembershipIdAndTenantId = async () => ({
     membership_id: 'membership-profile-read-whitespace',
     user_id: 'tenant-user-profile-read-whitespace',
     tenant_id: 'tenant-a',
@@ -6675,7 +6675,7 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when store retu
 
   await assert.rejects(
     () =>
-      service.findTenantMembershipByMembershipIdAndTenantId({
+      service.findTenantUsershipByMembershipIdAndTenantId({
         membershipId: 'membership-profile-read-whitespace',
         tenantId: 'tenant-a'
       }),
@@ -6688,12 +6688,12 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when store retu
   );
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId fails closed when store returns membership without phone', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId fails closed when store returns membership without phone', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+  authStore.findTenantUsershipByMembershipIdAndTenantId = async () => ({
     membership_id: 'membership-profile-read-missing-phone',
     user_id: 'tenant-user-profile-read-missing-phone',
     tenant_id: 'tenant-a',
@@ -6708,7 +6708,7 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when store retu
 
   await assert.rejects(
     () =>
-      service.findTenantMembershipByMembershipIdAndTenantId({
+      service.findTenantUsershipByMembershipIdAndTenantId({
         membershipId: 'membership-profile-read-missing-phone',
         tenantId: 'tenant-a'
       }),
@@ -6721,13 +6721,13 @@ test('findTenantMembershipByMembershipIdAndTenantId fails closed when store retu
   );
 });
 
-test('updateTenantMemberProfile updates member profile under tenant authorized route', async () => {
+test('updateTenantUserProfile updates member profile under tenant authorized route', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
   const profileUpdateCalls = [];
-  authStore.updateTenantMembershipProfile = async (payload) => {
+  authStore.updateTenantUsershipProfile = async (payload) => {
     profileUpdateCalls.push(payload);
     return {
       membership_id: payload.membershipId,
@@ -6743,7 +6743,7 @@ test('updateTenantMemberProfile updates member profile under tenant authorized r
     };
   };
 
-  const updated = await service.updateTenantMemberProfile({
+  const updated = await service.updateTenantUserProfile({
     requestId: 'req-tenant-member-profile-update-success',
     membershipId: 'MEMBERSHIP-PROFILE-UPDATE',
     tenantId: 'tenant-a',
@@ -6769,13 +6769,13 @@ test('updateTenantMemberProfile updates member profile under tenant authorized r
   assert.equal(updated.department_name, '产品部');
 });
 
-test('updateTenantMemberProfile keeps department unchanged when departmentNameProvided is false', async () => {
+test('updateTenantUserProfile keeps department unchanged when departmentNameProvided is false', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
   const profileUpdateCalls = [];
-  authStore.updateTenantMembershipProfile = async (payload) => {
+  authStore.updateTenantUsershipProfile = async (payload) => {
     profileUpdateCalls.push(payload);
     return {
       membership_id: payload.membershipId,
@@ -6791,7 +6791,7 @@ test('updateTenantMemberProfile keeps department unchanged when departmentNamePr
     };
   };
 
-  const updated = await service.updateTenantMemberProfile({
+  const updated = await service.updateTenantUserProfile({
     requestId: 'req-tenant-member-profile-update-no-dept',
     membershipId: 'membership-profile-update-no-dept',
     tenantId: 'tenant-a',
@@ -6809,20 +6809,20 @@ test('updateTenantMemberProfile keeps department unchanged when departmentNamePr
   assert.equal(profileUpdateCalls[0].departmentNameProvided, false);
   assert.equal(updated.department_name, '研发一部');
   const lastAuditEvent = service._internals.auditTrail.at(-1);
-  assert.equal(lastAuditEvent.type, 'auth.tenant.member.profile.updated');
+  assert.equal(lastAuditEvent.type, 'auth.tenant.user.profile.updated');
   assert.deepEqual(lastAuditEvent.changed_fields, ['display_name']);
 });
 
-test('updateTenantMemberProfile maps missing membership to stable 404', async () => {
+test('updateTenantUserProfile maps missing membership to stable 404', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.updateTenantMembershipProfile = async () => null;
+  authStore.updateTenantUsershipProfile = async () => null;
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberProfile({
+      service.updateTenantUserProfile({
         requestId: 'req-tenant-member-profile-update-not-found',
         membershipId: 'membership-profile-update-not-found',
         displayName: '成员乙',
@@ -6844,12 +6844,12 @@ test('updateTenantMemberProfile maps missing membership to stable 404', async ()
   );
 });
 
-test('updateTenantMemberProfile fails closed when store returns membership without phone', async () => {
+test('updateTenantUserProfile fails closed when store returns membership without phone', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.updateTenantMembershipProfile = async () => ({
+  authStore.updateTenantUsershipProfile = async () => ({
     membership_id: 'membership-profile-update-missing-phone',
     user_id: 'tenant-user-profile-update-missing-phone',
     tenant_id: 'tenant-a',
@@ -6864,7 +6864,7 @@ test('updateTenantMemberProfile fails closed when store returns membership witho
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberProfile({
+      service.updateTenantUserProfile({
         requestId: 'req-tenant-member-profile-update-missing-phone',
         membershipId: 'membership-profile-update-missing-phone',
         displayName: '成员乙',
@@ -6886,12 +6886,12 @@ test('updateTenantMemberProfile fails closed when store returns membership witho
   );
 });
 
-test('updateTenantMemberProfile fails closed when store returns membership phone with surrounding whitespace', async () => {
+test('updateTenantUserProfile fails closed when store returns membership phone with surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
   const authStore = service._internals.authStore;
-  authStore.updateTenantMembershipProfile = async () => ({
+  authStore.updateTenantUsershipProfile = async () => ({
     membership_id: 'membership-profile-update-whitespace-phone',
     user_id: 'tenant-user-profile-update-whitespace-phone',
     tenant_id: 'tenant-a',
@@ -6906,7 +6906,7 @@ test('updateTenantMemberProfile fails closed when store returns membership phone
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberProfile({
+      service.updateTenantUserProfile({
         requestId: 'req-tenant-member-profile-update-whitespace-phone',
         membershipId: 'membership-profile-update-whitespace-phone',
         displayName: '成员乙',
@@ -6928,7 +6928,7 @@ test('updateTenantMemberProfile fails closed when store returns membership phone
   );
 });
 
-test('updateTenantMemberProfile fails closed without mutation when existing department is malformed and request omits department update', async () => {
+test('updateTenantUserProfile fails closed without mutation when existing department is malformed and request omits department update', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -6959,7 +6959,7 @@ test('updateTenantMemberProfile fails closed without mutation when existing depa
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberProfile({
+      service.updateTenantUserProfile({
         requestId: 'req-tenant-member-profile-update-malformed-department',
         membershipId: 'membership-profile-invalid-department',
         displayName: '成员乙',
@@ -6980,7 +6980,7 @@ test('updateTenantMemberProfile fails closed without mutation when existing depa
   );
 
   const persistedMembership =
-    await service._internals.authStore.findTenantMembershipByMembershipIdAndTenantId({
+    await service._internals.authStore.findTenantUsershipByMembershipIdAndTenantId({
       membershipId: 'membership-profile-invalid-department',
       tenantId: 'tenant-a'
     });
@@ -7640,9 +7640,9 @@ test('provisioning is fail-closed when auth.default_password secure config is un
   );
 });
 
-test('in-memory auth store createTenantMembershipForUser returns created=false when user does not exist', async () => {
+test('in-memory auth store createTenantUsershipForUser returns created=false when user does not exist', async () => {
   const service = createAuthService();
-  const result = await service._internals.authStore.createTenantMembershipForUser({
+  const result = await service._internals.authStore.createTenantUsershipForUser({
     userId: 'missing-user-id',
     tenantId: 'tenant-a'
   });
@@ -8301,7 +8301,7 @@ test('in-memory tenant access is fail-closed when membership points to missing o
     operatorUserId: 'platform-role-facts-operator'
   });
 
-  await service._internals.authStore.createTenantMembershipForUser({
+  await service._internals.authStore.createTenantUsershipForUser({
     userId: 'orphan-tenant-user',
     tenantId: 'orphan-org-1',
     tenantName: 'Orphan Org'
@@ -8569,7 +8569,7 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     operatorUserId: 'platform-role-facts-operator'
   });
 
-  await service._internals.authStore.createTenantMembershipForUser({
+  await service._internals.authStore.createTenantUsershipForUser({
     userId: 'owner-transfer-execute-old-owner',
     tenantId: orgId,
     tenantName: '负责人变更执行闭环-成功路径'
@@ -8577,7 +8577,7 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
   await service._internals.authStore.ensureTenantDomainAccessForUser(
     'owner-transfer-execute-old-owner'
   );
-  const oldMembership = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+  const oldMembership = await service._internals.authStore.findTenantUsershipByUserAndTenantId({
     userId: 'owner-transfer-execute-old-owner',
     tenantId: orgId
   });
@@ -8601,7 +8601,7 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     operatorUserId: 'platform-role-facts-operator',
     operatorSessionId: 'platform-role-facts-session'
   });
-  await service.replaceTenantMemberRoleBindings({
+  await service.replaceTenantUserRoleBindings({
     requestId: 'req-owner-transfer-execute-old-role-bindings',
     tenantId: orgId,
     membershipId: oldMembership.membership_id,
@@ -8666,13 +8666,13 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
     tenantOwnerRolePermissionCodes.includes('tenant.role_management.operate')
   );
 
-  const newMembership = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+  const newMembership = await service._internals.authStore.findTenantUsershipByUserAndTenantId({
     userId: 'owner-transfer-execute-new-owner',
     tenantId: orgId
   });
   assert.ok(newMembership);
   assert.equal(newMembership.status, 'active');
-  const newRoleBindings = await service._internals.authStore.listTenantMembershipRoleBindings({
+  const newRoleBindings = await service._internals.authStore.listTenantUsershipRoleBindings({
     membershipId: newMembership.membership_id,
     tenantId: orgId
   });
@@ -8686,7 +8686,7 @@ test('executeOwnerTransferTakeover completes owner switch and takeover convergen
   assert.equal(newPermission.canViewRoleManagement, true);
   assert.equal(newPermission.canOperateRoleManagement, true);
 
-  const oldMembershipAfter = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+  const oldMembershipAfter = await service._internals.authStore.findTenantUsershipByUserAndTenantId({
     userId: 'owner-transfer-execute-old-owner',
     tenantId: orgId
   });
@@ -8792,21 +8792,21 @@ test('executeOwnerTransferTakeover uses tenant-scoped takeover role ids so cross
   assert.ok(roleA);
   assert.ok(roleB);
 
-  const membershipA = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+  const membershipA = await service._internals.authStore.findTenantUsershipByUserAndTenantId({
     userId: 'owner-transfer-role-scope-new-owner-a',
     tenantId: orgIdA
   });
-  const membershipB = await service._internals.authStore.findTenantMembershipByUserAndTenantId({
+  const membershipB = await service._internals.authStore.findTenantUsershipByUserAndTenantId({
     userId: 'owner-transfer-role-scope-new-owner-b',
     tenantId: orgIdB
   });
   assert.ok(membershipA);
   assert.ok(membershipB);
-  const roleBindingsA = await service._internals.authStore.listTenantMembershipRoleBindings({
+  const roleBindingsA = await service._internals.authStore.listTenantUsershipRoleBindings({
     membershipId: membershipA.membership_id,
     tenantId: orgIdA
   });
-  const roleBindingsB = await service._internals.authStore.listTenantMembershipRoleBindings({
+  const roleBindingsB = await service._internals.authStore.listTenantUsershipRoleBindings({
     membershipId: membershipB.membership_id,
     tenantId: orgIdB
   });
@@ -9100,7 +9100,7 @@ test('executeOwnerTransferTakeover rolls back in-memory owner switch when takeov
     orgAfterFailure.owner_user_id,
     'owner-transfer-memory-rollback-old-owner'
   );
-  const newOwnerMembership = await authStore.findTenantMembershipByUserAndTenantId({
+  const newOwnerMembership = await authStore.findTenantUsershipByUserAndTenantId({
     userId: 'owner-transfer-memory-rollback-new-owner',
     tenantId: orgId
   });
@@ -11907,7 +11907,7 @@ test('extractBearerToken rejects missing or malformed authorization', () => {
   });
 });
 
-test('updateTenantMemberStatus preserves tenant permission snapshot across disabled-to-active transition', async () => {
+test('updateTenantUserStatus preserves tenant permission snapshot across disabled-to-active transition', async () => {
   const service = createAuthService({
     seedUsers: [
       ...seedUsers,
@@ -11975,7 +11975,7 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
     operatorUserId: 'tenant-status-operator',
     operatorSessionId: 'tenant-status-session'
   });
-  await service.replaceTenantMemberRoleBindings({
+  await service.replaceTenantUserRoleBindings({
     requestId: 'req-tenant-permission-restore-bindings',
     tenantId: 'tenant-permission-restore',
     membershipId: 'membership-target-restore-1',
@@ -11984,7 +11984,7 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
     operatorSessionId: 'tenant-status-session'
   });
 
-  const disabled = await service.updateTenantMemberStatus({
+  const disabled = await service.updateTenantUserStatus({
     requestId: 'req-tenant-permission-restore-disable',
     membershipId: 'membership-target-restore-1',
     nextStatus: 'disabled',
@@ -12004,7 +12004,7 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
   });
   assert.equal(disabledPermission, null);
 
-  const reactivated = await service.updateTenantMemberStatus({
+  const reactivated = await service.updateTenantUserStatus({
     requestId: 'req-tenant-permission-restore-reactivate',
     membershipId: 'membership-target-restore-1',
     nextStatus: 'active',
@@ -12030,7 +12030,7 @@ test('updateTenantMemberStatus preserves tenant permission snapshot across disab
   assert.equal(restoredPermission.canOperateRoleManagement, false);
 });
 
-test('updateTenantMemberStatus clears tenant permission snapshot across left-to-active rejoin transition', async () => {
+test('updateTenantUserStatus clears tenant permission snapshot across left-to-active rejoin transition', async () => {
   const service = createAuthService({
     seedUsers: [
       ...seedUsers,
@@ -12079,7 +12079,7 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
     ]
   });
 
-  const reactivated = await service.updateTenantMemberStatus({
+  const reactivated = await service.updateTenantUserStatus({
     requestId: 'req-tenant-permission-rejoin-reactivate',
     membershipId: 'membership-target-left-1',
     nextStatus: 'active',
@@ -12106,12 +12106,12 @@ test('updateTenantMemberStatus clears tenant permission snapshot across left-to-
   assert.equal(restoredPermission.canOperateRoleManagement, false);
 });
 
-test('updateTenantMemberStatus fails closed when rejoin result reuses original membership_id', async () => {
+test('updateTenantUserStatus fails closed when rejoin result reuses original membership_id', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
 
-  service._internals.authStore.updateTenantMembershipStatus = async () => ({
+  service._internals.authStore.updateTenantUsershipStatus = async () => ({
     membership_id: 'membership-rejoin-old',
     user_id: 'tenant-status-target-rejoin',
     tenant_id: 'tenant-a',
@@ -12121,7 +12121,7 @@ test('updateTenantMemberStatus fails closed when rejoin result reuses original m
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberStatus({
+      service.updateTenantUserStatus({
         requestId: 'req-tenant-member-status-rejoin-old-membership',
         membershipId: 'membership-rejoin-old',
         nextStatus: 'active',
@@ -12142,14 +12142,14 @@ test('updateTenantMemberStatus fails closed when rejoin result reuses original m
   );
 });
 
-test('updateTenantMemberStatus rejects membershipId containing control characters', async () => {
+test('updateTenantUserStatus rejects membershipId containing control characters', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberStatus({
+      service.updateTenantUserStatus({
         requestId: 'req-tenant-member-status-invalid-membership-id',
         membershipId: 'membership-invalid\u0000id',
         nextStatus: 'disabled',
@@ -12169,14 +12169,14 @@ test('updateTenantMemberStatus rejects membershipId containing control character
   );
 });
 
-test('updateTenantMemberStatus rejects membershipId with surrounding whitespace', async () => {
+test('updateTenantUserStatus rejects membershipId with surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberStatus({
+      service.updateTenantUserStatus({
         requestId: 'req-tenant-member-status-membership-id-whitespace',
         membershipId: ' membership-valid-id ',
         nextStatus: 'disabled',
@@ -12196,14 +12196,14 @@ test('updateTenantMemberStatus rejects membershipId with surrounding whitespace'
   );
 });
 
-test('updateTenantMemberStatus rejects reason containing control characters', async () => {
+test('updateTenantUserStatus rejects reason containing control characters', async () => {
   const service = createAuthService({
     seedUsers: [buildPlatformRoleFactsOperatorSeed()]
   });
 
   await assert.rejects(
     () =>
-      service.updateTenantMemberStatus({
+      service.updateTenantUserStatus({
         requestId: 'req-tenant-member-status-invalid-reason',
         membershipId: 'membership-valid-reason-check',
         nextStatus: 'disabled',
@@ -12224,7 +12224,7 @@ test('updateTenantMemberStatus rejects reason containing control characters', as
   );
 });
 
-test('updateTenantMemberStatus persists audit event with request_id and traceparent', async () => {
+test('updateTenantUserStatus persists audit event with request_id and traceparent', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -12252,7 +12252,7 @@ test('updateTenantMemberStatus persists audit event with request_id and tracepar
   });
   const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
 
-  const result = await service.updateTenantMemberStatus({
+  const result = await service.updateTenantUserStatus({
     requestId: 'req-tenant-member-status-audit',
     traceparent,
     membershipId: 'membership-status-audit-1',
@@ -12271,20 +12271,20 @@ test('updateTenantMemberStatus persists audit event with request_id and tracepar
     domain: 'tenant',
     tenantId: 'tenant-status-audit',
     requestId: 'req-tenant-member-status-audit',
-    eventType: 'auth.tenant.member.status.updated'
+    eventType: 'auth.tenant.user.status.updated'
   });
   assert.equal(auditEvents.total, 1);
-  assert.equal(auditEvents.events[0].event_type, 'auth.tenant.member.status.updated');
+  assert.equal(auditEvents.events[0].event_type, 'auth.tenant.user.status.updated');
   assert.equal(auditEvents.events[0].request_id, 'req-tenant-member-status-audit');
   assert.equal(auditEvents.events[0].traceparent, traceparent);
   assert.equal(auditEvents.events[0].target_type, 'membership');
   assert.equal(auditEvents.events[0].target_id, result.membership_id);
 });
 
-test('updateTenantMemberStatus skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
+test('updateTenantUserStatus skips out-of-transaction audit fallback when store reports audit_recorded', async () => {
   const service = createAuthService({
     authStore: {
-      updateTenantMembershipStatus: async ({
+      updateTenantUsershipStatus: async ({
         membershipId,
         nextStatus,
         auditContext
@@ -12308,7 +12308,7 @@ test('updateTenantMemberStatus skips out-of-transaction audit fallback when stor
     allowInMemoryOtpStores: true
   });
 
-  const result = await service.updateTenantMemberStatus({
+  const result = await service.updateTenantUserStatus({
     requestId: 'req-tenant-member-status-atomic-audit',
     membershipId: 'membership-tenant-atomic-audit',
     nextStatus: 'disabled',
@@ -12352,7 +12352,7 @@ const buildTenantRoleBindingSeed = ({ membershipStatus = 'active' } = {}) => ({
   ]
 });
 
-test('replaceTenantMemberRoleBindings rejects non-active memberships', async () => {
+test('replaceTenantUserRoleBindings rejects non-active memberships', async () => {
   for (const membershipStatus of ['disabled', 'left']) {
     const service = createAuthService({
       seedUsers: [buildTenantRoleBindingSeed({ membershipStatus })]
@@ -12369,7 +12369,7 @@ test('replaceTenantMemberRoleBindings rejects non-active memberships', async () 
 
     await assert.rejects(
       () =>
-        service.replaceTenantMemberRoleBindings({
+        service.replaceTenantUserRoleBindings({
           requestId: `req-tenant-role-binding-non-active-${membershipStatus}`,
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1',
@@ -12387,7 +12387,7 @@ test('replaceTenantMemberRoleBindings rejects non-active memberships', async () 
   }
 });
 
-test('replaceTenantMemberRoleBindings persists audit event with request_id and traceparent', async () => {
+test('replaceTenantUserRoleBindings persists audit event with request_id and traceparent', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -12401,7 +12401,7 @@ test('replaceTenantMemberRoleBindings persists audit event with request_id and t
   });
   const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
 
-  const result = await service.replaceTenantMemberRoleBindings({
+  const result = await service.replaceTenantUserRoleBindings({
     requestId: 'req-tenant-role-binding-audit',
     traceparent,
     tenantId: 'tenant-role-binding',
@@ -12426,7 +12426,7 @@ test('replaceTenantMemberRoleBindings persists audit event with request_id and t
   assert.equal(auditEvents.events[0].target_id, 'membership-role-binding-1');
 });
 
-test('replaceTenantMemberRoleBindings maps store-level non-active membership race to tenant membership not found', async () => {
+test('replaceTenantUserRoleBindings maps store-level non-active membership race to tenant usership not found', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -12440,7 +12440,7 @@ test('replaceTenantMemberRoleBindings maps store-level non-active membership rac
     isSystem: false
   });
 
-  await service.updateTenantMemberStatus({
+  await service.updateTenantUserStatus({
     requestId: 'req-tenant-role-binding-race-membership-disable',
     membershipId: 'membership-role-binding-1',
     nextStatus: 'disabled',
@@ -12455,8 +12455,8 @@ test('replaceTenantMemberRoleBindings maps store-level non-active membership rac
 
   const authStore = service._internals.authStore;
   const originalFindMembership =
-    authStore.findTenantMembershipByMembershipIdAndTenantId;
-  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    authStore.findTenantUsershipByMembershipIdAndTenantId;
+  authStore.findTenantUsershipByMembershipIdAndTenantId = async () => ({
     membership_id: 'membership-role-binding-1',
     user_id: 'tenant-role-binding-user',
     tenant_id: 'tenant-role-binding',
@@ -12467,7 +12467,7 @@ test('replaceTenantMemberRoleBindings maps store-level non-active membership rac
   try {
     await assert.rejects(
       () =>
-        service.replaceTenantMemberRoleBindings({
+        service.replaceTenantUserRoleBindings({
           requestId: 'req-tenant-role-binding-race-membership-write',
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1',
@@ -12483,20 +12483,20 @@ test('replaceTenantMemberRoleBindings maps store-level non-active membership rac
       }
     );
   } finally {
-    authStore.findTenantMembershipByMembershipIdAndTenantId =
+    authStore.findTenantUsershipByMembershipIdAndTenantId =
       originalFindMembership;
   }
 });
 
-test('replaceTenantMemberRoleBindings fails closed when membership lookup returns record without phone', async () => {
+test('replaceTenantUserRoleBindings fails closed when membership lookup returns record without phone', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
   const authStore = service._internals.authStore;
   const originalFindMembership =
-    authStore.findTenantMembershipByMembershipIdAndTenantId;
-  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    authStore.findTenantUsershipByMembershipIdAndTenantId;
+  authStore.findTenantUsershipByMembershipIdAndTenantId = async () => ({
     membership_id: 'membership-role-binding-1',
     user_id: 'tenant-role-binding-user',
     tenant_id: 'tenant-role-binding',
@@ -12508,7 +12508,7 @@ test('replaceTenantMemberRoleBindings fails closed when membership lookup return
   try {
     await assert.rejects(
       () =>
-        service.replaceTenantMemberRoleBindings({
+        service.replaceTenantUserRoleBindings({
           requestId: 'req-tenant-role-binding-missing-phone',
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1',
@@ -12524,12 +12524,12 @@ test('replaceTenantMemberRoleBindings fails closed when membership lookup return
       }
     );
   } finally {
-    authStore.findTenantMembershipByMembershipIdAndTenantId =
+    authStore.findTenantUsershipByMembershipIdAndTenantId =
       originalFindMembership;
   }
 });
 
-test('replaceTenantMemberRoleBindings maps store-level role catalog race to role not found', async () => {
+test('replaceTenantUserRoleBindings maps store-level role catalog race to role not found', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -12567,7 +12567,7 @@ test('replaceTenantMemberRoleBindings maps store-level role catalog race to role
   try {
     await assert.rejects(
       () =>
-        service.replaceTenantMemberRoleBindings({
+        service.replaceTenantUserRoleBindings({
           requestId: 'req-tenant-role-binding-race-role-write',
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1',
@@ -12588,7 +12588,7 @@ test('replaceTenantMemberRoleBindings maps store-level role catalog race to role
   }
 });
 
-test('replaceTenantMemberRoleBindings fails closed when role catalog lookup returns role ids with surrounding whitespace', async () => {
+test('replaceTenantUserRoleBindings fails closed when role catalog lookup returns role ids with surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -12617,7 +12617,7 @@ test('replaceTenantMemberRoleBindings fails closed when role catalog lookup retu
   try {
     await assert.rejects(
       () =>
-        service.replaceTenantMemberRoleBindings({
+        service.replaceTenantUserRoleBindings({
           requestId: 'req-tenant-role-binding-catalog-roleid-whitespace-write',
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1',
@@ -12638,7 +12638,7 @@ test('replaceTenantMemberRoleBindings fails closed when role catalog lookup retu
   }
 });
 
-test('replaceTenantMemberRoleBindings fails closed when role catalog lookup returns scopes with surrounding whitespace', async () => {
+test('replaceTenantUserRoleBindings fails closed when role catalog lookup returns scopes with surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -12667,7 +12667,7 @@ test('replaceTenantMemberRoleBindings fails closed when role catalog lookup retu
   try {
     await assert.rejects(
       () =>
-        service.replaceTenantMemberRoleBindings({
+        service.replaceTenantUserRoleBindings({
           requestId: 'req-tenant-role-binding-catalog-scope-whitespace-write',
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1',
@@ -12688,7 +12688,7 @@ test('replaceTenantMemberRoleBindings fails closed when role catalog lookup retu
   }
 });
 
-test('replaceTenantMemberRoleBindings maps store-level sync failure to tenant dependency unavailable', async () => {
+test('replaceTenantUserRoleBindings maps store-level sync failure to tenant dependency unavailable', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -12702,8 +12702,8 @@ test('replaceTenantMemberRoleBindings maps store-level sync failure to tenant de
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => {
-    const syncError = new Error('tenant membership role bindings sync failed: unknown');
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => {
+    const syncError = new Error('tenant usership role bindings sync failed: unknown');
     syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
     syncError.syncReason = 'unknown';
     throw syncError;
@@ -12711,7 +12711,7 @@ test('replaceTenantMemberRoleBindings maps store-level sync failure to tenant de
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-sync-failed',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13110,19 +13110,19 @@ test('listTenantRolePermissionGrants fails closed when grants dependency returns
   );
 });
 
-test('listTenantMemberRoleBindings fails closed when store returns malformed role ids', async () => {
+test('listTenantUserRoleBindings fails closed when store returns malformed role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
-  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+  service._internals.authStore.listTenantUsershipRoleBindings = async () => [
     'tenant_role_valid',
     'tenant role invalid'
   ];
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1'
       }),
@@ -13135,15 +13135,15 @@ test('listTenantMemberRoleBindings fails closed when store returns malformed rol
   );
 });
 
-test('listTenantMemberRoleBindings fails closed when membership lookup returns record without phone', async () => {
+test('listTenantUserRoleBindings fails closed when membership lookup returns record without phone', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
   const authStore = service._internals.authStore;
   const originalFindMembership =
-    authStore.findTenantMembershipByMembershipIdAndTenantId;
-  authStore.findTenantMembershipByMembershipIdAndTenantId = async () => ({
+    authStore.findTenantUsershipByMembershipIdAndTenantId;
+  authStore.findTenantUsershipByMembershipIdAndTenantId = async () => ({
     membership_id: 'membership-role-binding-1',
     user_id: 'tenant-role-binding-user',
     tenant_id: 'tenant-role-binding',
@@ -13155,7 +13155,7 @@ test('listTenantMemberRoleBindings fails closed when membership lookup returns r
   try {
     await assert.rejects(
       () =>
-        service.listTenantMemberRoleBindings({
+        service.listTenantUserRoleBindings({
           tenantId: 'tenant-role-binding',
           membershipId: 'membership-role-binding-1'
         }),
@@ -13167,23 +13167,23 @@ test('listTenantMemberRoleBindings fails closed when membership lookup returns r
       }
     );
   } finally {
-    authStore.findTenantMembershipByMembershipIdAndTenantId =
+    authStore.findTenantUsershipByMembershipIdAndTenantId =
       originalFindMembership;
   }
 });
 
-test('listTenantMemberRoleBindings fails closed when store returns role ids with surrounding whitespace', async () => {
+test('listTenantUserRoleBindings fails closed when store returns role ids with surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
-  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+  service._internals.authStore.listTenantUsershipRoleBindings = async () => [
     ' tenant_role_valid'
   ];
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1'
       }),
@@ -13196,18 +13196,18 @@ test('listTenantMemberRoleBindings fails closed when store returns role ids with
   );
 });
 
-test('listTenantMemberRoleBindings fails closed when store returns role ids with uppercase characters', async () => {
+test('listTenantUserRoleBindings fails closed when store returns role ids with uppercase characters', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
-  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+  service._internals.authStore.listTenantUsershipRoleBindings = async () => [
     'TENANT_ROLE_VALID'
   ];
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1'
       }),
@@ -13220,12 +13220,12 @@ test('listTenantMemberRoleBindings fails closed when store returns role ids with
   );
 });
 
-test('listTenantMemberRoleBindings fails closed when store returns more than 5 role ids', async () => {
+test('listTenantUserRoleBindings fails closed when store returns more than 5 role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
-  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+  service._internals.authStore.listTenantUsershipRoleBindings = async () => [
     'tenant_role_1',
     'tenant_role_2',
     'tenant_role_3',
@@ -13236,7 +13236,7 @@ test('listTenantMemberRoleBindings fails closed when store returns more than 5 r
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1'
       }),
@@ -13249,7 +13249,7 @@ test('listTenantMemberRoleBindings fails closed when store returns more than 5 r
   );
 });
 
-test('listTenantMemberRoleBindings fails closed when store returns cross-tenant role ids', async () => {
+test('listTenantUserRoleBindings fails closed when store returns cross-tenant role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13263,13 +13263,13 @@ test('listTenantMemberRoleBindings fails closed when store returns cross-tenant 
     isSystem: false
   });
 
-  service._internals.authStore.listTenantMembershipRoleBindings = async () => [
+  service._internals.authStore.listTenantUsershipRoleBindings = async () => [
     'tenant_role_binding_other_tenant'
   ];
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1'
       }),
@@ -13282,7 +13282,7 @@ test('listTenantMemberRoleBindings fails closed when store returns cross-tenant 
   );
 });
 
-test('replaceTenantMemberRoleBindings accepts snake_case write result fields when camelCase shadow keys are undefined', async () => {
+test('replaceTenantUserRoleBindings accepts snake_case write result fields when camelCase shadow keys are undefined', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13298,8 +13298,8 @@ test('replaceTenantMemberRoleBindings accepts snake_case write result fields whe
 
   const authStore = service._internals.authStore;
   const originalReplaceBindings =
-    authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot;
-  authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+    authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot;
+  authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: undefined,
     membership_id: 'membership-role-binding-1',
     roleIds: undefined,
@@ -13311,7 +13311,7 @@ test('replaceTenantMemberRoleBindings accepts snake_case write result fields whe
   });
 
   try {
-    const result = await service.replaceTenantMemberRoleBindings({
+    const result = await service.replaceTenantUserRoleBindings({
       requestId: 'req-tenant-role-binding-write-shadow-fallback',
       tenantId: 'tenant-role-binding',
       membershipId: 'membership-role-binding-1',
@@ -13323,12 +13323,12 @@ test('replaceTenantMemberRoleBindings accepts snake_case write result fields whe
     assert.equal(result.membership_id, 'membership-role-binding-1');
     assert.deepEqual(result.role_ids, ['tenant_role_binding_shadow_fallback_target']);
   } finally {
-    authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot =
+    authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot =
       originalReplaceBindings;
   }
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result contains malformed role ids', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result contains malformed role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13350,7 +13350,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result conta
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a', 'tenant role invalid'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -13359,7 +13359,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result conta
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-malformed-result',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13376,7 +13376,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result conta
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result role ids contain surrounding whitespace', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result role ids contain surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13390,7 +13390,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result role 
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: [' tenant_role_binding_ws_a'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -13399,7 +13399,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result role 
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-role-ids-whitespace',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13416,7 +13416,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result role 
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result mismatches requested role ids', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result mismatches requested role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13438,7 +13438,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result misma
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -13447,7 +13447,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result misma
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-mismatch-result',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13778,7 +13778,7 @@ test('replaceTenantRolePermissionGrants maps ERR_AUDIT_WRITE_FAILED from atomic 
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result exceeds 5 role ids', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result exceeds 5 role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13800,7 +13800,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result excee
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: [
       'tenant_role_1',
@@ -13816,7 +13816,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result excee
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-over-limit-result',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13833,7 +13833,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result excee
   );
 });
 
-test('listTenantMemberRoleBindings fails closed when store returns non-string role ids', async () => {
+test('listTenantUserRoleBindings fails closed when store returns non-string role ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13847,11 +13847,11 @@ test('listTenantMemberRoleBindings fails closed when store returns non-string ro
     isSystem: false
   });
 
-  service._internals.authStore.listTenantMembershipRoleBindings = async () => [123];
+  service._internals.authStore.listTenantUsershipRoleBindings = async () => [123];
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1'
       }),
@@ -13864,7 +13864,7 @@ test('listTenantMemberRoleBindings fails closed when store returns non-string ro
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result mismatches requested membership_id', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result mismatches requested membership_id', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13878,7 +13878,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result misma
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-2',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -13887,7 +13887,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result misma
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-membership-mismatch',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13904,7 +13904,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result misma
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result membership_id contains surrounding whitespace', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result membership_id contains surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13918,7 +13918,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result membe
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: ' membership-role-binding-1',
     roleIds: ['tenant_role_binding_membership_whitespace_a'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -13927,7 +13927,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result membe
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-membership-whitespace',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13944,7 +13944,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result membe
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result has invalid affected user ids', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result has invalid affected user ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13958,7 +13958,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result has i
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: ['tenant-role-binding-user', 123],
@@ -13967,7 +13967,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result has i
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-affected-user-ids-invalid',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -13984,7 +13984,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result has i
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result affected user ids contain surrounding whitespace', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result affected user ids contain surrounding whitespace', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -13998,7 +13998,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result affec
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: [' tenant-role-binding-user'],
@@ -14007,7 +14007,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result affec
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-affected-user-ids-whitespace',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -14024,7 +14024,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result affec
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when store write result omits affected user metadata', async () => {
+test('replaceTenantUserRoleBindings fails closed when store write result omits affected user metadata', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -14038,14 +14038,14 @@ test('replaceTenantMemberRoleBindings fails closed when store write result omits
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a']
   });
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-affected-user-metadata-missing',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -14062,7 +14062,7 @@ test('replaceTenantMemberRoleBindings fails closed when store write result omits
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when affected user ids are null', async () => {
+test('replaceTenantUserRoleBindings fails closed when affected user ids are null', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -14076,7 +14076,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user ids are nu
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: null,
@@ -14085,7 +14085,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user ids are nu
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-affected-user-ids-null',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -14102,7 +14102,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user ids are nu
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when affected user count is null', async () => {
+test('replaceTenantUserRoleBindings fails closed when affected user count is null', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -14116,7 +14116,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user count is n
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -14125,7 +14125,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user count is n
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-affected-user-count-null',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -14142,7 +14142,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user count is n
   );
 });
 
-test('replaceTenantMemberRoleBindings fails closed when affected user count mismatches affected user ids', async () => {
+test('replaceTenantUserRoleBindings fails closed when affected user count mismatches affected user ids', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -14156,7 +14156,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user count mism
     isSystem: false
   });
 
-  service._internals.authStore.replaceTenantMembershipRoleBindingsAndSyncSnapshot = async () => ({
+  service._internals.authStore.replaceTenantUsershipRoleBindingsAndSyncSnapshot = async () => ({
     membershipId: 'membership-role-binding-1',
     roleIds: ['tenant_role_binding_a'],
     affectedUserIds: ['tenant-role-binding-user'],
@@ -14165,7 +14165,7 @@ test('replaceTenantMemberRoleBindings fails closed when affected user count mism
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-affected-user-count-mismatch',
         tenantId: 'tenant-role-binding',
         membershipId: 'membership-role-binding-1',
@@ -14684,14 +14684,14 @@ test('replaceTenantRolePermissionGrants rejects malformed role_id as invalid pay
   );
 });
 
-test('listTenantMemberRoleBindings rejects membership_id with surrounding whitespace as invalid payload', async () => {
+test('listTenantUserRoleBindings rejects membership_id with surrounding whitespace as invalid payload', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
   await assert.rejects(
     () =>
-      service.listTenantMemberRoleBindings({
+      service.listTenantUserRoleBindings({
         tenantId: 'tenant-role-binding',
         membershipId: ' membership-role-binding-1'
       }),
@@ -14704,14 +14704,14 @@ test('listTenantMemberRoleBindings rejects membership_id with surrounding whites
   );
 });
 
-test('replaceTenantMemberRoleBindings rejects membership_id with surrounding whitespace as invalid payload', async () => {
+test('replaceTenantUserRoleBindings rejects membership_id with surrounding whitespace as invalid payload', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
   await assert.rejects(
     () =>
-      service.replaceTenantMemberRoleBindings({
+      service.replaceTenantUserRoleBindings({
         requestId: 'req-tenant-role-binding-write-invalid-membership-id',
         tenantId: 'tenant-role-binding',
         membershipId: ' membership-role-binding-1',
@@ -14728,12 +14728,12 @@ test('replaceTenantMemberRoleBindings rejects membership_id with surrounding whi
   );
 });
 
-test('listTenantMemberRoleBindings normalizes uppercase membership_id to lowercase', async () => {
+test('listTenantUserRoleBindings normalizes uppercase membership_id to lowercase', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
 
-  const result = await service.listTenantMemberRoleBindings({
+  const result = await service.listTenantUserRoleBindings({
     tenantId: 'tenant-role-binding',
     membershipId: 'MEMBERSHIP-ROLE-BINDING-1'
   });
@@ -14742,7 +14742,7 @@ test('listTenantMemberRoleBindings normalizes uppercase membership_id to lowerca
   assert.deepEqual(result.role_ids, []);
 });
 
-test('replaceTenantMemberRoleBindings normalizes uppercase membership_id to lowercase', async () => {
+test('replaceTenantUserRoleBindings normalizes uppercase membership_id to lowercase', async () => {
   const service = createAuthService({
     seedUsers: [buildTenantRoleBindingSeed()]
   });
@@ -14756,7 +14756,7 @@ test('replaceTenantMemberRoleBindings normalizes uppercase membership_id to lowe
     isSystem: false
   });
 
-  const result = await service.replaceTenantMemberRoleBindings({
+  const result = await service.replaceTenantUserRoleBindings({
     requestId: 'req-tenant-role-binding-uppercase-membership-id',
     tenantId: 'tenant-role-binding',
     membershipId: 'MEMBERSHIP-ROLE-BINDING-1',

@@ -2,7 +2,7 @@ const { createAuthUserRepository } = require('./user-repository');
 const { createAuthSessionRepository } = require('./session-repository');
 const { createAuthDomainAccessRepository } = require('./domain-access-repository');
 const {
-  createAuthTenantMembershipRepository
+  createAuthTenantUsershipRepository
 } = require('./tenant-membership-repository');
 const { createAuthPermissionRepository } = require('./permission-repository');
 
@@ -11,7 +11,7 @@ const createAuthRepositories = ({ authStore } = {}) =>
     userRepository: createAuthUserRepository({ authStore }),
     sessionRepository: createAuthSessionRepository({ authStore }),
     domainAccessRepository: createAuthDomainAccessRepository({ authStore }),
-    tenantMembershipRepository: createAuthTenantMembershipRepository({ authStore }),
+    tenantUsershipRepository: createAuthTenantUsershipRepository({ authStore }),
     permissionRepository: createAuthPermissionRepository({ authStore })
   });
 
@@ -20,6 +20,6 @@ module.exports = {
   createAuthUserRepository,
   createAuthSessionRepository,
   createAuthDomainAccessRepository,
-  createAuthTenantMembershipRepository,
+  createAuthTenantUsershipRepository,
   createAuthPermissionRepository
 };

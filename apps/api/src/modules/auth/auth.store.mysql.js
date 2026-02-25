@@ -24,8 +24,8 @@ const {
   toTenantPermissionSnapshotFromCodes
 } = require('./permission-catalog');
 const {
-  createMySqlRepositoryMethods
-} = require('./store-methods/mysql-repository-methods');
+  createMySqlAuthStoreCapabilities
+} = require('./store-methods/auth-store-mysql-capabilities');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxRetries: 2,
@@ -115,8 +115,8 @@ const DEFAULT_PLATFORM_INTEGRATION_RECOVERY_CLAIM_LEASE_MS = Math.min(
   MAX_PLATFORM_INTEGRATION_TIMEOUT_MS
 );
 const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
-const MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH = 64;
-const MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH = 128;
+const MAX_TENANT_USER_DISPLAY_NAME_LENGTH = 64;
+const MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH = 128;
 const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
 const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
 const MAINLAND_PHONE_PATTERN = /^1\d{10}$/;
@@ -167,7 +167,7 @@ const normalizeOrgStatus = (status) => {
   }
   return value;
 };
-const normalizeTenantMembershipStatus = (status) => {
+const normalizeTenantUsershipStatus = (status) => {
   const value = String(status ?? '').trim().toLowerCase();
   if (!value) {
     return 'active';
@@ -177,7 +177,7 @@ const normalizeTenantMembershipStatus = (status) => {
   }
   return VALID_TENANT_MEMBERSHIP_STATUS.has(value) ? value : '';
 };
-const normalizeTenantMembershipStatusForRead = (status) => {
+const normalizeTenantUsershipStatusForRead = (status) => {
   const value = String(status ?? '').trim().toLowerCase();
   if (!value) {
     return '';
@@ -187,7 +187,7 @@ const normalizeTenantMembershipStatusForRead = (status) => {
   }
   return VALID_TENANT_MEMBERSHIP_STATUS.has(value) ? value : '';
 };
-const normalizeOptionalTenantMemberProfileField = ({
+const normalizeOptionalTenantUserProfileField = ({
   value,
   maxLength
 } = {}) => {
@@ -207,7 +207,7 @@ const normalizeOptionalTenantMemberProfileField = ({
   }
   return normalized;
 };
-const resolveOptionalTenantMemberProfileField = (value) =>
+const resolveOptionalTenantUserProfileField = (value) =>
   value === null || value === undefined
     ? null
     : value;
@@ -216,7 +216,7 @@ const normalizeRequiredPlatformUserProfileField = ({
   maxLength,
   fieldName
 } = {}) => {
-  const normalized = normalizeOptionalTenantMemberProfileField({
+  const normalized = normalizeOptionalTenantUserProfileField({
     value,
     maxLength
   });
@@ -240,7 +240,7 @@ const normalizeOptionalPlatformUserProfileField = ({
   if (!trimmed) {
     return null;
   }
-  const normalized = normalizeOptionalTenantMemberProfileField({
+  const normalized = normalizeOptionalTenantUserProfileField({
     value: trimmed,
     maxLength
   });
@@ -536,18 +536,18 @@ const isStrictMainlandPhone = (candidate) => {
   const normalized = raw.trim();
   return raw === normalized && MAINLAND_PHONE_PATTERN.test(normalized);
 };
-const isStrictOptionalTenantMemberProfileField = ({
+const isStrictOptionalTenantUserProfileField = ({
   value,
   maxLength
 } = {}) => {
-  const resolvedRawValue = resolveOptionalTenantMemberProfileField(value);
+  const resolvedRawValue = resolveOptionalTenantUserProfileField(value);
   if (resolvedRawValue === null) {
     return true;
   }
   if (typeof resolvedRawValue !== 'string') {
     return false;
   }
-  const normalized = normalizeOptionalTenantMemberProfileField({
+  const normalized = normalizeOptionalTenantUserProfileField({
     value: resolvedRawValue,
     maxLength
   });
@@ -1428,7 +1428,7 @@ const isDeadlockError = (error) =>
 const isDuplicateEntryError = (error) =>
   String(error?.code || '').toUpperCase() === 'ER_DUP_ENTRY'
   || Number(error?.errno || 0) === MYSQL_DUP_ENTRY_ERRNO;
-const isMissingTenantMembershipHistoryTableError = (error) =>
+const isMissingTenantUsershipHistoryTableError = (error) =>
   isTableMissingError(error)
   && /auth_user_tenant_membership_history/i.test(String(error?.message || ''));
 const isMissingTenantsTableError = (error) =>
@@ -1436,9 +1436,9 @@ const isMissingTenantsTableError = (error) =>
   && /\btenants\b/i.test(String(error?.message || ''));
 const TENANT_MEMBERSHIP_HISTORY_UNAVAILABLE_CODE =
   'AUTH-503-TENANT-MEMBER-HISTORY-UNAVAILABLE';
-const createTenantMembershipHistoryUnavailableError = () => {
+const createTenantUsershipHistoryUnavailableError = () => {
   const error = new Error(
-    'tenant membership history table is required but unavailable'
+    'tenant usership history table is required but unavailable'
   );
   error.code = TENANT_MEMBERSHIP_HISTORY_UNAVAILABLE_CODE;
   return error;
@@ -1650,22 +1650,22 @@ const normalizeStrictRoleIdFromTenantGrantRow = (
   }
   return normalizedRoleId;
 };
-const createTenantMembershipRoleBindingDataError = (
+const createTenantUsershipRoleBindingDataError = (
   reason = 'tenant-membership-role-bindings-invalid'
 ) => {
-  const error = new Error('tenant membership role bindings invalid');
+  const error = new Error('tenant usership role bindings invalid');
   error.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_INVALID';
   error.reason = String(reason || 'tenant-membership-role-bindings-invalid')
     .trim()
     .toLowerCase();
   return error;
 };
-const normalizeStrictTenantMembershipRoleIdFromBindingRow = (
+const normalizeStrictTenantUsershipRoleIdFromBindingRow = (
   roleId,
   reason = 'tenant-membership-role-bindings-invalid-role-id'
 ) => {
   if (typeof roleId !== 'string') {
-    throw createTenantMembershipRoleBindingDataError(reason);
+    throw createTenantUsershipRoleBindingDataError(reason);
   }
   const normalizedRoleId = normalizePlatformRoleCatalogRoleId(roleId);
   if (
@@ -1675,16 +1675,16 @@ const normalizeStrictTenantMembershipRoleIdFromBindingRow = (
     || CONTROL_CHAR_PATTERN.test(normalizedRoleId)
     || !ROLE_ID_ADDRESSABLE_PATTERN.test(normalizedRoleId)
   ) {
-    throw createTenantMembershipRoleBindingDataError(reason);
+    throw createTenantUsershipRoleBindingDataError(reason);
   }
   return normalizedRoleId;
 };
-const normalizeStrictTenantMembershipRoleBindingIdentity = (
+const normalizeStrictTenantUsershipRoleBindingIdentity = (
   identityValue,
   reason = 'tenant-membership-role-bindings-invalid-identity'
 ) => {
   if (typeof identityValue !== 'string') {
-    throw createTenantMembershipRoleBindingDataError(reason);
+    throw createTenantUsershipRoleBindingDataError(reason);
   }
   const normalizedIdentity = identityValue.trim();
   if (
@@ -1692,7 +1692,7 @@ const normalizeStrictTenantMembershipRoleBindingIdentity = (
     || identityValue !== normalizedIdentity
     || CONTROL_CHAR_PATTERN.test(normalizedIdentity)
   ) {
-    throw createTenantMembershipRoleBindingDataError(reason);
+    throw createTenantUsershipRoleBindingDataError(reason);
   }
   return normalizedIdentity;
 };
@@ -1967,9 +1967,9 @@ const createMySqlAuthStore = ({
     }
   };
   let orgStatusGuardAvailable = true;
-  let tenantMembershipHistoryTableAvailable = true;
+  let tenantUsershipHistoryTableAvailable = true;
 
-  const runTenantMembershipQuery = async ({
+  const runTenantUsershipQuery = async ({
     txClient = dbClient,
     sqlWithOrgGuard,
     sqlWithoutOrgGuard,
@@ -1990,18 +1990,18 @@ const createMySqlAuthStore = ({
     }
   };
 
-  const insertTenantMembershipHistoryTx = async ({
+  const insertTenantUsershipHistoryTx = async ({
     txClient,
     row,
     archivedReason = null,
     archivedByUserId = null
   }) => {
-    if (!tenantMembershipHistoryTableAvailable) {
-      throw createTenantMembershipHistoryUnavailableError();
+    if (!tenantUsershipHistoryTableAvailable) {
+      throw createTenantUsershipHistoryUnavailableError();
     }
-    const normalizedRowStatus = normalizeTenantMembershipStatusForRead(row?.status);
+    const normalizedRowStatus = normalizeTenantUsershipStatusForRead(row?.status);
     if (!VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedRowStatus)) {
-      throw new Error('insertTenantMembershipHistoryTx encountered unsupported status');
+      throw new Error('insertTenantUsershipHistoryTx encountered unsupported status');
     }
     try {
       await txClient.query(
@@ -2046,9 +2046,9 @@ const createMySqlAuthStore = ({
         ]
       );
     } catch (error) {
-      if (isMissingTenantMembershipHistoryTableError(error)) {
-        tenantMembershipHistoryTableAvailable = false;
-        throw createTenantMembershipHistoryUnavailableError();
+      if (isMissingTenantUsershipHistoryTableError(error)) {
+        tenantUsershipHistoryTableAvailable = false;
+        throw createTenantUsershipHistoryUnavailableError();
       }
       throw error;
     }
@@ -2066,7 +2066,7 @@ const createMySqlAuthStore = ({
     if (skipMembershipCheck) {
       return { inserted: false };
     }
-    const tenantCountRows = await runTenantMembershipQuery({
+    const tenantCountRows = await runTenantUsershipQuery({
       txClient,
       sqlWithOrgGuard: `
         SELECT COUNT(*) AS tenant_count
@@ -2099,7 +2099,7 @@ const createMySqlAuthStore = ({
     if (!normalizedUserId) {
       return { removed: false };
     }
-    const tenantCountRows = await runTenantMembershipQuery({
+    const tenantCountRows = await runTenantUsershipQuery({
       txClient,
       sqlWithOrgGuard: `
         SELECT COUNT(*) AS tenant_count
@@ -2121,7 +2121,7 @@ const createMySqlAuthStore = ({
     return { removed: tenantCount <= 0 };
   };
 
-  const normalizeTenantMembershipRoleIds = (roleIds = []) =>
+  const normalizeTenantUsershipRoleIds = (roleIds = []) =>
     [...new Set(
       (Array.isArray(roleIds) ? roleIds : [])
         .map((roleId) => normalizePlatformRoleCatalogRoleId(roleId))
@@ -2170,7 +2170,7 @@ const createMySqlAuthStore = ({
     );
   };
 
-  const listTenantMembershipRoleBindingsTx = async ({
+  const listTenantUsershipRoleBindingsTx = async ({
     txClient,
     membershipId
   }) => {
@@ -2191,12 +2191,12 @@ const createMySqlAuthStore = ({
     const normalizedRoleIds = [];
     const seenRoleIds = new Set();
     for (const row of Array.isArray(roleRows) ? roleRows : []) {
-      const normalizedRoleId = normalizeStrictTenantMembershipRoleIdFromBindingRow(
+      const normalizedRoleId = normalizeStrictTenantUsershipRoleIdFromBindingRow(
         row?.role_id,
         'tenant-membership-role-bindings-invalid-role-id'
       );
       if (seenRoleIds.has(normalizedRoleId)) {
-        throw createTenantMembershipRoleBindingDataError(
+        throw createTenantUsershipRoleBindingDataError(
           'tenant-membership-role-bindings-duplicate-role-id'
         );
       }
@@ -2212,7 +2212,7 @@ const createMySqlAuthStore = ({
     roleIds = []
   }) => {
     const normalizedTenantId = String(tenantId || '').trim();
-    const normalizedRoleIds = normalizeTenantMembershipRoleIds(roleIds);
+    const normalizedRoleIds = normalizeTenantUsershipRoleIds(roleIds);
     const grantsByRoleId = new Map();
     for (const roleId of normalizedRoleIds) {
       grantsByRoleId.set(roleId, []);
@@ -2314,13 +2314,13 @@ const createMySqlAuthStore = ({
     roleIds = []
   }) => {
     const normalizedTenantId = String(tenantId || '').trim();
-    const membershipStatus = normalizeTenantMembershipStatusForRead(
+    const membershipStatus = normalizeTenantUsershipStatusForRead(
       membership?.status
     );
     if (!isActiveLikeStatus(membershipStatus)) {
       return toTenantPermissionSnapshotFromGrantCodes([]);
     }
-    const normalizedRoleIds = normalizeTenantMembershipRoleIds(roleIds);
+    const normalizedRoleIds = normalizeTenantUsershipRoleIds(roleIds);
     if (normalizedRoleIds.length === 0) {
       return toTenantPermissionSnapshotFromGrantCodes([]);
     }
@@ -2336,7 +2336,7 @@ const createMySqlAuthStore = ({
     return toTenantPermissionSnapshotFromGrantCodes(mergedGrantCodes);
   };
 
-  const syncTenantMembershipPermissionSnapshotInTx = async ({
+  const syncTenantUsershipPermissionSnapshotInTx = async ({
     txClient,
     membershipId,
     tenantId,
@@ -2386,8 +2386,8 @@ const createMySqlAuthStore = ({
       '组织权限（角色并集）'
     );
     const resolvedRoleIds = Array.isArray(roleIds)
-      ? normalizeTenantMembershipRoleIds(roleIds)
-      : await listTenantMembershipRoleBindingsTx({
+      ? normalizeTenantUsershipRoleIds(roleIds)
+      : await listTenantUsershipRoleBindingsTx({
         txClient,
         membershipId: normalizedMembershipId
       });
@@ -3014,9 +3014,9 @@ const createMySqlAuthStore = ({
     };
   };
 
-  const repositoryMethods = createMySqlRepositoryMethods({
+  const repositoryMethods = createMySqlAuthStoreCapabilities({
     dbClient,
-    runTenantMembershipQuery,
+    runTenantUsershipQuery,
     toUserRecord,
     toSessionRecord,
     toRefreshRecord,
@@ -3042,8 +3042,8 @@ const createMySqlAuthStore = ({
     resolveActivePlatformPermissionSnapshotByUserIdTx,
     syncPlatformPermissionSnapshotByUserIdImpl: syncPlatformPermissionSnapshotByUserId,
     bumpSessionVersionAndConvergeSessionsTx,
-    MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH,
-    MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH,
+    MAX_TENANT_USER_DISPLAY_NAME_LENGTH,
+    MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH,
     MAX_PLATFORM_ROLE_CODE_LENGTH,
     MAX_PLATFORM_ROLE_NAME_LENGTH,
     MAINLAND_PHONE_PATTERN,
@@ -6964,7 +6964,7 @@ const createMySqlAuthStore = ({
     },
 
     listTenantRolePermissionGrantsByRoleIds: async ({ roleIds = [] } = {}) => {
-      const normalizedRoleIds = normalizeTenantMembershipRoleIds(roleIds);
+      const normalizedRoleIds = normalizeTenantUsershipRoleIds(roleIds);
       if (normalizedRoleIds.length === 0) {
         return [];
       }
@@ -7154,7 +7154,7 @@ const createMySqlAuthStore = ({
             }
 
             for (const membershipId of affectedMembershipIds) {
-              const syncResult = await syncTenantMembershipPermissionSnapshotInTx({
+              const syncResult = await syncTenantUsershipPermissionSnapshotInTx({
                 txClient: tx,
                 membershipId,
                 tenantId: normalizedTenantId,
@@ -7756,9 +7756,9 @@ const createMySqlAuthStore = ({
           dbClient.inTransaction(async (tx) => {
             const normalizedOrgId = String(orgId || '').trim() || randomUUID();
             const normalizedOrgName = normalizeOrgName(orgName);
-            const normalizedOwnerDisplayName = normalizeOptionalTenantMemberProfileField({
+            const normalizedOwnerDisplayName = normalizeOptionalTenantUserProfileField({
               value: ownerDisplayName,
-              maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+              maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
             });
             const normalizedOwnerUserId = String(ownerUserId || '').trim();
             const normalizedOperatorUserId = String(operatorUserId || '').trim();
@@ -7863,7 +7863,7 @@ const createMySqlAuthStore = ({
             if (!membershipRow) {
               throw new Error('org-owner-membership-missing');
             }
-            const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+            const normalizedMembershipStatus = normalizeTenantUsershipStatusForRead(
               membershipRow.status
             );
             if (
@@ -7877,7 +7877,7 @@ const createMySqlAuthStore = ({
               const previousMembershipId = String(
                 membershipRow.membership_id || ''
               ).trim();
-              await insertTenantMembershipHistoryTx({
+              await insertTenantUsershipHistoryTx({
                 txClient: tx,
                 row: {
                   ...membershipRow,
@@ -8138,11 +8138,11 @@ const createMySqlAuthStore = ({
               normalizedGrantSet.add(permissionCode);
             }
 
-            const existingRoleIds = await listTenantMembershipRoleBindingsTx({
+            const existingRoleIds = await listTenantUsershipRoleBindingsTx({
               txClient: tx,
               membershipId: resolvedMembershipId
             });
-            const nextRoleIds = normalizeTenantMembershipRoleIds([
+            const nextRoleIds = normalizeTenantUsershipRoleIds([
               ...existingRoleIds,
               normalizedTakeoverRoleId
             ]);
@@ -8181,7 +8181,7 @@ const createMySqlAuthStore = ({
               );
             }
 
-            const syncResult = await syncTenantMembershipPermissionSnapshotInTx({
+            const syncResult = await syncTenantUsershipPermissionSnapshotInTx({
               txClient: tx,
               membershipId: resolvedMembershipId,
               tenantId: normalizedOrgId,
@@ -8712,7 +8712,7 @@ const createMySqlAuthStore = ({
               );
               membershipRow = membershipRows?.[0] || null;
             } else {
-              const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+              const normalizedMembershipStatus = normalizeTenantUsershipStatusForRead(
                 membershipRow.status
               );
               if (
@@ -8731,7 +8731,7 @@ const createMySqlAuthStore = ({
                 const previousMembershipId = String(
                   membershipRow.membership_id || ''
                 ).trim();
-                await insertTenantMembershipHistoryTx({
+                await insertTenantUsershipHistoryTx({
                   txClient: tx,
                   row: {
                     ...membershipRow,
@@ -8846,11 +8846,11 @@ const createMySqlAuthStore = ({
               throw ownerSwitchError;
             }
 
-            const existingRoleIds = await listTenantMembershipRoleBindingsTx({
+            const existingRoleIds = await listTenantUsershipRoleBindingsTx({
               txClient: tx,
               membershipId: resolvedMembershipId
             });
-            const nextRoleIds = normalizeTenantMembershipRoleIds([
+            const nextRoleIds = normalizeTenantUsershipRoleIds([
               ...existingRoleIds,
               normalizedTakeoverRoleId
             ]);
@@ -8889,7 +8889,7 @@ const createMySqlAuthStore = ({
               );
             }
 
-            const syncResult = await syncTenantMembershipPermissionSnapshotInTx({
+            const syncResult = await syncTenantUsershipPermissionSnapshotInTx({
               txClient: tx,
               membershipId: resolvedMembershipId,
               tenantId: normalizedOrgId,
@@ -9044,7 +9044,7 @@ const createMySqlAuthStore = ({
                 const affectedMembershipUserIds = new Set();
                 const affectedUserIds = new Set();
 
-                const tenantMembershipRows = await tx.query(
+                const tenantUsershipRows = await tx.query(
                   `
                     SELECT membership_id, user_id, status
                     FROM tenant_memberships
@@ -9053,19 +9053,19 @@ const createMySqlAuthStore = ({
                   `,
                   [normalizedOrgId]
                 );
-                const activeTenantMembershipUserIds = (Array.isArray(tenantMembershipRows)
-                  ? tenantMembershipRows
+                const activeTenantUsershipUserIds = (Array.isArray(tenantUsershipRows)
+                  ? tenantUsershipRows
                   : [])
                   .filter((row) =>
                     isActiveLikeStatus(
-                      normalizeTenantMembershipStatusForRead(row?.status)
+                      normalizeTenantUsershipStatusForRead(row?.status)
                     )
                   )
                   .map((row) => String(row?.user_id || '').trim())
                   .filter((userId) => userId.length > 0);
-                for (const activeTenantMembershipUserId of activeTenantMembershipUserIds) {
-                  affectedMembershipUserIds.add(activeTenantMembershipUserId);
-                  affectedUserIds.add(activeTenantMembershipUserId);
+                for (const activeTenantUsershipUserId of activeTenantUsershipUserIds) {
+                  affectedMembershipUserIds.add(activeTenantUsershipUserId);
+                  affectedUserIds.add(activeTenantUsershipUserId);
                 }
                 await tx.query(
                   `
@@ -9587,17 +9587,17 @@ const createMySqlAuthStore = ({
       });
     },
 
-    createTenantMembershipForUser: async ({ userId, tenantId, tenantName = null }) => {
+    createTenantUsershipForUser: async ({ userId, tenantId, tenantName = null }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedUserId || !normalizedTenantId) {
-        throw new Error('createTenantMembershipForUser requires userId and tenantId');
+        throw new Error('createTenantUsershipForUser requires userId and tenantId');
       }
       const normalizedTenantName = tenantName === null || tenantName === undefined
         ? null
         : String(tenantName).trim() || null;
       return executeWithDeadlockRetry({
-        operation: 'createTenantMembershipForUser',
+        operation: 'createTenantUsershipForUser',
         onExhausted: 'throw',
         execute: () =>
           dbClient.inTransaction(async (tx) => {
@@ -9673,10 +9673,10 @@ const createMySqlAuthStore = ({
               return { created: Number(result?.affectedRows || 0) > 0 };
             }
 
-            const existingStatus = normalizeTenantMembershipStatusForRead(existing.status);
+            const existingStatus = normalizeTenantUsershipStatusForRead(existing.status);
             if (!VALID_TENANT_MEMBERSHIP_STATUS.has(existingStatus)) {
               throw new Error(
-                'createTenantMembershipForUser encountered unsupported existing status'
+                'createTenantUsershipForUser encountered unsupported existing status'
               );
             }
             if (existingStatus !== 'left') {
@@ -9684,7 +9684,7 @@ const createMySqlAuthStore = ({
             }
 
             const previousMembershipId = String(existing.membership_id || '').trim();
-            await insertTenantMembershipHistoryTx({
+            await insertTenantUsershipHistoryTx({
               txClient: tx,
               row: {
                 ...existing,
@@ -9732,11 +9732,11 @@ const createMySqlAuthStore = ({
       });
     },
 
-    removeTenantMembershipForUser: async ({ userId, tenantId }) => {
+    removeTenantUsershipForUser: async ({ userId, tenantId }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedUserId || !normalizedTenantId) {
-        throw new Error('removeTenantMembershipForUser requires userId and tenantId');
+        throw new Error('removeTenantUsershipForUser requires userId and tenantId');
       }
       const result = await dbClient.query(
         `
@@ -9753,7 +9753,7 @@ const createMySqlAuthStore = ({
       if (!normalizedUserId) {
         return { removed: false };
       }
-      const tenantCountRows = await runTenantMembershipQuery({
+      const tenantCountRows = await runTenantUsershipQuery({
         sqlWithOrgGuard: `
           SELECT COUNT(*) AS tenant_count
           FROM tenant_memberships ut
@@ -9790,7 +9790,7 @@ const createMySqlAuthStore = ({
 
     listTenantOptionsByUserId: repositoryMethods.listTenantOptionsByUserId,
 
-    findTenantMembershipByUserAndTenantId: async ({ userId, tenantId }) => {
+    findTenantUsershipByUserAndTenantId: async ({ userId, tenantId }) => {
       const normalizedUserId = String(userId || '').trim();
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedUserId || !normalizedTenantId) {
@@ -9825,9 +9825,9 @@ const createMySqlAuthStore = ({
         tenant_id: String(row.tenant_id || '').trim(),
         tenant_name: row.tenant_name ? String(row.tenant_name) : null,
         phone: String(row.phone || ''),
-        status: normalizeTenantMembershipStatusForRead(row.status),
-        display_name: resolveOptionalTenantMemberProfileField(row.display_name),
-        department_name: resolveOptionalTenantMemberProfileField(
+        status: normalizeTenantUsershipStatusForRead(row.status),
+        display_name: resolveOptionalTenantUserProfileField(row.display_name),
+        department_name: resolveOptionalTenantUserProfileField(
           row.department_name
         ),
         joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
@@ -9835,7 +9835,7 @@ const createMySqlAuthStore = ({
       };
     },
 
-    findTenantMembershipByMembershipIdAndTenantId: async ({
+    findTenantUsershipByMembershipIdAndTenantId: async ({
       membershipId,
       tenantId
     }) => {
@@ -9873,9 +9873,9 @@ const createMySqlAuthStore = ({
         tenant_id: String(row.tenant_id || '').trim(),
         tenant_name: row.tenant_name ? String(row.tenant_name) : null,
         phone: String(row.phone || ''),
-        status: normalizeTenantMembershipStatusForRead(row.status),
-        display_name: resolveOptionalTenantMemberProfileField(row.display_name),
-        department_name: resolveOptionalTenantMemberProfileField(
+        status: normalizeTenantUsershipStatusForRead(row.status),
+        display_name: resolveOptionalTenantUserProfileField(row.display_name),
+        department_name: resolveOptionalTenantUserProfileField(
           row.department_name
         ),
         joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
@@ -9883,7 +9883,7 @@ const createMySqlAuthStore = ({
       };
     },
 
-    listTenantMembershipRoleBindings: async ({
+    listTenantUsershipRoleBindings: async ({
       membershipId,
       tenantId
     } = {}) => {
@@ -9906,12 +9906,12 @@ const createMySqlAuthStore = ({
       const normalizedRoleIds = [];
       const seenRoleIds = new Set();
       for (const row of Array.isArray(rows) ? rows : []) {
-        const normalizedRoleId = normalizeStrictTenantMembershipRoleIdFromBindingRow(
+        const normalizedRoleId = normalizeStrictTenantUsershipRoleIdFromBindingRow(
           row?.role_id,
           'tenant-membership-role-bindings-invalid-role-id'
         );
         if (seenRoleIds.has(normalizedRoleId)) {
-          throw createTenantMembershipRoleBindingDataError(
+          throw createTenantUsershipRoleBindingDataError(
             'tenant-membership-role-bindings-duplicate-role-id'
           );
         }
@@ -9921,7 +9921,7 @@ const createMySqlAuthStore = ({
       return normalizedRoleIds.sort((left, right) => left.localeCompare(right));
     },
 
-    replaceTenantMembershipRoleBindingsAndSyncSnapshot: async ({
+    replaceTenantUsershipRoleBindingsAndSyncSnapshot: async ({
       tenantId,
       membershipId,
       roleIds = [],
@@ -9932,12 +9932,12 @@ const createMySqlAuthStore = ({
       const normalizedMembershipId = String(membershipId || '').trim();
       if (!normalizedTenantId || !normalizedMembershipId) {
         throw new Error(
-          'replaceTenantMembershipRoleBindingsAndSyncSnapshot requires tenantId and membershipId'
+          'replaceTenantUsershipRoleBindingsAndSyncSnapshot requires tenantId and membershipId'
         );
       }
-      const normalizedRoleIds = normalizeTenantMembershipRoleIds(roleIds);
+      const normalizedRoleIds = normalizeTenantUsershipRoleIds(roleIds);
       return executeWithDeadlockRetry({
-        operation: 'replaceTenantMembershipRoleBindingsAndSyncSnapshot',
+        operation: 'replaceTenantUsershipRoleBindingsAndSyncSnapshot',
         onExhausted: 'throw',
         execute: () =>
           dbClient.inTransaction(async (tx) => {
@@ -9958,19 +9958,19 @@ const createMySqlAuthStore = ({
             if (!membershipRow) {
               return null;
             }
-            const normalizedMembershipStatus = normalizeTenantMembershipStatusForRead(
+            const normalizedMembershipStatus = normalizeTenantUsershipStatusForRead(
               membershipRow.status
             );
             if (!isActiveLikeStatus(normalizedMembershipStatus)) {
               const membershipStatusError = new Error(
-                'tenant membership role bindings membership not active'
+                'tenant usership role bindings membership not active'
               );
               membershipStatusError.code =
                 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_MEMBERSHIP_NOT_ACTIVE';
               throw membershipStatusError;
             }
             const normalizedAffectedUserId =
-              normalizeStrictTenantMembershipRoleBindingIdentity(
+              normalizeStrictTenantUsershipRoleBindingIdentity(
                 membershipRow?.user_id,
                 'tenant-membership-role-bindings-invalid-affected-user-id'
               );
@@ -10016,7 +10016,7 @@ const createMySqlAuthStore = ({
                   || !isActiveLikeStatus(roleStatus)
                 ) {
                   const roleValidationError = new Error(
-                    'tenant membership role bindings role invalid'
+                    'tenant usership role bindings role invalid'
                   );
                   roleValidationError.code =
                     'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_ROLE_INVALID';
@@ -10025,7 +10025,7 @@ const createMySqlAuthStore = ({
                 }
               }
             }
-            const previousRoleIds = await listTenantMembershipRoleBindingsTx({
+            const previousRoleIds = await listTenantUsershipRoleBindingsTx({
               txClient: tx,
               membershipId: normalizedMembershipId
             });
@@ -10058,7 +10058,7 @@ const createMySqlAuthStore = ({
               );
             }
 
-            const syncResult = await syncTenantMembershipPermissionSnapshotInTx({
+            const syncResult = await syncTenantUsershipPermissionSnapshotInTx({
               txClient: tx,
               membershipId: normalizedMembershipId,
               tenantId: normalizedTenantId,
@@ -10070,7 +10070,7 @@ const createMySqlAuthStore = ({
               .toLowerCase();
             if (syncReason !== 'ok') {
               const syncError = new Error(
-                `tenant membership role bindings sync failed: ${syncReason || 'unknown'}`
+                `tenant usership role bindings sync failed: ${syncReason || 'unknown'}`
               );
               syncError.code = 'ERR_TENANT_MEMBERSHIP_ROLE_BINDINGS_SYNC_FAILED';
               syncError.syncReason = syncReason || 'unknown';
@@ -10104,7 +10104,7 @@ const createMySqlAuthStore = ({
                 auditRecorded = true;
               } catch (error) {
                 const auditWriteError = new Error(
-                  'tenant membership role bindings audit write failed'
+                  'tenant usership role bindings audit write failed'
                 );
                 auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
                 auditWriteError.cause = error;
@@ -10123,7 +10123,7 @@ const createMySqlAuthStore = ({
       });
     },
 
-    listTenantMembersByTenantId: async ({ tenantId, page = 1, pageSize = 50 }) => {
+    listTenantUsersByTenantId: async ({ tenantId, page = 1, pageSize = 50 }) => {
       const normalizedTenantId = String(tenantId || '').trim();
       if (!normalizedTenantId) {
         return [];
@@ -10164,9 +10164,9 @@ const createMySqlAuthStore = ({
         tenant_id: String(row.tenant_id || '').trim(),
         tenant_name: row.tenant_name ? String(row.tenant_name) : null,
         phone: String(row.phone || ''),
-        status: normalizeTenantMembershipStatusForRead(row.status),
-        display_name: resolveOptionalTenantMemberProfileField(row.display_name),
-        department_name: resolveOptionalTenantMemberProfileField(
+        status: normalizeTenantUsershipStatusForRead(row.status),
+        display_name: resolveOptionalTenantUserProfileField(row.display_name),
+        department_name: resolveOptionalTenantUserProfileField(
           row.department_name
         ),
         joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
@@ -10174,7 +10174,7 @@ const createMySqlAuthStore = ({
       }));
     },
 
-    updateTenantMembershipProfile: async ({
+    updateTenantUsershipProfile: async ({
       membershipId,
       tenantId,
       displayName,
@@ -10183,14 +10183,14 @@ const createMySqlAuthStore = ({
       operatorUserId = null
     }) =>
       executeWithDeadlockRetry({
-        operation: 'updateTenantMembershipProfile',
+        operation: 'updateTenantUsershipProfile',
         onExhausted: 'throw',
         execute: async () => {
           const normalizedMembershipId = String(membershipId || '').trim();
           const normalizedTenantId = String(tenantId || '').trim();
-          const normalizedDisplayName = normalizeOptionalTenantMemberProfileField({
+          const normalizedDisplayName = normalizeOptionalTenantUserProfileField({
             value: displayName,
-            maxLength: MAX_TENANT_MEMBER_DISPLAY_NAME_LENGTH
+            maxLength: MAX_TENANT_USER_DISPLAY_NAME_LENGTH
           });
           const normalizedOperatorUserId = String(operatorUserId || '').trim() || null;
           if (
@@ -10199,7 +10199,7 @@ const createMySqlAuthStore = ({
             || normalizedDisplayName === null
           ) {
             throw new Error(
-              'updateTenantMembershipProfile requires membershipId, tenantId and displayName'
+              'updateTenantUsershipProfile requires membershipId, tenantId and displayName'
             );
           }
 
@@ -10209,12 +10209,12 @@ const createMySqlAuthStore = ({
             if (departmentName === null) {
               normalizedDepartmentName = null;
             } else {
-              normalizedDepartmentName = normalizeOptionalTenantMemberProfileField({
+              normalizedDepartmentName = normalizeOptionalTenantUserProfileField({
                 value: departmentName,
-                maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+                maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
               });
               if (normalizedDepartmentName === null) {
-                throw new Error('updateTenantMembershipProfile departmentName is invalid');
+                throw new Error('updateTenantUsershipProfile departmentName is invalid');
               }
             }
           }
@@ -10239,7 +10239,7 @@ const createMySqlAuthStore = ({
             }
             if (!isStrictMainlandPhone(membershipRow.phone)) {
               const dependencyError = new Error(
-                'updateTenantMembershipProfile dependency unavailable: user-profile-missing'
+                'updateTenantUsershipProfile dependency unavailable: user-profile-missing'
               );
               dependencyError.code =
                 'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
@@ -10247,13 +10247,13 @@ const createMySqlAuthStore = ({
             }
             if (
               !shouldUpdateDepartmentName
-              && !isStrictOptionalTenantMemberProfileField({
+              && !isStrictOptionalTenantUserProfileField({
                 value: membershipRow.department_name,
-                maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+                maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
               })
             ) {
               const dependencyError = new Error(
-                'updateTenantMembershipProfile dependency unavailable: membership-profile-invalid'
+                'updateTenantUsershipProfile dependency unavailable: membership-profile-invalid'
               );
               dependencyError.code =
                 'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
@@ -10308,18 +10308,18 @@ const createMySqlAuthStore = ({
             }
             if (!isStrictMainlandPhone(row.phone)) {
               const dependencyError = new Error(
-                'updateTenantMembershipProfile dependency unavailable: user-profile-missing'
+                'updateTenantUsershipProfile dependency unavailable: user-profile-missing'
               );
               dependencyError.code =
                 'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
               throw dependencyError;
             }
-            if (!isStrictOptionalTenantMemberProfileField({
+            if (!isStrictOptionalTenantUserProfileField({
               value: row.department_name,
-              maxLength: MAX_TENANT_MEMBER_DEPARTMENT_NAME_LENGTH
+              maxLength: MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH
             })) {
               const dependencyError = new Error(
-                'updateTenantMembershipProfile dependency unavailable: membership-profile-invalid'
+                'updateTenantUsershipProfile dependency unavailable: membership-profile-invalid'
               );
               dependencyError.code =
                 'ERR_TENANT_MEMBERSHIP_PROFILE_DEPENDENCY_UNAVAILABLE';
@@ -10331,11 +10331,11 @@ const createMySqlAuthStore = ({
               tenant_id: String(row.tenant_id || '').trim(),
               tenant_name: row.tenant_name ? String(row.tenant_name) : null,
               phone: String(row.phone || ''),
-              status: normalizeTenantMembershipStatusForRead(row.status),
-              display_name: resolveOptionalTenantMemberProfileField(
+              status: normalizeTenantUsershipStatusForRead(row.status),
+              display_name: resolveOptionalTenantUserProfileField(
                 row.display_name
               ),
-              department_name: resolveOptionalTenantMemberProfileField(
+              department_name: resolveOptionalTenantUserProfileField(
                 row.department_name
               ),
               joined_at: row.joined_at ? new Date(row.joined_at).toISOString() : null,
@@ -10346,7 +10346,7 @@ const createMySqlAuthStore = ({
         }
       }),
 
-    updateTenantMembershipStatus: async ({
+    updateTenantUsershipStatus: async ({
       membershipId,
       tenantId,
       nextStatus,
@@ -10355,12 +10355,12 @@ const createMySqlAuthStore = ({
       auditContext = null
     }) =>
       executeWithDeadlockRetry({
-        operation: 'updateTenantMembershipStatus',
+        operation: 'updateTenantUsershipStatus',
         onExhausted: 'throw',
         execute: async () => {
           const normalizedMembershipId = String(membershipId || '').trim();
           const normalizedTenantId = String(tenantId || '').trim();
-          const normalizedNextStatus = normalizeTenantMembershipStatusForRead(nextStatus);
+          const normalizedNextStatus = normalizeTenantUsershipStatusForRead(nextStatus);
           const normalizedOperatorUserId = String(operatorUserId || '').trim();
           const normalizedReason = reason === null || reason === undefined
             ? null
@@ -10372,7 +10372,7 @@ const createMySqlAuthStore = ({
             || !VALID_TENANT_MEMBERSHIP_STATUS.has(normalizedNextStatus)
           ) {
             throw new Error(
-              'updateTenantMembershipStatus requires membershipId, tenantId, nextStatus and operatorUserId'
+              'updateTenantUsershipStatus requires membershipId, tenantId, nextStatus and operatorUserId'
             );
           }
           return dbClient.inTransaction(async (tx) => {
@@ -10400,17 +10400,17 @@ const createMySqlAuthStore = ({
             if (!row) {
               return null;
             }
-            const previousStatus = normalizeTenantMembershipStatusForRead(row.status);
+            const previousStatus = normalizeTenantUsershipStatusForRead(row.status);
             if (!VALID_TENANT_MEMBERSHIP_STATUS.has(previousStatus)) {
               throw new Error(
-                'updateTenantMembershipStatus encountered unsupported existing status'
+                'updateTenantUsershipStatus encountered unsupported existing status'
               );
             }
             let finalMembershipId = String(row.membership_id || '').trim() || normalizedMembershipId;
             let auditRecorded = false;
             if (previousStatus !== normalizedNextStatus) {
               if (previousStatus === 'left' && normalizedNextStatus === 'active') {
-                await insertTenantMembershipHistoryTx({
+                await insertTenantUsershipHistoryTx({
                   txClient: tx,
                   row,
                   archivedReason: normalizedReason || 'reactivate',
@@ -10442,7 +10442,7 @@ const createMySqlAuthStore = ({
                 );
               } else {
                 if (normalizedNextStatus === 'left') {
-                  await insertTenantMembershipHistoryTx({
+                  await insertTenantUsershipHistoryTx({
                     txClient: tx,
                     row,
                     archivedReason: normalizedReason || 'left',
@@ -10487,7 +10487,7 @@ const createMySqlAuthStore = ({
               }
 
               if (normalizedNextStatus === 'active') {
-                await syncTenantMembershipPermissionSnapshotInTx({
+                await syncTenantUsershipPermissionSnapshotInTx({
                   txClient: tx,
                   membershipId: finalMembershipId,
                   tenantId: normalizedTenantId,
@@ -10550,7 +10550,7 @@ const createMySqlAuthStore = ({
                   tenantId: normalizedTenantId,
                   requestId: String(auditContext.requestId || '').trim() || 'request_id_unset',
                   traceparent: auditContext.traceparent,
-                  eventType: 'auth.tenant.member.status.updated',
+                  eventType: 'auth.tenant.user.status.updated',
                   actorUserId: auditContext.actorUserId || normalizedOperatorUserId,
                   actorSessionId: auditContext.actorSessionId,
                   targetType: 'membership',
@@ -10573,7 +10573,7 @@ const createMySqlAuthStore = ({
                 });
                 auditRecorded = true;
               } catch (error) {
-                const auditWriteError = new Error('tenant membership status audit write failed');
+                const auditWriteError = new Error('tenant usership status audit write failed');
                 auditWriteError.code = 'ERR_AUDIT_WRITE_FAILED';
                 auditWriteError.cause = error;
                 throw auditWriteError;

@@ -1,8 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createRouteHandlers } = require('../src/http-routes');
-const { createPlatformUserHandlers } = require('../src/modules/platform/user.routes');
-const { createPlatformUserService } = require('../src/modules/platform/user.service');
+const {
+  createPlatformUserHandlers
+} = require('../src/domains/platform/settings/user/user.routes');
+const {
+  createPlatformUserService
+} = require('../src/domains/platform/settings/user/service');
 const { dispatchApiRoute } = require('../src/server');
 const { readConfig } = require('../src/config/env');
 const { AuthProblemError } = require('../src/modules/auth/auth.routes');

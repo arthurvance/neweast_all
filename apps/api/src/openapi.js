@@ -789,7 +789,7 @@ const buildOpenApiSpec = () => {
     },
     '/auth/tenant/user-management/provision-user': {
       post: {
-        summary: 'Provision tenant member user by phone with default password policy',
+        summary: 'Provision tenant user user by phone with default password policy',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1141,9 +1141,9 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/tenant/members': {
+    '/tenant/users': {
       get: {
-        summary: 'List tenant members under current active tenant context',
+        summary: 'List tenant users under current active tenant context',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1166,7 +1166,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant members listed',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberListResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserListResponse' }
               }
             }
           },
@@ -1266,7 +1266,7 @@ const buildOpenApiSpec = () => {
             }
           },
           409: {
-            description: 'Request conflict with tenant membership state',
+            description: 'Request conflict with tenant usership state',
             content: {
               'application/problem+json': {
                 schema: { $ref: '#/components/schemas/ProblemDetails' },
@@ -1331,7 +1331,7 @@ const buildOpenApiSpec = () => {
         }
       },
       post: {
-        summary: 'Create tenant member by phone with identity reuse first',
+        summary: 'Create tenant user by phone with identity reuse first',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1346,7 +1346,7 @@ const buildOpenApiSpec = () => {
           required: true,
           content: {
             'application/json': {
-              schema: { $ref: '#/components/schemas/TenantMemberCreateRequest' },
+              schema: { $ref: '#/components/schemas/TenantUserCreateRequest' },
               examples: {
                 create_member: {
                   value: {
@@ -1362,7 +1362,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant member created',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberCreateResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserCreateResponse' }
               }
             }
           },
@@ -1561,9 +1561,9 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/tenant/members/{membership_id}/status': {
+    '/tenant/users/{membership_id}/status': {
       patch: {
-        summary: 'Update tenant member status (active|disabled|left)',
+        summary: 'Update tenant user status (active|disabled|left)',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1590,7 +1590,7 @@ const buildOpenApiSpec = () => {
           required: true,
           content: {
             'application/json': {
-              schema: { $ref: '#/components/schemas/TenantMemberStatusUpdateRequest' },
+              schema: { $ref: '#/components/schemas/TenantUserStatusUpdateRequest' },
               examples: {
                 disable_member: {
                   value: {
@@ -1607,7 +1607,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant member status updated',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberStatusUpdateResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserStatusUpdateResponse' }
               }
             }
           },
@@ -1806,9 +1806,9 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/tenant/members/{membership_id}': {
+    '/tenant/users/{membership_id}': {
       get: {
-        summary: 'Get tenant member profile detail by membership_id',
+        summary: 'Get tenant user profile detail by membership_id',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1829,7 +1829,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant member profile detail fetched',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberDetailResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserDetailResponse' }
               }
             }
           },
@@ -1952,9 +1952,9 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/tenant/members/{membership_id}/profile': {
+    '/tenant/users/{membership_id}/profile': {
       patch: {
-        summary: 'Update tenant member profile by membership_id',
+        summary: 'Update tenant user profile by membership_id',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -1981,7 +1981,7 @@ const buildOpenApiSpec = () => {
           required: true,
           content: {
             'application/json': {
-              schema: { $ref: '#/components/schemas/TenantMemberProfileUpdateRequest' },
+              schema: { $ref: '#/components/schemas/TenantUserProfileUpdateRequest' },
               examples: {
                 update_profile: {
                   value: {
@@ -1998,7 +1998,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant member profile updated',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberDetailResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserDetailResponse' }
               }
             }
           },
@@ -2186,9 +2186,9 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/tenant/members/{membership_id}/roles': {
+    '/tenant/users/{membership_id}/roles': {
       get: {
-        summary: 'Get tenant member role bindings by membership_id',
+        summary: 'Get tenant user role bindings by membership_id',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -2209,7 +2209,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant member role bindings fetched',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberRoleBindingsResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserRoleBindingsResponse' }
               }
             }
           },
@@ -2332,7 +2332,7 @@ const buildOpenApiSpec = () => {
         }
       },
       put: {
-        summary: 'Replace tenant member role bindings by membership_id',
+        summary: 'Replace tenant user role bindings by membership_id',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -2359,7 +2359,7 @@ const buildOpenApiSpec = () => {
           required: true,
           content: {
             'application/json': {
-              schema: { $ref: '#/components/schemas/ReplaceTenantMemberRoleBindingsRequest' }
+              schema: { $ref: '#/components/schemas/ReplaceTenantUserRoleBindingsRequest' }
             }
           }
         },
@@ -2368,7 +2368,7 @@ const buildOpenApiSpec = () => {
             description: 'Tenant member role bindings replaced and snapshot synced',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/TenantMemberRoleBindingsResponse' }
+                schema: { $ref: '#/components/schemas/TenantUserRoleBindingsResponse' }
               }
             }
           },
@@ -9372,7 +9372,7 @@ const buildOpenApiSpec = () => {
           request_id: { type: 'string' }
         }
       },
-      TenantMemberRecord: {
+      TenantUserRecord: {
         type: 'object',
         additionalProperties: false,
         required: [
@@ -9427,7 +9427,7 @@ const buildOpenApiSpec = () => {
           }
         }
       },
-      TenantMemberListResponse: {
+      TenantUserListResponse: {
         type: 'object',
         additionalProperties: false,
         required: ['tenant_id', 'page', 'page_size', 'members', 'request_id'],
@@ -9437,12 +9437,12 @@ const buildOpenApiSpec = () => {
           page_size: { type: 'integer', minimum: 1, maximum: 200 },
           members: {
             type: 'array',
-            items: { $ref: '#/components/schemas/TenantMemberRecord' }
+            items: { $ref: '#/components/schemas/TenantUserRecord' }
           },
           request_id: { type: 'string' }
         }
       },
-      TenantMemberDetailResponse: {
+      TenantUserDetailResponse: {
         type: 'object',
         additionalProperties: false,
         required: [
@@ -9500,7 +9500,7 @@ const buildOpenApiSpec = () => {
           request_id: { type: 'string' }
         }
       },
-      TenantMemberCreateRequest: {
+      TenantUserCreateRequest: {
         type: 'object',
         additionalProperties: false,
         required: ['phone'],
@@ -9514,7 +9514,7 @@ const buildOpenApiSpec = () => {
           }
         }
       },
-      TenantMemberCreateResponse: {
+      TenantUserCreateResponse: {
         type: 'object',
         additionalProperties: false,
         required: [
@@ -9544,7 +9544,7 @@ const buildOpenApiSpec = () => {
           request_id: { type: 'string' }
         }
       },
-      TenantMemberStatusUpdateRequest: {
+      TenantUserStatusUpdateRequest: {
         type: 'object',
         additionalProperties: false,
         required: ['status'],
@@ -9561,7 +9561,7 @@ const buildOpenApiSpec = () => {
           }
         }
       },
-      TenantMemberStatusUpdateResponse: {
+      TenantUserStatusUpdateResponse: {
         type: 'object',
         additionalProperties: false,
         required: [
@@ -9592,7 +9592,7 @@ const buildOpenApiSpec = () => {
           request_id: { type: 'string' }
         }
       },
-      TenantMemberProfileUpdateRequest: {
+      TenantUserProfileUpdateRequest: {
         type: 'object',
         additionalProperties: false,
         required: ['display_name'],
@@ -9612,7 +9612,7 @@ const buildOpenApiSpec = () => {
           }
         }
       },
-      ReplaceTenantMemberRoleBindingsRequest: {
+      ReplaceTenantUserRoleBindingsRequest: {
         type: 'object',
         additionalProperties: false,
         required: ['role_ids'],
@@ -9631,7 +9631,7 @@ const buildOpenApiSpec = () => {
           }
         }
       },
-      TenantMemberRoleBindingsResponse: {
+      TenantUserRoleBindingsResponse: {
         type: 'object',
         additionalProperties: false,
         required: ['membership_id', 'role_ids', 'request_id'],

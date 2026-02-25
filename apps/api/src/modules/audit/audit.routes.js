@@ -1,7 +1,7 @@
 const { extractBearerToken } = require('../auth/auth.routes');
 const {
   resolveRoutePreauthorizedContext
-} = require('../auth/route-preauthorization');
+} = require('../../shared-kernel/auth/route-authz');
 const {
   PLATFORM_AUDIT_VIEW_PERMISSION_CODE,
   TENANT_AUDIT_VIEW_PERMISSION_CODE,

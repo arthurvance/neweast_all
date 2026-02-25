@@ -1,0 +1,135 @@
+[
+  {
+    "method": "GET",
+    "path": "/auth/tenant/options",
+    "access": "protected",
+    "permission_code": "tenant.context.read",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/tenant/select",
+    "access": "protected",
+    "permission_code": "tenant.context.switch",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/tenant/switch",
+    "access": "protected",
+    "permission_code": "tenant.context.switch",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/auth/tenant/user-management/probe",
+    "access": "protected",
+    "permission_code": "tenant.user_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/tenant/user-management/provision-user",
+    "access": "protected",
+    "permission_code": "tenant.user_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/users",
+    "access": "protected",
+    "permission_code": "tenant.user_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/users",
+    "access": "protected",
+    "permission_code": "tenant.user_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/users/:membership_id",
+    "access": "protected",
+    "permission_code": "tenant.user_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/users/:membership_id/status",
+    "access": "protected",
+    "permission_code": "tenant.user_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/users/:membership_id/profile",
+    "access": "protected",
+    "permission_code": "tenant.user_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/users/:membership_id/roles",
+    "access": "protected",
+    "permission_code": "tenant.user_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "PUT",
+    "path": "/tenant/users/:membership_id/roles",
+    "access": "protected",
+    "permission_code": "tenant.user_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/roles",
+    "access": "protected",
+    "permission_code": "tenant.role_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/roles",
+    "access": "protected",
+    "permission_code": "tenant.role_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/roles/:role_id",
+    "access": "protected",
+    "permission_code": "tenant.role_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "DELETE",
+    "path": "/tenant/roles/:role_id",
+    "access": "protected",
+    "permission_code": "tenant.role_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/roles/:role_id/permissions",
+    "access": "protected",
+    "permission_code": "tenant.role_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "PUT",
+    "path": "/tenant/roles/:role_id/permissions",
+    "access": "protected",
+    "permission_code": "tenant.role_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/audit/events",
+    "access": "protected",
+    "permission_code": "tenant.user_management.view",
+    "scope": "tenant"
+  }
+]

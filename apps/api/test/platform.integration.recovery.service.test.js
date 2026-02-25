@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { createAuthService } = require('../src/modules/auth/auth.service');
 const {
   createPlatformIntegrationRecoveryService
-} = require('../src/modules/platform/integration-recovery.service');
+} = require('../src/domains/platform/config/integration-recovery/service');
 
 const seedIntegration = async ({
   authStore,

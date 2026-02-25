@@ -1,6 +1,6 @@
 const { createOptionalDelegate } = require('./repository-helpers');
 
-const createAuthTenantMembershipRepository = ({ authStore } = {}) => {
+const createAuthTenantUsershipRepository = ({ authStore } = {}) => {
   const repository = {};
   const optionalMethodNames = [
     'listTenantOptionsByUserId'
@@ -17,5 +17,5 @@ const createAuthTenantMembershipRepository = ({ authStore } = {}) => {
 };
 
 module.exports = {
-  createAuthTenantMembershipRepository
+  createAuthTenantUsershipRepository
 };

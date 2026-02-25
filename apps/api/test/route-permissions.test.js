@@ -61,70 +61,70 @@ test('tenant protected auth routes expose explicit permission declarations', () 
   assert.equal(userManagementProvisionUser.permission_code, 'tenant.user_management.operate');
 });
 
-test('tenant member governance routes expose explicit permission declarations', () => {
-  const tenantMemberList = findRouteDefinition({
+test('tenant user governance routes expose explicit permission declarations', () => {
+  const tenantUserList = findRouteDefinition({
     method: 'GET',
-    path: '/tenant/members'
+    path: '/tenant/users'
   });
-  const tenantMemberCreate = findRouteDefinition({
+  const tenantUserCreate = findRouteDefinition({
     method: 'POST',
-    path: '/tenant/members'
+    path: '/tenant/users'
   });
-  const tenantMemberStatusUpdate = findRouteDefinition({
+  const tenantUserStatusUpdate = findRouteDefinition({
     method: 'PATCH',
-    path: '/tenant/members/:membership_id/status'
+    path: '/tenant/users/:membership_id/status'
   });
-  const tenantMemberDetailRead = findRouteDefinition({
+  const tenantUserDetailRead = findRouteDefinition({
     method: 'GET',
-    path: '/tenant/members/:membership_id'
+    path: '/tenant/users/:membership_id'
   });
-  const tenantMemberProfileUpdate = findRouteDefinition({
+  const tenantUserProfileUpdate = findRouteDefinition({
     method: 'PATCH',
-    path: '/tenant/members/:membership_id/profile'
+    path: '/tenant/users/:membership_id/profile'
   });
-  const tenantMemberRoleBindingsRead = findRouteDefinition({
+  const tenantUserRoleBindingsRead = findRouteDefinition({
     method: 'GET',
-    path: '/tenant/members/:membership_id/roles'
+    path: '/tenant/users/:membership_id/roles'
   });
-  const tenantMemberRoleBindingsUpdate = findRouteDefinition({
+  const tenantUserRoleBindingsUpdate = findRouteDefinition({
     method: 'PUT',
-    path: '/tenant/members/:membership_id/roles'
+    path: '/tenant/users/:membership_id/roles'
   });
 
-  assert.ok(tenantMemberList);
-  assert.equal(tenantMemberList.access, 'protected');
-  assert.equal(tenantMemberList.scope, 'tenant');
-  assert.equal(tenantMemberList.permission_code, 'tenant.user_management.view');
+  assert.ok(tenantUserList);
+  assert.equal(tenantUserList.access, 'protected');
+  assert.equal(tenantUserList.scope, 'tenant');
+  assert.equal(tenantUserList.permission_code, 'tenant.user_management.view');
 
-  assert.ok(tenantMemberCreate);
-  assert.equal(tenantMemberCreate.access, 'protected');
-  assert.equal(tenantMemberCreate.scope, 'tenant');
-  assert.equal(tenantMemberCreate.permission_code, 'tenant.user_management.operate');
+  assert.ok(tenantUserCreate);
+  assert.equal(tenantUserCreate.access, 'protected');
+  assert.equal(tenantUserCreate.scope, 'tenant');
+  assert.equal(tenantUserCreate.permission_code, 'tenant.user_management.operate');
 
-  assert.ok(tenantMemberStatusUpdate);
-  assert.equal(tenantMemberStatusUpdate.access, 'protected');
-  assert.equal(tenantMemberStatusUpdate.scope, 'tenant');
-  assert.equal(tenantMemberStatusUpdate.permission_code, 'tenant.user_management.operate');
+  assert.ok(tenantUserStatusUpdate);
+  assert.equal(tenantUserStatusUpdate.access, 'protected');
+  assert.equal(tenantUserStatusUpdate.scope, 'tenant');
+  assert.equal(tenantUserStatusUpdate.permission_code, 'tenant.user_management.operate');
 
-  assert.ok(tenantMemberDetailRead);
-  assert.equal(tenantMemberDetailRead.access, 'protected');
-  assert.equal(tenantMemberDetailRead.scope, 'tenant');
-  assert.equal(tenantMemberDetailRead.permission_code, 'tenant.user_management.view');
+  assert.ok(tenantUserDetailRead);
+  assert.equal(tenantUserDetailRead.access, 'protected');
+  assert.equal(tenantUserDetailRead.scope, 'tenant');
+  assert.equal(tenantUserDetailRead.permission_code, 'tenant.user_management.view');
 
-  assert.ok(tenantMemberProfileUpdate);
-  assert.equal(tenantMemberProfileUpdate.access, 'protected');
-  assert.equal(tenantMemberProfileUpdate.scope, 'tenant');
-  assert.equal(tenantMemberProfileUpdate.permission_code, 'tenant.user_management.operate');
+  assert.ok(tenantUserProfileUpdate);
+  assert.equal(tenantUserProfileUpdate.access, 'protected');
+  assert.equal(tenantUserProfileUpdate.scope, 'tenant');
+  assert.equal(tenantUserProfileUpdate.permission_code, 'tenant.user_management.operate');
 
-  assert.ok(tenantMemberRoleBindingsRead);
-  assert.equal(tenantMemberRoleBindingsRead.access, 'protected');
-  assert.equal(tenantMemberRoleBindingsRead.scope, 'tenant');
-  assert.equal(tenantMemberRoleBindingsRead.permission_code, 'tenant.user_management.view');
+  assert.ok(tenantUserRoleBindingsRead);
+  assert.equal(tenantUserRoleBindingsRead.access, 'protected');
+  assert.equal(tenantUserRoleBindingsRead.scope, 'tenant');
+  assert.equal(tenantUserRoleBindingsRead.permission_code, 'tenant.user_management.view');
 
-  assert.ok(tenantMemberRoleBindingsUpdate);
-  assert.equal(tenantMemberRoleBindingsUpdate.access, 'protected');
-  assert.equal(tenantMemberRoleBindingsUpdate.scope, 'tenant');
-  assert.equal(tenantMemberRoleBindingsUpdate.permission_code, 'tenant.user_management.operate');
+  assert.ok(tenantUserRoleBindingsUpdate);
+  assert.equal(tenantUserRoleBindingsUpdate.access, 'protected');
+  assert.equal(tenantUserRoleBindingsUpdate.scope, 'tenant');
+  assert.equal(tenantUserRoleBindingsUpdate.permission_code, 'tenant.user_management.operate');
 });
 
 test('tenant role governance routes expose explicit permission declarations', () => {

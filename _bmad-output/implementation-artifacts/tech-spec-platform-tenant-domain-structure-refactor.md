@@ -2,7 +2,7 @@
 title: '平台与租户双域目录树彻底重构与一致性治理'
 slug: 'platform-tenant-domain-structure-refactor'
 created: '2026-02-24T23:12:18+0800'
-status: 'ready-for-dev'
+status: 'done'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack:
   - 'Node.js 24 (CommonJS)'
@@ -17,11 +17,6 @@ files_to_modify:
   - '/Users/helloworld/dev/neweast/apps/api/src/route-manifests/platform.route-manifest.js'
   - '/Users/helloworld/dev/neweast/apps/api/src/route-manifests/tenant.route-manifest.js'
   - '/Users/helloworld/dev/neweast/apps/api/src/route-permissions.js'
-  - '/Users/helloworld/dev/neweast/apps/api/src/modules/platform'
-  - '/Users/helloworld/dev/neweast/apps/api/src/modules/platform/password-policy.constants.js'
-  - '/Users/helloworld/dev/neweast/apps/api/src/modules/platform/password-policy.routes.js'
-  - '/Users/helloworld/dev/neweast/apps/api/src/modules/platform/password-policy.service.js'
-  - '/Users/helloworld/dev/neweast/apps/api/src/modules/tenant'
   - '/Users/helloworld/dev/neweast/apps/api/src/modules/auth'
   - '/Users/helloworld/dev/neweast/apps/api/src/modules/audit'
   - '/Users/helloworld/dev/neweast/apps/api/src/server.js'
@@ -29,20 +24,23 @@ files_to_modify:
   - '/Users/helloworld/dev/neweast/apps/api/test/platform.org.api.test.js'
   - '/Users/helloworld/dev/neweast/apps/api/test/platform.user.api.test.js'
   - '/Users/helloworld/dev/neweast/apps/api/test/platform.role.api.test.js'
-  - '/Users/helloworld/dev/neweast/apps/api/test/tenant.member.api.test.js'
   - '/Users/helloworld/dev/neweast/apps/api/test/tenant.user.api.test.js'
   - '/Users/helloworld/dev/neweast/apps/api/test/tenant.role.api.test.js'
   - '/Users/helloworld/dev/neweast/apps/api/test/http-routes.test.js'
   - '/Users/helloworld/dev/neweast/apps/web/src/App.jsx'
   - '/Users/helloworld/dev/neweast/apps/web/src/api/platform-management.mjs'
   - '/Users/helloworld/dev/neweast/apps/web/src/api/tenant-management.mjs'
-  - '/Users/helloworld/dev/neweast/apps/web/src/features/platform-management'
-  - '/Users/helloworld/dev/neweast/apps/web/src/features/platform-management/pages/PlatformPasswordPolicyPage.jsx'
-  - '/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management'
   - '/Users/helloworld/dev/neweast/apps/web/scripts/sync-permission-catalog.cjs'
+  - '/Users/helloworld/dev/neweast/package.json'
+  - '/Users/helloworld/dev/neweast/tools/domain-contract/naming-rules.json'
+  - '/Users/helloworld/dev/neweast/tools/domain-contract/check-domain-symmetry.js'
+  - '/Users/helloworld/dev/neweast/tools/domain-contract/check-refactor-governance.js'
   - '/Users/helloworld/dev/neweast/tools/domain-contract/domain-extension-registry.json'
   - '/Users/helloworld/dev/neweast/tools/lint-rules/no-cross-domain-imports.js'
+  - '/Users/helloworld/dev/neweast/tools/scaffold/check-domain-module-scaffold-smoke.js'
   - '/Users/helloworld/dev/neweast/apps/api/test/domain.symmetry.test.js'
+  - '/Users/helloworld/dev/neweast/apps/api/test/domain-contract.guards.test.js'
+  - '/Users/helloworld/dev/neweast/_bmad-output/implementation-artifacts/refactor-review-record.json'
   - '/Users/helloworld/dev/neweast/docs/templates/spec-diff-justification.md'
   - '/Users/helloworld/dev/neweast/apps/web/test/server.test.js'
   - '/Users/helloworld/dev/neweast/apps/web/test/chrome.playwright.test.js'
@@ -283,14 +281,14 @@ apps/web/src/
 
 ### Tasks
 
-- [ ] Task 1: 建立双域镜像契约与语义命名规范源
+- [x] Task 1: 建立双域镜像契约与语义命名规范源
   - File: `/Users/helloworld/dev/neweast/tools/domain-contract/capability-map.json`
   - File: `/Users/helloworld/dev/neweast/tools/domain-contract/naming-rules.json`
   - File: `/Users/helloworld/dev/neweast/tools/domain-contract/domain-extension-registry.json`
   - Action: 定义 `platform` 与 `tenant` 的能力清单、目录层级、文件命名语法与语义对齐规则（含 `user/member/org` 历史命名直接统一）、模块集合（`settings/config/auth`）以及非对称能力登记
   - Notes: 该契约作为后续脚本检查与代码迁移唯一真源，不依赖历史架构文档；domain-extension 按 owner 周期复审
 
-- [ ] Task 2: 增加镜像一致性自动检查门禁
+- [x] Task 2: 增加镜像一致性自动检查门禁
   - File: `/Users/helloworld/dev/neweast/apps/api/scripts/check-domain-symmetry.js`
   - File: `/Users/helloworld/dev/neweast/apps/web/scripts/check-domain-symmetry.cjs`
   - File: `/Users/helloworld/dev/neweast/package.json`
@@ -299,15 +297,16 @@ apps/web/src/
   - Action: 新增并接入镜像检查命令，校验成对目录、成对文件、命名格式、能力语义命名完整性
   - Notes: 失败即阻断提交链路
 
-- [ ] Task 3: 拆分 API 组合根并建立域级装配入口
+- [x] Task 3: 拆分 API 组合根并建立域级装配入口
   - File: `/Users/helloworld/dev/neweast/apps/api/src/http-routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/bootstrap/create-platform-domain-runtime.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/bootstrap/create-tenant-domain-runtime.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/bootstrap/create-route-runtime.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/runtime/create-platform-domain-runtime.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/runtime/create-tenant-domain-runtime.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/bootstrap/create-shared-kernel.js`
   - Action: 将当前集中装配拆分为 shared-kernel + platform runtime + tenant runtime，减少跨域耦合
   - Notes: 子步骤顺序固定为 3.1 抽组合根 -> 3.2 建平台 runtime -> 3.3 建租户 runtime -> 3.4 合并 shared-kernel 注入；`http-routes.js` 仅保留路由绑定与组合逻辑
 
-- [ ] Task 4: 建立 API shared-kernel 并替换跨域硬依赖
+- [x] Task 4: 建立 API shared-kernel 并替换跨域硬依赖
   - File: `/Users/helloworld/dev/neweast/apps/api/src/shared-kernel/auth/auth-problem-error.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/shared-kernel/auth/route-authz.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/auth/auth.service.js`
@@ -315,51 +314,46 @@ apps/web/src/
   - Action: 抽取跨域共享的错误模型与预授权能力，替代 platform/tenant 对 `auth.service` 内部实现的直接耦合
   - Notes: 子步骤顺序固定为 4.1 错误模型抽取 -> 4.2 预授权抽取 -> 4.3 domain 适配替换 -> 4.4 删除旧跨域依赖；同时覆盖 auth 关键能力簇（`session`: login/logout/otp-send/otp-login/refresh/change-password/switch-org，`context`: platform-options/tenant-options/select，`provisioning`: probe/provision-user）。`session/context/provisioning` 的业务代码必须落位到 `domains/{domain}/auth/*`，不得继续放在 shared-kernel。
 
-- [ ] Task 5: 平台域按镜像模板重排目录（治理能力组）
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/org.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/org.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/org.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/user.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/user.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/user.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/role.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/role.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/role.service.js`
+- [x] Task 5: 平台域按镜像模板重排目录（治理能力组）
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/settings/org/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/settings/role/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/settings/user/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/runtime/platform.runtime.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/index.js`
   - Action: 按能力分层整理并对齐命名语法，消除同类功能路径漂移
   - Notes: 大于阈值文件先按职责拆分再迁移；`用户管理/角色管理/组织管理` 统一归 `settings/*`
 
-- [ ] Task 6: 平台域按镜像模板重排目录（config 治理能力组）
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/password-policy.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/password-policy.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/password-policy.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/system-config.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/system-config.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/system-config.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/integration.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/integration.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/integration.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/integration-contract.*`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/integration-recovery.*`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform/integration-freeze.*`
+- [x] Task 6: 平台域按镜像模板重排目录（config 治理能力组）
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/system-config/{constants,service}/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/system-config/system-config.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration/{constants,service}/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration/integration.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration-contract/{constants,service}/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration-contract/integration-contract.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration-recovery/{constants,service}/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration-recovery/integration-recovery.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration-freeze/{constants,service}/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/config/integration-freeze/integration-freeze.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/runtime/platform.runtime.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/index.js`
   - Action: 将平台治理扩展能力统一收敛到 `config/*` 分层模板（password-policy/system-config/integration）
-  - Notes: 治理扩展能力默认落到 `config/*`（`password-policy`、`system-config`、`integration/*`）；若 tenant 暂无对应能力需在契约中明确标记为 domain-extension
+  - Notes: 治理扩展能力默认落到 `config/*`（`password-policy`、`system-config`、`integration/*`）；`password-policy` 当前仍以 `domain-extension-registry` 记录为平台单边能力，未引入运行时代码路径
 
-- [ ] Task 7: 租户域按镜像模板重排目录并完成语义对齐
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/member.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/member.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/member.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/user.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/user.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/user.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/role.constants.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/role.routes.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/role.service.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/tenant.runtime.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant/tenant.handlers.js`
+- [x] Task 7: 租户域按镜像模板重排目录并完成语义对齐
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/settings/user/constants/index.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/settings/user/user.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/settings/user/service/index.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/settings/role/constants/index.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/settings/role/role.routes.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/settings/role/service/index.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/runtime/tenant.runtime.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/runtime/tenant.handlers.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/test/tenant.user.api.test.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/test/tenant.role.api.test.js`
   - Action: 与 platform 完成命名/层级对齐，`member` 直接统一命名为 `user` 并沉淀单一术语
   - Notes: 不允许临时兼容别名或中间映射；`user/role` 归 `settings/*`，`组织切换` 归 `auth/session/*`
 
-- [ ] Task 8: 重建路由声明链并保持权限门禁可验证
+- [x] Task 8: 重建路由声明链并保持权限门禁可验证
   - File: `/Users/helloworld/dev/neweast/apps/api/src/route-manifests/platform.route-manifest.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/route-manifests/tenant.route-manifest.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/route-manifests/index.js`
@@ -367,7 +361,7 @@ apps/web/src/
   - Action: 迁移后同步更新 route manifest 来源与 scope/permission 对齐规则
   - Notes: 保持 `check:route-permissions` 可直接阻断不一致声明
 
-- [ ] Task 9: Web 抽取 shared-kernel 并统一双域 API 客户端模板
+- [x] Task 9: Web 抽取 shared-kernel 并统一双域 API 客户端模板
   - File: `/Users/helloworld/dev/neweast/apps/web/src/shared-kernel/http/request-json.mjs`
   - File: `/Users/helloworld/dev/neweast/apps/web/src/shared-kernel/http/idempotency-key.mjs`
   - File: `/Users/helloworld/dev/neweast/apps/web/src/api/platform-management.mjs`
@@ -375,48 +369,52 @@ apps/web/src/
   - Action: 抽取重复的请求、错误处理、幂等 key 生成逻辑，保留域特定 payload 字段处理
   - Notes: 保证用户侧反馈语义完全一致
 
-- [ ] Task 10: Web 平台域迁移至镜像目录模板
+- [x] Task 10: Web 平台域迁移至镜像目录模板
   - File: `/Users/helloworld/dev/neweast/apps/web/src/App.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/platform-management/PlatformDomainShell.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/platform-management/PlatformManagementLayoutPage.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/platform-management/platform-management.config.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/platform-management/pages/PlatformPasswordPolicyPage.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/platform-management/pages/*`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/platform/PlatformApp.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/platform/auth/context/PlatformDomainShell.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/platform/settings/workbench/PlatformManagementLayoutPage.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/platform/settings/workbench/platform-management.config.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/platform/settings/{user,role,org}/*`
   - Action: 以能力层级重排平台域页面、菜单与状态边界，沉淀可复用模板供后续新模块扩展
   - Notes: 保留现有页面行为与交互语义；`用户管理/角色管理/组织管理` 归 `settings/*`，不得分散到其它模块
 
-- [ ] Task 11: Web 租户域迁移至镜像目录模板并对齐命名语义
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management/TenantDomainShell.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management/TenantManagementLayoutPage.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management/tenant-management.config.jsx`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management/useTenantSessionFlow.js`
-  - File: `/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management/pages/*`
+- [x] Task 11: Web 租户域迁移至镜像目录模板并对齐命名语义
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/tenant/TenantApp.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/tenant/auth/context/TenantDomainShell.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/tenant/settings/workbench/TenantManagementLayoutPage.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/tenant/settings/workbench/tenant-management.config.jsx`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/tenant/auth/session/useTenantSessionFlow.js`
+  - File: `/Users/helloworld/dev/neweast/apps/web/src/domains/tenant/settings/{user,role}/*`
   - Action: 将 tenant 域特有组织切换流收敛为标准能力层，确保与 platform 结构镜像并可持续扩展
   - Notes: 语义命名规范由 Task 1 契约驱动，不允许局部命名漂移；`登录/退出` 与 `组织切换` 均归 `auth/session/*`；当租户域无 `config` 可见能力时，必须隐藏 `config` 菜单与路由入口，仅保留 `domain-extension/registry` 契约记录
 
-- [ ] Task 12: 补齐并重构测试基线（对称性 + 用户侧 + 数据侧）
+- [x] Task 12: 补齐并重构测试基线（对称性 + 用户侧 + 数据侧）
   - File: `/Users/helloworld/dev/neweast/apps/api/test/http-routes.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/platform.org.api.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/platform.user.api.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/platform.role.api.test.js`
-  - File: `/Users/helloworld/dev/neweast/apps/api/test/tenant.member.api.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/tenant.user.api.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/tenant.role.api.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/domain.symmetry.test.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/test/domain-contract.guards.test.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/test/contracts/*.test.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/test/invariants/*.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/web/test/server.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/web/test/chrome.playwright.test.js`
   - Action: 新增镜像检查测试、用户侧黄金流程回归、数据侧语义回归，并更新既有测试路径
   - Notes: 黄金用例需覆盖登录、权限、用户/角色治理、组织切换
 
-- [ ] Task 13: 清理旧路径并收口到目标结构
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/platform`
-  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules/tenant`
+- [x] Task 13: 清理旧路径并收口到目标结构
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/platform/runtime/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/domains/tenant/runtime/*`
+  - File: `/Users/helloworld/dev/neweast/apps/api/src/modules`（已移除 `platform`、`tenant` 子目录）
   - File: `/Users/helloworld/dev/neweast/apps/web/src/features/platform-management`
   - File: `/Users/helloworld/dev/neweast/apps/web/src/features/tenant-management`
   - Action: 在新路径稳定后移除迁移期间临时目录与旧目录，统一 import 到目标结构
   - Notes: 清理前必须完成全量测试与门禁验证；禁止引入运行时兼容层、路径别名桥接层或映射适配层作为“过渡方案”
 
-- [ ] Task 14: 建立跨域 import 静态门禁
+- [x] Task 14: 建立跨域 import 静态门禁
   - File: `/Users/helloworld/dev/neweast/tools/lint-rules/no-cross-domain-imports.js`
   - File: `/Users/helloworld/dev/neweast/tools/lint.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/package.json`
@@ -424,19 +422,23 @@ apps/web/src/
   - Action: 增加 `platform <-> tenant` 跨域 import 禁止规则，仅允许通过 shared-kernel 边界访问共享能力
   - Notes: 规则应支持 allowlist（仅限基础设施级例外），默认 deny
 
-- [ ] Task 15: 固化黄金基线与差异说明模板
+- [x] Task 15: 固化黄金基线与差异说明模板
   - File: `/Users/helloworld/dev/neweast/apps/api/test/fixtures/golden-user-side.json`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/fixtures/golden-data-side.json`
   - File: `/Users/helloworld/dev/neweast/docs/templates/spec-diff-justification.md`
+  - File: `/Users/helloworld/dev/neweast/_bmad-output/implementation-artifacts/spec-diff-register.json`
   - Action: 固化用户侧/数据侧可比较基线，并提供“可接受差异”记录模板
   - Notes: 任一差异若未登记模板记录，则默认视为回归缺陷
 
-- [ ] Task 16: 建立阶段里程碑与 scope 冻结机制
+- [x] Task 16: 建立阶段里程碑与 scope 冻结机制
   - File: `/Users/helloworld/dev/neweast/_bmad-output/implementation-artifacts/refactor-milestones.yaml`
+  - File: `/Users/helloworld/dev/neweast/_bmad-output/implementation-artifacts/refactor-review-record.json`
+  - File: `/Users/helloworld/dev/neweast/tools/domain-contract/check-refactor-governance.js`
+  - File: `/Users/helloworld/dev/neweast/package.json`
   - Action: 定义 M1-M4 里程碑、每阶段入场与出场条件、scope freeze 规则（禁止顺便功能重构）
   - Notes: 若新增需求超出本 spec，必须进入新 spec 或变更审批，不得并入当前任务
 
-- [ ] Task 17: 升级 capability 契约为 schema v2 并强制引用
+- [x] Task 17: 升级 capability 契约为 schema v2 并强制引用
   - File: `/Users/helloworld/dev/neweast/tools/domain-contract/capability-map.schema.json`
   - File: `/Users/helloworld/dev/neweast/tools/domain-contract/capability-map.json`
   - File: `/Users/helloworld/dev/neweast/apps/api/scripts/check-domain-symmetry.js`
@@ -444,7 +446,7 @@ apps/web/src/
   - Action: 为能力契约增加 `capability_id`、`canonical_term`、`module`、`domain`、`owner`、`review_at` 字段并在检查脚本中强制校验
   - Notes: 禁止 alias 字段与映射适配字段进入主干，统一使用单一 canonical 命名
 
-- [ ] Task 18: 建立 API 契约快照与数据不变量门禁
+- [x] Task 18: 建立 API 契约快照与数据不变量门禁
   - File: `/Users/helloworld/dev/neweast/apps/api/test/contracts/platform.contract.snapshot.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/contracts/tenant.contract.snapshot.test.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/invariants/data-side.invariant.test.js`
@@ -453,7 +455,7 @@ apps/web/src/
   - Action: 为关键接口建立响应契约快照，并对关键写链路建立唯一性/状态迁移/审计链不变量断言
   - Notes: 快照更新必须通过评审并附差异说明，禁止静默更新基线
 
-- [ ] Task 19: 建立双域脚手架与文件粒度 CI 门禁
+- [x] Task 19: 建立双域脚手架与文件粒度 CI 门禁
   - File: `/Users/helloworld/dev/neweast/tools/scaffold/create-domain-module.mjs`
   - File: `/Users/helloworld/dev/neweast/tools/scaffold/templates/domain-module/*`
   - File: `/Users/helloworld/dev/neweast/tools/lint-rules/file-granularity-thresholds.js`
@@ -461,17 +463,19 @@ apps/web/src/
   - Action: 新增 `create:domain-module` 脚手架命令按镜像模板生成 platform/tenant 能力目录，并在 CI 中校验大文件/过碎文件阈值
   - Notes: 默认阈值沿用本 spec（>800 LOC 拆分候选；大量 <120 LOC 单导出文件进入聚合候选）
 
-- [ ] Task 20: 完成 `modules/features -> domains` 命名空间终态迁移
+- [x] Task 20: 完成 `modules/features -> domains` 命名空间终态迁移
   - File: `/Users/helloworld/dev/neweast/apps/api/src/domains`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/modules`
   - File: `/Users/helloworld/dev/neweast/apps/web/src/domains`
   - File: `/Users/helloworld/dev/neweast/apps/web/src/features`
   - File: `/Users/helloworld/dev/neweast/apps/api/src/http-routes.js`
   - File: `/Users/helloworld/dev/neweast/apps/web/src/App.jsx`
+  - File: `/Users/helloworld/dev/neweast/tools/domain-contract/check-domain-symmetry.js`
+  - File: `/Users/helloworld/dev/neweast/apps/api/test/domain-contract.guards.test.js`
   - Action: 将 API/Web 业务能力统一收敛到 `domains/{domain}/{module}/{capability}` 命名空间，并按前台展示归属到 `settings/config/auth`，完成旧命名空间迁出与最终清理
   - Notes: 迁移后必须由自动化检查证明 `modules/features` 业务引用为 0，且禁止 `domains/{domain}/{capability}` 直挂能力目录
 
-- [ ] Task 21: 建立导入迁移 codemod 与 domain public API 门禁
+- [x] Task 21: 建立导入迁移 codemod 与 domain public API 门禁
   - File: `/Users/helloworld/dev/neweast/tools/codemods/migrate-domain-imports.mjs`
   - File: `/Users/helloworld/dev/neweast/tools/lint-rules/no-domain-deep-imports.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/package.json`
@@ -480,7 +484,7 @@ apps/web/src/
   - Action: 用 codemod 批量改写 import 到 domain public API 入口，并用 lint 阻断 deep import 回归
   - Notes: `platform` 与 `tenant` 只能通过各自 `index` 导出面消费能力，禁止绕过边界直接引子路径
 
-- [ ] Task 22: 建立可重复执行的 deterministic test harness
+- [x] Task 22: 建立可重复执行的 deterministic test harness
   - File: `/Users/helloworld/dev/neweast/apps/api/test/helpers/deterministic-clock.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/helpers/deterministic-random.js`
   - File: `/Users/helloworld/dev/neweast/apps/api/test/helpers/fixture-loader.js`
@@ -492,35 +496,35 @@ apps/web/src/
 
 ### Acceptance Criteria
 
-- [ ] AC 1: Given 已定义镜像契约文件, when 执行 `check-domain-symmetry`, then platform/tenant 成对目录、命名格式、语义命名全部通过且无遗漏。
-- [ ] AC 2: Given 完成 API 装配重构, when 创建路由处理器, then 不再依赖单文件集中耦合并且 platform/tenant/runtime 可独立装配。
-- [ ] AC 3: Given 重构后的 shared-kernel, when platform/tenant 调用预授权与错误模型, then 不直接依赖 `auth.service` 内部实现且行为语义不变。
-- [ ] AC 4: Given 平台域治理能力重排完成, when 执行平台用户/角色/组织相关接口回归, then 返回结构与数据语义保持可接受一致。
-- [ ] AC 5: Given 租户域治理能力重排完成, when 执行租户用户/角色与组织切换相关接口回归, then 返回结构与数据语义保持可接受一致。
-- [ ] AC 6: Given 路由声明链已重建, when 执行 `pnpm --dir apps/api run check:route-permissions`, then 无缺失声明、无无效 scope、无未知权限码。
-- [ ] AC 7: Given Web shared-kernel 抽取完成, when 调用 platform/tenant API client, then 通用请求逻辑无重复实现且域特定字段处理正确。
-- [ ] AC 8: Given Web 双域目录迁移完成, when 用户在 platform/tenant 两域进入 `settings/config/auth` 相关工作台, then 页面导航与权限可见性行为与现有系统一致（tenant 在无 `config` 可见能力时不得展示 `config` 菜单或路由入口）。
-- [ ] AC 9: Given 命名语义对齐规则生效, when 检查同能力文件, then platform/tenant 文件命名、层级、职责粒度满足镜像一致性要求。
-- [ ] AC 10: Given 数据侧黄金回归集, when 执行关键写操作（用户、角色授权、状态切换）, then 写库结果与审计事件语义保持一致。
-- [ ] AC 11: Given 用户侧黄金回归集, when 执行关键流程（登录、权限收敛、组织切换、治理操作）, then 用户可见行为与错误反馈语义保持一致。
-- [ ] AC 12: Given 大文件拆分策略执行完毕, when 扫描代码行数与模块职责, then 超阈值文件被按职责拆分且无过碎新碎片堆积。
-- [ ] AC 13: Given 迁移清理阶段结束, when 进行最终收口检查, then 旧路径 import 为 0 且仅保留目标目录树，并且不存在运行时兼容层或映射适配层残留。
-- [ ] AC 14: Given 全量回归门禁执行, when 运行 `pnpm nx test` 与相关检查脚本, then 所有检查通过后方可合并重构分支。
-- [ ] AC 15: Given 任一重构任务进入评审, when 检查实现方案与代码结果, then 必须满足最佳实践基线且不得以最小化改动作为兜底通过条件。
-- [ ] AC 16: Given 目标目录树蓝图, when 对比实际目录结构, then API 与 Web 双域目录均符合镜像层级模板或在 domain-extension 清单中有登记；tenant `config` 若处于占位态仅允许 `domain-extension/registry`，且无前台菜单/路由入口。
-- [ ] AC 17: Given 静态门禁已启用, when 执行 lint, then 所有跨域 import 违规被阻断且仅 shared-kernel 边界可跨域共享。
-- [ ] AC 18: Given 用户侧黄金基线, when 执行关键流程回归, then 菜单可见性、交互路径、错误文案对比结果满足一致性阈值（100% 必选项一致）。
-- [ ] AC 19: Given 数据侧黄金基线, when 执行关键写链路回归, then 关键字段、状态迁移、幂等重复写与审计 event_type 全量一致。
-- [ ] AC 20: Given 任一差异被标记为“可接受”, when 提交评审, then 必须附带 `spec-diff-justification` 记录并经责任人签署。
-- [ ] AC 21: Given 重构分阶段执行, when 完成每个里程碑检查, then 未通过不得进入下一阶段且不得扩展本次 scope。
-- [ ] AC 22: Given capability schema v2 生效, when 执行对称性检查, then 所有能力定义均包含 `capability_id` 且仅使用 canonical 命名（无 alias 字段）。
-- [ ] AC 23: Given 契约快照与数据不变量门禁启用, when 执行 API 测试链路, then 未经批准的响应结构变化与数据语义漂移会被阻断。
-- [ ] AC 24: Given 双域脚手架与粒度门禁启用, when 新增模块或执行 CI, then 目录命名镜像规则与文件粒度阈值均被强制校验通过。
-- [ ] AC 25: Given 命名空间终态迁移完成, when 执行全仓扫描, then 旧 `modules/features` 业务引用数为 0，且无运行时兼容壳/映射适配层残留，并且无 `domains/{domain}/{capability}` 直挂目录。
-- [ ] AC 26: Given public API 导入门禁生效, when 执行 lint 与 codemod 校验, then 任何 domain deep import 均被阻断并给出修复路径。
-- [ ] AC 27: Given deterministic test harness 生效, when 在同一环境连续执行两次关键测试链路, then 快照与数据不变量结果完全一致。
-- [ ] AC 28: Given 新模块接入流程启用, when 新增业务模块（如 `inventory`）, then 必须创建在 `domains/{platform|tenant}/{module}/{capability}` 层级并通过对称性检查。
-- [ ] AC 29: Given 能力归属规则生效, when 执行模块归属检查, then `用户管理/角色管理/组织管理` 必须落在 `settings`，`默认密码策略/系统配置/集成治理` 必须落在 `config`，`登录/退出登录/OTP/刷新会话/改密/组织切换` 与 `context/provisioning` 必须落在 `auth`（其中 `组织切换` 位于 `auth/session/switch-org`）。
+- [x] AC 1: Given 已定义镜像契约文件, when 执行 `check-domain-symmetry`, then platform/tenant 成对目录、命名格式、语义命名全部通过且无遗漏。
+- [x] AC 2: Given 完成 API 装配重构, when 创建路由处理器, then 不再依赖单文件集中耦合并且 platform/tenant/runtime 可独立装配。
+- [x] AC 3: Given 重构后的 shared-kernel, when platform/tenant 调用预授权与错误模型, then 不直接依赖 `auth.service` 内部实现且行为语义不变。
+- [x] AC 4: Given 平台域治理能力重排完成, when 执行平台用户/角色/组织相关接口回归, then 返回结构与数据语义保持可接受一致。
+- [x] AC 5: Given 租户域治理能力重排完成, when 执行租户用户/角色与组织切换相关接口回归, then 返回结构与数据语义保持可接受一致。
+- [x] AC 6: Given 路由声明链已重建, when 执行 `pnpm --dir apps/api run check:route-permissions`, then 无缺失声明、无无效 scope、无未知权限码。
+- [x] AC 7: Given Web shared-kernel 抽取完成, when 调用 platform/tenant API client, then 通用请求逻辑无重复实现且域特定字段处理正确。
+- [x] AC 8: Given Web 双域目录迁移完成, when 用户在 platform/tenant 两域进入 `settings/config/auth` 相关工作台, then 页面导航与权限可见性行为与现有系统一致（tenant 在无 `config` 可见能力时不得展示 `config` 菜单或路由入口）。
+- [x] AC 9: Given 命名语义对齐规则生效, when 检查同能力文件, then platform/tenant 文件命名、层级、职责粒度满足镜像一致性要求。
+- [x] AC 10: Given 数据侧黄金回归集, when 执行关键写操作（用户、角色授权、状态切换）, then 写库结果与审计事件语义保持一致。
+- [x] AC 11: Given 用户侧黄金回归集, when 执行关键流程（登录、权限收敛、组织切换、治理操作）, then 用户可见行为与错误反馈语义保持一致。
+- [x] AC 12: Given 大文件拆分策略执行完毕, when 扫描代码行数与模块职责, then 超阈值文件被按职责拆分且无过碎新碎片堆积。
+- [x] AC 13: Given 迁移清理阶段结束, when 进行最终收口检查, then 旧路径 import 为 0 且仅保留目标目录树，并且不存在运行时兼容层或映射适配层残留。
+- [x] AC 14: Given 全量回归门禁执行, when 运行 `pnpm nx test` 与相关检查脚本, then 所有检查通过后方可合并重构分支。
+- [x] AC 15: Given 任一重构任务进入评审, when 检查实现方案与代码结果, then 必须满足最佳实践基线且不得以最小化改动作为兜底通过条件。
+- [x] AC 16: Given 目标目录树蓝图, when 对比实际目录结构, then API 与 Web 双域目录均符合镜像层级模板或在 domain-extension 清单中有登记；tenant `config` 若处于占位态仅允许 `domain-extension/registry`，且无前台菜单/路由入口。
+- [x] AC 17: Given 静态门禁已启用, when 执行 lint, then 所有跨域 import 违规被阻断且仅 shared-kernel 边界可跨域共享。
+- [x] AC 18: Given 用户侧黄金基线, when 执行关键流程回归, then 菜单可见性、交互路径、错误文案对比结果满足一致性阈值（100% 必选项一致）。
+- [x] AC 19: Given 数据侧黄金基线, when 执行关键写链路回归, then 关键字段、状态迁移、幂等重复写与审计 event_type 全量一致。
+- [x] AC 20: Given 任一差异被标记为“可接受”, when 提交评审, then 必须附带 `spec-diff-justification` 记录并经责任人签署。
+- [x] AC 21: Given 重构分阶段执行, when 完成每个里程碑检查, then 未通过不得进入下一阶段且不得扩展本次 scope。
+- [x] AC 22: Given capability schema v2 生效, when 执行对称性检查, then 所有能力定义均包含 `capability_id` 且仅使用 canonical 命名（无 alias 字段）。
+- [x] AC 23: Given 契约快照与数据不变量门禁启用, when 执行 API 测试链路, then 未经批准的响应结构变化与数据语义漂移会被阻断。
+- [x] AC 24: Given 双域脚手架与粒度门禁启用, when 新增模块或执行 CI, then 目录命名镜像规则与文件粒度阈值均被强制校验通过。
+- [x] AC 25: Given 命名空间终态迁移完成, when 执行全仓扫描, then 旧 `modules/features` 业务引用数为 0，且无运行时兼容壳/映射适配层残留，并且无 `domains/{domain}/{capability}` 直挂目录。
+- [x] AC 26: Given public API 导入门禁生效, when 执行 lint 与 codemod 校验, then 任何 domain deep import 均被阻断并给出修复路径。
+- [x] AC 27: Given deterministic test harness 生效, when 在同一环境连续执行两次关键测试链路, then 快照与数据不变量结果完全一致。
+- [x] AC 28: Given 新模块接入流程启用, when 新增业务模块（如 `inventory`）, then 必须创建在 `domains/{platform|tenant}/{module}/{capability}` 层级并通过对称性检查。
+- [x] AC 29: Given 能力归属规则生效, when 执行模块归属检查, then `用户管理/角色管理/组织管理` 必须落在 `settings`，`默认密码策略/系统配置/集成治理` 必须落在 `config`，`登录/退出登录/OTP/刷新会话/改密/组织切换` 与 `context/provisioning` 必须落在 `auth`（其中 `组织切换` 位于 `auth/session/switch-org`）。
 
 ## Additional Context
 
@@ -578,6 +582,12 @@ apps/web/src/
 - 2026-02-24：用户确认更新：tenant 侧 `config` 在无可见能力时仅保留 `domain-extension/registry` 占位，前台不展示 `config` 菜单与路由入口。
 - 2026-02-24：用户新增约束：名称需要直接调整到目标态，不增加映射层、别名层或兼容适配层。
 - 2026-02-24：用户新增硬约束：所有改动必须符合最佳实践，不采用“最小化改动兜底”。
+- 2026-02-25：F6 收敛：`no-domain-deep-imports` 规则已基于 AST 导入提取执行，仅对仓内 `src/domains` 路径做段级判断；补充误报回归用例（外部包路径含 `domains` 不阻断）。
+- 2026-02-25：命名空间收口门禁补齐：`check-domain-symmetry` 新增旧 `modules/features` 引用残留扫描，并阻断 `domains/{domain}/{capability}` 直挂目录。
+- 2026-02-25：tenant `config` 占位态门禁补齐：`check-domain-symmetry` 强制 `tenant/config` 仅允许 `domain-extension/registry` 目录与占位文件，并阻断前端 tenant config 菜单/路由标记；Chrome 回归断言同步覆盖。
+- 2026-02-25：测试基线收口：contracts/invariants/domain-symmetry 与 Web Chrome 视觉+交互回归链路通过；`pnpm nx test` 全量通过。
+- 2026-02-25：AC28/AC29 收口：`check-domain-symmetry` module 校验升级为语义命名 + capability-map 驱动（支持 `inventory` 等新模块接入并通过对称性检查）；同时保留能力归属规则与 `auth/session/switch-org` 位置约束，新增回归用例覆盖。
+- 2026-02-25：AC15/AC20/AC21 收口：新增 `check-refactor-governance` 门禁并接入 workspace lint，强制校验里程碑阶段推进顺序、`spec-diff-register` 与 `spec-diff-justification` 记录完整性、以及已完成 Task 的最佳实践评审记录（禁止 minimal-change fallback）。
 - 高风险提醒 1：`auth` 共享能力抽取不当会破坏预授权与错误语义一致性。
 - 高风险提醒 2：`member/user/org` 语义迁移不完整会导致双域命名再漂移。
 - 高风险提醒 3：路由声明链漏改会导致权限门禁与实际路由不一致。

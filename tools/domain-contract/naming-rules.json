@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "domains": ["platform", "tenant"],
+  "modules": ["settings", "config", "auth"],
+  "rules": {
+    "capability_id": "{domain}.{module}.{canonical_term}",
+    "canonical_term_regex": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "capability_path_regex": "^[a-z0-9-]+(?:/[a-z0-9-]+)*$",
+    "module_path_rule": "domains/{domain}/{module}/{capability}",
+    "forbidden_terms": ["member", "members", "tenant-user", "platform-user"],
+    "cross_domain_import_allowlist": []
+  },
+  "module_semantics": {
+    "settings": ["user", "role", "org"],
+    "config": ["password-policy", "system-config", "integration", "domain-extension-registry"],
+    "auth": ["session", "context", "provisioning"]
+  }
+}

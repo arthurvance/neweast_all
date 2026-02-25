@@ -8,16 +8,16 @@ const normalizeOptionalTenantOwnerField = (value) => {
 
 const createTenantContextService = ({
   sessionRepository,
-  tenantMembershipRepository,
+  tenantUsershipRepository,
   normalizeTenantId,
   addAuditEvent,
   invalidateSessionCacheBySessionId
 } = {}) => {
   const getTenantOptionsForUser = async (userId) => {
-    if (typeof tenantMembershipRepository.listTenantOptionsByUserId !== 'function') {
+    if (typeof tenantUsershipRepository.listTenantOptionsByUserId !== 'function') {
       return [];
     }
-    const options = await tenantMembershipRepository.listTenantOptionsByUserId(
+    const options = await tenantUsershipRepository.listTenantOptionsByUserId(
       String(userId)
     );
     if (!Array.isArray(options)) {

@@ -332,7 +332,7 @@ test('deleteUserById returns deleted=false when deadlock retries are exhausted',
   );
 });
 
-test('createTenantMembershipForUser inserts tenant relationship and returns created=true', async () => {
+test('createTenantUsershipForUser inserts tenant relationship and returns created=true', async () => {
   let insertSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -350,7 +350,7 @@ test('createTenantMembershipForUser inserts tenant relationship and returns crea
     return [];
   }, { userExists: true });
 
-  const result = await store.createTenantMembershipForUser({
+  const result = await store.createTenantUsershipForUser({
     userId: 'u-tenant-create',
     tenantId: 'tenant-1',
     tenantName: 'Tenant 1'
@@ -359,7 +359,7 @@ test('createTenantMembershipForUser inserts tenant relationship and returns crea
   assert.deepEqual(result, { created: true });
 });
 
-test('createTenantMembershipForUser normalizes blank tenant name to null', async () => {
+test('createTenantUsershipForUser normalizes blank tenant name to null', async () => {
   let insertedTenantName = 'unset';
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
@@ -377,7 +377,7 @@ test('createTenantMembershipForUser normalizes blank tenant name to null', async
     return [];
   }, { userExists: true });
 
-  const result = await store.createTenantMembershipForUser({
+  const result = await store.createTenantUsershipForUser({
     userId: 'u-tenant-name-normalize',
     tenantId: 'tenant-name-normalize',
     tenantName: '   '
@@ -386,7 +386,7 @@ test('createTenantMembershipForUser normalizes blank tenant name to null', async
   assert.deepEqual(result, { created: true });
 });
 
-test('createTenantMembershipForUser returns created=false on duplicate relationship', async () => {
+test('createTenantUsershipForUser returns created=false on duplicate relationship', async () => {
   const duplicateError = new Error('Duplicate entry for tenant_memberships');
   duplicateError.code = 'ER_DUP_ENTRY';
   duplicateError.errno = 1062;
@@ -413,7 +413,7 @@ test('createTenantMembershipForUser returns created=false on duplicate relations
     return [];
   }, { userExists: true });
 
-  const result = await store.createTenantMembershipForUser({
+  const result = await store.createTenantUsershipForUser({
     userId: 'u-tenant-duplicate',
     tenantId: 'tenant-2'
   });
@@ -421,7 +421,7 @@ test('createTenantMembershipForUser returns created=false on duplicate relations
   assert.deepEqual(result, { created: false });
 });
 
-test('createTenantMembershipForUser fails closed when lifecycle columns are missing', async () => {
+test('createTenantUsershipForUser fails closed when lifecycle columns are missing', async () => {
   let lifecycleSelectAttempts = 0;
   let legacyStatusLookupCount = 0;
   const store = createStore(async (sql) => {
@@ -451,7 +451,7 @@ test('createTenantMembershipForUser fails closed when lifecycle columns are miss
 
   await assert.rejects(
     () =>
-      store.createTenantMembershipForUser({
+      store.createTenantUsershipForUser({
         userId: 'u-tenant-lifecycle-required',
         tenantId: 'tenant-lifecycle-required',
         tenantName: 'Tenant Lifecycle Required'
@@ -465,7 +465,7 @@ test('createTenantMembershipForUser fails closed when lifecycle columns are miss
   assert.equal(legacyStatusLookupCount, 0);
 });
 
-test('createTenantMembershipForUser fails closed when existing membership status is blank', async () => {
+test('createTenantUsershipForUser fails closed when existing membership status is blank', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -495,7 +495,7 @@ test('createTenantMembershipForUser fails closed when existing membership status
 
   await assert.rejects(
     () =>
-      store.createTenantMembershipForUser({
+      store.createTenantUsershipForUser({
         userId: 'u-tenant-empty-status',
         tenantId: 'tenant-empty-status',
         tenantName: 'Tenant Empty Status'
@@ -504,7 +504,7 @@ test('createTenantMembershipForUser fails closed when existing membership status
   );
 });
 
-test('findTenantMembershipByUserAndTenantId does not coerce blank status to active', async () => {
+test('findTenantUsershipByUserAndTenantId does not coerce blank status to active', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -528,7 +528,7 @@ test('findTenantMembershipByUserAndTenantId does not coerce blank status to acti
     return [];
   });
 
-  const membership = await store.findTenantMembershipByUserAndTenantId({
+  const membership = await store.findTenantUsershipByUserAndTenantId({
     userId: 'u-tenant-blank-status',
     tenantId: 'tenant-blank-status'
   });
@@ -536,7 +536,7 @@ test('findTenantMembershipByUserAndTenantId does not coerce blank status to acti
   assert.equal(membership.status, '');
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId returns membership projection with phone', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId returns membership projection with phone', async () => {
   let lookupSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -565,7 +565,7 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
     return [];
   });
 
-  const membership = await store.findTenantMembershipByMembershipIdAndTenantId({
+  const membership = await store.findTenantUsershipByMembershipIdAndTenantId({
     membershipId: 'membership-profile-read-1',
     tenantId: 'tenant-profile-read-1'
   });
@@ -580,7 +580,7 @@ test('findTenantMembershipByMembershipIdAndTenantId returns membership projectio
   assert.equal(membership.department_name, '研发一部');
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId keeps raw profile fields without trimming', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId keeps raw profile fields without trimming', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -607,7 +607,7 @@ test('findTenantMembershipByMembershipIdAndTenantId keeps raw profile fields wit
     return [];
   });
 
-  const membership = await store.findTenantMembershipByMembershipIdAndTenantId({
+  const membership = await store.findTenantUsershipByMembershipIdAndTenantId({
     membershipId: 'membership-profile-read-raw',
     tenantId: 'tenant-profile-read-raw'
   });
@@ -617,7 +617,7 @@ test('findTenantMembershipByMembershipIdAndTenantId keeps raw profile fields wit
   assert.equal(membership.department_name, '研发一部 ');
 });
 
-test('findTenantMembershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row when user profile is missing', async () => {
+test('findTenantUsershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row when user profile is missing', async () => {
   let lookupSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -646,7 +646,7 @@ test('findTenantMembershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row
     return [];
   });
 
-  const membership = await store.findTenantMembershipByMembershipIdAndTenantId({
+  const membership = await store.findTenantUsershipByMembershipIdAndTenantId({
     membershipId: 'membership-profile-read-missing-user',
     tenantId: 'tenant-profile-read-missing-user'
   });
@@ -657,7 +657,7 @@ test('findTenantMembershipByMembershipIdAndTenantId uses LEFT JOIN and keeps row
   assert.equal(membership.phone, '');
 });
 
-test('listTenantMembersByTenantId uses LEFT JOIN iam_users and preserves rows with missing user profile', async () => {
+test('listTenantUsersByTenantId uses LEFT JOIN iam_users and preserves rows with missing user profile', async () => {
   let listSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -687,7 +687,7 @@ test('listTenantMembersByTenantId uses LEFT JOIN iam_users and preserves rows wi
     return [];
   });
 
-  const members = await store.listTenantMembersByTenantId({
+  const members = await store.listTenantUsersByTenantId({
     tenantId: 'tenant-list-missing-user',
     page: 1,
     pageSize: 50
@@ -699,7 +699,7 @@ test('listTenantMembersByTenantId uses LEFT JOIN iam_users and preserves rows wi
   assert.equal(members[0].phone, '');
 });
 
-test('createTenantMembershipForUser returns created=false when user does not exist', async () => {
+test('createTenantUsershipForUser returns created=false when user does not exist', async () => {
   let insertCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -711,7 +711,7 @@ test('createTenantMembershipForUser returns created=false when user does not exi
     return [];
   }, { userExists: false });
 
-  const result = await store.createTenantMembershipForUser({
+  const result = await store.createTenantUsershipForUser({
     userId: 'u-tenant-missing-user',
     tenantId: 'tenant-missing-user'
   });
@@ -2668,7 +2668,7 @@ test('createOrganizationWithOwner throws deadlock error after retry exhaustion',
   );
 });
 
-test('createOrganizationWithOwner surfaces transaction failure when tenant membership upsert fails mid-transaction', async () => {
+test('createOrganizationWithOwner surfaces transaction failure when tenant usership upsert fails mid-transaction', async () => {
   let rollbackTriggered = false;
   const store = createMySqlAuthStore({
     dbClient: {
@@ -2896,7 +2896,7 @@ test('releaseOwnerTransferLock uses mysql RELEASE_LOCK and returns release state
   assert.match(queryHistory[0].params[0], /^neweast:owner-transfer:[0-9a-f]{40}$/);
 });
 
-test('updateOrganizationStatus cascades soft-delete state to tenant memberships, tenant roles, role bindings, and tenant sessions', async () => {
+test('updateOrganizationStatus cascades soft-delete state to tenant userships, tenant roles, role bindings, and tenant sessions', async () => {
   let inTransactionCalls = 0;
   const revokeTenantSessionParams = [];
   const revokeTenantRefreshParams = [];
@@ -2904,7 +2904,7 @@ test('updateOrganizationStatus cascades soft-delete state to tenant memberships,
   const disableTenantRolesParams = [];
   const orgSelectSql = [];
   const orgUpdateSql = [];
-  let updateTenantMembershipCalled = false;
+  let updateTenantUsershipCalled = false;
   let disableTenantRolesCalled = false;
   let deleteTenantRoleBindingsCalled = false;
   const store = createMySqlAuthStore({
@@ -2951,7 +2951,7 @@ test('updateOrganizationStatus cascades soft-delete state to tenant memberships,
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE tenant_id = ?')
             ) {
-              updateTenantMembershipCalled = true;
+              updateTenantUsershipCalled = true;
               return { affectedRows: 2 };
             }
             if (
@@ -3029,7 +3029,7 @@ test('updateOrganizationStatus cascades soft-delete state to tenant memberships,
     revoked_refresh_token_count: 3,
     audit_recorded: false
   });
-  assert.equal(updateTenantMembershipCalled, true);
+  assert.equal(updateTenantUsershipCalled, true);
   assert.equal(disableTenantRolesCalled, true);
   assert.deepEqual(disableTenantRolesParams, [['u-operator', 'org-status-1']]);
   assert.equal(deleteTenantRoleBindingsCalled, true);
@@ -3162,7 +3162,7 @@ test('updateOrganizationStatus does not count owner-only revocation target as af
 
 test('updateOrganizationStatus treats same-status change as no-op without session convergence', async () => {
   let updateOrgCalled = false;
-  let readTenantMembershipCalled = false;
+  let readTenantUsershipCalled = false;
   let disableTenantRolesCalled = false;
   let removeTenantDomainCalled = false;
   let convergeSessionCalled = false;
@@ -3186,7 +3186,7 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
               return { affectedRows: 1 };
             }
             if (normalizedSql.includes('FROM tenant_memberships')) {
-              readTenantMembershipCalled = true;
+              readTenantUsershipCalled = true;
               return [];
             }
             if (
@@ -3232,7 +3232,7 @@ test('updateOrganizationStatus treats same-status change as no-op without sessio
     audit_recorded: false
   });
   assert.equal(updateOrgCalled, false);
-  assert.equal(readTenantMembershipCalled, false);
+  assert.equal(readTenantUsershipCalled, false);
   assert.equal(disableTenantRolesCalled, false);
   assert.equal(removeTenantDomainCalled, false);
   assert.equal(convergeSessionCalled, false);
@@ -4551,7 +4551,7 @@ test('updatePlatformUserStatus returns null when target user does not exist', as
 test('softDeleteUser cascades disabled status and revokes global sessions/refresh tokens in one transaction', async () => {
   let inTransactionCalls = 0;
   let updateUserCalled = false;
-  let updateTenantMembershipCalled = false;
+  let updateTenantUsershipCalled = false;
   let updatePlatformRolesCalled = false;
   let updatePlatformUsersCalled = false;
   let deleteTenantRoleBindingsCalled = false;
@@ -4586,7 +4586,7 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
-              updateTenantMembershipCalled = true;
+              updateTenantUsershipCalled = true;
               return { affectedRows: 2 };
             }
             if (
@@ -4645,7 +4645,7 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
 
   assert.equal(inTransactionCalls, 1);
   assert.equal(updateUserCalled, true);
-  assert.equal(updateTenantMembershipCalled, true);
+  assert.equal(updateTenantUsershipCalled, true);
   assert.equal(updatePlatformRolesCalled, true);
   assert.equal(updatePlatformUsersCalled, true);
   assert.equal(deleteTenantRoleBindingsCalled, true);
@@ -4666,7 +4666,7 @@ test('softDeleteUser cascades disabled status and revokes global sessions/refres
 
 test('softDeleteUser treats disabled user as idempotent no-op while still enforcing cleanup checks', async () => {
   let updateUsersCalled = false;
-  let updateTenantMembershipCalled = false;
+  let updateTenantUsershipCalled = false;
   let updatePlatformRolesCalled = false;
   let updatePlatformUsersCalled = false;
   let deleteTenantRoleBindingsCalled = false;
@@ -4700,7 +4700,7 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
               && normalizedSql.includes("SET status = 'disabled'")
               && normalizedSql.includes('WHERE user_id = ?')
             ) {
-              updateTenantMembershipCalled = true;
+              updateTenantUsershipCalled = true;
               assert.equal(params[0], 'platform-soft-delete-noop-user');
               return { affectedRows: 0 };
             }
@@ -4764,7 +4764,7 @@ test('softDeleteUser treats disabled user as idempotent no-op while still enforc
   });
 
   assert.equal(updateUsersCalled, false);
-  assert.equal(updateTenantMembershipCalled, true);
+  assert.equal(updateTenantUsershipCalled, true);
   assert.equal(updatePlatformRolesCalled, true);
   assert.equal(updatePlatformUsersCalled, true);
   assert.equal(deleteTenantRoleBindingsCalled, true);
@@ -4910,7 +4910,7 @@ test('softDeleteUser returns null when target user does not exist', async () => 
   assert.equal(writeCalled, false);
 });
 
-test('updateTenantMembershipStatus fails closed when lifecycle columns are missing', async () => {
+test('updateTenantUsershipStatus fails closed when lifecycle columns are missing', async () => {
   let lifecycleSelectAttempts = 0;
   let legacySelectAttempts = 0;
   const store = createStore(async (sql) => {
@@ -4941,7 +4941,7 @@ test('updateTenantMembershipStatus fails closed when lifecycle columns are missi
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-lifecycle-required',
         tenantId: 'tenant-lifecycle-required',
         nextStatus: 'disabled',
@@ -4956,7 +4956,7 @@ test('updateTenantMembershipStatus fails closed when lifecycle columns are missi
   assert.equal(legacySelectAttempts, 0);
 });
 
-test('updateTenantMembershipStatus rejects blank nextStatus before executing SQL', async () => {
+test('updateTenantUsershipStatus rejects blank nextStatus before executing SQL', async () => {
   let queryCount = 0;
   const store = createStore(async (sql) => {
     queryCount += 1;
@@ -4966,7 +4966,7 @@ test('updateTenantMembershipStatus rejects blank nextStatus before executing SQL
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-reject-empty-next-status',
         tenantId: 'tenant-reject-empty-next-status',
         nextStatus: '',
@@ -4977,7 +4977,7 @@ test('updateTenantMembershipStatus rejects blank nextStatus before executing SQL
   assert.equal(queryCount, 0);
 });
 
-test('updateTenantMembershipStatus does not execute legacy left-to-active reactivation fallback', async () => {
+test('updateTenantUsershipStatus does not execute legacy left-to-active reactivation fallback', async () => {
   let lifecycleSelectAttempts = 0;
   let legacySelectAttempts = 0;
   let lifecycleUpdateAttempts = 0;
@@ -5016,7 +5016,7 @@ test('updateTenantMembershipStatus does not execute legacy left-to-active reacti
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-lifecycle-left-active',
         tenantId: 'tenant-lifecycle-left-active',
         nextStatus: 'active',
@@ -5032,7 +5032,7 @@ test('updateTenantMembershipStatus does not execute legacy left-to-active reacti
   assert.equal(lifecycleUpdateAttempts, 0);
 });
 
-test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeated missing-column failures', async () => {
+test('updateTenantUsershipStatus keeps lifecycle path unchanged across repeated missing-column failures', async () => {
   let lifecycleSelectAttempts = 0;
   let legacySelectAttempts = 0;
   const store = createStore(async (sql) => {
@@ -5063,7 +5063,7 @@ test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeate
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-lifecycle-latched',
         tenantId: 'tenant-lifecycle-latched',
         nextStatus: 'disabled',
@@ -5076,7 +5076,7 @@ test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeate
   );
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-lifecycle-latched',
         tenantId: 'tenant-lifecycle-latched',
         nextStatus: 'disabled',
@@ -5091,7 +5091,7 @@ test('updateTenantMembershipStatus keeps lifecycle path unchanged across repeate
   assert.equal(legacySelectAttempts, 0);
 });
 
-test('updateTenantMembershipStatus fails closed when membership history table is unavailable', async () => {
+test('updateTenantUsershipStatus fails closed when membership history table is unavailable', async () => {
   let historyInsertAttempts = 0;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5130,7 +5130,7 @@ test('updateTenantMembershipStatus fails closed when membership history table is
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-history-missing',
         tenantId: 'tenant-history',
         nextStatus: 'active',
@@ -5145,7 +5145,7 @@ test('updateTenantMembershipStatus fails closed when membership history table is
   assert.equal(historyInsertAttempts, 1);
 });
 
-test('updateTenantMembershipStatus keeps permission snapshot when re-activating from disabled', async () => {
+test('updateTenantUsershipStatus keeps permission snapshot when re-activating from disabled', async () => {
   let updateSql = '';
   let updateParams = [];
   let membershipLookupCount = 0;
@@ -5238,7 +5238,7 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
     return [];
   });
 
-  const result = await store.updateTenantMembershipStatus({
+  const result = await store.updateTenantUsershipStatus({
     membershipId: 'membership-reactivate',
     tenantId: 'tenant-reactivate',
     nextStatus: 'active',
@@ -5269,7 +5269,7 @@ test('updateTenantMembershipStatus keeps permission snapshot when re-activating 
   assert.equal(roleGrantLookupCount, 1);
 });
 
-test('updateTenantMembershipStatus clears permission snapshot when re-activating from left', async () => {
+test('updateTenantUsershipStatus clears permission snapshot when re-activating from left', async () => {
   let updateSql = '';
   let updateParams = [];
   let membershipLookupCount = 0;
@@ -5350,7 +5350,7 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
     return [];
   });
 
-  const result = await store.updateTenantMembershipStatus({
+  const result = await store.updateTenantUsershipStatus({
     membershipId: 'membership-reactivate-left',
     tenantId: 'tenant-reactivate-left',
     nextStatus: 'active',
@@ -5370,7 +5370,7 @@ test('updateTenantMembershipStatus clears permission snapshot when re-activating
   assert.equal(membershipLookupCount, 2);
 });
 
-test('updateTenantMembershipStatus writes tenant audit event when auditContext is provided', async () => {
+test('updateTenantUsershipStatus writes tenant audit event when auditContext is provided', async () => {
   let auditInsertParams = null;
   const store = createStore(async (sql, params) => {
     const normalizedSql = String(sql);
@@ -5402,7 +5402,7 @@ test('updateTenantMembershipStatus writes tenant audit event when auditContext i
     return [];
   });
 
-  const result = await store.updateTenantMembershipStatus({
+  const result = await store.updateTenantUsershipStatus({
     membershipId: 'membership-status-audit',
     tenantId: 'tenant-status-audit',
     nextStatus: 'active',
@@ -5433,7 +5433,7 @@ test('updateTenantMembershipStatus writes tenant audit event when auditContext i
     auditInsertParams[4],
     '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
   );
-  assert.equal(auditInsertParams[5], 'auth.tenant.member.status.updated');
+  assert.equal(auditInsertParams[5], 'auth.tenant.user.status.updated');
   assert.equal(auditInsertParams[6], 'tenant-operator-status-audit');
   assert.equal(auditInsertParams[7], 'tenant-session-status-audit');
   assert.equal(auditInsertParams[8], 'membership');
@@ -5444,7 +5444,7 @@ test('updateTenantMembershipStatus writes tenant audit event when auditContext i
   assert.equal(JSON.parse(auditInsertParams[13]).reason, 'manual-noop');
 });
 
-test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_FAILED', async () => {
+test('updateTenantUsershipStatus maps audit write failure to ERR_AUDIT_WRITE_FAILED', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -5476,7 +5476,7 @@ test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_F
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipStatus({
+      store.updateTenantUsershipStatus({
         membershipId: 'membership-status-audit-failed',
         tenantId: 'tenant-status-audit-failed',
         nextStatus: 'active',
@@ -5494,7 +5494,7 @@ test('updateTenantMembershipStatus maps audit write failure to ERR_AUDIT_WRITE_F
   );
 });
 
-test('updateTenantMembershipProfile updates profile fields and returns normalized membership projection', async () => {
+test('updateTenantUsershipProfile updates profile fields and returns normalized membership projection', async () => {
   let updateSql = '';
   let updateParams = [];
   const store = createStore(async (sql, params) => {
@@ -5546,7 +5546,7 @@ test('updateTenantMembershipProfile updates profile fields and returns normalize
     return [];
   });
 
-  const result = await store.updateTenantMembershipProfile({
+  const result = await store.updateTenantUsershipProfile({
     membershipId: 'membership-profile-update-1',
     tenantId: 'tenant-profile-update-1',
     displayName: '成员乙',
@@ -5567,7 +5567,7 @@ test('updateTenantMembershipProfile updates profile fields and returns normalize
   assert.equal(result.tenant_id, 'tenant-profile-update-1');
 });
 
-test('updateTenantMembershipProfile fails closed before update when locked membership row has missing user profile', async () => {
+test('updateTenantUsershipProfile fails closed before update when locked membership row has missing user profile', async () => {
   let updateCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5597,7 +5597,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipProfile({
+      store.updateTenantUsershipProfile({
         membershipId: 'membership-profile-update-missing-user',
         tenantId: 'tenant-profile-update-missing-user',
         displayName: '成员丁'
@@ -5607,7 +5607,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
   assert.equal(updateCalled, false);
 });
 
-test('updateTenantMembershipProfile fails closed before update when locked membership row has malformed phone', async () => {
+test('updateTenantUsershipProfile fails closed before update when locked membership row has malformed phone', async () => {
   let updateCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5637,7 +5637,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipProfile({
+      store.updateTenantUsershipProfile({
         membershipId: 'membership-profile-update-malformed-phone',
         tenantId: 'tenant-profile-update-malformed-phone',
         displayName: '成员丁'
@@ -5647,7 +5647,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
   assert.equal(updateCalled, false);
 });
 
-test('updateTenantMembershipProfile fails closed before update when locked membership row has malformed department and request omits department update', async () => {
+test('updateTenantUsershipProfile fails closed before update when locked membership row has malformed department and request omits department update', async () => {
   let updateCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5678,7 +5678,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipProfile({
+      store.updateTenantUsershipProfile({
         membershipId: 'membership-profile-update-malformed-department',
         tenantId: 'tenant-profile-update-malformed-department',
         displayName: '成员丁',
@@ -5689,7 +5689,7 @@ test('updateTenantMembershipProfile fails closed before update when locked membe
   assert.equal(updateCalled, false);
 });
 
-test('updateTenantMembershipProfile returns null when target membership does not exist', async () => {
+test('updateTenantUsershipProfile returns null when target membership does not exist', async () => {
   let updateCalled = false;
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
@@ -5710,7 +5710,7 @@ test('updateTenantMembershipProfile returns null when target membership does not
     return [];
   });
 
-  const result = await store.updateTenantMembershipProfile({
+  const result = await store.updateTenantUsershipProfile({
     membershipId: 'membership-profile-missing',
     tenantId: 'tenant-profile-missing',
     displayName: '成员乙'
@@ -5720,7 +5720,7 @@ test('updateTenantMembershipProfile returns null when target membership does not
   assert.equal(result, null);
 });
 
-test('updateTenantMembershipProfile rejects blank displayName before executing SQL', async () => {
+test('updateTenantUsershipProfile rejects blank displayName before executing SQL', async () => {
   let queryCalled = false;
   const store = createStore(async (sql) => {
     queryCalled = true;
@@ -5730,7 +5730,7 @@ test('updateTenantMembershipProfile rejects blank displayName before executing S
 
   await assert.rejects(
     () =>
-      store.updateTenantMembershipProfile({
+      store.updateTenantUsershipProfile({
         membershipId: 'membership-profile-invalid',
         tenantId: 'tenant-profile-invalid',
         displayName: '   '
@@ -5740,7 +5740,7 @@ test('updateTenantMembershipProfile rejects blank displayName before executing S
   assert.equal(queryCalled, false);
 });
 
-test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects non-active membership inside transaction', async () => {
+test('replaceTenantUsershipRoleBindingsAndSyncSnapshot rejects non-active membership inside transaction', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -5762,7 +5762,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects non-active memb
 
   await assert.rejects(
     () =>
-      store.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+      store.replaceTenantUsershipRoleBindingsAndSyncSnapshot({
         tenantId: 'tenant-binding-race',
         membershipId: 'membership-binding-race',
         roleIds: ['tenant_role_binding_race']
@@ -5777,7 +5777,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects non-active memb
   );
 });
 
-test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects disabled role bindings inside transaction', async () => {
+test('replaceTenantUsershipRoleBindingsAndSyncSnapshot rejects disabled role bindings inside transaction', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -5811,7 +5811,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects disabled role b
 
   await assert.rejects(
     () =>
-      store.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+      store.replaceTenantUsershipRoleBindingsAndSyncSnapshot({
         tenantId: 'tenant-binding-role-race',
         membershipId: 'membership-binding-role-race',
         roleIds: ['tenant_role_binding_disabled']
@@ -5827,7 +5827,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects disabled role b
   );
 });
 
-test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects malformed affected user id from membership row', async () => {
+test('replaceTenantUsershipRoleBindingsAndSyncSnapshot rejects malformed affected user id from membership row', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -5849,7 +5849,7 @@ test('replaceTenantMembershipRoleBindingsAndSyncSnapshot rejects malformed affec
 
   await assert.rejects(
     () =>
-      store.replaceTenantMembershipRoleBindingsAndSyncSnapshot({
+      store.replaceTenantUsershipRoleBindingsAndSyncSnapshot({
         tenantId: 'tenant-binding-user-id-invalid',
         membershipId: 'membership-binding-user-id-invalid',
         roleIds: []
@@ -6246,7 +6246,7 @@ test('listTenantRolePermissionGrantsByRoleIds rejects role rows with uppercase r
   );
 });
 
-test('listTenantMembershipRoleBindings rejects role ids with surrounding whitespace from storage rows', async () => {
+test('listTenantUsershipRoleBindings rejects role ids with surrounding whitespace from storage rows', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -6264,7 +6264,7 @@ test('listTenantMembershipRoleBindings rejects role ids with surrounding whitesp
 
   await assert.rejects(
     () =>
-      store.listTenantMembershipRoleBindings({
+      store.listTenantUsershipRoleBindings({
         membershipId: 'membership-role-binding-whitespace',
         tenantId: 'tenant-role-binding-whitespace'
       }),
@@ -6275,7 +6275,7 @@ test('listTenantMembershipRoleBindings rejects role ids with surrounding whitesp
   );
 });
 
-test('listTenantMembershipRoleBindings rejects role ids with uppercase role_id from storage rows', async () => {
+test('listTenantUsershipRoleBindings rejects role ids with uppercase role_id from storage rows', async () => {
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (
@@ -6293,7 +6293,7 @@ test('listTenantMembershipRoleBindings rejects role ids with uppercase role_id f
 
   await assert.rejects(
     () =>
-      store.listTenantMembershipRoleBindings({
+      store.listTenantUsershipRoleBindings({
         membershipId: 'membership-role-binding-case',
         tenantId: 'tenant-role-binding-case'
       }),
