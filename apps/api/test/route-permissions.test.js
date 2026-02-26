@@ -20,10 +20,6 @@ test('tenant protected auth routes expose explicit permission declarations', () 
     method: 'GET',
     path: '/auth/tenant/options'
   });
-  const tenantSelect = findRouteDefinition({
-    method: 'POST',
-    path: '/auth/tenant/select'
-  });
   const tenantSwitch = findRouteDefinition({
     method: 'POST',
     path: '/auth/tenant/switch'
@@ -42,13 +38,11 @@ test('tenant protected auth routes expose explicit permission declarations', () 
   assert.equal(tenantOptions.scope, 'tenant');
   assert.equal(tenantOptions.permission_code, 'tenant.context.read');
 
-  for (const route of [tenantSelect, tenantSwitch]) {
-    assert.ok(route);
-    assert.equal(route.access, 'protected');
-    assert.equal(route.scope, 'tenant');
-    assert.equal(typeof route.permission_code, 'string');
-    assert.ok(route.permission_code.length > 0);
-  }
+  assert.ok(tenantSwitch);
+  assert.equal(tenantSwitch.access, 'protected');
+  assert.equal(tenantSwitch.scope, 'tenant');
+  assert.equal(typeof tenantSwitch.permission_code, 'string');
+  assert.ok(tenantSwitch.permission_code.length > 0);
 
   assert.ok(userManagementProbe);
   assert.equal(userManagementProbe.access, 'protected');

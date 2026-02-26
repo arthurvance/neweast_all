@@ -182,10 +182,9 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     nextTenantOptions: [],
     nextActiveTenantId: 'tenant-b',
     hasTenantOptions: false,
-    previousTenantSelectionValue: 'tenant-a',
+    previousTenantSwitchValue: 'tenant-a',
     previousTenantOptions: [{ tenant_id: 'tenant-a', tenant_name: 'A' }]
   });
-  assert.equal(partialPayloadState.tenantSelectionValue, 'tenant-a');
   assert.equal(partialPayloadState.tenantSwitchValue, 'tenant-a');
   assert.equal(partialPayloadState.tenantOptionsUpdate, undefined);
 
@@ -193,13 +192,12 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     nextTenantOptions: [],
     nextActiveTenantId: 'tenant-b',
     hasTenantOptions: false,
-    previousTenantSelectionValue: 'tenant-a',
+    previousTenantSwitchValue: 'tenant-a',
     previousTenantOptions: [
       { tenant_id: 'tenant-a', tenant_name: 'A' },
       { tenant_id: 'tenant-b', tenant_name: 'B' }
     ]
   });
-  assert.equal(partialPayloadKnownActiveState.tenantSelectionValue, 'tenant-b');
   assert.equal(partialPayloadKnownActiveState.tenantSwitchValue, 'tenant-b');
   assert.equal(partialPayloadKnownActiveState.tenantOptionsUpdate, undefined);
 
@@ -207,10 +205,9 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     nextTenantOptions: [],
     nextActiveTenantId: 'tenant-z',
     hasTenantOptions: false,
-    previousTenantSelectionValue: '',
+    previousTenantSwitchValue: '',
     previousTenantOptions: []
   });
-  assert.equal(partialPayloadWithoutKnownOptionsState.tenantSelectionValue, '');
   assert.equal(partialPayloadWithoutKnownOptionsState.tenantSwitchValue, '');
   assert.equal(partialPayloadWithoutKnownOptionsState.tenantOptionsUpdate, undefined);
 
@@ -218,9 +215,8 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     nextTenantOptions: [],
     nextActiveTenantId: 'tenant-b',
     hasTenantOptions: true,
-    previousTenantSelectionValue: 'tenant-a'
+    previousTenantSwitchValue: 'tenant-a'
   });
-  assert.equal(explicitEmptyOptionsState.tenantSelectionValue, '');
   assert.equal(explicitEmptyOptionsState.tenantSwitchValue, '');
   assert.deepEqual(explicitEmptyOptionsState.tenantOptionsUpdate, []);
 
@@ -231,9 +227,8 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     ],
     nextActiveTenantId: 'tenant-b',
     hasTenantOptions: true,
-    previousTenantSelectionValue: 'tenant-a'
+    previousTenantSwitchValue: 'tenant-a'
   });
-  assert.equal(activeTenantPreferredState.tenantSelectionValue, 'tenant-b');
   assert.equal(activeTenantPreferredState.tenantSwitchValue, 'tenant-b');
 
   const activeTenantOutOfOptionsState = resolveTenantMutationUiState({
@@ -243,9 +238,8 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     ],
     nextActiveTenantId: 'tenant-c',
     hasTenantOptions: true,
-    previousTenantSelectionValue: 'tenant-a'
+    previousTenantSwitchValue: 'tenant-a'
   });
-  assert.equal(activeTenantOutOfOptionsState.tenantSelectionValue, 'tenant-a');
   assert.equal(activeTenantOutOfOptionsState.tenantSwitchValue, 'tenant-a');
 
   const missingActiveFallsBackToPreviousState = resolveTenantMutationUiState({
@@ -255,9 +249,8 @@ test('tenant mutation resolver differentiates missing tenant_options vs explicit
     ],
     nextActiveTenantId: '',
     hasTenantOptions: true,
-    previousTenantSelectionValue: 'tenant-b'
+    previousTenantSwitchValue: 'tenant-b'
   });
-  assert.equal(missingActiveFallsBackToPreviousState.tenantSelectionValue, 'tenant-b');
   assert.equal(missingActiveFallsBackToPreviousState.tenantSwitchValue, 'tenant-b');
 });
 
@@ -371,7 +364,7 @@ test('tenant refresh session binding uses expected session context to avoid stal
   assert.equal(acceptedWithExpectedSession, true);
 });
 
-test('tenant refresh ui resolver keeps selection and switch values aligned after tenant list shrink', async () => {
+test('tenant refresh ui resolver keeps switch value aligned after tenant list shrink', async () => {
   const { resolveTenantRefreshUiState } = await import('../src/tenant-mutation.mjs');
 
   const refreshState = resolveTenantRefreshUiState({
@@ -380,14 +373,13 @@ test('tenant refresh ui resolver keeps selection and switch values aligned after
       { tenant_id: 'tenant-b', tenant_name: 'B' }
     ],
     activeTenantId: '',
-    previousTenantSelectionValue: 'tenant-stale'
+    previousTenantSwitchValue: 'tenant-stale'
   });
 
   assert.deepEqual(refreshState.tenantOptionsUpdate, [
     { tenant_id: 'tenant-a', tenant_name: 'A' },
     { tenant_id: 'tenant-b', tenant_name: 'B' }
   ]);
-  assert.equal(refreshState.tenantSelectionValue, 'tenant-a');
   assert.equal(refreshState.tenantSwitchValue, 'tenant-a');
 });
 

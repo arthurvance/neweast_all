@@ -3,7 +3,6 @@ import TenantManagementLayoutPage from '../../settings/workbench/TenantManagemen
 import TenantSwitchScreen from '../session/TenantSwitchScreen';
 import {
   APP_SCREEN_DASHBOARD,
-  APP_SCREEN_TENANT_SELECT,
   APP_SCREEN_TENANT_SWITCH
 } from '../../../../features/app-shell/app-screen';
 
@@ -54,7 +53,7 @@ export default function TenantDomainShell({
     );
   }
 
-  if (screen === APP_SCREEN_TENANT_SWITCH || screen === APP_SCREEN_TENANT_SELECT) {
+  if (screen === APP_SCREEN_TENANT_SWITCH) {
     return (
       <TenantSwitchScreen
         tenantOptions={tenantOptions}

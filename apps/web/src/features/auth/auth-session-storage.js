@@ -84,12 +84,10 @@ export const readPersistedAuthSession = () => {
     const tenantOptions = asTenantOptions(snapshot.tenantOptions);
     const fallbackTenantId = String(sessionState.active_tenant_id || '').trim()
       || (tenantOptions[0] ? tenantOptions[0].tenant_id : '');
-    const tenantSelectionValue = String(snapshot.tenantSelectionValue || '').trim() || fallbackTenantId;
     const tenantSwitchValue = String(snapshot.tenantSwitchValue || '').trim() || fallbackTenantId;
     return {
       sessionState,
       tenantOptions,
-      tenantSelectionValue,
       tenantSwitchValue
     };
   } catch (_error) {
@@ -101,7 +99,6 @@ export const readPersistedAuthSession = () => {
 export const persistAuthSession = ({
   sessionState,
   tenantOptions,
-  tenantSelectionValue,
   tenantSwitchValue
 }) => {
   if (typeof window === 'undefined') {
@@ -131,7 +128,6 @@ export const persistAuthSession = ({
           : null
     },
     tenantOptions: asTenantOptions(tenantOptions),
-    tenantSelectionValue: String(tenantSelectionValue || '').trim(),
     tenantSwitchValue: String(tenantSwitchValue || '').trim()
   };
   window.sessionStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(snapshot));

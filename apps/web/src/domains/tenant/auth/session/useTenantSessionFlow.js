@@ -26,7 +26,6 @@ export const useTenantSessionFlow = ({
   isTenantSubmitting,
   setSessionState,
   setTenantOptions,
-  setTenantSelectionValue,
   setTenantSwitchValue,
   setIsTenantSubmitting,
   setScreen,
@@ -58,17 +57,16 @@ export const useTenantSessionFlow = ({
         tenant_selection_required: Boolean(payload.tenant_selection_required),
         tenant_permission_context: payload.tenant_permission_context || null
       }));
-      setTenantSelectionValue((previous) => {
+      setTenantSwitchValue((previous) => {
         const nextUiState = resolveTenantRefreshUiState({
           tenantOptions: nextTenantOptions,
           activeTenantId: payload.active_tenant_id,
-          previousTenantSelectionValue: previous
+          previousTenantSwitchValue: previous
         });
         if (nextUiState.tenantOptionsUpdate !== undefined) {
           setTenantOptions(nextUiState.tenantOptionsUpdate);
         }
-        setTenantSwitchValue(nextUiState.tenantSwitchValue);
-        return nextUiState.tenantSelectionValue;
+        return nextUiState.tenantSwitchValue;
       });
     };
 
@@ -101,7 +99,7 @@ export const useTenantSessionFlow = ({
           })
       }
     );
-  }, [requestJson, setSessionState, setTenantOptions, setTenantSelectionValue, setTenantSwitchValue, sessionStateRef]);
+  }, [requestJson, setSessionState, setTenantOptions, setTenantSwitchValue, sessionStateRef]);
 
   useEffect(() => {
     const restoredSession = initialPersistedAuth?.sessionState;
@@ -146,7 +144,6 @@ export const useTenantSessionFlow = ({
     if (resolvedSession.entry_domain === 'tenant') {
       if (options.length > 0) {
         const firstTenant = options[0].tenant_id;
-        setTenantSelectionValue(firstTenant);
         setTenantSwitchValue(resolvedSession.active_tenant_id || firstTenant);
       }
 
@@ -154,7 +151,7 @@ export const useTenantSessionFlow = ({
         setScreen(APP_SCREEN_TENANT_SWITCH);
         setGlobalMessage({
           type: 'success',
-          text: '登录成功，请先选择组织后进入工作台'
+          text: '登录成功，请先切换到目标组织后进入工作台'
         });
       } else {
         setScreen(APP_SCREEN_DASHBOARD);
@@ -171,7 +168,7 @@ export const useTenantSessionFlow = ({
       type: 'success',
       text: '登录成功'
     });
-  }, [setGlobalMessage, setScreen, setSessionState, setTenantOptions, setTenantSelectionValue, setTenantSwitchValue, sessionStateRef]);
+  }, [setGlobalMessage, setScreen, setSessionState, setTenantOptions, setTenantSwitchValue, sessionStateRef]);
 
   const applyTenantMutationPayload = useCallback((payload, fallbackTenantId) => {
     const normalizedPayload = normalizeTenantMutationPayload(payload);
@@ -200,26 +197,25 @@ export const useTenantSessionFlow = ({
     sessionStateRef.current = nextSessionState;
     setSessionState(nextSessionState);
 
-    setTenantSelectionValue((previous) => {
+    setTenantSwitchValue((previous) => {
       const nextUiState = resolveTenantMutationUiState({
         nextTenantOptions,
         nextActiveTenantId,
         hasTenantOptions,
-        previousTenantSelectionValue: previous,
+        previousTenantSwitchValue: previous,
         previousTenantOptions: tenantOptions
       });
       if (nextUiState.tenantOptionsUpdate !== undefined) {
         setTenantOptions(nextUiState.tenantOptionsUpdate);
       }
-      setTenantSwitchValue(nextUiState.tenantSwitchValue);
-      return nextUiState.tenantSelectionValue;
+      return nextUiState.tenantSwitchValue;
     });
 
     return {
       nextAccessToken,
       nextSessionState
     };
-  }, [sessionStateRef, setSessionState, setTenantOptions, setTenantSelectionValue, setTenantSwitchValue, tenantOptions]);
+  }, [sessionStateRef, setSessionState, setTenantOptions, setTenantSwitchValue, tenantOptions]);
 
   const handleTenantSwitch = useCallback(async (tenantIdOverride = null) => {
     if (!sessionState?.access_token) {

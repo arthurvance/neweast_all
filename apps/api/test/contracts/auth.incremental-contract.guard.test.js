@@ -14,7 +14,6 @@ const REQUIRED_SERVICE_METHODS = [
   'changePassword',
   'tenantOptions',
   'platformOptions',
-  'selectTenant',
   'switchTenant',
   'provisionPlatformUserByPhone',
   'provisionTenantUserByPhone',

@@ -56,9 +56,6 @@ export default function App() {
   );
   const [sessionState, setSessionState] = useState(() => initialPersistedAuth?.sessionState || null);
   const [tenantOptions, setTenantOptions] = useState(() => initialPersistedAuth?.tenantOptions || []);
-  const [tenantSelectionValue, setTenantSelectionValue] = useState(
-    () => initialPersistedAuth?.tenantSelectionValue || ''
-  );
   const [tenantSwitchValue, setTenantSwitchValue] = useState(
     () => initialPersistedAuth?.tenantSwitchValue || ''
   );
@@ -87,7 +84,6 @@ export default function App() {
     setSessionState(null);
     setScreen(APP_SCREEN_LOGIN);
     setTenantOptions([]);
-    setTenantSelectionValue('');
     setTenantSwitchValue('');
     setIsTenantSubmitting(false);
     setGlobalMessage(nextGlobalMessage);
@@ -133,7 +129,6 @@ export default function App() {
     isTenantSubmitting,
     setSessionState,
     setTenantOptions,
-    setTenantSelectionValue,
     setTenantSwitchValue,
     setIsTenantSubmitting,
     setScreen,
@@ -204,10 +199,9 @@ export default function App() {
     persistAuthSession({
       sessionState,
       tenantOptions,
-      tenantSelectionValue,
       tenantSwitchValue
     });
-  }, [sessionState, tenantOptions, tenantSelectionValue, tenantSwitchValue]);
+  }, [sessionState, tenantOptions, tenantSwitchValue]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {

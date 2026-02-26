@@ -300,7 +300,6 @@ const createOtpApiServer = async () => {
     { tenant_id: 'tenant-101', tenant_name: 'Tenant 101' },
     { tenant_id: 'tenant-202', tenant_name: 'Tenant 202' }
   ];
-  let failTenantOptionsOnceAfterSelect = false;
   let failTenantOptionsOnceAfterSwitch = false;
   let activeTenantId = null;
   const tenantPermissionById = {
@@ -522,8 +521,7 @@ const createOtpApiServer = async () => {
     }
 
     if (req.method === 'GET' && req.url === '/auth/tenant/options') {
-      if (failTenantOptionsOnceAfterSelect || failTenantOptionsOnceAfterSwitch) {
-        failTenantOptionsOnceAfterSelect = false;
+      if (failTenantOptionsOnceAfterSwitch) {
         failTenantOptionsOnceAfterSwitch = false;
         sendJson({
           status: 503,
@@ -552,40 +550,6 @@ const createOtpApiServer = async () => {
           request_id: 'chrome-regression-tenant-options'
         }
       });
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/auth/tenant/select') {
-      if (tenantOptions.some((option) => option.tenant_id === body.tenant_id)) {
-        activeTenantId = body.tenant_id;
-        failTenantOptionsOnceAfterSelect = true;
-        sendJson({
-          status: 200,
-          contentType: 'application/json',
-          payload: {
-            session_id: 'tenant-flow-session',
-            entry_domain: 'tenant',
-            active_tenant_id: activeTenantId,
-            tenant_selection_required: false,
-            tenant_options: tenantOptions,
-            tenant_permission_context: currentTenantPermissionContext(),
-            request_id: 'chrome-regression-tenant-select'
-          }
-        });
-      } else {
-        sendJson({
-          status: 403,
-          contentType: 'application/problem+json',
-          payload: {
-            type: 'about:blank',
-            title: 'Forbidden',
-            status: 403,
-            detail: '当前入口无可用访问域权限',
-            error_code: 'AUTH-403-NO-DOMAIN',
-            request_id: 'chrome-regression-tenant-select-denied'
-          }
-        });
-      }
       return;
     }
 
@@ -2016,34 +1980,6 @@ const createTenantManagementApiServer = async () => {
           entry_domain: 'tenant',
           active_tenant_id: activeTenantId,
           tenant_selection_required: activeTenantId === null,
-          tenant_options: tenantOptions,
-          tenant_permission_context: buildTenantPermissionContext(),
-          request_id: requestId
-        }
-      });
-      return;
-    }
-
-    if (method === 'POST' && pathname === '/auth/tenant/select') {
-      const tenantId = String(body.tenant_id || '').trim();
-      if (!tenantOptions.some((option) => option.tenant_id === tenantId)) {
-        sendProblem({
-          status: 403,
-          title: 'Forbidden',
-          detail: '当前入口无可用访问域权限',
-          errorCode: 'AUTH-403-NO-DOMAIN'
-        });
-        return;
-      }
-      activeTenantId = tenantId;
-      sendJson({
-        status: 200,
-        contentType: 'application/json',
-        payload: {
-          session_id: 'tenant-management-session',
-          entry_domain: 'tenant',
-          active_tenant_id: activeTenantId,
-          tenant_selection_required: false,
           tenant_options: tenantOptions,
           tenant_permission_context: buildTenantPermissionContext(),
           request_id: requestId

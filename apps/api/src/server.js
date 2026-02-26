@@ -2211,17 +2211,6 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    'POST /auth/tenant/select': async () =>
-      runAuthRouteWithTrace(
-        () =>
-          handlers.authTenantSelect(
-            requestId,
-            headers.authorization,
-            body || {},
-            getAuthorizationContext()
-          ),
-        requestId
-      ),
     'POST /auth/tenant/switch': async () =>
       runAuthRouteWithTrace(
         () =>

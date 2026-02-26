@@ -809,7 +809,7 @@ test('tenant entry with multiple options requires selection and persists active 
     can_operate_role_management: false
   });
 
-  const selected = await service.selectTenant({
+  const selected = await service.switchTenant({
     requestId: 'req-tenant-select',
     accessToken: login.access_token,
     tenantId: 'tenant-b'
@@ -1059,7 +1059,7 @@ test('tenant options reconciles stale active_tenant_id against latest tenant opt
   });
   assert.equal(login.tenant_selection_required, true);
 
-  const selected = await service.selectTenant({
+  const selected = await service.switchTenant({
     requestId: 'req-tenant-reconcile-select-a',
     accessToken: login.access_token,
     tenantId: 'tenant-a'
@@ -1272,7 +1272,7 @@ test('platform options in tenant entry session is blocked with AUTH-403-NO-DOMAI
   );
 });
 
-test('selectTenant rejects stale authorizationContext after session domain changes', async () => {
+test('switchTenant rejects stale authorizationContext after session domain changes', async () => {
   const service = createAuthService({
     seedUsers: [
       {
@@ -1312,7 +1312,7 @@ test('selectTenant rejects stale authorizationContext after session domain chang
 
   await assert.rejects(
     () =>
-      service.selectTenant({
+      service.switchTenant({
         requestId: 'req-select-tenant-stale-context',
         accessToken: login.access_token,
         tenantId: 'tenant-a',
@@ -4713,7 +4713,7 @@ test('authorizeRoute returns AUTH-403-FORBIDDEN when tenant permission snapshot 
     password: 'Passw0rd!',
     entryDomain: 'tenant'
   });
-  await service.selectTenant({
+  await service.switchTenant({
     requestId: 'req-route-authz-select',
     accessToken: login.access_token,
     tenantId: 'tenant-b'

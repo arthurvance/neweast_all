@@ -361,7 +361,7 @@ test_patterns:
   - Action: 承载平台 context 的 MySQL 存储与上下文读取能力。
   - Notes: 与 memory 端口一致。
   - File: `apps/api/src/domains/tenant/auth/context/context.service.js`（new）
-  - Action: 承载租户 context 能力（tenantOptions/selectTenant/switchTenant）。
+  - Action: 承载租户 context 能力（tenantOptions/switchTenant）。
   - Notes: 与 platform 同构命名。
   - File: `apps/api/src/domains/tenant/auth/context/context.store.memory.js`（new）
   - Action: 承载租户 context 的 memory 存储能力。
@@ -370,7 +370,7 @@ test_patterns:
   - Action: 承载租户 context 的 MySQL 存储能力。
   - Notes: 与 platform 同构命名。
   - File: `apps/api/src/modules/auth/auth.service.js`
-  - Action: 将 `platformOptions/tenantOptions/authorizeRoute/selectTenant/switchTenant` 委托新模块。
+  - Action: 将 `platformOptions/tenantOptions/authorizeRoute/switchTenant` 委托新模块。
   - Notes: 入参与返回字段保持不变。
 
 - [x] Task 8: 抽离 `provisioning` 能力实现（平台/租户用户开通与回滚）

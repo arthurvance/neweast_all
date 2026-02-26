@@ -2430,7 +2430,7 @@ test('express tenant options/select/switch endpoints work with mysql persistent 
 
     const selected = await invokeRoute(harness, {
       method: 'post',
-      path: '/auth/tenant/select',
+      path: '/auth/tenant/switch',
       headers: {
         authorization: `Bearer ${accessToken}`
       },

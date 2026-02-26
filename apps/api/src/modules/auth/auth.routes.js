@@ -122,19 +122,6 @@ const createAuthHandlers = (authService = createAuthService()) => {
       };
     },
 
-    tenantSelect: async ({
-      requestId,
-      authorization,
-      body,
-      authorizationContext = null
-    }) =>
-      authService.selectTenant({
-        requestId,
-        accessToken: extractBearerToken(authorization),
-        tenantId: body.tenant_id,
-        authorizationContext
-      }),
-
     tenantSwitch: async ({
       requestId,
       authorization,

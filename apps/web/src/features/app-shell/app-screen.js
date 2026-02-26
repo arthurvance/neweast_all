@@ -1,6 +1,5 @@
 export const APP_SCREEN_LOGIN = 'login';
 export const APP_SCREEN_DASHBOARD = 'dashboard';
-export const APP_SCREEN_TENANT_SELECT = 'tenant-select';
 export const APP_SCREEN_TENANT_SWITCH = 'tenant-switch';
 
 const normalizePathname = (pathname) => {
@@ -13,9 +12,6 @@ const normalizePathname = (pathname) => {
 
 export const resolvePreferredScreenFromPathname = (pathname) => {
   const normalizedPathname = normalizePathname(pathname).toLowerCase();
-  if (normalizedPathname === '/tenant/select') {
-    return APP_SCREEN_TENANT_SWITCH;
-  }
   if (normalizedPathname === '/tenant/switch') {
     return APP_SCREEN_TENANT_SWITCH;
   }
@@ -48,10 +44,7 @@ export const resolveInitialScreen = ({
   }
   if (
     entryDomain === 'tenant'
-    && (
-      preferredScreen === APP_SCREEN_TENANT_SWITCH
-      || preferredScreen === APP_SCREEN_TENANT_SELECT
-    )
+    && preferredScreen === APP_SCREEN_TENANT_SWITCH
   ) {
     return APP_SCREEN_TENANT_SWITCH;
   }
@@ -70,9 +63,6 @@ export const resolvePathForScreen = ({
 
   if (normalizedScreen === APP_SCREEN_LOGIN) {
     return `/login/${normalizedEntryDomain}`;
-  }
-  if (normalizedScreen === APP_SCREEN_TENANT_SELECT) {
-    return '/tenant/switch';
   }
   if (normalizedScreen === APP_SCREEN_TENANT_SWITCH) {
     return '/tenant/switch';

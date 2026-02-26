@@ -31,7 +31,7 @@ const createLoginService = ({
     sessionId,
     sessionContext,
     tenantOptions,
-    tenantSelectionRequired,
+    tenantSwitchRequired,
     successAuditType,
     resendAfterSeconds
   }) => {
@@ -91,7 +91,7 @@ const createLoginService = ({
       session_id: sessionId,
       entry_domain: sessionContext.entry_domain,
       active_tenant_id: sessionContext.active_tenant_id,
-      tenant_selection_required: tenantSelectionRequired,
+      tenant_selection_required: tenantSwitchRequired,
       tenant_options: tenantOptions,
       user_name: userName,
       platform_permission_context: platformPermissionContext,
@@ -129,14 +129,14 @@ const createLoginService = ({
       throw errors.noDomainAccess();
     }
 
-    const tenantSelectionRequired = normalizedEntryDomain === 'tenant' && tenantOptions.length > 1;
+    const tenantSwitchRequired = normalizedEntryDomain === 'tenant' && tenantOptions.length > 1;
     const activeTenantId = normalizedEntryDomain === 'tenant' && tenantOptions.length === 1
       ? tenantOptions[0].tenant_id
       : null;
 
     return {
       tenantOptions,
-      tenantSelectionRequired,
+      tenantSwitchRequired,
       activeTenantId
     };
   };
@@ -208,7 +208,7 @@ const createLoginService = ({
 
     const {
       tenantOptions,
-      tenantSelectionRequired,
+      tenantSwitchRequired,
       activeTenantId
     } = await resolveTenantContextForLogin({
       requestId,
@@ -236,7 +236,7 @@ const createLoginService = ({
         refresh_token: refreshToken
       },
       tenantOptions,
-      tenantSelectionRequired,
+      tenantSwitchRequired,
       successAuditType: 'auth.login.succeeded',
       resendAfterSeconds: rateLimit.remainingSeconds
     });
@@ -335,7 +335,7 @@ const createLoginService = ({
 
     const {
       tenantOptions,
-      tenantSelectionRequired,
+      tenantSwitchRequired,
       activeTenantId
     } = await resolveTenantContextForLogin({
       requestId,
@@ -363,7 +363,7 @@ const createLoginService = ({
         refresh_token: refreshToken
       },
       tenantOptions,
-      tenantSelectionRequired,
+      tenantSwitchRequired,
       successAuditType: 'auth.otp.login.succeeded'
     });
   };

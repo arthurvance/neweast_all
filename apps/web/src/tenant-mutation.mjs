@@ -95,7 +95,7 @@ export const resolveTenantMutationUiState = ({
   nextTenantOptions,
   nextActiveTenantId,
   hasTenantOptions,
-  previousTenantSelectionValue,
+  previousTenantSwitchValue,
   previousTenantOptions
 }) => {
   const normalizedHasTenantOptions = hasTenantOptions === true;
@@ -108,7 +108,7 @@ export const resolveTenantMutationUiState = ({
     ? previousTenantOptions
     : [];
   const normalizedActiveTenantId = normalizeTenantId(nextActiveTenantId);
-  const normalizedPreviousSelection = normalizeTenantId(previousTenantSelectionValue);
+  const normalizedPreviousSwitch = normalizeTenantId(previousTenantSwitchValue);
 
   if (normalizedOptions && normalizedOptions.length > 0) {
     const firstTenantId = normalizeTenantId(normalizedOptions[0].tenant_id);
@@ -119,18 +119,17 @@ export const resolveTenantMutationUiState = ({
     );
     const hasExistingTenant = normalizedOptions.some(
       (option) =>
-        normalizedPreviousSelection.length > 0
-        && normalizeTenantId(option.tenant_id) === normalizedPreviousSelection
+        normalizedPreviousSwitch.length > 0
+        && normalizeTenantId(option.tenant_id) === normalizedPreviousSwitch
     );
-    const nextSelectedTenantId = hasActiveTenant
+    const nextSwitchTenantId = hasActiveTenant
       ? normalizedActiveTenantId
       : hasExistingTenant
-      ? normalizedPreviousSelection
+      ? normalizedPreviousSwitch
       : firstTenantId;
     return {
       tenantOptionsUpdate: normalizedOptions,
-      tenantSelectionValue: nextSelectedTenantId,
-      tenantSwitchValue: nextSelectedTenantId
+      tenantSwitchValue: nextSwitchTenantId
     };
   }
 
@@ -142,25 +141,23 @@ export const resolveTenantMutationUiState = ({
           normalizedActiveTenantId.length > 0
           && normalizeTenantId(option.tenant_id) === normalizedActiveTenantId
       );
-      const hasPreviousSelectionInKnownOptions = normalizedPreviousOptions.some(
+      const hasPreviousSwitchInKnownOptions = normalizedPreviousOptions.some(
         (option) =>
-          normalizedPreviousSelection.length > 0
-          && normalizeTenantId(option.tenant_id) === normalizedPreviousSelection
+          normalizedPreviousSwitch.length > 0
+          && normalizeTenantId(option.tenant_id) === normalizedPreviousSwitch
       );
-      const nextSelectedTenantId = hasActiveTenantInKnownOptions
+      const nextSwitchTenantId = hasActiveTenantInKnownOptions
         ? normalizedActiveTenantId
-        : hasPreviousSelectionInKnownOptions
-        ? normalizedPreviousSelection
+        : hasPreviousSwitchInKnownOptions
+        ? normalizedPreviousSwitch
         : firstKnownTenantId;
       return {
         tenantOptionsUpdate: undefined,
-        tenantSelectionValue: nextSelectedTenantId,
-        tenantSwitchValue: nextSelectedTenantId
+        tenantSwitchValue: nextSwitchTenantId
       };
     }
     return {
       tenantOptionsUpdate: undefined,
-      tenantSelectionValue: '',
       tenantSwitchValue: ''
     };
   }
@@ -168,14 +165,12 @@ export const resolveTenantMutationUiState = ({
   if (normalizedActiveTenantId) {
     return {
       tenantOptionsUpdate: [],
-      tenantSelectionValue: '',
       tenantSwitchValue: ''
     };
   }
 
   return {
     tenantOptionsUpdate: [],
-    tenantSelectionValue: '',
     tenantSwitchValue: ''
   };
 };
@@ -211,11 +206,11 @@ export const resolveTenantMutationSessionState = ({
 export const resolveTenantRefreshUiState = ({
   tenantOptions,
   activeTenantId,
-  previousTenantSelectionValue
+  previousTenantSwitchValue
 }) =>
   resolveTenantMutationUiState({
     nextTenantOptions: tenantOptions,
     nextActiveTenantId: activeTenantId,
     hasTenantOptions: true,
-    previousTenantSelectionValue
+    previousTenantSwitchValue
   });

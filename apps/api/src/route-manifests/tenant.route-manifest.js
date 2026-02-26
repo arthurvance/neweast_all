@@ -31,13 +31,6 @@ const TENANT_ROUTE_MANIFEST = Object.freeze([
   },
   {
     method: 'POST',
-    path: '/auth/tenant/select',
-    access: 'protected',
-    permission_code: 'tenant.context.switch',
-    scope: 'tenant'
-  },
-  {
-    method: 'POST',
     path: '/auth/tenant/switch',
     access: 'protected',
     permission_code: 'tenant.context.switch',

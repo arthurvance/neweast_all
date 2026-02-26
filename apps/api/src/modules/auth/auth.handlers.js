@@ -39,19 +39,6 @@ const createAuthRouteHandlers = ({
       authorizationContext
     }),
 
-  authTenantSelect: async (
-    requestId,
-    authorization,
-    body,
-    authorizationContext
-  ) =>
-    auth.tenantSelect({
-      requestId,
-      authorization,
-      body: body || {},
-      authorizationContext
-    }),
-
   authTenantSwitch: async (
     requestId,
     authorization,

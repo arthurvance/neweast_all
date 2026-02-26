@@ -20,7 +20,7 @@ export default function TenantSwitchScreen({
         level={4}
         style={{ margin: 0 }}
       >
-        请选择组织
+        切换组织
       </Typography.Title>
       <section
         data-testid="tenant-org-switch-list"

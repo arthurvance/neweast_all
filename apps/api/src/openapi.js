@@ -605,66 +605,6 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/auth/tenant/select': {
-      post: {
-        summary: 'Select active tenant for current session',
-        security: [{ bearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: { $ref: '#/components/schemas/TenantSelectRequest' }
-            }
-          }
-        },
-        responses: {
-          200: {
-            description: 'Tenant selected and persisted to session context',
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/TenantSelectResponse' }
-              }
-            }
-          },
-          400: {
-            description: 'Invalid payload',
-            content: {
-              'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
-              }
-            }
-          },
-          401: {
-            description: 'Invalid access token',
-            content: {
-              'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' }
-              }
-            }
-          },
-          403: {
-            description: 'No access to selected tenant',
-            content: {
-              'application/problem+json': {
-                schema: { $ref: '#/components/schemas/ProblemDetails' },
-                examples: {
-                  no_domain: {
-                    value: {
-                      type: 'about:blank',
-                      title: 'Forbidden',
-                      status: 403,
-                      detail: '当前入口无可用访问域权限',
-                      error_code: 'AUTH-403-NO-DOMAIN',
-                      request_id: 'request_id_unset'
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     '/auth/tenant/switch': {
       post: {
         summary: 'Switch active tenant in current session',

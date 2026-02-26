@@ -296,7 +296,7 @@ claude-opus-4-6
 - `pnpm --dir apps/api exec node --test --test-name-pattern "route method declarations with trailing whitespace" test/auth.express.api.test.js`
 - `pnpm --dir apps/api exec node --test --test-name-pattern "extractBearerToken accepts case-insensitive" test/auth.service.test.js`
 - `pnpm --dir apps/api exec node --test --test-name-pattern "injected declaration lookup" test/server.test.js`
-- `pnpm --dir apps/web exec node --test --test-name-pattern "tenant mutation resolver keeps tenantSelectionValue aligned" test/server.test.js`
+- `pnpm --dir apps/web exec node --test --test-name-pattern "tenant mutation resolver keeps tenantSwitchValue aligned" test/server.test.js`
 - `pnpm --dir apps/api exec node --test --test-name-pattern "path has leading or trailing whitespace|path contains query or hash fragments" test/route-permissions.test.js`
 - `pnpm --dir apps/api run check:route-permissions`
 - `pnpm --dir apps/api exec node --test test/route-permissions.test.js test/server.test.js`

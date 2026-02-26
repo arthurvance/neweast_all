@@ -105,7 +105,7 @@ test('tenant login with multiple tenants requires explicit selection', async () 
 
   const select = await callRoute(
     {
-      pathname: '/auth/tenant/select',
+      pathname: '/auth/tenant/switch',
       method: 'POST',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
@@ -231,7 +231,7 @@ test('tenant switch updates active_tenant_id and rejects unknown tenant options'
 
   const select = await callRoute(
     {
-      pathname: '/auth/tenant/select',
+      pathname: '/auth/tenant/switch',
       method: 'POST',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
@@ -308,7 +308,7 @@ test('tenant context routes reconcile stale active_tenant_id before route author
 
   const selected = await callRoute(
     {
-      pathname: '/auth/tenant/select',
+      pathname: '/auth/tenant/switch',
       method: 'POST',
       headers: {
         authorization: `Bearer ${login.body.access_token}`
