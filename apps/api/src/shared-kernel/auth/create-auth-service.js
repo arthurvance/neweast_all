@@ -2,7 +2,7 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { createHash, createDecipheriv, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, randomInt, timingSafeEqual, createSign, createVerify } = require('node:crypto');
 const { log } = require('../../common/logger');
 const { normalizeTraceparent } = require('../../common/trace-context');
-const { createInMemoryAuthStore } = require('./auth.store.memory');
+const { createInMemoryAuthStore } = require('./store/create-in-memory-auth-store');
 const {
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
@@ -23,13 +23,13 @@ const {
   listTenantPermissionCatalogItems,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
-} = require('./permission-catalog');
-const { createAuthSessionService } = require('./session-service');
-const { createTenantContextService } = require('./tenant-context-service');
-const { createPermissionContextBuilder } = require('./permission-context-builder');
-const { createEntryPolicyService } = require('./entry-policy-service');
-const { createLoginService } = require('./login-service');
-const { createAuthRepositories } = require('./repositories');
+} = require('../../modules/auth/permission-catalog');
+const { createAuthSessionService } = require('../../modules/auth/session-service');
+const { createTenantContextService } = require('../../modules/auth/tenant-context-service');
+const { createPermissionContextBuilder } = require('../../modules/auth/permission-context-builder');
+const { createEntryPolicyService } = require('../../modules/auth/entry-policy-service');
+const { createLoginService } = require('../../modules/auth/login-service');
+const { createAuthRepositories } = require('../../modules/auth/repositories');
 
 const ACCESS_TTL_SECONDS = 15 * 60;
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;

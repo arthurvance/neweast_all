@@ -1,6 +1,6 @@
 'use strict';
 
-const { AuthProblemError } = require('../../modules/auth/auth.service');
+const { AuthProblemError } = require('./core/auth-problem-error');
 
 module.exports = {
   AuthProblemError

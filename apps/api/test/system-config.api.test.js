@@ -6,7 +6,7 @@ const {
   randomBytes
 } = require('node:crypto');
 const { createRouteHandlers } = require('../src/http-routes');
-const { createAuthService } = require('../src/modules/auth/auth.service');
+const { createAuthService } = require('../src/shared-kernel/auth/create-auth-service');
 const { dispatchApiRoute } = require('../src/server');
 const { readConfig } = require('../src/config/env');
 

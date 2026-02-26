@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createInMemoryAuthStore } = require('../src/modules/auth/auth.store.memory');
+const { createInMemoryAuthStore } = require('../src/shared-kernel/auth/store/create-in-memory-auth-store');
 
 const createStore = () =>
   createInMemoryAuthStore({

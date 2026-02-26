@@ -1,0 +1,145 @@
+{
+  "version": "1.0.0",
+  "entries": [
+    {
+      "capability_id": "platform.auth.session",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": true
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Core auth session orchestration and token lifecycle."
+    },
+    {
+      "capability_id": "tenant.auth.session",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": true
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Tenant-scoped session orchestration."
+    },
+    {
+      "capability_id": "platform.auth.context",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": false,
+        "independent_audit_event_model": true,
+        "independent_state_machine": false
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Route authorization and platform context projection."
+    },
+    {
+      "capability_id": "tenant.auth.context",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": false,
+        "independent_audit_event_model": true,
+        "independent_state_machine": false
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Tenant option/select/switch context lifecycle."
+    },
+    {
+      "capability_id": "platform.auth.provisioning",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": false
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Platform user provisioning and rollback."
+    },
+    {
+      "capability_id": "tenant.auth.provisioning",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": false
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Tenant provisioning and usership/profile synchronization."
+    },
+    {
+      "capability_id": "platform.auth.governance",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": true
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Platform organization/user/role governance."
+    },
+    {
+      "capability_id": "tenant.auth.governance",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": true
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Tenant member/role governance state transitions."
+    },
+    {
+      "capability_id": "platform.auth.system-config",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": false
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Platform-only sensitive configuration governance."
+    },
+    {
+      "capability_id": "platform.auth.integration",
+      "criteria": {
+        "independent_permission_set": true,
+        "independent_transaction_boundary": true,
+        "independent_audit_event_model": true,
+        "independent_state_machine": true
+      },
+      "shared_kernel_exception": {
+        "enabled": false,
+        "reason": ""
+      },
+      "notes": "Platform-only integration directory/lifecycle governance."
+    }
+  ]
+}

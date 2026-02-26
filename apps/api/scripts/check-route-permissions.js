@@ -7,7 +7,7 @@ const { listExecutableRouteKeys } = require('../src/server');
 const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
-} = require('../src/modules/auth/auth.service');
+} = require('../src/shared-kernel/auth/create-auth-service');
 
 const result = validateRoutePermissionDeclarations(undefined, {
   executableRouteKeys: listExecutableRouteKeys(),

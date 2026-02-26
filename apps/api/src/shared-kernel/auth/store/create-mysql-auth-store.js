@@ -1,11 +1,11 @@
 const { setTimeout: sleep } = require('node:timers/promises');
 const { createHash, randomUUID } = require('node:crypto');
-const { log } = require('../../common/logger');
-const { normalizeTraceparent } = require('../../common/trace-context');
+const { log } = require('../../../common/logger');
+const { normalizeTraceparent } = require('../../../common/trace-context');
 const {
   isRetryableDeliveryFailure,
   computeRetrySchedule
-} = require('../integration');
+} = require('../../../modules/integration');
 const {
   KNOWN_PLATFORM_PERMISSION_CODES,
   KNOWN_TENANT_PERMISSION_CODES,
@@ -22,10 +22,10 @@ const {
   ROLE_MANAGEMENT_PERMISSION_CODE_KEY_SET,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
-} = require('./permission-catalog');
+} = require('../../../modules/auth/permission-catalog');
 const {
   createMySqlAuthStoreCapabilities
-} = require('./store-methods/auth-store-mysql-capabilities');
+} = require('./methods/mysql-method-map');
 
 const DEFAULT_DEADLOCK_RETRY_CONFIG = Object.freeze({
   maxRetries: 2,

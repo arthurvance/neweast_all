@@ -2,13 +2,23 @@
   "version": "1.0.0",
   "extensions": [
     {
-      "capability_id": "platform.settings.org",
+      "capability_id": "platform.auth.integration",
       "domain": "platform",
-      "module": "settings",
-      "capability": "org",
+      "module": "auth",
+      "capability": "integration",
       "owner": "platform-core",
-      "reason": "Platform owns organization governance. Tenant only keeps switch-org session flow.",
-      "exit_condition": "Remove this record when tenant org governance reaches parity.",
+      "reason": "Integration governance is currently operated by platform auth domain.",
+      "exit_condition": "Remove when tenant auth integration governance is introduced.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "platform.auth.system-config",
+      "domain": "platform",
+      "module": "auth",
+      "capability": "system-config",
+      "owner": "platform-core",
+      "reason": "System config management is currently platform-only.",
+      "exit_condition": "Remove when tenant auth system-config reaches parity.",
       "review_at": "2026-06-30"
     },
     {
@@ -22,23 +32,13 @@
       "review_at": "2026-06-30"
     },
     {
-      "capability_id": "platform.config.system-config",
+      "capability_id": "platform.settings.org",
       "domain": "platform",
-      "module": "config",
-      "capability": "system-config",
+      "module": "settings",
+      "capability": "org",
       "owner": "platform-core",
-      "reason": "System config management is currently platform-only.",
-      "exit_condition": "Remove when tenant config module gains parity.",
-      "review_at": "2026-06-30"
-    },
-    {
-      "capability_id": "platform.config.integration",
-      "domain": "platform",
-      "module": "config",
-      "capability": "integration",
-      "owner": "platform-core",
-      "reason": "Integration governance is currently operated by the platform domain.",
-      "exit_condition": "Remove when tenant integration governance is introduced.",
+      "reason": "Platform owns organization governance. Tenant only keeps switch-org session flow.",
+      "exit_condition": "Remove this record when tenant org governance reaches parity.",
       "review_at": "2026-06-30"
     },
     {

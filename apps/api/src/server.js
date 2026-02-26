@@ -66,7 +66,7 @@ const {
 const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
-} = require('./shared-kernel/auth/auth-capabilities');
+} = require('./shared-kernel/auth/auth-facade');
 const {
   ROUTE_DEFINITIONS,
   toRouteDefinitionsSnapshot,

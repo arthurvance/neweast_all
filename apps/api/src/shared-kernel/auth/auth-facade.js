@@ -4,7 +4,7 @@ const {
   createAuthService,
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
-} = require('../../modules/auth/auth.service');
+} = require('./create-auth-service');
 
 module.exports = {
   createAuthService,

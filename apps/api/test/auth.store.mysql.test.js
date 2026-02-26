@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createMySqlAuthStore } = require('../src/modules/auth/auth.store.mysql');
+const { createMySqlAuthStore } = require('../src/shared-kernel/auth/store/create-mysql-auth-store');
 
 const createStore = (queryImpl, options = {}) => {
   const {

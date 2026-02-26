@@ -5,7 +5,7 @@ const {
   pbkdf2Sync,
   randomBytes
 } = require('node:crypto');
-const { AuthProblemError } = require('../src/modules/auth/auth.service');
+const { AuthProblemError } = require('../src/shared-kernel/auth/create-auth-service');
 const {
   createPlatformSystemConfigService
 } = require('../src/domains/platform/config/system-config/service');

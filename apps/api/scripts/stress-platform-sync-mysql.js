@@ -2,7 +2,7 @@
 const { randomUUID } = require('node:crypto');
 const { setTimeout: sleep } = require('node:timers/promises');
 const { connectMySql } = require('../src/infrastructure/mysql-client');
-const { createMySqlAuthStore } = require('../src/modules/auth/auth.store.mysql');
+const { createMySqlAuthStore } = require('../src/shared-kernel/auth/store/create-mysql-auth-store');
 
 const asNumber = (value, fallback) => {
   const parsed = Number(value);

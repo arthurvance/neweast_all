@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createAuthService } = require('../src/modules/auth/auth.service');
+const { createAuthService } = require('../src/shared-kernel/auth/create-auth-service');
 const {
   createPlatformIntegrationRecoveryService
 } = require('../src/domains/platform/config/integration-recovery/service');

@@ -4,7 +4,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "lint": "node ../../tools/lint.js src test scripts && pnpm run check:domain-symmetry",
+    "lint": "node ../../tools/lint.js src test scripts && pnpm run check:domain-symmetry && pnpm run check:auth-refactor-guards",
     "build": "node ../../tools/build-api.js",
     "test": "node --test --test-force-exit test/**/*.test.js",
     "test:deterministic": "node --test test/helpers/*.test.js",
@@ -19,7 +19,12 @@
     "smoke": "node -e \"console.log('api smoke is validated by workspace smoke chain')\"",
     "migrate": "node scripts/migrate-baseline.js",
     "start": "node --env-file-if-exists=../../.env src/main.js",
-    "migrate:down": "node scripts/migrate-baseline.js --down"
+    "migrate:down": "node scripts/migrate-baseline.js --down",
+    "check:auth-import-cycles": "node ../../tools/domain-contract/check-auth-import-cycles.js",
+    "check:capability-boundaries": "node ../../tools/domain-contract/check-capability-boundaries.js",
+    "check:layer-responsibilities": "node ../../tools/domain-contract/check-layer-responsibilities.js",
+    "check:legacy-auth-imports": "node scripts/refactor-auth-import-paths.js --check",
+    "check:auth-refactor-guards": "pnpm run check:domain-symmetry && pnpm run check:auth-import-cycles && pnpm run check:capability-boundaries && pnpm run check:layer-responsibilities && pnpm run check:legacy-auth-imports"
   },
   "dependencies": {
     "@nestjs/common": "11.1.13",

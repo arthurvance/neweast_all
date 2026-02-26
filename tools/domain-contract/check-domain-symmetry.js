@@ -44,8 +44,8 @@ const TENANT_CONFIG_FORBIDDEN_FRONTEND_PATTERNS = [
 ];
 const DEFAULT_MODULE_SEMANTICS = Object.freeze({
   settings: ['user', 'role', 'org'],
-  config: ['password-policy', 'system-config', 'integration', 'domain-extension-registry'],
-  auth: ['session', 'context', 'provisioning']
+  config: ['password-policy', 'domain-extension-registry'],
+  auth: ['session', 'context', 'provisioning', 'governance', 'system-config', 'integration']
 });
 const DEFAULT_CAPABILITY_ID_TEMPLATE = '{domain}.{module}.{canonical_term}';
 const PUBLIC_API_FILES = [
@@ -300,6 +300,52 @@ function validateForbiddenTermsInDomainPaths({
       errors.push(
         `directory name uses forbidden term "${forbiddenToken}": ${toRelativePath(repoRoot, absoluteEntryPath)}`
       );
+    }
+  }
+}
+
+function validateAuthCapabilityFileNaming({
+  domainsRoot,
+  repoRoot,
+  errors
+}) {
+  if (!isDirectory(domainsRoot)) {
+    return;
+  }
+
+  const directoriesToVisit = [domainsRoot];
+  while (directoriesToVisit.length > 0) {
+    const currentDirectory = directoriesToVisit.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+    } catch (_error) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDirectory, entry.name);
+      if (entry.isDirectory()) {
+        directoriesToVisit.push(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const relativePath = toRelativePath(repoRoot, absolutePath);
+      if (!relativePath.includes('/domains/')) {
+        continue;
+      }
+      if (!relativePath.includes('/auth/')) {
+        continue;
+      }
+      if (!SOURCE_EXTENSION_SET.has(path.extname(entry.name))) {
+        continue;
+      }
+      if (entry.name.endsWith('-capabilities.js')) {
+        errors.push(`auth capability file naming forbids *-capabilities.js: ${relativePath}`);
+      }
     }
   }
 }
@@ -1100,6 +1146,11 @@ function runDomainSymmetryCheck(options = {}) {
     forbiddenTerms: namingRulesConfig.forbiddenTerms,
     errors
   });
+  validateAuthCapabilityFileNaming({
+    domainsRoot,
+    repoRoot,
+    errors
+  });
 
   if (extensionRegistry && Array.isArray(extensionRegistry.extensions)) {
     for (const extension of extensionRegistry.extensions) {
@@ -1140,6 +1191,7 @@ module.exports = {
     normalizeNamingRules,
     validateForbiddenTerm,
     validateForbiddenTermsInDomainPaths,
+    validateAuthCapabilityFileNaming,
     resolveCanonicalTermOwnership,
     formatCapabilityIdFromTemplate,
     validateDate,

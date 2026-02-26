@@ -10,7 +10,7 @@ const { tmpdir } = require('node:os');
 const { createHash } = require('node:crypto');
 const { createApiApp } = require('../../api/src/app');
 const { readConfig } = require('../../api/src/config/env');
-const { createAuthService } = require('../../api/src/modules/auth/auth.service');
+const { createAuthService } = require('../../api/src/shared-kernel/auth/create-auth-service');
 
 const WORKSPACE_ROOT = resolve(__dirname, '../../..');
 const CHROME_BIN_CANDIDATES = [

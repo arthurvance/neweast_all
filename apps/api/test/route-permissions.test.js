@@ -12,7 +12,7 @@ const {
 const {
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
-} = require('../src/modules/auth/auth.service');
+} = require('../src/shared-kernel/auth/create-auth-service');
 const { listExecutableRouteKeys } = require('../src/server');
 
 test('tenant protected auth routes expose explicit permission declarations', () => {

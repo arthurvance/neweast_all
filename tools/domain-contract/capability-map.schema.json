@@ -4,7 +4,10 @@
   "title": "Domain Capability Map Schema v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "capabilities"],
+  "required": [
+    "schema_version",
+    "capabilities"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -49,7 +52,10 @@
         },
         "domain": {
           "type": "string",
-          "enum": ["platform", "tenant"]
+          "enum": [
+            "platform",
+            "tenant"
+          ]
         },
         "capability": {
           "type": "string",
@@ -69,16 +75,40 @@
         },
         "symmetry": {
           "type": "string",
-          "enum": ["required", "extension", "placeholder"]
+          "enum": [
+            "required",
+            "extension",
+            "placeholder"
+          ]
         },
         "applications": {
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "string",
-            "enum": ["api", "web"]
+            "enum": [
+              "api",
+              "web"
+            ]
           },
           "uniqueItems": true
+        },
+        "domain_scoped_exception": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "reason"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     }

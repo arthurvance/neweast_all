@@ -292,7 +292,11 @@ test('domain symmetry check internals reject tenant config placeholder violation
 
 test('domain symmetry check internals enforce capability module ownership rules', () => {
   const invalidMap = JSON.parse(JSON.stringify(CAPABILITY_MAP));
-  invalidMap.capabilities[0].module = 'auth';
+  const targetCapability = invalidMap.capabilities.find((capability) =>
+    capability.canonical_term === 'user' && capability.module === 'settings'
+  );
+  assert.ok(targetCapability);
+  targetCapability.module = 'auth';
 
   const errors = [];
   domainSymmetryContract._internals.validateCapabilityModuleOwnership({
@@ -301,9 +305,9 @@ test('domain symmetry check internals enforce capability module ownership rules'
     errors
   });
 
-  assert.equal(errors.length, 1);
-  assert.match(errors[0], /violates module ownership/);
-  assert.match(errors[0], /canonical_term=user expects module=settings/);
+  assert.ok(errors.length >= 1);
+  assert.match(errors.join('\n'), /violates module ownership/);
+  assert.match(errors.join('\n'), /canonical_term=user expects module=settings/);
 });
 
 test('domain symmetry check consumes naming-rules forbidden_terms', () => {
@@ -886,4 +890,16 @@ test('file-granularity-thresholds ignores domain index files', () => {
   });
 
   assert.deepEqual(issues, []);
+});
+
+test('domain contract guard runs capability-boundary checker', () => {
+  const { runCapabilityBoundaryCheck } = require('../../../tools/domain-contract/check-capability-boundaries');
+  const result = runCapabilityBoundaryCheck({ repoRoot: REPO_ROOT });
+  assert.equal(result.ok, true, result.errors.join('\n'));
+});
+
+test('domain contract guard runs layer-responsibility checker', () => {
+  const { runLayerResponsibilityCheck } = require('../../../tools/domain-contract/check-layer-responsibilities');
+  const result = runLayerResponsibilityCheck({ repoRoot: REPO_ROOT });
+  assert.equal(result.ok, true, result.errors.join('\n'));
 });

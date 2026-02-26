@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createApiApp } = require('../src/app');
 const { readConfig } = require('../src/config/env');
-const { RATE_LIMIT_WINDOW_SECONDS } = require('../src/modules/auth/auth.service');
+const { RATE_LIMIT_WINDOW_SECONDS } = require('../src/shared-kernel/auth/create-auth-service');
 
 const config = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 
@@ -24,7 +24,7 @@ const createExpressHarness = async () => {
   let currentNow = Date.now();
   const app = await createApiApp(config, {
     dependencyProbe,
-    authService: require('../src/modules/auth/auth.service').createAuthService({
+    authService: require('../src/shared-kernel/auth/create-auth-service').createAuthService({
       seedUsers,
       now: () => currentNow
     })

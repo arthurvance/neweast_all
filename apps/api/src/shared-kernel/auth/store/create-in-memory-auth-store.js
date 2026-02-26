@@ -1,9 +1,9 @@
 const { createHash, randomUUID } = require('node:crypto');
-const { normalizeTraceparent } = require('../../common/trace-context');
+const { normalizeTraceparent } = require('../../../common/trace-context');
 const {
   isRetryableDeliveryFailure,
   computeRetrySchedule
-} = require('../integration');
+} = require('../../../modules/integration');
 const {
   KNOWN_PLATFORM_PERMISSION_CODES,
   KNOWN_TENANT_PERMISSION_CODES,
@@ -15,10 +15,10 @@ const {
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   toPlatformPermissionSnapshotFromCodes,
   toTenantPermissionSnapshotFromCodes
-} = require('./permission-catalog');
+} = require('../../../modules/auth/permission-catalog');
 const {
   createMemoryAuthStoreCapabilities
-} = require('./store-methods/auth-store-memory-capabilities');
+} = require('./methods/memory-method-map');
 
 const createInMemoryAuthStore = ({
   seedUsers = [],
@@ -2167,8 +2167,16 @@ const createInMemoryAuthStore = ({
       rawTenants
         .filter((tenant) => tenant && tenant.tenantId)
         .map((tenant) => ({
-          membershipId: tenant.usershipId
-            ? String(tenant.usershipId)
+          membershipId: (
+            tenant.membershipId
+            || tenant.membership_id
+            || tenant.usershipId
+          )
+            ? String(
+              tenant.membershipId
+              || tenant.membership_id
+              || tenant.usershipId
+            )
             : randomUUID(),
           tenantId: String(tenant.tenantId),
           tenantName: tenant.tenantName ? String(tenant.tenantName) : null,

@@ -3,7 +3,7 @@ const {
   createAuthHandlers,
   createAuthRouteHandlers
 } = require('../shared-kernel/auth/auth-route-handlers');
-const { createAuthService } = require('../shared-kernel/auth/auth-capabilities');
+const { createAuthService } = require('../shared-kernel/auth/auth-facade');
 
 const assertAlignedPlatformServicesAuthService = ({
   authService,

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { createCipheriv, createHash, pbkdf2Sync, randomBytes } = require('node:crypto');
 const { handleApiRoute } = require('../src/server');
 const { readConfig } = require('../src/config/env');
-const { createAuthService } = require('../src/modules/auth/auth.service');
+const { createAuthService } = require('../src/shared-kernel/auth/create-auth-service');
 
 const config = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 

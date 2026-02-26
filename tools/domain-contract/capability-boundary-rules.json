@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "scope": {
+    "include": [
+      "apps/api/src/domains/*/auth",
+      "apps/api/src/shared-kernel/auth",
+      "apps/api/src/modules/auth"
+    ]
+  },
+  "constraints": {
+    "minimum_decision_criteria": 2,
+    "require_domain_structure": true,
+    "require_colocated_service_store": true,
+    "forbidden_file_name_patterns": [
+      "-capabilities.js",
+      "common.js",
+      "misc.js"
+    ],
+    "legacy_paths": [],
+    "platform_only_capabilities_require_exception": true,
+    "enforce_shared_kernel_min_ref_count": false,
+    "shared_kernel_min_ref_count": 2
+  }
+}

@@ -11,8 +11,8 @@ const {
   createAuthService,
   AuthProblemError,
   REFRESH_TTL_SECONDS
-} = require('../src/modules/auth/auth.service');
-const { createInMemoryAuthStore } = require('../src/modules/auth/auth.store.memory');
+} = require('../src/shared-kernel/auth/create-auth-service');
+const { createInMemoryAuthStore } = require('../src/shared-kernel/auth/store/create-in-memory-auth-store');
 
 const seedUsers = [
   {

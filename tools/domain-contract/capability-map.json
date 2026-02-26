@@ -2,78 +2,6 @@
   "schema_version": "2.0.0",
   "capabilities": [
     {
-      "capability_id": "platform.settings.user",
-      "canonical_term": "user",
-      "module": "settings",
-      "domain": "platform",
-      "capability": "user",
-      "owner": "platform-core",
-      "review_at": "2026-06-30",
-      "parity_key": "settings.user",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
-      "capability_id": "tenant.settings.user",
-      "canonical_term": "user",
-      "module": "settings",
-      "domain": "tenant",
-      "capability": "user",
-      "owner": "tenant-core",
-      "review_at": "2026-06-30",
-      "parity_key": "settings.user",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
-      "capability_id": "platform.settings.role",
-      "canonical_term": "role",
-      "module": "settings",
-      "domain": "platform",
-      "capability": "role",
-      "owner": "platform-core",
-      "review_at": "2026-06-30",
-      "parity_key": "settings.role",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
-      "capability_id": "tenant.settings.role",
-      "canonical_term": "role",
-      "module": "settings",
-      "domain": "tenant",
-      "capability": "role",
-      "owner": "tenant-core",
-      "review_at": "2026-06-30",
-      "parity_key": "settings.role",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
-      "capability_id": "platform.auth.session",
-      "canonical_term": "session",
-      "module": "auth",
-      "domain": "platform",
-      "capability": "session",
-      "owner": "platform-core",
-      "review_at": "2026-06-30",
-      "parity_key": "auth.session",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
-      "capability_id": "tenant.auth.session",
-      "canonical_term": "session",
-      "module": "auth",
-      "domain": "tenant",
-      "capability": "session",
-      "owner": "tenant-core",
-      "review_at": "2026-06-30",
-      "parity_key": "auth.session",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
       "capability_id": "platform.auth.context",
       "canonical_term": "context",
       "module": "auth",
@@ -83,19 +11,42 @@
       "review_at": "2026-06-30",
       "parity_key": "auth.context",
       "symmetry": "required",
-      "applications": ["api", "web"]
+      "applications": [
+        "api",
+        "web"
+      ]
     },
     {
-      "capability_id": "tenant.auth.context",
-      "canonical_term": "context",
+      "capability_id": "platform.auth.governance",
+      "canonical_term": "governance",
       "module": "auth",
-      "domain": "tenant",
-      "capability": "context",
-      "owner": "tenant-core",
+      "domain": "platform",
+      "capability": "governance",
+      "owner": "platform-core",
       "review_at": "2026-06-30",
-      "parity_key": "auth.context",
+      "parity_key": "auth.governance",
       "symmetry": "required",
-      "applications": ["api", "web"]
+      "applications": [
+        "api"
+      ]
+    },
+    {
+      "capability_id": "platform.auth.integration",
+      "canonical_term": "integration",
+      "module": "auth",
+      "domain": "platform",
+      "capability": "integration",
+      "owner": "platform-core",
+      "review_at": "2026-06-30",
+      "parity_key": "auth.integration",
+      "symmetry": "extension",
+      "applications": [
+        "api"
+      ],
+      "domain_scoped_exception": {
+        "enabled": true,
+        "reason": "platform-only capability"
+      }
     },
     {
       "capability_id": "platform.auth.provisioning",
@@ -107,31 +58,43 @@
       "review_at": "2026-06-30",
       "parity_key": "auth.provisioning",
       "symmetry": "required",
-      "applications": ["api", "web"]
+      "applications": [
+        "api",
+        "web"
+      ]
     },
     {
-      "capability_id": "tenant.auth.provisioning",
-      "canonical_term": "provisioning",
+      "capability_id": "platform.auth.session",
+      "canonical_term": "session",
       "module": "auth",
-      "domain": "tenant",
-      "capability": "provisioning",
-      "owner": "tenant-core",
-      "review_at": "2026-06-30",
-      "parity_key": "auth.provisioning",
-      "symmetry": "required",
-      "applications": ["api", "web"]
-    },
-    {
-      "capability_id": "platform.settings.org",
-      "canonical_term": "org",
-      "module": "settings",
       "domain": "platform",
-      "capability": "org",
+      "capability": "session",
       "owner": "platform-core",
       "review_at": "2026-06-30",
-      "parity_key": "settings.org",
+      "parity_key": "auth.session",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "platform.auth.system-config",
+      "canonical_term": "system-config",
+      "module": "auth",
+      "domain": "platform",
+      "capability": "system-config",
+      "owner": "platform-core",
+      "review_at": "2026-06-30",
+      "parity_key": "auth.system-config",
       "symmetry": "extension",
-      "applications": ["api", "web"]
+      "applications": [
+        "api"
+      ],
+      "domain_scoped_exception": {
+        "enabled": true,
+        "reason": "platform-only capability"
+      }
     },
     {
       "capability_id": "platform.config.password-policy",
@@ -143,31 +106,114 @@
       "review_at": "2026-06-30",
       "parity_key": "config.password-policy",
       "symmetry": "extension",
-      "applications": ["api", "web"]
+      "applications": [
+        "api",
+        "web"
+      ]
     },
     {
-      "capability_id": "platform.config.system-config",
-      "canonical_term": "system-config",
-      "module": "config",
+      "capability_id": "platform.settings.org",
+      "canonical_term": "org",
+      "module": "settings",
       "domain": "platform",
-      "capability": "system-config",
+      "capability": "org",
       "owner": "platform-core",
       "review_at": "2026-06-30",
-      "parity_key": "config.system-config",
+      "parity_key": "settings.org",
       "symmetry": "extension",
-      "applications": ["api", "web"]
+      "applications": [
+        "api",
+        "web"
+      ]
     },
     {
-      "capability_id": "platform.config.integration",
-      "canonical_term": "integration",
-      "module": "config",
+      "capability_id": "platform.settings.role",
+      "canonical_term": "role",
+      "module": "settings",
       "domain": "platform",
-      "capability": "integration",
+      "capability": "role",
       "owner": "platform-core",
       "review_at": "2026-06-30",
-      "parity_key": "config.integration",
-      "symmetry": "extension",
-      "applications": ["api", "web"]
+      "parity_key": "settings.role",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "platform.settings.user",
+      "canonical_term": "user",
+      "module": "settings",
+      "domain": "platform",
+      "capability": "user",
+      "owner": "platform-core",
+      "review_at": "2026-06-30",
+      "parity_key": "settings.user",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.auth.context",
+      "canonical_term": "context",
+      "module": "auth",
+      "domain": "tenant",
+      "capability": "context",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "auth.context",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.auth.governance",
+      "canonical_term": "governance",
+      "module": "auth",
+      "domain": "tenant",
+      "capability": "governance",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "auth.governance",
+      "symmetry": "required",
+      "applications": [
+        "api"
+      ]
+    },
+    {
+      "capability_id": "tenant.auth.provisioning",
+      "canonical_term": "provisioning",
+      "module": "auth",
+      "domain": "tenant",
+      "capability": "provisioning",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "auth.provisioning",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.auth.session",
+      "canonical_term": "session",
+      "module": "auth",
+      "domain": "tenant",
+      "capability": "session",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "auth.session",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
     },
     {
       "capability_id": "tenant.config.domain-extension-registry",
@@ -179,7 +225,40 @@
       "review_at": "2026-06-30",
       "parity_key": "config.domain-extension-registry",
       "symmetry": "placeholder",
-      "applications": ["api", "web"]
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.settings.role",
+      "canonical_term": "role",
+      "module": "settings",
+      "domain": "tenant",
+      "capability": "role",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "settings.role",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.settings.user",
+      "canonical_term": "user",
+      "module": "settings",
+      "domain": "tenant",
+      "capability": "user",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "settings.user",
+      "symmetry": "required",
+      "applications": [
+        "api",
+        "web"
+      ]
     }
   ]
 }

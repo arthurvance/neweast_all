@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createAuditService } = require('../src/modules/audit/audit.service');
-const { AuthProblemError } = require('../src/modules/auth/auth.service');
+const { AuthProblemError } = require('../src/shared-kernel/auth/create-auth-service');
 
 const VALID_EVENT = {
   event_id: 'audit-event-1',

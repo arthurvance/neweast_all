@@ -22,8 +22,8 @@ const {
   createAuthService,
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes
-} = require('./shared-kernel/auth/auth-capabilities');
-const { createMySqlAuthStore } = require('./modules/auth/auth.store.mysql');
+} = require('./shared-kernel/auth/auth-facade');
+const { createMySqlAuthStore } = require('./shared-kernel/auth/store/create-mysql-auth-store');
 const { createRedisOtpStore } = require('./modules/auth/auth.otp.store.redis');
 const { createRedisRateLimitStore } = require('./modules/auth/auth.rate-limit.redis');
 const {

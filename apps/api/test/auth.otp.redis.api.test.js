@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const Redis = require('ioredis');
 const { createApiApp } = require('../src/app');
 const { readConfig } = require('../src/config/env');
-const { createAuthService } = require('../src/modules/auth/auth.service');
+const { createAuthService } = require('../src/shared-kernel/auth/create-auth-service');
 const { createRedisOtpStore } = require('../src/modules/auth/auth.otp.store.redis');
 const { createRedisRateLimitStore } = require('../src/modules/auth/auth.rate-limit.redis');
 

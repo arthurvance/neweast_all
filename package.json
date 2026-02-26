@@ -9,13 +9,13 @@
   },
   "scripts": {
     "nx": "node tools/nx.js",
-    "lint": "pnpm run check:refactor-governance && pnpm run check:domain-module-scaffold-smoke && pnpm nx lint",
+    "lint": "pnpm run check:refactor-governance && pnpm run check:auth-refactor-guards && pnpm run check:domain-module-scaffold-smoke && pnpm nx lint",
     "build": "pnpm nx build",
     "test": "pnpm nx test",
     "check:route-permissions": "pnpm --dir apps/api run check:route-permissions",
     "check:domain-symmetry": "pnpm --dir apps/api run check:domain-symmetry && pnpm --dir apps/web run check:domain-symmetry",
     "check:domain-module-scaffold-smoke": "node tools/scaffold/check-domain-module-scaffold-smoke.js",
-    "check:refactor-governance": "node tools/domain-contract/check-refactor-governance.js",
+    "check:refactor-governance": "node tools/domain-contract/check-refactor-governance.js && pnpm --dir apps/api run check:auth-refactor-guards",
     "codemod:migrate-domain-imports": "node tools/codemods/migrate-domain-imports.mjs",
     "codemod:migrate-domain-imports:write": "node tools/codemods/migrate-domain-imports.mjs --write",
     "codemod:split-domain-file-by-boundary": "node tools/codemods/split-domain-file-by-boundary.js",
@@ -23,7 +23,8 @@
     "create:domain-module": "node tools/scaffold/create-domain-module.mjs",
     "smoke": "pnpm nx smoke",
     "migrate": "node apps/api/scripts/migrate-baseline.js",
-    "migrate:down": "node apps/api/scripts/migrate-baseline.js --down"
+    "migrate:down": "node apps/api/scripts/migrate-baseline.js --down",
+    "check:auth-refactor-guards": "pnpm --dir apps/api run check:auth-refactor-guards"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.0",

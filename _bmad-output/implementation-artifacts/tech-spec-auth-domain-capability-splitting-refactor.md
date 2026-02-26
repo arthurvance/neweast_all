@@ -2,8 +2,8 @@
 title: 'Auth 大文件领域化能力切分与语义命名重构（无行为变更）'
 slug: 'auth-domain-capability-splitting-refactor'
 created: '2026-02-25T22:01:00+08:00'
-status: 'ready-for-dev'
-stepsCompleted: [1, 2, 3, 4]
+status: 'Completed'
+stepsCompleted: [1, 2, 3, 4, 5, 6]
 tech_stack:
   - 'Node.js 24 (CommonJS)'
   - 'pnpm + Nx monorepo'
@@ -236,7 +236,7 @@ test_patterns:
 
 ### Tasks
 
-- [ ] Task 1: 冻结重构前公共契约基线（导出面与关键方法集合）
+- [x] Task 1: 冻结重构前公共契约基线（导出面与关键方法集合）
   - File: `apps/api/test/contracts/auth.service.public-contract.test.js`（new）
   - Action: 新增 `createAuthService` 导出方法集合快照测试，锁定行为与能力集合语义。
   - Notes: 重构期间允许导入路径迁移，但不得变更公共能力名称与参数语义。
@@ -247,7 +247,7 @@ test_patterns:
   - Action: 每完成一组 capability 迁移即执行增量导出面/端口集合比对，确保拆分过程不引入隐式回归。
   - Notes: 任一增量检查失败立即阻断继续迁移。
 
-- [ ] Task 2: 将 auth 细分能力纳入 domain-contract 真源
+- [x] Task 2: 将 auth 细分能力纳入 domain-contract 真源
   - File: `tools/domain-contract/capability-map.json`
   - Action: 为 `platform/tenant/auth/{session,context,provisioning,governance}` 与 `platform/auth/{system-config,integration}` 补齐 capability 记录，并为 platform-only capability 声明 `domain_scoped_exception`。
   - Notes: capability-map 与 capability-decision-log 必须保持一一对应。
@@ -261,7 +261,7 @@ test_patterns:
   - Action: 记录 capability 新增/拆分决策输入（四项判据、shared-kernel 豁免、审批备注），供 `check-capability-boundaries.js` 读取。
   - Notes: 所有新增 capability 必须先登记再实现。
 
-- [ ] Task 3: 建立 auth 目标目录与导出面骨架（不迁移业务逻辑）
+- [x] Task 3: 建立 auth 目标目录与导出面骨架（不迁移业务逻辑）
   - File: `apps/api/src/domains/platform/auth/session/index.js`（new）
   - Action: 创建平台域 auth.session capability 导出入口。
   - Notes: 仅导出面，不引入业务分歧。
@@ -281,7 +281,7 @@ test_patterns:
   - Action: 创建租户域 auth.provisioning capability 导出入口。
   - Notes: 与 platform 对称。
 
-- [ ] Task 4: 抽离 `AuthProblemError` 与公共常量/归一化工具
+- [x] Task 4: 抽离 `AuthProblemError` 与公共常量/归一化工具
   - File: `apps/api/src/modules/auth/auth.service.js`
   - Action: 将错误类、通用常量、通用 normalize/helper 从单体文件迁出并改为导入。
   - Notes: `AuthProblemError` 外部行为与 error_code 映射保持不变。
@@ -298,7 +298,7 @@ test_patterns:
   - Action: 承载可复用的 normalize/parse 工具。
   - Notes: 作为后续 capability 文件共用基础。
 
-- [ ] Task 5: 按能力重组认证路由适配层（handler/router）
+- [x] Task 5: 按能力重组认证路由适配层（handler/router）
   - File: `apps/api/src/modules/auth/auth.routes.js`
   - Action: 仅保留路由入参解析与向能力 facade 转发，删除冗余业务判断。
   - Notes: `AuthProblemError` 映射语义保持一致。
@@ -309,7 +309,7 @@ test_patterns:
   - Action: 更新为指向新分组导出面。
   - Notes: 继续提供兼容包装层。
 
-- [ ] Task 6: 抽离 `session` 能力实现（登录/OTP/refresh/logout/change-password）
+- [x] Task 6: 抽离 `session` 能力实现（登录/OTP/refresh/logout/change-password）
   - File: `apps/api/src/modules/auth/login-service.js`
   - Action: 将会话登录主流程提炼为可复用函数，迁移到 capability 同层文件。
   - Notes: 审计事件类型与字段保持一致。
@@ -338,7 +338,7 @@ test_patterns:
   - Action: 将 `login/sendOtp/loginWithOtp/refresh/logout/changePassword` 改为委托新能力模块。
   - Notes: 返回 payload 字段与错误码严格一致。
 
-- [ ] Task 7: 抽离 `context` 能力实现（authorizeRoute/options/select/switch）
+- [x] Task 7: 抽离 `context` 能力实现（authorizeRoute/options/select/switch）
   - File: `apps/api/src/modules/auth/tenant-context-service.js`
   - Action: 提炼 tenant options 与 session context 修复逻辑并迁移到 capability 同层文件。
   - Notes: `tenant_selection_required` 判定规则保持一致。
@@ -373,7 +373,7 @@ test_patterns:
   - Action: 将 `platformOptions/tenantOptions/authorizeRoute/selectTenant/switchTenant` 委托新模块。
   - Notes: 入参与返回字段保持不变。
 
-- [ ] Task 8: 抽离 `provisioning` 能力实现（平台/租户用户开通与回滚）
+- [x] Task 8: 抽离 `provisioning` 能力实现（平台/租户用户开通与回滚）
   - File: `apps/api/src/modules/auth/auth.service.js`
   - Action: 将 `provisionPlatformUserByPhone/provisionTenantUserByPhone/getOrCreateUserIdentityByPhone/rollbackProvisionedUserIdentity` 提取为 capability 模块。
   - Notes: 默认密码配置读取与失败回滚策略保持不变。
@@ -396,7 +396,7 @@ test_patterns:
   - Action: 承载租户 provisioning 的 MySQL 持久化能力。
   - Notes: 与 platform 同构命名。
 
-- [ ] Task 8A: 抽离剩余治理/配置/集成/审计能力，闭合旧聚合删除前置条件
+- [x] Task 8A: 抽离剩余治理/配置/集成/审计能力，闭合旧聚合删除前置条件
   - File: `apps/api/src/modules/auth/auth.service.js`
   - Action: 将 `createOrganizationWithOwner/acquireOwnerTransferLock/releaseOwnerTransferLock/validateOwnerTransferRequest/executeOwnerTransferTakeover`、平台/租户角色权限治理、`getSystemSensitiveConfig/upsertSystemSensitiveConfig/recordSystemSensitiveConfigAuditEvent`、integration、`listAuditEvents/recordIdempotencyEvent` 迁移为 capability 委托。
   - Notes: Task 18 前禁止在 `auth.service.js` 保留以上能力的业务内联实现。
@@ -452,7 +452,7 @@ test_patterns:
   - Action: 抽离跨 capability 复用的审计/幂等编排逻辑并供各 capability 调用。
   - Notes: 仅承载跨能力稳定复用逻辑，符合 C8 准入规则。
 
-- [ ] Task 9: 拆分 memory `store-methods` 聚合文件为语义能力文件
+- [x] Task 9: 拆分 memory `store-methods` 聚合文件为语义能力文件
   - File: `apps/api/src/modules/auth/store-methods/auth-store-memory-capabilities.js`
   - Action: 将 memory 方法实现迁移到 capability 同层 store 文件，并将该文件临时收敛为“仅导出映射表”。
   - Notes: 本任务仅负责方法迁移，不负责 createInMemoryAuthStore 组合逻辑。
@@ -478,7 +478,7 @@ test_patterns:
   - Action: 收拢平台 integration memory 方法到 capability 同层文件。
   - Notes: 与 mysql 端口保持镜像。
 
-- [ ] Task 10: 拆分 mysql `store-methods` 聚合文件为语义能力文件
+- [x] Task 10: 拆分 mysql `store-methods` 聚合文件为语义能力文件
   - File: `apps/api/src/modules/auth/store-methods/auth-store-mysql-capabilities.js`
   - Action: 将 mysql 方法实现迁移到 capability 同层 store 文件，并将该文件临时收敛为“仅导出映射表”。
   - Notes: 本任务仅负责方法迁移，不负责 createMySqlAuthStore 组合逻辑。
@@ -504,7 +504,7 @@ test_patterns:
   - Action: 收拢平台 integration mysql 方法到 capability 同层文件。
   - Notes: 与 memory 端口保持镜像。
 
-- [ ] Task 11: 将 `auth.store.memory.js` 按领域-能力拆分并保留临时桥接入口
+- [x] Task 11: 将 `auth.store.memory.js` 按领域-能力拆分并保留临时桥接入口
   - File: `apps/api/src/modules/auth/auth.store.memory.js`
   - Action: 基于 Task 9 迁移结果，仅负责组合 `createInMemoryAuthStore` 与桥接导出（无业务内联逻辑）。
   - Notes: 最终在 Task 18 删除该旧文件。
@@ -530,7 +530,7 @@ test_patterns:
   - Action: 作为租户 provisioning memory 能力组合导出入口。
   - Notes: 与 platform 同构。
 
-- [ ] Task 12: 将 `auth.store.mysql.js` 按领域-能力拆分并保留临时桥接入口
+- [x] Task 12: 将 `auth.store.mysql.js` 按领域-能力拆分并保留临时桥接入口
   - File: `apps/api/src/modules/auth/auth.store.mysql.js`
   - Action: 基于 Task 10 迁移结果，仅负责组合 `createMySqlAuthStore` 与桥接导出（无业务内联 SQL）。
   - Notes: 最终在 Task 18 删除该旧文件。
@@ -556,7 +556,7 @@ test_patterns:
   - Action: 作为租户 provisioning mysql 能力组合导出入口。
   - Notes: 与 platform 同构。
 
-- [ ] Task 13: 统一 auth store 组合与 repository 适配
+- [x] Task 13: 统一 auth store 组合与 repository 适配
   - File: `apps/api/src/modules/auth/repositories/index.js`
   - Action: 保持 repository 接口不变，改为消费新的组合式 auth store。
   - Notes: 上层 service 无感迁移。
@@ -579,7 +579,7 @@ test_patterns:
   - Action: 保持接口稳定，校准到新 store 组合端口。
   - Notes: 兼容现有调用点。
 
-- [ ] Task 14: 收敛 `auth.service.js` 为薄 facade（目标 <= 500 LOC）
+- [x] Task 14: 收敛 `auth.service.js` 为薄 facade（目标 <= 500 LOC）
   - File: `apps/api/src/modules/auth/auth.service.js`
   - Action: 将内联重逻辑迁移后收敛为临时薄 facade，仅做委托与导出。
   - Notes: 最终在 Task 18 删除该旧文件。
@@ -590,7 +590,7 @@ test_patterns:
   - Action: 对接新的 facade 导出面。
   - Notes: 统一导出入口到新路径。
 
-- [ ] Task 15: 更新 bootstrap/runtime 装配，确保单实例 authService 对齐
+- [x] Task 15: 更新 bootstrap/runtime 装配，确保单实例 authService 对齐
   - File: `apps/api/src/bootstrap/create-shared-kernel.js`
   - Action: 维持实例对齐断言，适配新的 capability 组合结构。
   - Notes: 保持现有类型与错误消息语义。
@@ -604,7 +604,7 @@ test_patterns:
   - Action: 将 `createAuthService`、`createMySqlAuthStore` 的导入切换到新 shared-kernel 入口。
   - Notes: 删除旧路径引用。
 
-- [ ] Task 16: 收紧大文件与命名门禁，阻断回归
+- [x] Task 16: 收紧大文件与命名门禁，阻断回归
   - File: `tools/lint-rules/file-granularity-thresholds.js`
   - Action: 将生产文件硬上限收紧到 `500 LOC`，并将过碎建议阈值调整到与本次策略一致（`<80 LOC` 建议合并，工具文件可 `40 LOC` 例外）。
   - Notes: route adapter 文件维持例外策略。
@@ -639,7 +639,7 @@ test_patterns:
   - Action: 将 `pnpm --dir apps/api run check:auth-refactor-guards` 同时接入根级 `check:refactor-governance` 与 `lint` 链路（两条链路均为强制）。
   - Notes: 任一链路失败均阻断合并。
 
-- [ ] Task 17: 扩展/校准回归测试覆盖，验证“只重构不改行为”
+- [x] Task 17: 扩展/校准回归测试覆盖，验证“只重构不改行为”
   - File: `apps/api/test/auth.service.test.js`
   - Action: 保持现有行为断言，补充公共导出面与错误码回归断言。
   - Notes: 不削减现有覆盖。
@@ -662,7 +662,7 @@ test_patterns:
   - Action: 静态断言迁移阶段旧聚合文件仅承担桥接委托职责，不承载业务分支与 SQL 内联逻辑。
   - Notes: 收口删除验证由 AC 18 与 Task 18 联合完成。
 
-- [ ] Task 18: 直接删除旧聚合文件并完成全量改引用收口
+- [x] Task 18: 直接删除旧聚合文件并完成全量改引用收口
   - File: `apps/api/scripts/refactor-auth-import-paths.js`（new）
   - Action: 提供旧路径到新路径的批量改写与 `--check` 校验能力，并支持 `--restore-bridge` 回滚模式。
   - Notes: 删除旧文件前必须通过 `--check` 且旧路径扫描结果为空。
@@ -685,7 +685,7 @@ test_patterns:
   - Action: 直接删除旧文件并迁移全部调用点到 `shared-kernel/auth/create-auth-service.js`。
   - Notes: 仅在完整回归通过后执行删除；全量更新后仓库内不得残留旧路径 import/require。
 
-- [ ] Task 0（Pre-Gate）: 建立并维护旧->新文件迁移映射清单（强制执行）
+- [x] Task 0（Pre-Gate）: 建立并维护旧->新文件迁移映射清单（强制执行）
   - File: `apps/api/src/modules/auth/refactor-migration-map.md`（new）
   - Action: 维护旧文件到新文件的一一映射（含“已迁移/待迁移/删除”状态）并作为迁移主清单。
   - Notes: 至少覆盖 Task 6-12/18 涉及的全部旧路径与新路径。
@@ -695,30 +695,30 @@ test_patterns:
 
 ### Acceptance Criteria
 
-- [ ] AC 1: Given 认证模块完成重构, when 全仓执行导入扫描, then 不再存在对 `modules/auth/auth.service`、`modules/auth/auth.store.memory`、`modules/auth/auth.store.mysql` 的引用，且新入口行为与旧行为一致。
-- [ ] AC 2: Given memory/mysql 双实现, when 执行 store 合同测试, then 两者在 `capability-map + contract snapshot` 定义的全量端口上方法名与输入输出语义一致（非“至少 N 项”）。
-- [ ] AC 3: Given 登录主链路（密码登录与 OTP 登录）, when 调用 `/auth/login` 与 `/auth/otp/login`, then token/session 字段、权限上下文字段和错误码行为与重构前一致。
-- [ ] AC 4: Given tenant 多组织场景, when 登录并执行 tenant select/switch, then `tenant_selection_required`、`active_tenant_id` 与拒绝语义（`AUTH-403-NO-DOMAIN`）保持一致。
-- [ ] AC 5: Given refresh token 轮换与重放路径, when 触发重复 refresh, then 仍按原语义返回 `AUTH-401-INVALID-REFRESH` 并执行对应会话收敛策略。
-- [ ] AC 6: Given change-password 场景, when 修改密码后使用旧凭据/旧会话, then 仍按原策略强制重新登录并保持原错误码语义。
-- [ ] AC 7: Given platform 用户/角色/组织治理接口, when 执行增删改查与状态变更, then 返回结构、审计事件语义与权限检查行为不变。
-- [ ] AC 8: Given platform system-config 能力, when 读取/更新敏感配置, then 白名单、版本冲突、审计落库与错误码语义不变。
-- [ ] AC 9: Given platform integration 目录/契约/恢复/冻结能力, when 执行 CRUD、激活、回放与冻结操作, then 事务与门禁行为（含 freeze blocked）与现状一致。
-- [ ] AC 10: Given tenant user/role 治理能力, when 执行成员状态变更、资料更新、角色绑定, then usership 状态机与返回字段语义不变。
-- [ ] AC 11: Given route preauthorization 机制, when 使用预授权上下文调用 platform/tenant 服务层, then symbol 标记校验逻辑与拒绝行为保持一致。
-- [ ] AC 12: Given shared-kernel 与 domain runtime 装配链路, when 启动应用创建 handlers, then auth/platform/tenant/audit handler 装配结果与现有路由分发兼容。
-- [ ] AC 13: Given 大文件拆分完成, when 执行 lint granularity 与目录结构校验, then 目标业务文件不超过 500 LOC、无新增 `*-capabilities.js`，且 capability 默认满足 `service + store.memory + store.mysql` 同层共置；任何豁免必须登记到 `capability-decision-log.json` 并通过边界校验。
-- [ ] AC 14: Given 对称性与边界门禁, when 执行 `check-domain-symmetry` 与相关 guard tests, then 平台/租户共享 capability（session/context/provisioning/governance）的目录层级、命名与跨域导入规则全部通过，且 platform-only capability（system-config/integration）已在 capability-map 声明 `domain_scoped_exception` 并通过校验。
-- [ ] AC 15: Given 完整回归矩阵, when 执行 auth/service/store/api/domain-contract 相关测试集, then 全部通过且无行为回归。
-- [ ] AC 16: Given 迁移中间态, when 扫描旧聚合实现残留, then `auth.service`/`auth.store.*` 仅允许薄 facade/桥接职责，不得承载业务内联逻辑。
-- [ ] AC 17: Given auth 领域拆分完成, when 执行 no-cycle 检查与对应测试, then `modules/auth`、`shared-kernel/auth`、`domains/*/auth` 之间不存在循环依赖。
-- [ ] AC 18: Given 旧聚合文件删除策略, when 执行静态结构断言与契约测试, then 旧聚合文件已被删除且新入口文件仅承载组合/导出职责。
-- [ ] AC 19: Given 执行 Task 18 收口删除, when 运行 `node scripts/refactor-auth-import-paths.js --check` 与旧路径 `rg` 扫描, then `auth.service/auth.store.memory/auth.store.mysql/auth-store-memory-capabilities/auth-store-mysql-capabilities` 残留引用结果为 0。
-- [ ] AC 20: Given Task 14-17 的迁移中间态验收, when 运行 facade 结构静态断言, then 旧聚合文件仅含委托/导出逻辑且不含业务分支与 SQL 内联实现，且同一 capability 的 service/store 不跨目录分散；该项为 Task 18 的前置门禁而非终态验收。
-- [ ] AC 21: Given capability 结构完成, when 执行 capability boundary 检查, then 所有能力均满足 C1-C7（能力划分、目录契约、同层共置、命名与分层职责）。
-- [ ] AC 22: Given shared-kernel/auth/core 引入新逻辑, when 执行 boundary 与契约测试, then 仅允许满足 C8 准入条件的跨能力稳定复用逻辑进入 shared-kernel。
-- [ ] AC 23: Given CI 执行 auth 范围门禁, when 运行结构/命名/循环依赖/layer 责任/旧路径扫描/contract 套件, then 必须全部通过才允许合并（C10）。
-- [ ] AC 24: Given 执行 Task 18 收口删除失败, when 按回滚清单执行恢复, then 能在一个提交内恢复到桥接可运行状态并重新通过核心回归。
+- [x] AC 1: Given 认证模块完成重构, when 全仓执行导入扫描, then 不再存在对 `modules/auth/auth.service`、`modules/auth/auth.store.memory`、`modules/auth/auth.store.mysql` 的引用，且新入口行为与旧行为一致。
+- [x] AC 2: Given memory/mysql 双实现, when 执行 store 合同测试, then 两者在 `capability-map + contract snapshot` 定义的全量端口上方法名与输入输出语义一致（非“至少 N 项”）。
+- [x] AC 3: Given 登录主链路（密码登录与 OTP 登录）, when 调用 `/auth/login` 与 `/auth/otp/login`, then token/session 字段、权限上下文字段和错误码行为与重构前一致。
+- [x] AC 4: Given tenant 多组织场景, when 登录并执行 tenant select/switch, then `tenant_selection_required`、`active_tenant_id` 与拒绝语义（`AUTH-403-NO-DOMAIN`）保持一致。
+- [x] AC 5: Given refresh token 轮换与重放路径, when 触发重复 refresh, then 仍按原语义返回 `AUTH-401-INVALID-REFRESH` 并执行对应会话收敛策略。
+- [x] AC 6: Given change-password 场景, when 修改密码后使用旧凭据/旧会话, then 仍按原策略强制重新登录并保持原错误码语义。
+- [x] AC 7: Given platform 用户/角色/组织治理接口, when 执行增删改查与状态变更, then 返回结构、审计事件语义与权限检查行为不变。
+- [x] AC 8: Given platform system-config 能力, when 读取/更新敏感配置, then 白名单、版本冲突、审计落库与错误码语义不变。
+- [x] AC 9: Given platform integration 目录/契约/恢复/冻结能力, when 执行 CRUD、激活、回放与冻结操作, then 事务与门禁行为（含 freeze blocked）与现状一致。
+- [x] AC 10: Given tenant user/role 治理能力, when 执行成员状态变更、资料更新、角色绑定, then usership 状态机与返回字段语义不变。
+- [x] AC 11: Given route preauthorization 机制, when 使用预授权上下文调用 platform/tenant 服务层, then symbol 标记校验逻辑与拒绝行为保持一致。
+- [x] AC 12: Given shared-kernel 与 domain runtime 装配链路, when 启动应用创建 handlers, then auth/platform/tenant/audit handler 装配结果与现有路由分发兼容。
+- [x] AC 13: Given 大文件拆分完成, when 执行 lint granularity 与目录结构校验, then 目标业务文件不超过 500 LOC、无新增 `*-capabilities.js`，且 capability 默认满足 `service + store.memory + store.mysql` 同层共置；任何豁免必须登记到 `capability-decision-log.json` 并通过边界校验。
+- [x] AC 14: Given 对称性与边界门禁, when 执行 `check-domain-symmetry` 与相关 guard tests, then 平台/租户共享 capability（session/context/provisioning/governance）的目录层级、命名与跨域导入规则全部通过，且 platform-only capability（system-config/integration）已在 capability-map 声明 `domain_scoped_exception` 并通过校验。
+- [x] AC 15: Given 完整回归矩阵, when 执行 auth/service/store/api/domain-contract 相关测试集, then 全部通过且无行为回归。
+- [x] AC 16: Given 迁移中间态, when 扫描旧聚合实现残留, then `auth.service`/`auth.store.*` 仅允许薄 facade/桥接职责，不得承载业务内联逻辑。
+- [x] AC 17: Given auth 领域拆分完成, when 执行 no-cycle 检查与对应测试, then `modules/auth`、`shared-kernel/auth`、`domains/*/auth` 之间不存在循环依赖。
+- [x] AC 18: Given 旧聚合文件删除策略, when 执行静态结构断言与契约测试, then 旧聚合文件已被删除且新入口文件仅承载组合/导出职责。
+- [x] AC 19: Given 执行 Task 18 收口删除, when 运行 `node scripts/refactor-auth-import-paths.js --check` 与旧路径 `rg` 扫描, then `auth.service/auth.store.memory/auth.store.mysql/auth-store-memory-capabilities/auth-store-mysql-capabilities` 残留引用结果为 0。
+- [x] AC 20: Given Task 14-17 的迁移中间态验收, when 运行 facade 结构静态断言, then 旧聚合文件仅含委托/导出逻辑且不含业务分支与 SQL 内联实现，且同一 capability 的 service/store 不跨目录分散；该项为 Task 18 的前置门禁而非终态验收。
+- [x] AC 21: Given capability 结构完成, when 执行 capability boundary 检查, then 所有能力均满足 C1-C7（能力划分、目录契约、同层共置、命名与分层职责）。
+- [x] AC 22: Given shared-kernel/auth/core 引入新逻辑, when 执行 boundary 与契约测试, then 仅允许满足 C8 准入条件的跨能力稳定复用逻辑进入 shared-kernel。
+- [x] AC 23: Given CI 执行 auth 范围门禁, when 运行结构/命名/循环依赖/layer 责任/旧路径扫描/contract 套件, then 必须全部通过才允许合并（C10）。
+- [x] AC 24: Given 执行 Task 18 收口删除失败, when 按回滚清单执行恢复, then 能在一个提交内恢复到桥接可运行状态并重新通过核心回归。
 
 ## Additional Context
 
@@ -782,3 +782,9 @@ test_patterns:
 - 后续考虑（超出本次范围）：
   - 将治理能力进一步细化（如 owner-transfer、role-catalog、role-grants）并评估是否拆为独立子 capability。
   - 将 codemod 自动拆分能力用于后续模块（例如 inventory）接入流程。
+
+## Review Notes
+
+- Adversarial review completed
+- Findings: 6 total, 6 fixed, 0 skipped
+- Resolution approach: auto-fix

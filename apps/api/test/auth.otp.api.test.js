@@ -70,7 +70,7 @@ const createExpressHarness = async (overrides = {}) => {
 
   const app = await createApiApp(effectiveConfig, {
     dependencyProbe,
-    authService: require('../src/modules/auth/auth.service').createAuthService({
+    authService: require('../src/shared-kernel/auth/create-auth-service').createAuthService({
       seedUsers,
       otpStore: otpHarness.store,
       now: () => currentNow

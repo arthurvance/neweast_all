@@ -1,4 +1,4 @@
-const { AuthProblemError, createAuthService } = require('./auth.service');
+const { AuthProblemError, createAuthService } = require('../../shared-kernel/auth/create-auth-service');
 
 const authPing = (requestId) => ({
   module: 'auth',
