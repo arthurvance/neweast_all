@@ -11,6 +11,7 @@ coverage/
 # Runtime and generated artifacts
 artifacts/
 _bmad/
+_bmad-output/
 *.log
 *.pid
 
