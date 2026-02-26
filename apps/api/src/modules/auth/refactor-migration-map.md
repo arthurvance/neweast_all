@@ -13,8 +13,8 @@
 | `apps/api/src/modules / auth / auth.service.js` | `apps/api/src/shared-kernel/auth/create-auth-service.js` | migrated |
 | `apps/api/src/modules / auth / auth.store.memory.js` | `apps/api/src/shared-kernel/auth/store/create-in-memory-auth-store.js` | migrated |
 | `apps/api/src/modules / auth / auth.store.mysql.js` | `apps/api/src/shared-kernel/auth/store/create-mysql-auth-store.js` | migrated |
-| `apps/api/src/modules / auth / store-methods / auth-store-memory-capabilities.js` | `apps/api/src/shared-kernel/auth/store/methods/memory-method-map.js` | migrated |
-| `apps/api/src/modules / auth / store-methods / auth-store-mysql-capabilities.js` | `apps/api/src/shared-kernel/auth/store/methods/mysql-method-map.js` | migrated |
+| `apps/api/src/modules / auth / store-methods / auth-store-memory-capabilities.js` | `apps/api/src/shared-kernel/auth/store/memory/shared-memory-auth-store-repository-capability-composition.js` | migrated |
+| `apps/api/src/modules / auth / store-methods / auth-store-mysql-capabilities.js` | `apps/api/src/shared-kernel/auth/store/mysql/shared-mysql-auth-store-repository-capability-composition.js` | migrated |
 
 ## Capability Surface Mapping
 

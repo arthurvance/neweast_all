@@ -25,12 +25,12 @@ const REPLACEMENTS = [
   },
   {
     from: joinModulePath('store-methods', 'auth-store-memory-capabilities'),
-    to: 'shared-kernel/auth/store/methods/memory-method-map',
+    to: 'shared-kernel/auth/store/memory/shared-memory-auth-store-repository-method-map.service',
     bridge: joinModulePath('store-methods', 'auth-store-memory-capabilities')
   },
   {
     from: joinModulePath('store-methods', 'auth-store-mysql-capabilities'),
-    to: 'shared-kernel/auth/store/methods/mysql-method-map',
+    to: 'shared-kernel/auth/store/mysql/shared-mysql-auth-store-repository-method-map.service',
     bridge: joinModulePath('store-methods', 'auth-store-mysql-capabilities')
   }
 ];
