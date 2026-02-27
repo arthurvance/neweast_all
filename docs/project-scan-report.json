@@ -1,0 +1,124 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2026-02-26T12:47:25Z",
+    "last_updated": "2026-02-26T12:47:25Z",
+    "completed": "2026-02-26T12:47:25Z"
+  },
+  "mode": "initial_scan",
+  "scan_level": "deep",
+  "project_root": "/Users/helloworld/dev/neweast",
+  "project_knowledge": "/Users/helloworld/dev/neweast/docs",
+  "project_types": [
+    {
+      "part_id": "api",
+      "project_type_id": "backend",
+      "display_name": "Backend API"
+    },
+    {
+      "part_id": "web",
+      "project_type_id": "web",
+      "display_name": "Web Frontend"
+    }
+  ],
+  "completed_steps": [
+    {
+      "step": "step_1",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Classified project as monorepo with api/backend and web/frontend parts."
+    },
+    {
+      "step": "step_2",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Discovered existing documentation and captured context for auth module notes."
+    },
+    {
+      "step": "step_3",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Mapped workspace stack: Nx + pnpm + Node24 + React + Nest-style API + MySQL + Redis."
+    },
+    {
+      "step": "step_4",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Completed conditional scans for API contracts, data models, and UI component inventory."
+    },
+    {
+      "step": "step_5",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Generated source tree analysis."
+    },
+    {
+      "step": "step_6",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Documented development and deployment setup."
+    },
+    {
+      "step": "step_7",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Documented integration architecture across web/api/mysql/redis."
+    },
+    {
+      "step": "step_8",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Generated per-part architecture docs."
+    },
+    {
+      "step": "step_9",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Generated supporting documents for API/Web development and operations."
+    },
+    {
+      "step": "step_10",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Generated master index for docs retrieval."
+    },
+    {
+      "step": "step_11",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Validated output completeness for this scan scope."
+    },
+    {
+      "step": "step_12",
+      "status": "completed",
+      "timestamp": "2026-02-26T12:47:25Z",
+      "summary": "Workflow completed."
+    }
+  ],
+  "current_step": "completed",
+  "findings": {
+    "project_classification": "monorepo with backend(api) + web(web) parts",
+    "technology_stack": "Node24, Nx, pnpm, React/Vite/AntD, Nest-style API runtime, MySQL, Redis",
+    "route_summary": "66 routes total, 58 protected",
+    "data_summary": "19 identified tables from SQL migrations",
+    "tests_summary": "68 test files total (api=62, web=6)"
+  },
+  "outputs_generated": [
+    "project-scan-report.json",
+    "project-overview.md",
+    "source-tree-analysis.md",
+    "architecture-api.md",
+    "architecture-web.md",
+    "integration-architecture.md",
+    "api-contracts-api.md",
+    "data-models-api.md",
+    "component-inventory-web.md",
+    "development-guide-api.md",
+    "development-guide-web.md",
+    "deployment-guide.md",
+    "project-parts.json",
+    "index.md"
+  ],
+  "resume_instructions": "Workflow finished; rerun document-project for rescan or deep-dive."
+}
+

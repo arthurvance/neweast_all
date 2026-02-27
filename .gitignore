@@ -25,6 +25,7 @@ _bmad-output/
 
 # Local tool/workspace state (non-business)
 .agent/
+.agents/
 .cache/
 .claude/
 .codex/

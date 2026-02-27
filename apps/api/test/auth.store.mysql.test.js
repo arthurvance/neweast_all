@@ -864,6 +864,7 @@ test('findTenantPermissionByUserAndTenantId surfaces schema errors for missing p
 
 test('findTenantPermissionByUserAndTenantId reads permission columns when available', async () => {
   let permissionSql = '';
+  let grantSql = '';
   const store = createStore(async (sql) => {
     const normalizedSql = String(sql);
     if (normalizedSql.includes('can_view_user_management')) {
@@ -872,12 +873,17 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
         {
           tenant_id: 'tenant-z',
           tenant_name: 'Tenant Z',
+          membership_id: 'membership-tenant-z-u5',
           can_view_user_management: 1,
           can_operate_user_management: 0,
           can_view_role_management: 1,
           can_operate_role_management: 1
         }
       ];
+    }
+    if (normalizedSql.includes('FROM tenant_membership_roles tmr')) {
+      grantSql = normalizedSql;
+      return [];
     }
     assert.fail(`unexpected query: ${normalizedSql}`);
     return [];
@@ -891,12 +897,15 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
     scopeLabel: '组织权限（Tenant Z）',
     canViewUserManagement: true,
     canOperateUserManagement: false,
+    canViewAccountManagement: false,
+    canOperateAccountManagement: false,
     canViewRoleManagement: true,
     canOperateRoleManagement: true
   });
   assert.match(permissionSql, /LEFT JOIN tenants/i);
   assert.match(permissionSql, /o\.status IN \('active', 'enabled'\)/i);
   assert.doesNotMatch(permissionSql, /o\.id IS NULL/i);
+  assert.match(grantSql, /JOIN tenant_role_permission_grants/i);
 });
 
 test('findPlatformPermissionByUserId is fail-closed when platform identity is unavailable', async () => {

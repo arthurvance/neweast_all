@@ -11,6 +11,26 @@ const OUTPUT_FILE = path.resolve(
   __dirname,
   '../src/features/auth/generated-permission-catalog.js'
 );
+const TENANT_PERMISSION_CATALOG_EXTENSIONS = Object.freeze([
+  {
+    code: 'tenant.account_management.view',
+    scope: 'tenant',
+    group_key: 'account_management',
+    action_key: 'view',
+    label_key: 'permission.tenant.account_management.view',
+    order: 310,
+    assignable: true
+  },
+  {
+    code: 'tenant.account_management.operate',
+    scope: 'tenant',
+    group_key: 'account_management',
+    action_key: 'operate',
+    label_key: 'permission.tenant.account_management.operate',
+    order: 320,
+    assignable: true
+  }
+]);
 
 const normalizeCatalogItem = (item = {}) => ({
   code: String(item.code || '').trim().toLowerCase(),
@@ -52,15 +72,36 @@ const toGroupActionMap = ({ catalogItems = [], scope }) => {
 };
 
 const serialize = (value) => JSON.stringify(value, null, 2);
+const mergeCatalogItemsByCode = ({ baseItems = [], extensionItems = [] }) => {
+  const mergedByCode = new Map();
+  for (const item of [...baseItems, ...extensionItems]) {
+    const normalizedItem = normalizeCatalogItem(item);
+    if (!normalizedItem.code) {
+      continue;
+    }
+    mergedByCode.set(normalizedItem.code, normalizedItem);
+  }
+  return [...mergedByCode.values()].sort((left, right) => {
+    if (left.order !== right.order) {
+      return left.order - right.order;
+    }
+    return left.code.localeCompare(right.code);
+  });
+};
 
 const main = () => {
-  const platformCatalogItems = listPlatformPermissionCatalogItems({
-    includeUnassignable: true
-  }).map(normalizeCatalogItem);
-  const tenantCatalogItems = listTenantPermissionCatalogItems({
-    includeTenantContextCodes: true,
-    includeUnassignable: true
-  }).map(normalizeCatalogItem);
+  const platformCatalogItems = mergeCatalogItemsByCode({
+    baseItems: listPlatformPermissionCatalogItems({
+      includeUnassignable: true
+    })
+  });
+  const tenantCatalogItems = mergeCatalogItemsByCode({
+    baseItems: listTenantPermissionCatalogItems({
+      includeTenantContextCodes: true,
+      includeUnassignable: true
+    }),
+    extensionItems: TENANT_PERMISSION_CATALOG_EXTENSIONS
+  });
 
   const platformPermissionCodeByGroupAction = toGroupActionMap({
     catalogItems: platformCatalogItems,

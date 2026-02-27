@@ -5,6 +5,8 @@ const TENANT_CONTEXT_READ_PERMISSION_CODE = 'tenant.context.read';
 const TENANT_CONTEXT_SWITCH_PERMISSION_CODE = 'tenant.context.switch';
 const TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.user_management.view';
 const TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.user_management.operate';
+const TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.account_management.view';
+const TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.account_management.operate';
 const TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
 const TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
 
@@ -91,6 +93,14 @@ const hasPermissionCodeGrant = ({ permissionContext = null, permissionCode }) =>
     case TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_operate_user_management')
         || readBooleanPermissionField(permissionContext, 'canOperateUserManagement');
+    case TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_account_management')
+        || readBooleanPermissionField(permissionContext, 'canViewAccountManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_account_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateAccountManagement');
+    case TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_account_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateAccountManagement');
     case TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_view_role_management')
         || readBooleanPermissionField(permissionContext, 'canViewRoleManagement')
@@ -301,6 +311,24 @@ const ROUTE_PERMISSION_DEFINITIONS = Object.freeze([
     order: 120
   }),
   createPermissionDefinition({
+    code: TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'account_management',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.account_management.view',
+    order: 160
+  }),
+  createPermissionDefinition({
+    code: TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'account_management',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.account_management.operate',
+    order: 170
+  }),
+  createPermissionDefinition({
     code: TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
     scopes: [PERMISSION_SCOPE_TENANT],
     contextKey: 'tenant',
@@ -388,6 +416,8 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
   const snapshot = {
     canViewUserManagement: false,
     canOperateUserManagement: false,
+    canViewAccountManagement: false,
+    canOperateAccountManagement: false,
     canViewRoleManagement: false,
     canOperateRoleManagement: false
   };
@@ -399,6 +429,13 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
       case TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE:
         snapshot.canViewUserManagement = true;
         snapshot.canOperateUserManagement = true;
+        break;
+      case TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewAccountManagement = true;
+        break;
+      case TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewAccountManagement = true;
+        snapshot.canOperateAccountManagement = true;
         break;
       case TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
         snapshot.canViewRoleManagement = true;
@@ -512,6 +549,8 @@ module.exports = {
   TENANT_CONTEXT_SWITCH_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,

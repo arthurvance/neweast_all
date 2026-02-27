@@ -1,4 +1,6 @@
 import {
+  AppstoreOutlined,
+  IdcardOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined
@@ -8,14 +10,30 @@ import {
   TENANT_PERMISSION_CODE_BY_GROUP_ACTION
 } from '../../../../features/auth/generated-permission-catalog';
 
+const ACCOUNT_MATRIX_MENU_KEY = 'account';
+const ACCOUNT_MENU_KEY = 'account/account';
+const LEGACY_ACCOUNT_MATRIX_MENU_KEY = 'account-matrix';
+const LEGACY_ACCOUNT_MENU_KEY = 'account-matrix/accounts';
 const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ROLE_MENU_KEY = 'settings/roles';
-const TenantRoleManagementPage = lazy(() => import('../role/TenantRoleManagementPage'));
-const TenantUserManagementPage = lazy(() => import('../user/TenantUserManagementPage'));
+const TenantAccountManagementPage = lazy(() => import('../account/TenantAccountManagementPage'));
+const TenantRoleManagementPage = lazy(() => import('../../settings/role/TenantRoleManagementPage'));
+const TenantUserManagementPage = lazy(() => import('../../settings/user/TenantUserManagementPage'));
 
-const readTenantPermissionCode = ({ groupKey, actionKey }) => {
+const readTenantPermissionCode = ({
+  groupKey,
+  actionKey,
+  fallbackCode = ''
+}) => {
   const code = TENANT_PERMISSION_CODE_BY_GROUP_ACTION?.[groupKey]?.[actionKey];
+  if (code) {
+    return code;
+  }
+  const normalizedFallbackCode = String(fallbackCode || '').trim();
+  if (normalizedFallbackCode) {
+    return normalizedFallbackCode;
+  }
   if (!code) {
     throw new Error(
       `missing generated tenant permission code for ${String(groupKey)}.${String(actionKey)}`
@@ -40,8 +58,19 @@ const ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
   groupKey: 'role_management',
   actionKey: 'operate'
 });
+const ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'account_management',
+  actionKey: 'view',
+  fallbackCode: 'tenant.account_management.view'
+});
+const ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'account_management',
+  actionKey: 'operate',
+  fallbackCode: 'tenant.account_management.operate'
+});
 
 const TENANT_MENU_ORDER = Object.freeze([
+  ACCOUNT_MENU_KEY,
   USER_MENU_KEY,
   ROLE_MENU_KEY
 ]);
@@ -49,10 +78,14 @@ const TENANT_MENU_ORDER = Object.freeze([
 export const TENANT_DEFAULT_MENU_KEY = USER_MENU_KEY;
 
 export const TENANT_NAV_GROUP_FALLBACK = Object.freeze({
+  [ACCOUNT_MATRIX_MENU_KEY]: ACCOUNT_MENU_KEY,
+  [LEGACY_ACCOUNT_MATRIX_MENU_KEY]: ACCOUNT_MENU_KEY,
   [SETTINGS_MENU_KEY]: USER_MENU_KEY
 });
 
 export const TENANT_MENU_PERMISSION_REGISTRY = Object.freeze({
+  [ACCOUNT_MATRIX_MENU_KEY]: '',
+  [ACCOUNT_MENU_KEY]: ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
   [SETTINGS_MENU_KEY]: '',
   [USER_MENU_KEY]: USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   [ROLE_MENU_KEY]: ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
@@ -95,6 +128,18 @@ const hasTenantRoleManagementAccess = (permissionContext = null) => {
   return canView && canOperate;
 };
 
+const hasTenantAccountManagementAccess = (permissionContext = null) => {
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return false;
+  }
+  const canView = readPermissionFlag(
+    permissionContext,
+    'can_view_account_management',
+    'canViewAccountManagement'
+  );
+  return canView;
+};
+
 export const resolveTenantMenuPermissionCode = (menuKey) => {
   const normalizedKey = String(menuKey || '').trim();
   return TENANT_MENU_PERMISSION_REGISTRY[normalizedKey] || '';
@@ -117,10 +162,30 @@ export const hasTenantMenuAccess = ({ menuKey, permissionContext = null }) => {
   ) {
     return hasTenantRoleManagementAccess(permissionContext);
   }
+  if (
+    permissionCode === ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE
+    || permissionCode === ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
+  ) {
+    return hasTenantAccountManagementAccess(permissionContext);
+  }
   return false;
 };
 
 export const TENANT_NAV_ITEMS = [
+  {
+    key: ACCOUNT_MATRIX_MENU_KEY,
+    permission_code: resolveTenantMenuPermissionCode(ACCOUNT_MATRIX_MENU_KEY),
+    icon: <AppstoreOutlined />,
+    label: <span data-testid="tenant-menu-account-matrix">账号矩阵</span>,
+    children: [
+      {
+        key: ACCOUNT_MENU_KEY,
+        permission_code: resolveTenantMenuPermissionCode(ACCOUNT_MENU_KEY),
+        icon: <IdcardOutlined />,
+        label: <span data-testid="tenant-tab-accounts">账号管理</span>
+      }
+    ]
+  },
   {
     key: SETTINGS_MENU_KEY,
     permission_code: resolveTenantMenuPermissionCode(SETTINGS_MENU_KEY),
@@ -144,6 +209,16 @@ export const TENANT_NAV_ITEMS = [
 ];
 
 export const TENANT_PAGE_REGISTRY = Object.freeze({
+  [ACCOUNT_MENU_KEY]: {
+    title: '账号管理',
+    subTitle: '账号矩阵 / 账号管理',
+    permission_code: resolveTenantMenuPermissionCode(ACCOUNT_MENU_KEY),
+    breadcrumbItems: [
+      { key: ACCOUNT_MATRIX_MENU_KEY, title: '账号矩阵' },
+      { key: ACCOUNT_MENU_KEY, title: '账号管理' }
+    ],
+    Component: TenantAccountManagementPage
+  },
   [USER_MENU_KEY]: {
     title: '用户管理',
     subTitle: '组织设置 / 用户管理',
@@ -168,6 +243,9 @@ export const TENANT_PAGE_REGISTRY = Object.freeze({
 
 export const resolveTenantMenuKey = (menuKey) => {
   const normalizedKey = String(menuKey || '').trim();
+  if (normalizedKey === LEGACY_ACCOUNT_MATRIX_MENU_KEY || normalizedKey === LEGACY_ACCOUNT_MENU_KEY) {
+    return ACCOUNT_MENU_KEY;
+  }
   if (TENANT_PAGE_REGISTRY[normalizedKey]) {
     return normalizedKey;
   }

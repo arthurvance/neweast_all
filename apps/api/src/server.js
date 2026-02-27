@@ -61,7 +61,13 @@ const {
   TENANT_ROLE_UPDATE_ROUTE_KEY,
   TENANT_ROLE_DELETE_ROUTE_KEY,
   TENANT_ROLE_PERMISSION_GET_ROUTE_KEY,
-  TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY
+  TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY,
+  TENANT_ACCOUNT_LIST_ROUTE_KEY,
+  TENANT_ACCOUNT_CREATE_ROUTE_KEY,
+  TENANT_ACCOUNT_DETAIL_ROUTE_KEY,
+  TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
+  TENANT_ACCOUNT_STATUS_ROUTE_KEY,
+  TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY
 } = require('./domains/tenant');
 const {
   listSupportedRoutePermissionCodes,
@@ -175,6 +181,9 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   TENANT_ROLE_UPDATE_ROUTE_KEY,
   TENANT_ROLE_DELETE_ROUTE_KEY,
   TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY,
+  TENANT_ACCOUNT_CREATE_ROUTE_KEY,
+  TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
+  TENANT_ACCOUNT_STATUS_ROUTE_KEY,
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
@@ -208,6 +217,9 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_ROLE_UPDATE_ROUTE_KEY,
   TENANT_ROLE_DELETE_ROUTE_KEY,
   TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY,
+  TENANT_ACCOUNT_CREATE_ROUTE_KEY,
+  TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
+  TENANT_ACCOUNT_STATUS_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
@@ -264,6 +276,9 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_ROLE_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [TENANT_ROLE_DELETE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [TENANT_ROLE_PERMISSION_PUT_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [TENANT_ACCOUNT_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_ACCOUNT_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [TENANT_ACCOUNT_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [
@@ -803,6 +818,16 @@ const normalizeRouteParamsForRoute = ({
   ) {
     normalizedRouteParams.role_id = String(
       normalizedRouteParams.role_id || ''
+    ).trim().toLowerCase();
+  }
+  if (
+    routeKey === TENANT_ACCOUNT_DETAIL_ROUTE_KEY
+    || routeKey === TENANT_ACCOUNT_UPDATE_ROUTE_KEY
+    || routeKey === TENANT_ACCOUNT_STATUS_ROUTE_KEY
+    || routeKey === TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY
+  ) {
+    normalizedRouteParams.account_id = String(
+      normalizedRouteParams.account_id || ''
     ).trim().toLowerCase();
   }
   if (
@@ -2427,6 +2452,90 @@ const createRouteTable = ({
             requestId
           )
       }),
+    [TENANT_ACCOUNT_LIST_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListAccounts(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_ACCOUNT_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_ACCOUNT_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantCreateAccount(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_ACCOUNT_DETAIL_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantGetAccountDetail(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_ACCOUNT_UPDATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantUpdateAccount(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_ACCOUNT_STATUS_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_ACCOUNT_STATUS_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantUpdateAccountStatus(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListAccountOperationLogs(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
     [TENANT_AUDIT_EVENTS_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>

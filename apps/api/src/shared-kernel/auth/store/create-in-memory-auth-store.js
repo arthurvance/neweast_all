@@ -11,6 +11,8 @@ const {
   KNOWN_TENANT_PERMISSION_CODES,
   TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
@@ -99,6 +101,11 @@ const createInMemoryAuthStore = ({
   const platformRolePermissionGrantsByRoleId = new Map();
   const tenantRolePermissionGrantsByRoleId = new Map();
   const tenantUsershipRolesByMembershipId = new Map();
+  const tenantAccountsByAccountId = new Map();
+  const tenantAccountIdsByTenantId = new Map();
+  const tenantAccountWechatIndexByTenantId = new Map();
+  const tenantAccountAssistantsByAccountId = new Map();
+  const tenantAccountOperationLogsByAccountId = new Map();
   const systemSensitiveConfigsByKey = new Map();
   const orgsById = new Map();
   const tenantUsershipHistoryByPair = new Map();
@@ -201,6 +208,8 @@ const createInMemoryAuthStore = ({
   const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
     TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
     TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+    TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
     TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
     TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
   ]);
@@ -401,6 +410,11 @@ const createInMemoryAuthStore = ({
     orgsById,
     revokeTenantSessionsForUser: (params = {}) => revokeTenantSessionsForUser(params),
     tenantRolePermissionGrantsByRoleId,
+    tenantAccountsByAccountId,
+    tenantAccountIdsByTenantId,
+    tenantAccountWechatIndexByTenantId,
+    tenantAccountAssistantsByAccountId,
+    tenantAccountOperationLogsByAccountId,
     tenantUsershipHistoryByPair,
     tenantUsershipRolesByMembershipId,
     tenantsByUserId,
@@ -585,6 +599,8 @@ const createInMemoryAuthStore = ({
     normalizePlatformRoleCatalogTenantIdForScope,
     normalizePlatformRoleCatalogStatus,
     listPlatformRolePermissionGrantsForRoleId,
+    listTenantRolePermissionGrantsForRoleId,
+    listTenantUsershipRoleBindingsForMembershipId,
     toPlatformPermissionCodeKey,
     syncPlatformPermissionFromRoleFacts,
     bumpSessionVersionAndConvergeSessions,
@@ -850,6 +866,11 @@ const createInMemoryAuthStore = ({
     syncPlatformPermissionFromRoleFacts,
     syncTenantUsershipPermissionSnapshot,
     systemSensitiveConfigsByKey,
+    tenantAccountsByAccountId,
+    tenantAccountAssistantsByAccountId,
+    tenantAccountIdsByTenantId,
+    tenantAccountOperationLogsByAccountId,
+    tenantAccountWechatIndexByTenantId,
     tenantRolePermissionGrantsByRoleId,
     tenantUsershipHistoryByPair,
     tenantUsershipRolesByMembershipId,

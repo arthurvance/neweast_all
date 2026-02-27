@@ -68,10 +68,25 @@ const isTenantSysAdminRole = (roleRecord) => {
   );
 };
 
+const ACCOUNT_MATRIX_TREE_ROOT_KEY = 'account';
 const SETTINGS_TREE_ROOT_KEY = 'settings';
+const TENANT_PERMISSION_MODULE_LABEL_MAP = Object.freeze({
+  [ACCOUNT_MATRIX_TREE_ROOT_KEY]: '账号矩阵',
+  [SETTINGS_TREE_ROOT_KEY]: '设置'
+});
+const TENANT_PERMISSION_MODULE_ORDER_MAP = Object.freeze({
+  [ACCOUNT_MATRIX_TREE_ROOT_KEY]: 0,
+  [SETTINGS_TREE_ROOT_KEY]: 1
+});
+const TENANT_PERMISSION_GROUP_MODULE_KEY_MAP = Object.freeze({
+  account_management: ACCOUNT_MATRIX_TREE_ROOT_KEY,
+  user_management: SETTINGS_TREE_ROOT_KEY,
+  role_management: SETTINGS_TREE_ROOT_KEY
+});
 const TENANT_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
   user_management: '用户管理',
-  role_management: '角色管理'
+  role_management: '角色管理',
+  account_management: '账号管理'
 });
 const TENANT_PERMISSION_ACTION_LABEL_MAP = Object.freeze({
   view: '查看',
@@ -81,7 +96,9 @@ const TENANT_PERMISSION_LABEL_KEY_MAP = Object.freeze({
   'permission.tenant.user_management.view': '查看用户管理',
   'permission.tenant.user_management.operate': '操作用户管理',
   'permission.tenant.role_management.view': '查看角色管理',
-  'permission.tenant.role_management.operate': '操作角色管理'
+  'permission.tenant.role_management.operate': '操作角色管理',
+  'permission.tenant.account_management.view': '查看账号管理',
+  'permission.tenant.account_management.operate': '操作账号管理'
 });
 
 const toPermissionCodeParts = (permissionCode) => {
@@ -182,8 +199,39 @@ const toTenantPermissionGroupLabel = (groupKey = '') => {
   return toReadableLabelFromKey(normalizedGroupKey || 'misc');
 };
 
+const toTenantPermissionModuleKey = (groupKey = '') => {
+  const normalizedGroupKey = String(groupKey || '').trim().toLowerCase();
+  if (
+    normalizedGroupKey
+    && TENANT_PERMISSION_GROUP_MODULE_KEY_MAP[normalizedGroupKey]
+  ) {
+    return TENANT_PERMISSION_GROUP_MODULE_KEY_MAP[normalizedGroupKey];
+  }
+  return SETTINGS_TREE_ROOT_KEY;
+};
+
+const toTenantPermissionModuleLabel = (moduleKey = '') => {
+  const normalizedModuleKey = String(moduleKey || '').trim().toLowerCase();
+  if (
+    normalizedModuleKey
+    && TENANT_PERMISSION_MODULE_LABEL_MAP[normalizedModuleKey]
+  ) {
+    return TENANT_PERMISSION_MODULE_LABEL_MAP[normalizedModuleKey];
+  }
+  return toReadableLabelFromKey(normalizedModuleKey || SETTINGS_TREE_ROOT_KEY);
+};
+
+const toTenantPermissionModuleOrder = (moduleKey = '') => {
+  const normalizedModuleKey = String(moduleKey || '').trim().toLowerCase();
+  const order = TENANT_PERMISSION_MODULE_ORDER_MAP[normalizedModuleKey];
+  if (Number.isFinite(Number(order))) {
+    return Number(order);
+  }
+  return Number.MAX_SAFE_INTEGER;
+};
+
 const toPermissionTreeData = (availablePermissions = []) => {
-  const groupNodeByKey = new Map();
+  const moduleNodeByKey = new Map();
   for (const permissionItem of Array.isArray(availablePermissions) ? availablePermissions : []) {
     const permissionCode = String(permissionItem?.code || '').trim().toLowerCase();
     if (!permissionCode.startsWith('tenant.')) {
@@ -193,10 +241,18 @@ const toPermissionTreeData = (availablePermissions = []) => {
     const groupKey = String(
       permissionItem?.group_key || parsed?.moduleKey || 'misc'
     ).trim().toLowerCase();
-    const menuKey = `settings/${groupKey || 'misc'}`;
+    const moduleKey = toTenantPermissionModuleKey(groupKey);
+    const groupNodeKey = `${moduleKey}/${groupKey || 'misc'}`;
     const groupOrder = Number(permissionItem?.order || 0);
-    const currentNode = groupNodeByKey.get(menuKey) || {
-      key: menuKey,
+    const moduleNode = moduleNodeByKey.get(moduleKey) || {
+      key: moduleKey,
+      title: toTenantPermissionModuleLabel(moduleKey),
+      selectable: false,
+      order: toTenantPermissionModuleOrder(moduleKey),
+      groups: new Map()
+    };
+    const currentNode = moduleNode.groups.get(groupNodeKey) || {
+      key: groupNodeKey,
       title: toTenantPermissionGroupLabel(groupKey),
       selectable: false,
       order: Number.isFinite(groupOrder) ? groupOrder : 0,
@@ -210,16 +266,36 @@ const toPermissionTreeData = (availablePermissions = []) => {
       title: toTenantPermissionActionLabel(permissionItem),
       order: Number.isFinite(groupOrder) ? groupOrder : 0
     });
-    groupNodeByKey.set(menuKey, currentNode);
+    moduleNode.groups.set(groupNodeKey, currentNode);
+    moduleNodeByKey.set(moduleKey, moduleNode);
   }
 
-  const orderedNodes = [...groupNodeByKey.values()]
-    .map((groupNode) => ({
-      key: groupNode.key,
-      title: groupNode.title,
+  return [...moduleNodeByKey.values()]
+    .map((moduleNode) => ({
+      key: moduleNode.key,
+      title: moduleNode.title,
       selectable: false,
-      order: groupNode.order,
-      children: [...groupNode.children]
+      order: moduleNode.order,
+      children: [...moduleNode.groups.values()]
+        .map((groupNode) => ({
+          key: groupNode.key,
+          title: groupNode.title,
+          selectable: false,
+          order: groupNode.order,
+          children: [...groupNode.children]
+            .sort((left, right) => {
+              const leftOrder = Number(left?.order || 0);
+              const rightOrder = Number(right?.order || 0);
+              if (leftOrder !== rightOrder) {
+                return leftOrder - rightOrder;
+              }
+              return String(left.key).localeCompare(String(right.key));
+            })
+            .map((childNode) => ({
+              key: childNode.key,
+              title: childNode.title
+            }))
+        }))
         .sort((left, right) => {
           const leftOrder = Number(left?.order || 0);
           const rightOrder = Number(right?.order || 0);
@@ -228,28 +304,15 @@ const toPermissionTreeData = (availablePermissions = []) => {
           }
           return String(left.key).localeCompare(String(right.key));
         })
-        .map((childNode) => ({
-          key: childNode.key,
-          title: childNode.title
-        }))
     }))
     .sort((left, right) => {
-      const leftOrder = Number(left?.order || 0);
-      const rightOrder = Number(right?.order || 0);
+      const leftOrder = Number(left?.order ?? Number.MAX_SAFE_INTEGER);
+      const rightOrder = Number(right?.order ?? Number.MAX_SAFE_INTEGER);
       if (leftOrder !== rightOrder) {
         return leftOrder - rightOrder;
       }
       return String(left.key).localeCompare(String(right.key));
     });
-
-  return [
-    {
-      key: SETTINGS_TREE_ROOT_KEY,
-      title: '设置',
-      selectable: false,
-      children: orderedNodes
-    }
-  ];
 };
 
 const selectPermissionCatalogProbeRoleId = (roles = []) => {

@@ -707,6 +707,40 @@ test('0024 down migration drops integration freeze control table', () => {
   assert.match(sql, /DROP TABLE IF EXISTS platform_integration_freeze_control/i);
 });
 
+test('0026 migration defines tenant account matrix tables and tenant-scoped unique constraints', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0026_tenant_account_matrix.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_accounts/i);
+  assert.match(sql, /UNIQUE KEY uk_tenant_accounts_tenant_wechat\s*\(\s*tenant_id,\s*wechat_id\s*\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_account_assistants/i);
+  assert.match(sql, /PRIMARY KEY\s*\(\s*account_id,\s*assistant_membership_id\s*\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_account_operation_logs/i);
+  assert.match(sql, /KEY idx_tenant_account_operation_logs_account_time/i);
+});
+
+test('0027 migration backfills tenant sys_admin account-management permissions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0027_tenant_sys_admin_account_permissions_backfill.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
+  assert.match(sql, /tenant\.account_management\.view/i);
+  assert.match(sql, /tenant\.account_management\.operate/i);
+  assert.match(sql, /FROM platform_roles/i);
+  assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
+  assert.match(sql, /pr\.scope\s*=\s*'tenant'/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

@@ -1,5 +1,5 @@
 import TenantDashboardFallbackPanel from './TenantDashboardFallbackPanel';
-import TenantManagementLayoutPage from '../../settings/workbench/TenantManagementLayoutPage';
+import TenantManagementLayoutPage from '../../account/workbench/TenantManagementLayoutPage';
 import TenantSwitchScreen from '../session/TenantSwitchScreen';
 import {
   APP_SCREEN_DASHBOARD,

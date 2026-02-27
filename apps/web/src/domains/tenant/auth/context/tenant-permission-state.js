@@ -6,7 +6,9 @@ export const readTenantPermissionState = (sessionState) => {
       can_view_user_management: Boolean(permission.can_view_user_management),
       can_operate_user_management: Boolean(permission.can_operate_user_management),
       can_view_role_management: Boolean(permission.can_view_role_management),
-      can_operate_role_management: Boolean(permission.can_operate_role_management)
+      can_operate_role_management: Boolean(permission.can_operate_role_management),
+      can_view_account_management: Boolean(permission.can_view_account_management),
+      can_operate_account_management: Boolean(permission.can_operate_account_management)
     };
   }
 
@@ -16,7 +18,9 @@ export const readTenantPermissionState = (sessionState) => {
       can_view_user_management: false,
       can_operate_user_management: false,
       can_view_role_management: false,
-      can_operate_role_management: false
+      can_operate_role_management: false,
+      can_view_account_management: false,
+      can_operate_account_management: false
     };
   }
 
@@ -25,7 +29,9 @@ export const readTenantPermissionState = (sessionState) => {
     can_view_user_management: false,
     can_operate_user_management: false,
     can_view_role_management: false,
-    can_operate_role_management: false
+    can_operate_role_management: false,
+    can_view_account_management: false,
+    can_operate_account_management: false
   };
 };
 
@@ -38,15 +44,24 @@ export const selectPermissionUiState = (permissionState) => {
     permissionState?.can_view_role_management
     && permissionState?.can_operate_role_management
   );
+  const canViewAccountManagement = Boolean(
+    permissionState?.can_view_account_management
+  );
+  const canOperateAccountManagement = Boolean(
+    permissionState?.can_view_account_management
+    && permissionState?.can_operate_account_management
+  );
 
   return {
     menu: {
       user_management: canAccessUserManagement,
-      role_management: canAccessRoleManagement
+      role_management: canAccessRoleManagement,
+      account_management: canViewAccountManagement
     },
     action: {
       user_management: canAccessUserManagement,
-      role_management: canAccessRoleManagement
+      role_management: canAccessRoleManagement,
+      account_management: canOperateAccountManagement
     }
   };
 };

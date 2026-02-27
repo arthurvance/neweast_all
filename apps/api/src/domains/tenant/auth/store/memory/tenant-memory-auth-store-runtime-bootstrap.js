@@ -256,6 +256,8 @@ const createTenantMemoryAuthStoreRuntimeBootstrap = (dependencies = {}) => {
     scopeLabel,
     canViewUserManagement: false,
     canOperateUserManagement: false,
+    canViewAccountManagement: false,
+    canOperateAccountManagement: false,
     canViewRoleManagement: false,
     canOperateRoleManagement: false
   });

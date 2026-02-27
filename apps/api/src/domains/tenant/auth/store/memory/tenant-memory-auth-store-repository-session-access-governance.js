@@ -1,9 +1,26 @@
 'use strict';
 
+const {
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+} = require('../../../../../modules/auth/permission-catalog');
+
 const createTenantMemoryAuthStoreRepositorySessionAccessGovernance = ({
   domainsByUserId,
   isTenantUsershipActiveForAuth,
-  tenantsByUserId
+  tenantsByUserId,
+  listTenantUsershipRoleBindingsForMembershipId,
+  listTenantRolePermissionGrantsForRoleId,
+  normalizePlatformRoleCatalogRoleId,
+  findPlatformRoleCatalogRecordStateByRoleId,
+  normalizePlatformRoleCatalogScope,
+  normalizePlatformRoleCatalogTenantId,
+  normalizePlatformRoleCatalogStatus,
+  isActiveLikeStatus
 } = {}) => ({
   ensureTenantDomainAccessForUser: async (userId) => {
     const normalizedUserId = String(userId);
@@ -48,16 +65,101 @@ const createTenantMemoryAuthStoreRepositorySessionAccessGovernance = ({
     if (!tenant) {
       return null;
     }
-    if (tenant.permission) {
-      return {
-        scopeLabel: tenant.permission.scopeLabel || `组织权限（${tenant.tenantName || tenant.tenantId}）`,
-        canViewUserManagement: Boolean(tenant.permission.canViewUserManagement),
-        canOperateUserManagement: Boolean(tenant.permission.canOperateUserManagement),
-        canViewRoleManagement: Boolean(tenant.permission.canViewRoleManagement),
-        canOperateRoleManagement: Boolean(tenant.permission.canOperateRoleManagement)
-      };
+    const membershipId = String(
+      tenant.membershipId || tenant.membership_id || ''
+    ).trim();
+    const roleIds = typeof listTenantUsershipRoleBindingsForMembershipId === 'function'
+      ? listTenantUsershipRoleBindingsForMembershipId({
+        membershipId,
+        tenantId: normalizedTenantId
+      })
+      : [];
+    const permissionCodeSet = new Set();
+    for (const roleIdCandidate of Array.isArray(roleIds) ? roleIds : []) {
+      const normalizedRoleId = typeof normalizePlatformRoleCatalogRoleId === 'function'
+        ? normalizePlatformRoleCatalogRoleId(roleIdCandidate)
+        : String(roleIdCandidate || '').trim().toLowerCase();
+      if (!normalizedRoleId) {
+        continue;
+      }
+      const catalogEntryState = typeof findPlatformRoleCatalogRecordStateByRoleId === 'function'
+        ? findPlatformRoleCatalogRecordStateByRoleId(normalizedRoleId)
+        : null;
+      const catalogEntry = catalogEntryState?.record;
+      if (!catalogEntry) {
+        continue;
+      }
+      const roleScope = typeof normalizePlatformRoleCatalogScope === 'function'
+        ? normalizePlatformRoleCatalogScope(catalogEntry.scope)
+        : String(catalogEntry.scope || '').trim().toLowerCase();
+      const roleTenantId = typeof normalizePlatformRoleCatalogTenantId === 'function'
+        ? normalizePlatformRoleCatalogTenantId(catalogEntry.tenantId)
+        : String(catalogEntry.tenantId || '').trim();
+      const roleStatus = typeof normalizePlatformRoleCatalogStatus === 'function'
+        ? normalizePlatformRoleCatalogStatus(catalogEntry.status)
+        : String(catalogEntry.status || '').trim().toLowerCase();
+      const roleActive = typeof isActiveLikeStatus === 'function'
+        ? isActiveLikeStatus(roleStatus)
+        : roleStatus === 'active' || roleStatus === 'enabled';
+      if (
+        roleScope !== 'tenant'
+        || roleTenantId !== normalizedTenantId
+        || !roleActive
+      ) {
+        continue;
+      }
+      const grants = typeof listTenantRolePermissionGrantsForRoleId === 'function'
+        ? listTenantRolePermissionGrantsForRoleId(normalizedRoleId)
+        : [];
+      for (const permissionCode of Array.isArray(grants) ? grants : []) {
+        const normalizedPermissionCode = String(permissionCode || '').trim().toLowerCase();
+        if (normalizedPermissionCode) {
+          permissionCodeSet.add(normalizedPermissionCode);
+        }
+      }
     }
-    return null;
+
+    const permissionSource = tenant.permission || null;
+    const context = {
+      scopeLabel: permissionSource?.scopeLabel || `组织权限（${tenant.tenantName || tenant.tenantId}）`,
+      canViewUserManagement: Boolean(permissionSource?.canViewUserManagement),
+      canOperateUserManagement: Boolean(permissionSource?.canOperateUserManagement),
+      canViewRoleManagement: Boolean(permissionSource?.canViewRoleManagement),
+      canOperateRoleManagement: Boolean(permissionSource?.canOperateRoleManagement)
+    };
+    if (context.canViewUserManagement) {
+      permissionCodeSet.add(TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (context.canOperateUserManagement) {
+      permissionCodeSet.add(TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (context.canViewRoleManagement) {
+      permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (context.canOperateRoleManagement) {
+      permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    context.canViewAccountManagement = permissionCodeSet.has(
+      TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    context.canOperateAccountManagement = permissionCodeSet.has(
+      TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    Object.defineProperty(context, 'permission_code_set', {
+      value: permissionCodeSet,
+      enumerable: false,
+      configurable: true
+    });
+    Object.defineProperty(context, 'permissionCodeSet', {
+      value: permissionCodeSet,
+      enumerable: false,
+      configurable: true
+    });
+    return context;
   },
 });
 

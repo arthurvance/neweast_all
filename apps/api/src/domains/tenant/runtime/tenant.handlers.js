@@ -1,6 +1,7 @@
 const createTenantRouteHandlers = ({
   tenantUser,
-  tenantRole
+  tenantRole,
+  tenantAccount
 }) => ({
   tenantListUsers: async (
     requestId,
@@ -188,6 +189,96 @@ const createTenantRouteHandlers = ({
       params: params || {},
       body: body || {},
       traceparent,
+      authorizationContext
+    }),
+
+  tenantListAccounts: async (
+    requestId,
+    authorization,
+    query,
+    authorizationContext
+  ) =>
+    tenantAccount.listAccounts({
+      requestId,
+      authorization,
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantCreateAccount: async (
+    requestId,
+    authorization,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantAccount.createAccount({
+      requestId,
+      authorization,
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantGetAccountDetail: async (
+    requestId,
+    authorization,
+    params,
+    authorizationContext
+  ) =>
+    tenantAccount.getAccountDetail({
+      requestId,
+      authorization,
+      params: params || {},
+      authorizationContext
+    }),
+
+  tenantUpdateAccount: async (
+    requestId,
+    authorization,
+    params,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantAccount.updateAccount({
+      requestId,
+      authorization,
+      params: params || {},
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantUpdateAccountStatus: async (
+    requestId,
+    authorization,
+    params,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantAccount.updateAccountStatus({
+      requestId,
+      authorization,
+      params: params || {},
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantListAccountOperationLogs: async (
+    requestId,
+    authorization,
+    params,
+    query,
+    authorizationContext
+  ) =>
+    tenantAccount.listAccountOperationLogs({
+      requestId,
+      authorization,
+      params: params || {},
+      query: query || {},
       authorizationContext
     })
 });
