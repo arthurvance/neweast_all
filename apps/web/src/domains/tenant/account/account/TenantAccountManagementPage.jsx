@@ -150,10 +150,17 @@ const parseTimeValue = (value) => {
   return timestamp;
 };
 
+const OPERATION_TYPE_LABEL_MAP = {
+  create: '新建账号',
+  edit: '编辑账号',
+  update: '更新账号',
+  status: '状态变更'
+};
+
 const normalizeOperationLogs = (logs = []) =>
   (Array.isArray(logs) ? logs : [])
     .map((log) => ({
-      operation_type: String(log?.operation_type || log?.type || '').trim() || '操作',
+      operation_type: OPERATION_TYPE_LABEL_MAP[log?.operation_type || log?.type] || String(log?.operation_type || log?.type || '').trim() || '操作',
       operated_at: String(log?.operated_at || log?.operation_time || log?.created_at || '').trim(),
       operator_name: String(log?.operator_name || log?.operator || '').trim() || '-',
       content: String(log?.content || log?.detail || '-').trim() || '-'
@@ -1068,6 +1075,7 @@ export default function TenantAccountManagementPage({
                       <div style={{ display: 'grid', gap: 12 }}>
                         <Descriptions
                           title="基本信息"
+                          column={2}
                         >
                           <Descriptions.Item label="账号ID">
                             {accountDetailAccountId || '-'}
@@ -1112,6 +1120,7 @@ export default function TenantAccountManagementPage({
 
                         <Descriptions
                           title="系统信息"
+                          column={2}
                         >
                           <Descriptions.Item label="创建人">
                             {accountDetail?.created_by_name
@@ -1138,8 +1147,11 @@ export default function TenantAccountManagementPage({
                           children: (
                             <div data-testid={`tenant-account-log-${index}`} style={{ display: 'grid', gap: 2 }}>
                               <Text strong>{log.operation_type || '-'}</Text>
-                              <Text type="secondary">时间：{formatDateTimeMinute(log.operated_at)}</Text>
-                              <Text type="secondary">操作人：{log.operator_name || '-'}</Text>
+                              <Text type="secondary">
+                                {formatDateTimeMinute(log.operated_at)}
+                                <span style={{ margin: '0 8px' }}>·</span>
+                                {log.operator_name || '-'}
+                              </Text>
                               <Text>{log.content || '-'}</Text>
                             </div>
                           )
