@@ -2275,6 +2275,92 @@ test('PUT /tenant/roles/:role_id/permissions rejects non-tenant permission codes
   );
 });
 
+test('PUT /tenant/roles/:role_id/permissions rejects scoped customer operate permission without matching scoped view permission', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-permission-customer-operate-no-scope',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-permission-customer-operate-no-scope',
+    headers,
+    body: {
+      role_id: 'tenant_permission_customer_operate_no_scope_target',
+      code: 'TENANT_PERMISSION_CUSTOMER_OPERATE_NO_SCOPE_TARGET',
+      name: '客户操作无范围校验目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const replaceRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_permission_customer_operate_no_scope_target/permissions',
+    method: 'PUT',
+    requestId: 'req-tenant-role-permission-customer-operate-no-scope',
+    headers,
+    body: {
+      permission_codes: ['tenant.customer_scope_my.operate']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replaceRoute.status, 400);
+  assert.equal(
+    JSON.parse(replaceRoute.body).error_code,
+    'TROLE-400-INVALID-PAYLOAD'
+  );
+});
+
+test('PUT /tenant/roles/:role_id/permissions rejects customer_management.view because it is not assignable', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-permission-customer-view-unassignable',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-permission-customer-view-unassignable',
+    headers,
+    body: {
+      role_id: 'tenant_permission_customer_view_unassignable_target',
+      code: 'TENANT_PERMISSION_CUSTOMER_VIEW_UNASSIGNABLE_TARGET',
+      name: '客户查看权限不可分配校验目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const replaceRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_permission_customer_view_unassignable_target/permissions',
+    method: 'PUT',
+    requestId: 'req-tenant-role-permission-customer-view-unassignable',
+    headers,
+    body: {
+      permission_codes: ['tenant.customer_management.view']
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(replaceRoute.status, 400);
+  assert.equal(
+    JSON.parse(replaceRoute.body).error_code,
+    'TROLE-400-INVALID-PAYLOAD'
+  );
+});
+
 test('PUT /tenant/roles/:role_id/permissions rejects permission codes with leading or trailing whitespace', async () => {
   const harness = createHarness();
   const login = await loginByPhone(
@@ -2663,6 +2749,76 @@ test('GET /tenant/roles/:role_id/permissions returns deterministically sorted pe
       'tenant.user_management.operate',
       'tenant.user_management.view'
     ]);
+  } finally {
+    harness.authService.listTenantRolePermissionGrants = originalListTenantRolePermissionGrants;
+  }
+});
+
+test('GET /tenant/roles/:role_id/permissions tolerates non-assignable but registered tenant grants', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-permission-read-non-assignable-grants',
+    TENANT_OPERATOR_A_PHONE
+  );
+  const headers = {
+    authorization: `Bearer ${login.access_token}`
+  };
+
+  const createRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles',
+    method: 'POST',
+    requestId: 'req-tenant-role-create-permission-read-non-assignable-grants',
+    headers,
+    body: {
+      role_id: 'tenant_permission_read_non_assignable_grants',
+      code: 'TENANT_PERMISSION_READ_NON_ASSIGNABLE_GRANTS',
+      name: '租户权限读取包含不可分配授权目标角色',
+      status: 'active'
+    },
+    handlers: harness.handlers
+  });
+  assert.equal(createRoute.status, 200);
+
+  const originalListTenantRolePermissionGrants = harness.authService.listTenantRolePermissionGrants;
+  harness.authService.listTenantRolePermissionGrants = async (params = {}) => {
+    const normalizedRoleId = String(params?.roleId || '').trim().toLowerCase();
+    const result = await originalListTenantRolePermissionGrants(params);
+    if (normalizedRoleId !== 'tenant_permission_read_non_assignable_grants') {
+      return result;
+    }
+    const permissionCodeSet = new Set(
+      (Array.isArray(result?.permission_codes) ? result.permission_codes : [])
+        .map((permissionCode) => String(permissionCode || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+    permissionCodeSet.add('tenant.customer_management.view');
+    permissionCodeSet.add('tenant.customer_management.operate');
+    return {
+      ...result,
+      permission_codes: [...permissionCodeSet].sort((left, right) => left.localeCompare(right))
+    };
+  };
+
+  try {
+    const readRoute = await dispatchApiRoute({
+      pathname: '/tenant/roles/tenant_permission_read_non_assignable_grants/permissions',
+      method: 'GET',
+      requestId: 'req-tenant-role-permission-read-non-assignable-grants',
+      headers,
+      handlers: harness.handlers
+    });
+    assert.equal(readRoute.status, 200);
+    const payload = JSON.parse(readRoute.body);
+    assert.deepEqual(payload.permission_codes, [
+      'tenant.customer_management.operate',
+      'tenant.customer_management.view'
+    ]);
+    assert.ok(Array.isArray(payload.available_permission_codes));
+    assert.equal(
+      payload.available_permission_codes.includes('tenant.customer_management.view'),
+      false
+    );
   } finally {
     harness.authService.listTenantRolePermissionGrants = originalListTenantRolePermissionGrants;
   }

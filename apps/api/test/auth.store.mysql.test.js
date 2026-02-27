@@ -899,6 +899,14 @@ test('findTenantPermissionByUserAndTenantId reads permission columns when availa
     canOperateUserManagement: false,
     canViewAccountManagement: false,
     canOperateAccountManagement: false,
+    canViewCustomerManagement: false,
+    canOperateCustomerManagement: false,
+    canViewCustomerScopeMy: false,
+    canOperateCustomerScopeMy: false,
+    canViewCustomerScopeAssist: false,
+    canOperateCustomerScopeAssist: false,
+    canViewCustomerScopeAll: false,
+    canOperateCustomerScopeAll: false,
     canViewRoleManagement: true,
     canOperateRoleManagement: true
   });

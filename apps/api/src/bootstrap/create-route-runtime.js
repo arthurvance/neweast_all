@@ -60,7 +60,8 @@ const createRouteRuntime = ({
       auditService: auditRuntime.auditService,
       tenantUserService: tenantRuntime.tenantUserService,
       tenantRoleService: tenantRuntime.tenantRoleService,
-      tenantAccountService: tenantRuntime.tenantAccountService
+      tenantAccountService: tenantRuntime.tenantAccountService,
+      tenantCustomerService: tenantRuntime.tenantCustomerService
     }
   };
 };

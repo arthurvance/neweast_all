@@ -162,6 +162,48 @@
   },
   {
     "method": "GET",
+    "path": "/tenant/customers",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/customers",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/customers/:customer_id",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/customers/:customer_id/basic",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/customers/:customer_id/realname",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/customers/:customer_id/operation-logs",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
     "path": "/tenant/audit/events",
     "access": "protected",
     "permission_code": "tenant.user_management.view",

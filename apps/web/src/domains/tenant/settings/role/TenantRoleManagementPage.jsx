@@ -68,22 +68,33 @@ const isTenantSysAdminRole = (roleRecord) => {
   );
 };
 
+const CUSTOMER_TREE_ROOT_KEY = 'customer';
 const ACCOUNT_MATRIX_TREE_ROOT_KEY = 'account';
 const SETTINGS_TREE_ROOT_KEY = 'settings';
 const TENANT_PERMISSION_MODULE_LABEL_MAP = Object.freeze({
+  [CUSTOMER_TREE_ROOT_KEY]: '客户管理',
   [ACCOUNT_MATRIX_TREE_ROOT_KEY]: '账号矩阵',
   [SETTINGS_TREE_ROOT_KEY]: '设置'
 });
 const TENANT_PERMISSION_MODULE_ORDER_MAP = Object.freeze({
-  [ACCOUNT_MATRIX_TREE_ROOT_KEY]: 0,
-  [SETTINGS_TREE_ROOT_KEY]: 1
+  [CUSTOMER_TREE_ROOT_KEY]: 0,
+  [ACCOUNT_MATRIX_TREE_ROOT_KEY]: 1,
+  [SETTINGS_TREE_ROOT_KEY]: 2
 });
 const TENANT_PERMISSION_GROUP_MODULE_KEY_MAP = Object.freeze({
+  customer_management: CUSTOMER_TREE_ROOT_KEY,
+  customer_scope_my: CUSTOMER_TREE_ROOT_KEY,
+  customer_scope_assist: CUSTOMER_TREE_ROOT_KEY,
+  customer_scope_all: CUSTOMER_TREE_ROOT_KEY,
   account_management: ACCOUNT_MATRIX_TREE_ROOT_KEY,
   user_management: SETTINGS_TREE_ROOT_KEY,
   role_management: SETTINGS_TREE_ROOT_KEY
 });
 const TENANT_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
+  customer_management: '客户资料',
+  customer_scope_my: '我的客户',
+  customer_scope_assist: '协管客户',
+  customer_scope_all: '全部客户',
   user_management: '用户管理',
   role_management: '角色管理',
   account_management: '账号管理'
@@ -98,8 +109,27 @@ const TENANT_PERMISSION_LABEL_KEY_MAP = Object.freeze({
   'permission.tenant.role_management.view': '查看角色管理',
   'permission.tenant.role_management.operate': '操作角色管理',
   'permission.tenant.account_management.view': '查看账号管理',
-  'permission.tenant.account_management.operate': '操作账号管理'
+  'permission.tenant.account_management.operate': '操作账号管理',
+  'permission.tenant.customer_management.view': '查看客户资料',
+  'permission.tenant.customer_management.operate': '操作客户资料',
+  'permission.tenant.customer_scope_my.view': '查看我的客户',
+  'permission.tenant.customer_scope_my.operate': '操作我的客户',
+  'permission.tenant.customer_scope_assist.view': '查看协管客户',
+  'permission.tenant.customer_scope_assist.operate': '操作协管客户',
+  'permission.tenant.customer_scope_all.view': '查看全部客户',
+  'permission.tenant.customer_scope_all.operate': '操作全部客户'
 });
+const HIDDEN_TENANT_PERMISSION_GROUP_KEY_SET = new Set(['customer_management']);
+const CUSTOMER_SCOPE_GROUP_KEY_SET = new Set([
+  'customer_scope_my',
+  'customer_scope_assist',
+  'customer_scope_all'
+]);
+const TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP = new Map([
+  ['tenant.customer_scope_my.operate', 'tenant.customer_scope_my.view'],
+  ['tenant.customer_scope_assist.operate', 'tenant.customer_scope_assist.view'],
+  ['tenant.customer_scope_all.operate', 'tenant.customer_scope_all.view']
+]);
 
 const toPermissionCodeParts = (permissionCode) => {
   const normalizedCode = String(permissionCode || '').trim().toLowerCase();
@@ -241,6 +271,9 @@ const toPermissionTreeData = (availablePermissions = []) => {
     const groupKey = String(
       permissionItem?.group_key || parsed?.moduleKey || 'misc'
     ).trim().toLowerCase();
+    if (HIDDEN_TENANT_PERMISSION_GROUP_KEY_SET.has(groupKey)) {
+      continue;
+    }
     const moduleKey = toTenantPermissionModuleKey(groupKey);
     const groupNodeKey = `${moduleKey}/${groupKey || 'misc'}`;
     const groupOrder = Number(permissionItem?.order || 0);
@@ -253,6 +286,7 @@ const toPermissionTreeData = (availablePermissions = []) => {
     };
     const currentNode = moduleNode.groups.get(groupNodeKey) || {
       key: groupNodeKey,
+      groupKey,
       title: toTenantPermissionGroupLabel(groupKey),
       selectable: false,
       order: Number.isFinite(groupOrder) ? groupOrder : 0,
@@ -270,41 +304,76 @@ const toPermissionTreeData = (availablePermissions = []) => {
     moduleNodeByKey.set(moduleKey, moduleNode);
   }
 
+  const toSortedLeafNodes = (children = []) =>
+    [...children]
+      .sort((left, right) => {
+        const leftOrder = Number(left?.order || 0);
+        const rightOrder = Number(right?.order || 0);
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return String(left.key).localeCompare(String(right.key));
+      })
+      .map((childNode) => ({
+        key: childNode.key,
+        title: childNode.title
+      }));
+
+  const toTreeGroupNode = (groupNode = {}) => ({
+    key: groupNode.key,
+    title: groupNode.title,
+    selectable: false,
+    order: groupNode.order,
+    children: toSortedLeafNodes(groupNode.children)
+  });
+
   return [...moduleNodeByKey.values()]
-    .map((moduleNode) => ({
-      key: moduleNode.key,
-      title: moduleNode.title,
-      selectable: false,
-      order: moduleNode.order,
-      children: [...moduleNode.groups.values()]
-        .map((groupNode) => ({
-          key: groupNode.key,
-          title: groupNode.title,
-          selectable: false,
-          order: groupNode.order,
-          children: [...groupNode.children]
-            .sort((left, right) => {
-              const leftOrder = Number(left?.order || 0);
-              const rightOrder = Number(right?.order || 0);
-              if (leftOrder !== rightOrder) {
-                return leftOrder - rightOrder;
-              }
-              return String(left.key).localeCompare(String(right.key));
-            })
-            .map((childNode) => ({
-              key: childNode.key,
-              title: childNode.title
-            }))
-        }))
-        .sort((left, right) => {
-          const leftOrder = Number(left?.order || 0);
-          const rightOrder = Number(right?.order || 0);
-          if (leftOrder !== rightOrder) {
-            return leftOrder - rightOrder;
-          }
-          return String(left.key).localeCompare(String(right.key));
-        })
-    }))
+    .map((moduleNode) => {
+      const sortedGroupNodes = [...moduleNode.groups.values()].sort((left, right) => {
+        const leftOrder = Number(left?.order || 0);
+        const rightOrder = Number(right?.order || 0);
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return String(left.key).localeCompare(String(right.key));
+      });
+
+      let resolvedGroupNodes = sortedGroupNodes.map((groupNode) => toTreeGroupNode(groupNode));
+      if (moduleNode.key === CUSTOMER_TREE_ROOT_KEY) {
+        const customerScopeGroups = sortedGroupNodes.filter((groupNode) =>
+          CUSTOMER_SCOPE_GROUP_KEY_SET.has(String(groupNode?.groupKey || '').trim().toLowerCase())
+        );
+        if (customerScopeGroups.length > 0) {
+          const customerScopeGroupKeySet = new Set(
+            customerScopeGroups.map((groupNode) => String(groupNode.key || '').trim())
+          );
+          const nonScopeGroups = sortedGroupNodes
+            .filter((groupNode) => !customerScopeGroupKeySet.has(String(groupNode.key || '').trim()))
+            .map((groupNode) => toTreeGroupNode(groupNode));
+          const customerProfileOrder = customerScopeGroups
+            .map((groupNode) => Number(groupNode?.order || 0))
+            .reduce((minOrder, currentOrder) => Math.min(minOrder, currentOrder), Number.MAX_SAFE_INTEGER);
+          resolvedGroupNodes = [
+            {
+              key: `${CUSTOMER_TREE_ROOT_KEY}/customer_management`,
+              title: toTenantPermissionGroupLabel('customer_management'),
+              selectable: false,
+              order: Number.isFinite(customerProfileOrder) ? customerProfileOrder : 0,
+              children: customerScopeGroups.map((groupNode) => toTreeGroupNode(groupNode))
+            },
+            ...nonScopeGroups
+          ];
+        }
+      }
+
+      return {
+        key: moduleNode.key,
+        title: moduleNode.title,
+        selectable: false,
+        order: moduleNode.order,
+        children: resolvedGroupNodes
+      };
+    })
     .sort((left, right) => {
       const leftOrder = Number(left?.order ?? Number.MAX_SAFE_INTEGER);
       const rightOrder = Number(right?.order ?? Number.MAX_SAFE_INTEGER);
@@ -653,6 +722,17 @@ export default function TenantRoleManagementPage({ accessToken }) {
           .map((permissionCode) => String(permissionCode || '').trim())
           .filter((permissionCode) => permissionCode.startsWith('tenant.'))
       )];
+      const normalizedPermissionCodeSet = new Set(normalizedPermissionCodes);
+      for (const [operatePermissionCode, viewPermissionCode] of
+        TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP.entries()) {
+        if (
+          normalizedPermissionCodeSet.has(operatePermissionCode)
+          && !normalizedPermissionCodeSet.has(viewPermissionCode)
+        ) {
+          messageApi.error('客户范围操作权限必须搭配同范围查看权限');
+          return;
+        }
+      }
       setRoleEditSubmitting(true);
       if (roleEditMode === 'create') {
         const payload = await api.createRole({

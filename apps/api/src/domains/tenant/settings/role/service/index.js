@@ -1610,7 +1610,9 @@ const createTenantRoleService = ({ authService } = {}) => {
     let availablePermissionCodes;
     try {
       availablePermissionCatalogItems = normalizeStrictTenantPermissionCatalogItems({
-        permissionCatalogItems: authService.listTenantPermissionCatalogEntries(),
+        permissionCatalogItems: authService.listTenantPermissionCatalogEntries({
+          includeUnassignable: true
+        }),
         minCount: 0,
         maxCount: Number.POSITIVE_INFINITY
       });
@@ -1706,10 +1708,9 @@ const createTenantRoleService = ({ authService } = {}) => {
       && normalizedAvailablePermissionCodes.some((permissionCode) =>
         !catalogPermissionSet.has(permissionCode)
       );
-    const availablePermissionSet = new Set(normalizedAvailablePermissionCodes || []);
     const hasUnsupportedGrantedPermission = Array.isArray(normalizedPermissionCodes)
       && normalizedPermissionCodes.some((permissionCode) =>
-        !availablePermissionSet.has(permissionCode)
+        !catalogPermissionSet.has(permissionCode)
       );
     const sortedAvailablePermissionCodes = [...(normalizedAvailablePermissionCodes || [])]
       .sort((left, right) => left.localeCompare(right));

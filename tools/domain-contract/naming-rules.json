@@ -7,7 +7,9 @@
   "modules": [
     "settings",
     "config",
-    "auth"
+    "auth",
+    "account",
+    "customer"
   ],
   "rules": {
     "capability_id": "{domain}.{module}.{canonical_term}",
@@ -40,6 +42,13 @@
       "governance",
       "system-config",
       "integration"
+    ],
+    "account": [
+      "account",
+      "workbench"
+    ],
+    "customer": [
+      "profile"
     ]
   }
 }

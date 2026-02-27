@@ -25,7 +25,15 @@ const {
   TENANT_ACCOUNT_OPERATION_LOG_PATH,
   TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
   TENANT_ACCOUNT_OPERATE_PERMISSION_CODE,
-  TENANT_ACCOUNT_SCOPE
+  TENANT_ACCOUNT_SCOPE,
+  TENANT_CUSTOMER_BASE_PATH,
+  TENANT_CUSTOMER_ITEM_PATH,
+  TENANT_CUSTOMER_BASIC_PATH,
+  TENANT_CUSTOMER_REALNAME_PATH,
+  TENANT_CUSTOMER_OPERATION_LOG_PATH,
+  TENANT_CUSTOMER_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE
 } = require('../domains/tenant');
 
 const TENANT_ROUTE_MANIFEST = Object.freeze([
@@ -189,6 +197,48 @@ const TENANT_ROUTE_MANIFEST = Object.freeze([
     access: 'protected',
     permission_code: TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
     scope: TENANT_ACCOUNT_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_CUSTOMER_BASE_PATH,
+    access: 'protected',
+    permission_code: TENANT_CUSTOMER_VIEW_PERMISSION_CODE,
+    scope: TENANT_CUSTOMER_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_CUSTOMER_BASE_PATH,
+    access: 'protected',
+    permission_code: TENANT_CUSTOMER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_CUSTOMER_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_CUSTOMER_ITEM_PATH,
+    access: 'protected',
+    permission_code: TENANT_CUSTOMER_VIEW_PERMISSION_CODE,
+    scope: TENANT_CUSTOMER_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_CUSTOMER_BASIC_PATH,
+    access: 'protected',
+    permission_code: TENANT_CUSTOMER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_CUSTOMER_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_CUSTOMER_REALNAME_PATH,
+    access: 'protected',
+    permission_code: TENANT_CUSTOMER_OPERATE_PERMISSION_CODE,
+    scope: TENANT_CUSTOMER_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_CUSTOMER_OPERATION_LOG_PATH,
+    access: 'protected',
+    permission_code: TENANT_CUSTOMER_VIEW_PERMISSION_CODE,
+    scope: TENANT_CUSTOMER_SCOPE
   },
   {
     method: 'GET',

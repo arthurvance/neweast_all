@@ -1586,7 +1586,12 @@ const createTenantManagementApiServer = async () => {
     'tenant.role_management.view',
     'tenant.role_management.operate',
     'tenant.account_management.view',
-    'tenant.account_management.operate'
+    'tenant.account_management.operate',
+    'tenant.customer_management.view',
+    'tenant.customer_management.operate',
+    'tenant.customer_scope_my.view',
+    'tenant.customer_scope_assist.view',
+    'tenant.customer_scope_all.view'
   ];
   const protectedRoleIds = new Set(['tenant_owner', 'tenant_admin', 'tenant_member']);
   const sessionMembershipByTenantId = {
@@ -1598,6 +1603,7 @@ const createTenantManagementApiServer = async () => {
   let nextMemberId = 3;
   let nextRoleSequence = 3;
   let nextAccountSequence = 3;
+  let nextCustomerSequence = 3;
 
   const membersByTenantId = new Map([
     [
@@ -1751,7 +1757,12 @@ const createTenantManagementApiServer = async () => {
             'tenant.role_management.view',
             'tenant.role_management.operate',
             'tenant.account_management.view',
-            'tenant.account_management.operate'
+            'tenant.account_management.operate',
+            'tenant.customer_management.view',
+            'tenant.customer_management.operate',
+            'tenant.customer_scope_my.view',
+            'tenant.customer_scope_assist.view',
+            'tenant.customer_scope_all.view'
           ]
         ]
       ])
@@ -1812,8 +1823,8 @@ const createTenantManagementApiServer = async () => {
             avatar_url: '',
             owner_membership_id: 'membership-tenant-101-member',
             owner_name: '成员乙',
-            assistant_membership_ids: [],
-            assistant_names: [],
+            assistant_membership_ids: ['membership-tenant-101-admin'],
+            assistant_names: ['组织管理员'],
             customer_count: 8,
             group_chat_count: 2,
             status: 'disabled',
@@ -1893,6 +1904,132 @@ const createTenantManagementApiServer = async () => {
       ])
     ]
   ]);
+  const customersByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'customer-tenant-101-1',
+          {
+            customer_id: 'customer-tenant-101-1',
+            tenant_id: 'tenant-101',
+            account_id: 'account-tenant-101-1',
+            account_wechat_id: 'wx_tenant_101_admin',
+            account_nickname: '管理员主号',
+            wechat_id: 'wx_customer_101_primary',
+            nickname: '客户甲',
+            source: 'ground',
+            school: '第一中学',
+            class_name: '高二(1)班',
+            real_name: '张三',
+            relation: '家长',
+            phone: '13900000001',
+            address: '浦东新区',
+            status: 'enabled',
+            created_by_name: '系统',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        [
+          'customer-tenant-101-2',
+          {
+            customer_id: 'customer-tenant-101-2',
+            tenant_id: 'tenant-101',
+            account_id: 'account-tenant-101-2',
+            account_wechat_id: 'wx_tenant_101_sales',
+            account_nickname: '销售号',
+            wechat_id: 'wx_customer_101_assist',
+            nickname: '客户乙',
+            source: 'fission',
+            school: '第二中学',
+            class_name: '高一(3)班',
+            real_name: '李四',
+            relation: '学生',
+            phone: '13900000002',
+            address: '海淀区',
+            status: 'enabled',
+            created_by_name: '系统',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'customer-tenant-202-1',
+          {
+            customer_id: 'customer-tenant-202-1',
+            tenant_id: 'tenant-202',
+            account_id: 'account-tenant-202-1',
+            account_wechat_id: 'wx_tenant_202_admin',
+            account_nickname: '租户202主号',
+            wechat_id: 'wx_customer_202_primary',
+            nickname: '客户丙',
+            source: 'other',
+            school: '',
+            class_name: '',
+            real_name: '',
+            relation: '',
+            phone: '',
+            address: '',
+            status: 'enabled',
+            created_by_name: '系统',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ]
+      ])
+    ]
+  ]);
+  const customerOperationLogsByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'customer-tenant-101-1',
+          [
+            {
+              operation_type: 'create',
+              operated_at: new Date().toISOString(),
+              operator_name: '系统',
+              content: '初始化客户'
+            }
+          ]
+        ],
+        [
+          'customer-tenant-101-2',
+          [
+            {
+              operation_type: 'create',
+              operated_at: new Date().toISOString(),
+              operator_name: '系统',
+              content: '初始化客户'
+            }
+          ]
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'customer-tenant-202-1',
+          [
+            {
+              operation_type: 'create',
+              operated_at: new Date().toISOString(),
+              operator_name: '系统',
+              content: '初始化客户'
+            }
+          ]
+        ]
+      ])
+    ]
+  ]);
   const tenant101Members = membersByTenantId.get('tenant-101');
   const tenant101Bindings = memberRoleBindingsByTenantId.get('tenant-101');
   if (tenant101Members && tenant101Bindings) {
@@ -1945,6 +2082,39 @@ const createTenantManagementApiServer = async () => {
     return [...deduped];
   };
 
+  const normalizeCustomerSource = (source) => {
+    const normalizedSource = String(source || '').trim().toLowerCase();
+    if (normalizedSource === 'ground' || normalizedSource === '地推' || normalizedSource === '地堆') {
+      return 'ground';
+    }
+    if (normalizedSource === 'fission' || normalizedSource === '裂变') {
+      return 'fission';
+    }
+    if (normalizedSource === 'other' || normalizedSource === '其它' || normalizedSource === '其他') {
+      return 'other';
+    }
+    return '';
+  };
+
+  const normalizeCustomerStatus = (status) => {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    if (normalizedStatus === 'active' || normalizedStatus === 'enabled') {
+      return 'enabled';
+    }
+    if (normalizedStatus === 'inactive' || normalizedStatus === 'disabled') {
+      return 'disabled';
+    }
+    return '';
+  };
+
+  const parseCsvList = (value) =>
+    [...new Set(
+      String(value || '')
+        .split(',')
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    )];
+
   const ensureTenantMaps = (tenantId) => {
     if (!membersByTenantId.has(tenantId)) {
       membersByTenantId.set(tenantId, new Map());
@@ -1964,6 +2134,12 @@ const createTenantManagementApiServer = async () => {
     if (!accountOperationLogsByTenantId.has(tenantId)) {
       accountOperationLogsByTenantId.set(tenantId, new Map());
     }
+    if (!customersByTenantId.has(tenantId)) {
+      customersByTenantId.set(tenantId, new Map());
+    }
+    if (!customerOperationLogsByTenantId.has(tenantId)) {
+      customerOperationLogsByTenantId.set(tenantId, new Map());
+    }
   };
 
   const getCurrentTenantMaps = () => {
@@ -1976,7 +2152,9 @@ const createTenantManagementApiServer = async () => {
       rolePermissions: rolePermissionsByTenantId.get(tenantId),
       memberRoleBindings: memberRoleBindingsByTenantId.get(tenantId),
       accounts: accountsByTenantId.get(tenantId),
-      accountOperationLogs: accountOperationLogsByTenantId.get(tenantId)
+      accountOperationLogs: accountOperationLogsByTenantId.get(tenantId),
+      customers: customersByTenantId.get(tenantId),
+      customerOperationLogs: customerOperationLogsByTenantId.get(tenantId)
     };
   };
 
@@ -1989,7 +2167,12 @@ const createTenantManagementApiServer = async () => {
         can_view_role_management: false,
         can_operate_role_management: false,
         can_view_account_management: false,
-        can_operate_account_management: false
+        can_operate_account_management: false,
+        can_view_customer_management: false,
+        can_operate_customer_management: false,
+        can_view_customer_scope_my: false,
+        can_view_customer_scope_assist: false,
+        can_view_customer_scope_all: false
       };
     }
     const { tenantId, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
@@ -2009,7 +2192,12 @@ const createTenantManagementApiServer = async () => {
       can_view_role_management: permissionSet.has('tenant.role_management.view'),
       can_operate_role_management: permissionSet.has('tenant.role_management.operate'),
       can_view_account_management: permissionSet.has('tenant.account_management.view'),
-      can_operate_account_management: permissionSet.has('tenant.account_management.operate')
+      can_operate_account_management: permissionSet.has('tenant.account_management.operate'),
+      can_view_customer_management: permissionSet.has('tenant.customer_management.view'),
+      can_operate_customer_management: permissionSet.has('tenant.customer_management.operate'),
+      can_view_customer_scope_my: permissionSet.has('tenant.customer_scope_my.view'),
+      can_view_customer_scope_assist: permissionSet.has('tenant.customer_scope_assist.view'),
+      can_view_customer_scope_all: permissionSet.has('tenant.customer_scope_all.view')
     };
   };
 
@@ -2179,8 +2367,12 @@ const createTenantManagementApiServer = async () => {
       rolePermissions,
       memberRoleBindings,
       accounts,
-      accountOperationLogs
+      accountOperationLogs,
+      customers,
+      customerOperationLogs
     } = getCurrentTenantMaps();
+    const tenantPermissionContext = buildTenantPermissionContext();
+    const sessionMembershipId = String(sessionMembershipByTenantId[tenantId] || '').trim();
 
     if (method === 'GET' && pathname === '/tenant/users') {
       const page = Number(url.searchParams.get('page') || 1);
@@ -2428,7 +2620,7 @@ const createTenantManagementApiServer = async () => {
       const nicknameFilter = String(url.searchParams.get('nickname') || '').trim().toLowerCase();
       const ownerKeywordFilter = String(url.searchParams.get('owner_keyword') || '').trim().toLowerCase();
       const assistantKeywordFilter = String(url.searchParams.get('assistant_keyword') || '').trim().toLowerCase();
-      const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
+      const statusFilter = normalizeCustomerStatus(url.searchParams.get('status'));
       const createdTimeStart = Date.parse(String(url.searchParams.get('created_time_start') || '').trim());
       const createdTimeEnd = Date.parse(String(url.searchParams.get('created_time_end') || '').trim());
       const hasCreatedTimeStart = !Number.isNaN(createdTimeStart);
@@ -2442,7 +2634,7 @@ const createTenantManagementApiServer = async () => {
         const accountAssistantJoined = String(
           (Array.isArray(account?.assistant_names) ? account.assistant_names : []).join(' ')
         ).trim().toLowerCase();
-        const accountStatus = String(account?.status || '').trim().toLowerCase();
+        const accountStatus = normalizeCustomerStatus(account?.status);
         const accountCreatedAt = Date.parse(String(account?.created_at || '').trim());
         if (wechatIdFilter && accountWechatId !== wechatIdFilter) {
           return false;
@@ -2736,6 +2928,380 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
+    const ensureCustomerViewPermission = () => {
+      if (tenantPermissionContext?.can_view_customer_management) {
+        return true;
+      }
+      sendProblem({
+        status: 403,
+        title: 'Forbidden',
+        detail: '当前角色缺少客户资料查看权限',
+        errorCode: 'TCUSTOMER-403-VIEW-FORBIDDEN'
+      });
+      return false;
+    };
+    const ensureCustomerOperatePermission = () => {
+      if (tenantPermissionContext?.can_operate_customer_management) {
+        return true;
+      }
+      sendProblem({
+        status: 403,
+        title: 'Forbidden',
+        detail: '当前角色缺少客户资料操作权限',
+        errorCode: 'TCUSTOMER-403-OPERATE-FORBIDDEN'
+      });
+      return false;
+    };
+
+    if (method === 'GET' && pathname === '/tenant/customers') {
+      if (!ensureCustomerViewPermission()) {
+        return;
+      }
+
+      const scope = String(url.searchParams.get('scope') || 'my').trim().toLowerCase() || 'my';
+      const scopePermissionByKey = {
+        my: Boolean(tenantPermissionContext?.can_view_customer_scope_my),
+        assist: Boolean(tenantPermissionContext?.can_view_customer_scope_assist),
+        all: Boolean(tenantPermissionContext?.can_view_customer_scope_all)
+      };
+      if (!scopePermissionByKey[scope]) {
+        const detail = scopePermissionByKey[scope] === undefined
+          ? 'scope 参数非法'
+          : '当前角色缺少对应客户范围查看权限';
+        sendProblem({
+          status: scopePermissionByKey[scope] === undefined ? 400 : 403,
+          detail,
+          errorCode: scopePermissionByKey[scope] === undefined
+            ? 'TCUSTOMER-400-INVALID-SCOPE'
+            : 'TCUSTOMER-403-SCOPE-FORBIDDEN'
+        });
+        return;
+      }
+
+      const page = Number(url.searchParams.get('page') || 1);
+      const pageSize = Number(url.searchParams.get('page_size') || 20);
+      const wechatIdFilter = String(url.searchParams.get('wechat_id') || '').trim();
+      const accountIdsFilter = parseCsvList(url.searchParams.get('account_ids'));
+      const nicknameFilter = String(url.searchParams.get('nickname') || '').trim().toLowerCase();
+      const sourceFilter = normalizeCustomerSource(url.searchParams.get('source'));
+      const realNameFilter = String(url.searchParams.get('real_name') || '').trim().toLowerCase();
+      const phoneFilter = String(url.searchParams.get('phone') || '').trim();
+      const statusFilter = normalizeCustomerStatus(url.searchParams.get('status'));
+      const createdTimeStart = Date.parse(String(url.searchParams.get('created_time_start') || '').trim());
+      const createdTimeEnd = Date.parse(String(url.searchParams.get('created_time_end') || '').trim());
+      const hasCreatedTimeStart = !Number.isNaN(createdTimeStart);
+      const hasCreatedTimeEnd = !Number.isNaN(createdTimeEnd);
+
+      const listedCustomers = [...customers.values()];
+      const filteredCustomers = listedCustomers.filter((customer) => {
+        const accountId = String(customer?.account_id || '').trim();
+        const account = accounts.get(accountId) || null;
+        const ownerMembershipId = String(account?.owner_membership_id || '').trim();
+        const assistantMembershipIds = Array.isArray(account?.assistant_membership_ids)
+          ? account.assistant_membership_ids.map((membershipId) => String(membershipId || '').trim())
+          : [];
+        if (scope === 'my' && ownerMembershipId !== sessionMembershipId) {
+          return false;
+        }
+        if (scope === 'assist' && !assistantMembershipIds.includes(sessionMembershipId)) {
+          return false;
+        }
+
+        const customerWechatId = String(customer?.wechat_id || '').trim();
+        const customerAccountId = String(customer?.account_id || '').trim();
+        const customerNickname = String(customer?.nickname || '').trim().toLowerCase();
+        const customerSource = normalizeCustomerSource(customer?.source);
+        const customerRealName = String(customer?.real_name || '').trim().toLowerCase();
+        const customerPhone = String(customer?.phone || '').trim();
+        const customerStatus = normalizeCustomerStatus(customer?.status);
+        const customerCreatedAt = Date.parse(String(customer?.created_at || '').trim());
+
+        if (wechatIdFilter && customerWechatId !== wechatIdFilter) {
+          return false;
+        }
+        if (accountIdsFilter.length > 0 && !accountIdsFilter.includes(customerAccountId)) {
+          return false;
+        }
+        if (nicknameFilter && !customerNickname.includes(nicknameFilter)) {
+          return false;
+        }
+        if (sourceFilter && customerSource !== sourceFilter) {
+          return false;
+        }
+        if (realNameFilter && !customerRealName.includes(realNameFilter)) {
+          return false;
+        }
+        if (phoneFilter && customerPhone !== phoneFilter) {
+          return false;
+        }
+        if (statusFilter && customerStatus !== statusFilter) {
+          return false;
+        }
+        if ((hasCreatedTimeStart || hasCreatedTimeEnd) && Number.isNaN(customerCreatedAt)) {
+          return false;
+        }
+        if (hasCreatedTimeStart && customerCreatedAt < createdTimeStart) {
+          return false;
+        }
+        if (hasCreatedTimeEnd && customerCreatedAt > createdTimeEnd) {
+          return false;
+        }
+        return true;
+      });
+      filteredCustomers.sort((left, right) => {
+        const leftCreatedAt = Date.parse(String(left?.created_at || '').trim());
+        const rightCreatedAt = Date.parse(String(right?.created_at || '').trim());
+        if (!Number.isNaN(leftCreatedAt) && !Number.isNaN(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
+          return rightCreatedAt - leftCreatedAt;
+        }
+        return String(left?.customer_id || '').localeCompare(String(right?.customer_id || ''));
+      });
+      const offset = (Math.max(1, page) - 1) * Math.max(1, pageSize);
+      const pageItems = filteredCustomers.slice(offset, offset + Math.max(1, pageSize));
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          tenant_id: tenantId,
+          page: Math.max(1, page),
+          page_size: Math.max(1, pageSize),
+          total: filteredCustomers.length,
+          customers: pageItems,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/tenant/customers') {
+      if (!ensureCustomerViewPermission() || !ensureCustomerOperatePermission()) {
+        return;
+      }
+
+      const accountId = String(body.account_id || '').trim();
+      const wechatId = String(body.wechat_id || '').trim();
+      const nickname = String(body.nickname || '').trim();
+      const source = normalizeCustomerSource(body.source);
+      if (!accountId || !wechatId || !nickname || !source) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'TCUSTOMER-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const account = accounts.get(accountId);
+      if (!account) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标账号不存在',
+          errorCode: 'TACCOUNT-404-ACCOUNT-NOT-FOUND'
+        });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const customerId = `customer-${tenantId}-${nextCustomerSequence++}`;
+      const createdCustomer = {
+        customer_id: customerId,
+        tenant_id: tenantId,
+        account_id: accountId,
+        account_wechat_id: String(account.wechat_id || '').trim(),
+        account_nickname: String(account.nickname || '').trim(),
+        wechat_id: wechatId,
+        nickname,
+        source,
+        school: String(body.school || '').trim(),
+        class_name: String(body.class_name || '').trim(),
+        real_name: String(body.real_name || '').trim(),
+        relation: String(body.relation || '').trim(),
+        phone: String(body.phone || '').trim(),
+        address: String(body.address || '').trim(),
+        status: 'enabled',
+        created_by_user_id: sessionMembershipId || null,
+        created_by_name: '当前用户',
+        created_at: now,
+        updated_at: now
+      };
+      customers.set(customerId, createdCustomer);
+      customerOperationLogs.set(customerId, [
+        {
+          operation_type: 'create',
+          operated_at: now,
+          operator_name: '当前用户',
+          content: `request_id: ${requestId}`
+        }
+      ]);
+      accounts.set(accountId, {
+        ...account,
+        customer_count: Math.max(0, Number(account?.customer_count || 0)) + 1,
+        updated_at: now
+      });
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...createdCustomer,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const customerMatch = pathname.match(/^\/tenant\/customers\/([^/]+)$/);
+    if (customerMatch && method === 'GET') {
+      if (!ensureCustomerViewPermission()) {
+        return;
+      }
+      const customerId = decodeURIComponent(customerMatch[1] || '').trim();
+      const customer = customers.get(customerId);
+      if (!customer) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标客户不存在',
+          errorCode: 'TCUSTOMER-404-CUSTOMER-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...customer,
+          operation_logs: customerOperationLogs.get(customerId) || [],
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const customerBasicMatch = pathname.match(/^\/tenant\/customers\/([^/]+)\/basic$/);
+    if (customerBasicMatch && method === 'PATCH') {
+      if (!ensureCustomerViewPermission() || !ensureCustomerOperatePermission()) {
+        return;
+      }
+      const customerId = decodeURIComponent(customerBasicMatch[1] || '').trim();
+      const customer = customers.get(customerId);
+      if (!customer) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标客户不存在',
+          errorCode: 'TCUSTOMER-404-CUSTOMER-NOT-FOUND'
+        });
+        return;
+      }
+      const source = normalizeCustomerSource(body.source);
+      if (!source) {
+        sendProblem({
+          status: 400,
+          detail: 'source 必须为 ground、fission 或 other',
+          errorCode: 'TCUSTOMER-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const updatedCustomer = {
+        ...customer,
+        source,
+        updated_at: now
+      };
+      customers.set(customerId, updatedCustomer);
+      const logs = customerOperationLogs.get(customerId) || [];
+      logs.unshift({
+        operation_type: 'update_basic',
+        operated_at: now,
+        operator_name: '当前用户',
+        content: `source -> ${source}`
+      });
+      customerOperationLogs.set(customerId, logs);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...updatedCustomer,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const customerRealnameMatch = pathname.match(/^\/tenant\/customers\/([^/]+)\/realname$/);
+    if (customerRealnameMatch && method === 'PATCH') {
+      if (!ensureCustomerViewPermission() || !ensureCustomerOperatePermission()) {
+        return;
+      }
+      const customerId = decodeURIComponent(customerRealnameMatch[1] || '').trim();
+      const customer = customers.get(customerId);
+      if (!customer) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标客户不存在',
+          errorCode: 'TCUSTOMER-404-CUSTOMER-NOT-FOUND'
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const updatedCustomer = {
+        ...customer,
+        real_name: String(body.real_name || '').trim(),
+        school: String(body.school || '').trim(),
+        class_name: String(body.class_name || '').trim(),
+        relation: String(body.relation || '').trim(),
+        phone: String(body.phone || '').trim(),
+        address: String(body.address || '').trim(),
+        updated_at: now
+      };
+      customers.set(customerId, updatedCustomer);
+      const logs = customerOperationLogs.get(customerId) || [];
+      logs.unshift({
+        operation_type: 'update_realname',
+        operated_at: now,
+        operator_name: '当前用户',
+        content: `request_id: ${requestId}`
+      });
+      customerOperationLogs.set(customerId, logs);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...updatedCustomer,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const customerLogsMatch = pathname.match(/^\/tenant\/customers\/([^/]+)\/operation-logs$/);
+    if (customerLogsMatch && method === 'GET') {
+      if (!ensureCustomerViewPermission()) {
+        return;
+      }
+      const customerId = decodeURIComponent(customerLogsMatch[1] || '').trim();
+      if (!customers.has(customerId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标客户不存在',
+          errorCode: 'TCUSTOMER-404-CUSTOMER-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          customer_id: customerId,
+          logs: customerOperationLogs.get(customerId) || [],
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
     if (method === 'GET' && pathname === '/tenant/roles') {
       sendJson({
         status: 200,
@@ -2977,6 +3543,31 @@ const createTenantManagementApiServer = async () => {
   };
 };
 
+const ensureAuthStoreCustomerCapabilities = (authService) => {
+  const authStore = authService?._internals?.authStore;
+  if (!authStore || typeof authStore !== 'object') {
+    return;
+  }
+  if (typeof authStore.listTenantCustomersByTenantId !== 'function') {
+    authStore.listTenantCustomersByTenantId = async () => [];
+  }
+  if (typeof authStore.createTenantCustomer !== 'function') {
+    authStore.createTenantCustomer = async () => null;
+  }
+  if (typeof authStore.findTenantCustomerByCustomerId !== 'function') {
+    authStore.findTenantCustomerByCustomerId = async () => null;
+  }
+  if (typeof authStore.updateTenantCustomerBasic !== 'function') {
+    authStore.updateTenantCustomerBasic = async () => null;
+  }
+  if (typeof authStore.updateTenantCustomerRealname !== 'function') {
+    authStore.updateTenantCustomerRealname = async () => null;
+  }
+  if (typeof authStore.listTenantCustomerOperationLogs !== 'function') {
+    authStore.listTenantCustomerOperationLogs = async () => [];
+  }
+};
+
 const createRealApiServer = async () => {
   const config = readConfig({
     ALLOW_MOCK_BACKENDS: 'true'
@@ -3020,6 +3611,7 @@ const createRealApiServer = async () => {
     allowInMemoryOtpStores: true,
     requireSecureOtpStores: false
   });
+  ensureAuthStoreCustomerCapabilities(authService);
 
   const app = await createApiApp(config, {
     dependencyProbe: async () => ({
@@ -5463,6 +6055,350 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
+    `(() => {
+      const customerMenu = document.querySelector('[data-testid="tenant-menu-customer-management"]');
+      const accountMenu = document.querySelector('[data-testid="tenant-menu-account-matrix"]');
+      if (!customerMenu || !accountMenu) {
+        return false;
+      }
+      return Boolean(customerMenu.compareDocumentPosition(accountMenu) & Node.DOCUMENT_POSITION_FOLLOWING);
+    })()`,
+    10000,
+    'customer management menu should appear before account matrix menu'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-menu-customer-management"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-tab-customer-profile"]'))`,
+    8000,
+    'customer profile submenu item should be visible after expanding customer management menu'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-tab-customer-profile"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customers-module"]'))`,
+    10000,
+    'customer profile module should be visible'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const tabMy = document.querySelector('[data-testid="tenant-customer-tab-my"]');
+      const tabAssist = document.querySelector('[data-testid="tenant-customer-tab-assist"]');
+      const tabAll = document.querySelector('[data-testid="tenant-customer-tab-all"]');
+      return Boolean(tabMy) && Boolean(tabAssist) && Boolean(tabAll);
+    })()`,
+    10000,
+    'customer scope tabs should be visible according to permissions'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-customer-tab-all"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-id-customer-tenant-101-1"]'))`,
+    10000,
+    'customer list should render initial records'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-customer-create-open"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-create-account-id"]'))`,
+    10000,
+    'customer create modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const accountSelect = document.querySelector('[data-testid="tenant-customer-create-account-id"]');
+      const accountTrigger = accountSelect?.querySelector('.ant-select-selector') || accountSelect;
+      const sourceSelect = document.querySelector('[data-testid="tenant-customer-create-source"]');
+      const sourceTrigger = sourceSelect?.querySelector('.ant-select-selector') || sourceSelect;
+      const wechatInput = document.querySelector('[data-testid="tenant-customer-create-wechat-id"]');
+      const nicknameInput = document.querySelector('[data-testid="tenant-customer-create-nickname"]');
+
+      accountTrigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      accountTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return Boolean(accountTrigger && sourceTrigger && wechatInput && nicknameInput);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('管理员主号'));
+      return Boolean(option);
+    })()`,
+    10000,
+    'customer create account selector should expose account option'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('管理员主号'));
+      option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      option?.click();
+      return Boolean(option);
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const sourceSelect = document.querySelector('[data-testid="tenant-customer-create-source"]');
+      const sourceTrigger = sourceSelect?.querySelector('.ant-select-selector') || sourceSelect;
+      const wechatInput = document.querySelector('[data-testid="tenant-customer-create-wechat-id"]');
+      const nicknameInput = document.querySelector('[data-testid="tenant-customer-create-nickname"]');
+      setter.call(wechatInput, 'wx_customer_101_new');
+      wechatInput.dispatchEvent(new Event('input', { bubbles: true }));
+      wechatInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nicknameInput, '客户新增甲');
+      nicknameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nicknameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      sourceTrigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      sourceTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('地推'));
+      return Boolean(option);
+    })()`,
+    10000,
+    'customer create source selector should expose source option'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('地推'));
+      option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      option?.click();
+      return Boolean(option);
+    })()`
+  );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-customer-create-confirm',
+    10000,
+    'tenant customer create confirm should be enabled before submission'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-customer-create-confirm"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/customers' && request.method === 'POST',
+    10000,
+    'tenant customer create request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-id-customer-tenant-101-3"]'))`,
+    10000,
+    'customer list should render newly created customer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const row = document.querySelector('[data-row-key="customer-tenant-101-3"]');
+      row?.click();
+      return Boolean(row);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-detail-drawer"]'))`,
+    10000,
+    'customer row click should open detail drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-customer-detail-edit-basic"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-basic-source"]'))`,
+    8000,
+    'customer basic edit modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const sourceSelect = document.querySelector('[data-testid="tenant-customer-basic-source"]');
+      const sourceTrigger = sourceSelect?.querySelector('.ant-select-selector') || sourceSelect;
+      sourceTrigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      sourceTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return Boolean(sourceTrigger);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('裂变'));
+      return Boolean(option);
+    })()`,
+    8000,
+    'customer basic source selector should expose fission option'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const option = [...document.querySelectorAll('.ant-select-item-option')]
+        .find((node) => String(node.textContent || '').includes('裂变'));
+      option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      option?.click();
+      return Boolean(option);
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-customer-basic-confirm"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/customers/customer-tenant-101-3/basic' && request.method === 'PATCH',
+    10000,
+    'tenant customer basic edit request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="tenant-customer-detail-drawer"]');
+      return Boolean(drawer && String(drawer.textContent || '').includes('裂变'));
+    })()`,
+    10000,
+    'customer detail drawer should reflect updated source'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-customer-detail-edit-realname"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-realname-name"]'))`,
+    8000,
+    'customer realname edit modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const nameInput = document.querySelector('[data-testid="tenant-customer-realname-name"]');
+      const schoolInput = document.querySelector('[data-testid="tenant-customer-realname-school"]');
+      setter.call(nameInput, '王五');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(schoolInput, '第三中学');
+      schoolInput.dispatchEvent(new Event('input', { bubbles: true }));
+      schoolInput.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-customer-realname-confirm"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/customers/customer-tenant-101-3/realname' && request.method === 'PATCH',
+    10000,
+    'tenant customer realname edit request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="tenant-customer-detail-drawer"]');
+      return Boolean(drawer && String(drawer.textContent || '').includes('王五') && String(drawer.textContent || '').includes('第三中学'));
+    })()`,
+    10000,
+    'customer detail drawer should reflect updated realname information'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="tenant-customer-detail-drawer"]');
+      const timelineTab = [...(drawer?.querySelectorAll('.ant-tabs-tab') || [])]
+        .find((tab) => String(tab.textContent || '').includes('操作记录'));
+      timelineTab?.click();
+      return Boolean(timelineTab);
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-customer-log-0"]'))`,
+    10000,
+    'customer operation timeline should render entries'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
+      return true;
+    })()`
+  );
+
+  await waitForCondition(
+    cdp,
+    sessionId,
     `Boolean(document.querySelector('[data-testid="tenant-menu-account-matrix"]'))`,
     10000,
     'tenant account management menu should become visible after account permissions are granted'
@@ -5677,19 +6613,21 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     10000,
     'tenant account row should reflect disabled status after toggle'
   );
-  await evaluate(
-    cdp,
-    sessionId,
-    `(() => {
-      document.querySelector('[data-testid="tenant-account-id-account-tenant-101-3"]')?.click();
-      return true;
-    })()`
-  );
   await waitForCondition(
     cdp,
     sessionId,
-    `Boolean(document.querySelector('[data-testid="tenant-account-detail-drawer"]'))`,
-    8000,
+    `(() => {
+      const drawer = document.querySelector('[data-testid="tenant-account-detail-drawer"]');
+      if (drawer) {
+        return true;
+      }
+      const row = document.querySelector('[data-row-key="account-tenant-101-3"]');
+      const accountIdCell = row?.querySelector('[data-testid="tenant-account-id-account-tenant-101-3"]');
+      accountIdCell?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return false;
+    })()`,
+    10000,
     'tenant account row click should open detail drawer'
   );
   await evaluate(
@@ -6214,6 +7152,25 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   );
   assert.deepEqual(replaceRolesRequest?.body?.role_ids?.sort(), ['tenant_role_management_admin', 'tenant_user_management']);
 
+  const createCustomerRequest = api.requests.find(
+    (request) => request.path === '/tenant/customers' && request.method === 'POST'
+  );
+  assert.equal(createCustomerRequest?.body?.account_id, 'account-tenant-101-1');
+  assert.equal(createCustomerRequest?.body?.wechat_id, 'wx_customer_101_new');
+  assert.equal(createCustomerRequest?.body?.nickname, '客户新增甲');
+  assert.equal(createCustomerRequest?.body?.source, 'ground');
+
+  const updateCustomerBasicRequest = api.requests.find(
+    (request) => request.path === '/tenant/customers/customer-tenant-101-3/basic' && request.method === 'PATCH'
+  );
+  assert.equal(updateCustomerBasicRequest?.body?.source, 'fission');
+
+  const updateCustomerRealnameRequest = api.requests.find(
+    (request) => request.path === '/tenant/customers/customer-tenant-101-3/realname' && request.method === 'PATCH'
+  );
+  assert.equal(updateCustomerRealnameRequest?.body?.real_name, '王五');
+  assert.equal(updateCustomerRealnameRequest?.body?.school, '第三中学');
+
   const tenantWriteRequests = api.requests.filter(
     (request) =>
       request.path.startsWith('/tenant/')
@@ -6245,6 +7202,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
           tenant_member_status_modal: true,
           tenant_member_profile_failure_and_retry: true,
           tenant_member_roles_assignment: true,
+          tenant_customer_management_create_and_edit: true,
           tenant_account_management_create_and_detail: true,
           tenant_write_idempotency_keys: true,
           tenant_permission_context_refresh: true,

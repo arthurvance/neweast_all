@@ -73,6 +73,9 @@ export default function TenantDashboardFallbackPanel({
             <nav aria-label="tenant-permission-menu">
               <p style={{ margin: 0 }}>可见菜单</p>
               <ul style={{ margin: '4px 0 0 20px', padding: 0 }}>
+                {permissionUiState?.menu?.customer_management ? (
+                  <li data-testid="menu-customer_management">客户资料</li>
+                ) : null}
                 {permissionUiState?.menu?.user_management ? (
                   <li data-testid="menu-user-management">用户管理</li>
                 ) : null}
@@ -82,13 +85,23 @@ export default function TenantDashboardFallbackPanel({
                 {permissionUiState?.menu?.account_management ? (
                   <li data-testid="menu-account_management">账号管理</li>
                 ) : null}
-                {!permissionUiState?.menu?.user_management
+                {!permissionUiState?.menu?.customer_management
+                && !permissionUiState?.menu?.user_management
                 && !permissionUiState?.menu?.role_management
                 && !permissionUiState?.menu?.account_management ? (
                   <li data-testid="menu-empty">当前无可见菜单</li>
                 ) : null}
               </ul>
             </nav>
+            {permissionUiState?.action?.customer_management ? (
+              <button
+                data-testid="permission-customer_management-button"
+                type="button"
+                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
+              >
+                客户资料
+              </button>
+            ) : null}
             {permissionUiState?.action?.user_management ? (
               <button
                 data-testid="permission-user-management-button"

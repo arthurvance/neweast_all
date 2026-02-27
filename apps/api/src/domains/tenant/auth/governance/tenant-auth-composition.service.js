@@ -110,8 +110,8 @@ const createTenantAuthComposition = ({
   const listTenantPermissionCatalog = () =>
     listSupportedTenantPermissionCodes();
 
-  const listTenantPermissionCatalogEntries = () =>
-    listTenantPermissionCatalogItems();
+  const listTenantPermissionCatalogEntries = (options = {}) =>
+    listTenantPermissionCatalogItems(options);
 
   const {
     listTenantRolePermissionGrants,

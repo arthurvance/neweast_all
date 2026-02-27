@@ -9,7 +9,6 @@ const createTenantRolePermissionGrantCapabilities = ({
   loadValidatedTenantRoleCatalogEntries,
   loadTenantRolePermissionGrantsByRoleIds,
   normalizePlatformRoleIdKey,
-  listSupportedTenantPermissionCodes,
   listTenantPermissionCatalogItems,
   normalizeTenantPermissionCode,
   toTenantPermissionCodeKey,
@@ -28,11 +27,26 @@ const createTenantRolePermissionGrantCapabilities = ({
   addAuditEvent,
   recordPersistentAuditEvent
 } = {}) => {
-  const listTenantPermissionCatalog = () =>
-    listSupportedTenantPermissionCodes();
+  const TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_CODE_MAP = new Map([
+    ['tenant.customer_scope_my.operate', 'tenant.customer_scope_my.view'],
+    ['tenant.customer_scope_assist.operate', 'tenant.customer_scope_assist.view'],
+    ['tenant.customer_scope_all.operate', 'tenant.customer_scope_all.view']
+  ]);
 
   const listTenantPermissionCatalogEntries = () =>
     listTenantPermissionCatalogItems();
+  const listAssignableTenantPermissionCodeSet = () =>
+    new Set(
+      listTenantPermissionCatalogEntries()
+        .map((item) => toTenantPermissionCodeKey(item?.code))
+        .filter((permissionCode) => permissionCode.length > 0)
+    );
+
+  const listTenantPermissionCatalog = () =>
+    listTenantPermissionCatalogEntries()
+      .map((item) => String(item?.code || '').trim().toLowerCase())
+      .filter((code) => code.length > 0)
+      .sort((left, right) => left.localeCompare(right));
 
   const listTenantRolePermissionGrants = async ({
     tenantId,
@@ -76,6 +90,7 @@ const createTenantRolePermissionGrantCapabilities = ({
     if (permissionCodes.length > MAX_ROLE_PERMISSION_CODES_PER_REQUEST) {
       throw errors.invalidPayload();
     }
+    const assignablePermissionCodeSet = listAssignableTenantPermissionCodeSet();
     const dedupedPermissionCodes = new Map();
     for (const permissionCode of permissionCodes) {
       const normalizedPermissionCode = normalizeTenantPermissionCode(permissionCode);
@@ -89,12 +104,23 @@ const createTenantRolePermissionGrantCapabilities = ({
       if (
         !isTenantPermissionCode(normalizedPermissionCode)
         || !SUPPORTED_TENANT_PERMISSION_CODE_SET.has(permissionCodeKey)
+        || !assignablePermissionCodeSet.has(permissionCodeKey)
       ) {
         throw errors.invalidPayload();
       }
       dedupedPermissionCodes.set(permissionCodeKey, permissionCodeKey);
     }
     const normalizedPermissionCodes = [...dedupedPermissionCodes.values()];
+    const normalizedPermissionCodeSet = new Set(normalizedPermissionCodes);
+    for (const [operatePermissionCode, viewPermissionCode] of
+      TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_CODE_MAP.entries()) {
+      if (
+        normalizedPermissionCodeSet.has(operatePermissionCode)
+        && !normalizedPermissionCodeSet.has(viewPermissionCode)
+      ) {
+        throw errors.invalidPayload();
+      }
+    }
 
     await loadValidatedTenantRoleCatalogEntries({
       tenantId,
@@ -201,6 +227,7 @@ const createTenantRolePermissionGrantCapabilities = ({
         || seenSavedPermissionCodeKeys.has(permissionCodeKey)
         || !isTenantPermissionCode(normalizedPermissionCode)
         || !SUPPORTED_TENANT_PERMISSION_CODE_SET.has(permissionCodeKey)
+        || !assignablePermissionCodeSet.has(permissionCodeKey)
       ) {
         throw errors.tenantUserDependencyUnavailable({
           reason: 'tenant-role-permission-grants-update-invalid'

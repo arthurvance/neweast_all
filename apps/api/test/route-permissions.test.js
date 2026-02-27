@@ -219,6 +219,47 @@ test('tenant account governance routes expose explicit permission declarations',
   }
 });
 
+test('tenant customer governance routes expose explicit permission declarations', () => {
+  const tenantCustomerList = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/customers'
+  });
+  const tenantCustomerCreate = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/customers'
+  });
+  const tenantCustomerDetail = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/customers/:customer_id'
+  });
+  const tenantCustomerUpdateBasic = findRouteDefinition({
+    method: 'PATCH',
+    path: '/tenant/customers/:customer_id/basic'
+  });
+  const tenantCustomerUpdateRealname = findRouteDefinition({
+    method: 'PATCH',
+    path: '/tenant/customers/:customer_id/realname'
+  });
+  const tenantCustomerOperationLogs = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/customers/:customer_id/operation-logs'
+  });
+
+  for (const route of [tenantCustomerList, tenantCustomerDetail, tenantCustomerOperationLogs]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'tenant');
+    assert.equal(route.permission_code, 'tenant.customer_management.view');
+  }
+
+  for (const route of [tenantCustomerCreate, tenantCustomerUpdateBasic, tenantCustomerUpdateRealname]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'tenant');
+    assert.equal(route.permission_code, 'tenant.customer_management.operate');
+  }
+});
+
 test('tenant audit query route exposes explicit permission declaration', () => {
   const tenantAuditEvents = findRouteDefinition({
     method: 'GET',

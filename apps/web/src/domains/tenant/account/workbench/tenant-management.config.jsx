@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  ContactsOutlined,
   IdcardOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
@@ -10,6 +11,8 @@ import {
   TENANT_PERMISSION_CODE_BY_GROUP_ACTION
 } from '../../../../features/auth/generated-permission-catalog';
 
+const CUSTOMER_MANAGEMENT_MENU_KEY = 'customer';
+const CUSTOMER_PROFILE_MENU_KEY = 'customer/profile';
 const ACCOUNT_MATRIX_MENU_KEY = 'account';
 const ACCOUNT_MENU_KEY = 'account/account';
 const LEGACY_ACCOUNT_MATRIX_MENU_KEY = 'account-matrix';
@@ -17,6 +20,9 @@ const LEGACY_ACCOUNT_MENU_KEY = 'account-matrix/accounts';
 const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ROLE_MENU_KEY = 'settings/roles';
+const TenantCustomerProfilePage = lazy(() =>
+  import('../../customer/profile/TenantCustomerProfilePage')
+);
 const TenantAccountManagementPage = lazy(() => import('../account/TenantAccountManagementPage'));
 const TenantRoleManagementPage = lazy(() => import('../../settings/role/TenantRoleManagementPage'));
 const TenantUserManagementPage = lazy(() => import('../../settings/user/TenantUserManagementPage'));
@@ -68,8 +74,19 @@ const ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
   actionKey: 'operate',
   fallbackCode: 'tenant.account_management.operate'
 });
+const CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'customer_management',
+  actionKey: 'view',
+  fallbackCode: 'tenant.customer_management.view'
+});
+const CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'customer_management',
+  actionKey: 'operate',
+  fallbackCode: 'tenant.customer_management.operate'
+});
 
 const TENANT_MENU_ORDER = Object.freeze([
+  CUSTOMER_PROFILE_MENU_KEY,
   ACCOUNT_MENU_KEY,
   USER_MENU_KEY,
   ROLE_MENU_KEY
@@ -78,12 +95,15 @@ const TENANT_MENU_ORDER = Object.freeze([
 export const TENANT_DEFAULT_MENU_KEY = USER_MENU_KEY;
 
 export const TENANT_NAV_GROUP_FALLBACK = Object.freeze({
+  [CUSTOMER_MANAGEMENT_MENU_KEY]: CUSTOMER_PROFILE_MENU_KEY,
   [ACCOUNT_MATRIX_MENU_KEY]: ACCOUNT_MENU_KEY,
   [LEGACY_ACCOUNT_MATRIX_MENU_KEY]: ACCOUNT_MENU_KEY,
   [SETTINGS_MENU_KEY]: USER_MENU_KEY
 });
 
 export const TENANT_MENU_PERMISSION_REGISTRY = Object.freeze({
+  [CUSTOMER_MANAGEMENT_MENU_KEY]: '',
+  [CUSTOMER_PROFILE_MENU_KEY]: CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
   [ACCOUNT_MATRIX_MENU_KEY]: '',
   [ACCOUNT_MENU_KEY]: ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
   [SETTINGS_MENU_KEY]: '',
@@ -140,6 +160,28 @@ const hasTenantAccountManagementAccess = (permissionContext = null) => {
   return canView;
 };
 
+const hasTenantCustomerManagementAccess = (permissionContext = null) => {
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return false;
+  }
+  const canViewScopeMy = readPermissionFlag(
+    permissionContext,
+    'can_view_customer_scope_my',
+    'canViewCustomerScopeMy'
+  );
+  const canViewScopeAssist = readPermissionFlag(
+    permissionContext,
+    'can_view_customer_scope_assist',
+    'canViewCustomerScopeAssist'
+  );
+  const canViewScopeAll = readPermissionFlag(
+    permissionContext,
+    'can_view_customer_scope_all',
+    'canViewCustomerScopeAll'
+  );
+  return canViewScopeMy || canViewScopeAssist || canViewScopeAll;
+};
+
 export const resolveTenantMenuPermissionCode = (menuKey) => {
   const normalizedKey = String(menuKey || '').trim();
   return TENANT_MENU_PERMISSION_REGISTRY[normalizedKey] || '';
@@ -168,10 +210,30 @@ export const hasTenantMenuAccess = ({ menuKey, permissionContext = null }) => {
   ) {
     return hasTenantAccountManagementAccess(permissionContext);
   }
+  if (
+    permissionCode === CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE
+    || permissionCode === CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE
+  ) {
+    return hasTenantCustomerManagementAccess(permissionContext);
+  }
   return false;
 };
 
 export const TENANT_NAV_ITEMS = [
+  {
+    key: CUSTOMER_MANAGEMENT_MENU_KEY,
+    permission_code: resolveTenantMenuPermissionCode(CUSTOMER_MANAGEMENT_MENU_KEY),
+    icon: <ContactsOutlined />,
+    label: <span data-testid="tenant-menu-customer-management">客户管理</span>,
+    children: [
+      {
+        key: CUSTOMER_PROFILE_MENU_KEY,
+        permission_code: resolveTenantMenuPermissionCode(CUSTOMER_PROFILE_MENU_KEY),
+        icon: <IdcardOutlined />,
+        label: <span data-testid="tenant-tab-customer-profile">客户资料</span>
+      }
+    ]
+  },
   {
     key: ACCOUNT_MATRIX_MENU_KEY,
     permission_code: resolveTenantMenuPermissionCode(ACCOUNT_MATRIX_MENU_KEY),
@@ -209,6 +271,16 @@ export const TENANT_NAV_ITEMS = [
 ];
 
 export const TENANT_PAGE_REGISTRY = Object.freeze({
+  [CUSTOMER_PROFILE_MENU_KEY]: {
+    title: '客户资料',
+    subTitle: '客户管理 / 客户资料',
+    permission_code: resolveTenantMenuPermissionCode(CUSTOMER_PROFILE_MENU_KEY),
+    breadcrumbItems: [
+      { key: CUSTOMER_MANAGEMENT_MENU_KEY, title: '客户管理' },
+      { key: CUSTOMER_PROFILE_MENU_KEY, title: '客户资料' }
+    ],
+    Component: TenantCustomerProfilePage
+  },
   [ACCOUNT_MENU_KEY]: {
     title: '账号管理',
     subTitle: '账号矩阵 / 账号管理',

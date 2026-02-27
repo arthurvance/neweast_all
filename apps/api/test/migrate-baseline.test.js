@@ -100,6 +100,21 @@ test('0005 migration defines tenant permission columns required by runtime prefl
   assert.match(sql, /can_operate_role_management/i);
 });
 
+test('0002 iam_users baseline migration defines auth user table before timestamp precision update', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0002_iam_users_baseline.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS iam_users/i);
+  assert.match(sql, /PRIMARY KEY \(id\)/i);
+  assert.match(sql, /UNIQUE KEY uk_iam_users_phone \(phone\)/i);
+  assert.match(sql, /password_hash/i);
+});
+
 test('0006 migration is an explicit no-op marker', () => {
   const sqlPath = resolve(
     __dirname,
@@ -739,6 +754,45 @@ test('0027 migration backfills tenant sys_admin account-management permissions',
   assert.match(sql, /FROM platform_roles/i);
   assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
   assert.match(sql, /pr\.scope\s*=\s*'tenant'/i);
+});
+
+test('0028 migration defines tenant customer tables and tenant-scoped governance indexes', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0028_tenant_customer_management.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_customers/i);
+  assert.match(sql, /UNIQUE KEY uk_tenant_customers_tenant_wechat\s*\(\s*tenant_id,\s*wechat_id\s*\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_customer_profiles/i);
+  assert.match(sql, /KEY idx_tenant_customer_profiles_tenant_real_name/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_customer_operation_logs/i);
+  assert.match(sql, /KEY idx_tenant_customer_logs_customer_time/i);
+});
+
+test('0029 migration backfills tenant sys_admin scoped customer view and operate permissions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0029_tenant_sys_admin_customer_permissions_backfill.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /UPDATE tenant_accounts a/i);
+  assert.match(sql, /SELECT COUNT\(\*\)\s+FROM tenant_customers c/i);
+  assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
+  assert.match(sql, /tenant\.customer_scope_my\.view/i);
+  assert.match(sql, /tenant\.customer_scope_my\.operate/i);
+  assert.match(sql, /tenant\.customer_scope_assist\.view/i);
+  assert.match(sql, /tenant\.customer_scope_assist\.operate/i);
+  assert.match(sql, /tenant\.customer_scope_all\.view/i);
+  assert.match(sql, /tenant\.customer_scope_all\.operate/i);
+  assert.match(sql, /FROM platform_roles/i);
+  assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
 });
 
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {

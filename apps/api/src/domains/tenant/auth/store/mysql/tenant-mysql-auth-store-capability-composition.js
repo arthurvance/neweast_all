@@ -9,11 +9,15 @@ const {
 const {
   createTenantMysqlAuthStoreAccountMatrix
 } = require('./tenant-mysql-auth-store-account-matrix.js');
+const {
+  createTenantMysqlAuthStoreCustomer
+} = require('./tenant-mysql-auth-store-customer.js');
 
 const createTenantMysqlAuthStoreCapabilityComposition = (dependencies = {}) => ({
   ...createTenantMysqlAuthStoreUsershipGovernance(dependencies),
   ...createTenantMysqlAuthStoreRolePermission(dependencies),
   ...createTenantMysqlAuthStoreAccountMatrix(dependencies),
+  ...createTenantMysqlAuthStoreCustomer(dependencies),
 });
 
 module.exports = {

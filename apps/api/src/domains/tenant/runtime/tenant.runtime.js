@@ -16,6 +16,12 @@ const {
 const {
   createTenantAccountService
 } = require('../account/account/service');
+const {
+  createTenantCustomerHandlers
+} = require('../customer/profile/customer.routes');
+const {
+  createTenantCustomerService
+} = require('../customer/profile/service');
 
 const createTenantRuntime = ({
   authService,
@@ -36,14 +42,21 @@ const createTenantRuntime = ({
     || createTenantAccountService({
       authService
     });
+  const tenantCustomerService =
+    options.tenantCustomerService
+    || createTenantCustomerService({
+      authService
+    });
 
   return {
     tenantUserService,
     tenantRoleService,
     tenantAccountService,
+    tenantCustomerService,
     tenantUser: createTenantUserHandlers(tenantUserService),
     tenantRole: createTenantRoleHandlers(tenantRoleService),
-    tenantAccount: createTenantAccountHandlers(tenantAccountService)
+    tenantAccount: createTenantAccountHandlers(tenantAccountService),
+    tenantCustomer: createTenantCustomerHandlers(tenantCustomerService)
   };
 };
 

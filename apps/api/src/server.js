@@ -67,7 +67,13 @@ const {
   TENANT_ACCOUNT_DETAIL_ROUTE_KEY,
   TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
   TENANT_ACCOUNT_STATUS_ROUTE_KEY,
-  TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY
+  TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY,
+  TENANT_CUSTOMER_LIST_ROUTE_KEY,
+  TENANT_CUSTOMER_CREATE_ROUTE_KEY,
+  TENANT_CUSTOMER_DETAIL_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+  TENANT_CUSTOMER_OPERATION_LOG_ROUTE_KEY
 } = require('./domains/tenant');
 const {
   listSupportedRoutePermissionCodes,
@@ -184,6 +190,9 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   TENANT_ACCOUNT_CREATE_ROUTE_KEY,
   TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
   TENANT_ACCOUNT_STATUS_ROUTE_KEY,
+  TENANT_CUSTOMER_CREATE_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
@@ -220,6 +229,9 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_ACCOUNT_CREATE_ROUTE_KEY,
   TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
   TENANT_ACCOUNT_STATUS_ROUTE_KEY,
+  TENANT_CUSTOMER_CREATE_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
@@ -2528,6 +2540,90 @@ const createRouteTable = ({
       runAuthRouteWithTrace(
         () =>
           handlers.tenantListAccountOperationLogs(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_CUSTOMER_LIST_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListCustomers(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_CUSTOMER_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_CUSTOMER_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantCreateCustomer(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_CUSTOMER_DETAIL_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantGetCustomerDetail(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantUpdateCustomerBasic(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantUpdateCustomerRealname(
+                requestId,
+                headers.authorization,
+                getRouteParams(),
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_CUSTOMER_OPERATION_LOG_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListCustomerOperationLogs(
             requestId,
             headers.authorization,
             getRouteParams(),

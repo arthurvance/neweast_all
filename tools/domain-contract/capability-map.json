@@ -216,6 +216,50 @@
       ]
     },
     {
+      "capability_id": "tenant.account.account",
+      "canonical_term": "account",
+      "module": "account",
+      "domain": "tenant",
+      "capability": "account",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "account.account",
+      "symmetry": "extension",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.account.workbench",
+      "canonical_term": "workbench",
+      "module": "account",
+      "domain": "tenant",
+      "capability": "workbench",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "account.workbench",
+      "symmetry": "extension",
+      "applications": [
+        "web"
+      ]
+    },
+    {
+      "capability_id": "tenant.customer.profile",
+      "canonical_term": "profile",
+      "module": "customer",
+      "domain": "tenant",
+      "capability": "profile",
+      "owner": "tenant-core",
+      "review_at": "2026-06-30",
+      "parity_key": "customer.profile",
+      "symmetry": "extension",
+      "applications": [
+        "api",
+        "web"
+      ]
+    },
+    {
       "capability_id": "tenant.config.domain-extension-registry",
       "canonical_term": "domain-extension-registry",
       "module": "config",

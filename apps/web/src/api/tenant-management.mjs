@@ -26,6 +26,14 @@ export const createTenantManagementApi = ({ accessToken }) => {
     encodeURIComponent(String(roleId || '').trim().toLowerCase());
   const withAccountId = (accountId) =>
     encodeURIComponent(String(accountId || '').trim());
+  const withCustomerId = (customerId) =>
+    encodeURIComponent(String(customerId || '').trim());
+  const normalizeQueryIdList = (source = []) =>
+    [...new Set(
+      (Array.isArray(source) ? source : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )];
 
   return {
     listUsers: async ({ page = 1, pageSize = 20, status = undefined } = {}) =>
@@ -164,6 +172,81 @@ export const createTenantManagementApi = ({ accessToken }) => {
           status: String(status || '').trim().toLowerCase()
         },
         idempotencyKey: buildIdempotencyKey('ui-tenant-accounts-status')
+      }),
+
+    listCustomers: async (query = {}) =>
+      withToken({
+        path: `/tenant/customers${toSearch({
+          page: query.page,
+          page_size: query.pageSize,
+          scope: query.scope,
+          wechat_id: query.wechat_id,
+          account_ids: normalizeQueryIdList(query.account_ids).join(','),
+          nickname: query.nickname,
+          source: query.source,
+          real_name: query.real_name,
+          phone: query.phone,
+          status: query.status,
+          created_time_start: query.created_time_start,
+          created_time_end: query.created_time_end
+        })}`,
+        method: 'GET'
+      }),
+
+    createCustomer: async (payload = {}) =>
+      withToken({
+        path: '/tenant/customers',
+        method: 'POST',
+        payload: {
+          account_id: String(payload.account_id || '').trim(),
+          wechat_id: String(payload.wechat_id || '').trim(),
+          nickname: String(payload.nickname || '').trim(),
+          source: String(payload.source || '').trim().toLowerCase(),
+          real_name: payload.real_name == null ? null : String(payload.real_name).trim(),
+          school: payload.school == null ? null : String(payload.school).trim(),
+          class_name: payload.class_name == null ? null : String(payload.class_name).trim(),
+          relation: payload.relation == null ? null : String(payload.relation).trim(),
+          phone: payload.phone == null ? null : String(payload.phone).trim(),
+          address: payload.address == null ? null : String(payload.address).trim()
+        },
+        idempotencyKey: buildIdempotencyKey('ui-tenant-customers-create')
+      }),
+
+    getCustomerDetail: async (customerId) =>
+      withToken({
+        path: `/tenant/customers/${withCustomerId(customerId)}`,
+        method: 'GET'
+      }),
+
+    updateCustomerBasic: async ({ customerId, payload = {} }) =>
+      withToken({
+        path: `/tenant/customers/${withCustomerId(customerId)}/basic`,
+        method: 'PATCH',
+        payload: {
+          source: String(payload.source || '').trim().toLowerCase()
+        },
+        idempotencyKey: buildIdempotencyKey('ui-tenant-customers-basic')
+      }),
+
+    updateCustomerRealname: async ({ customerId, payload = {} }) =>
+      withToken({
+        path: `/tenant/customers/${withCustomerId(customerId)}/realname`,
+        method: 'PATCH',
+        payload: {
+          real_name: payload.real_name == null ? null : String(payload.real_name).trim(),
+          school: payload.school == null ? null : String(payload.school).trim(),
+          class_name: payload.class_name == null ? null : String(payload.class_name).trim(),
+          relation: payload.relation == null ? null : String(payload.relation).trim(),
+          phone: payload.phone == null ? null : String(payload.phone).trim(),
+          address: payload.address == null ? null : String(payload.address).trim()
+        },
+        idempotencyKey: buildIdempotencyKey('ui-tenant-customers-realname')
+      }),
+
+    listCustomerOperationLogs: async (customerId) =>
+      withToken({
+        path: `/tenant/customers/${withCustomerId(customerId)}/operation-logs`,
+        method: 'GET'
       }),
 
     listRoles: async () =>

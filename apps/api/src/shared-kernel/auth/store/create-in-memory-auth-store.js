@@ -13,6 +13,11 @@ const {
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
@@ -106,6 +111,11 @@ const createInMemoryAuthStore = ({
   const tenantAccountWechatIndexByTenantId = new Map();
   const tenantAccountAssistantsByAccountId = new Map();
   const tenantAccountOperationLogsByAccountId = new Map();
+  const tenantCustomersByCustomerId = new Map();
+  const tenantCustomerIdsByTenantId = new Map();
+  const tenantCustomerWechatIndexByTenantId = new Map();
+  const tenantCustomerProfileByCustomerId = new Map();
+  const tenantCustomerOperationLogsByCustomerId = new Map();
   const systemSensitiveConfigsByKey = new Map();
   const orgsById = new Map();
   const tenantUsershipHistoryByPair = new Map();
@@ -205,14 +215,19 @@ const createInMemoryAuthStore = ({
   const OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH = 24;
   const OWNER_TRANSFER_TAKEOVER_ROLE_CODE = 'sys_admin';
   const OWNER_TRANSFER_TAKEOVER_ROLE_NAME = '管理员';
-  const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
-    TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
-    TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
-    TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
-    TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
-    TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
-    TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
-  ]);
+const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+]);
   const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
   const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
   const { invokeFaultInjector } = createSharedMemoryAuthStoreTestFaultInjectionRuntimeSupport({
@@ -415,6 +430,11 @@ const createInMemoryAuthStore = ({
     tenantAccountWechatIndexByTenantId,
     tenantAccountAssistantsByAccountId,
     tenantAccountOperationLogsByAccountId,
+    tenantCustomersByCustomerId,
+    tenantCustomerIdsByTenantId,
+    tenantCustomerWechatIndexByTenantId,
+    tenantCustomerProfileByCustomerId,
+    tenantCustomerOperationLogsByCustomerId,
     tenantUsershipHistoryByPair,
     tenantUsershipRolesByMembershipId,
     tenantsByUserId,
@@ -871,6 +891,11 @@ const createInMemoryAuthStore = ({
     tenantAccountIdsByTenantId,
     tenantAccountOperationLogsByAccountId,
     tenantAccountWechatIndexByTenantId,
+    tenantCustomersByCustomerId,
+    tenantCustomerIdsByTenantId,
+    tenantCustomerWechatIndexByTenantId,
+    tenantCustomerProfileByCustomerId,
+    tenantCustomerOperationLogsByCustomerId,
     tenantRolePermissionGrantsByRoleId,
     tenantUsershipHistoryByPair,
     tenantUsershipRolesByMembershipId,

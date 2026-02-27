@@ -14,6 +14,14 @@ const buildTenantUnselectedPermissionContext = () => ({
   can_operate_user_management: false,
   can_view_account_management: false,
   can_operate_account_management: false,
+  can_view_customer_management: false,
+  can_operate_customer_management: false,
+  can_view_customer_scope_my: false,
+  can_operate_customer_scope_my: false,
+  can_view_customer_scope_assist: false,
+  can_operate_customer_scope_assist: false,
+  can_view_customer_scope_all: false,
+  can_operate_customer_scope_all: false,
   can_view_role_management: false,
   can_operate_role_management: false
 });
@@ -24,6 +32,14 @@ const buildTenantPlatformEntryPermissionContext = () => ({
   can_operate_user_management: false,
   can_view_account_management: false,
   can_operate_account_management: false,
+  can_view_customer_management: false,
+  can_operate_customer_management: false,
+  can_view_customer_scope_my: false,
+  can_operate_customer_scope_my: false,
+  can_view_customer_scope_assist: false,
+  can_operate_customer_scope_assist: false,
+  can_view_customer_scope_all: false,
+  can_operate_customer_scope_all: false,
   can_view_role_management: false,
   can_operate_role_management: false
 });
@@ -84,6 +100,31 @@ const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel)
     ),
     can_operate_account_management: Boolean(
       permissionContext.canOperateAccountManagement ?? permissionContext.can_operate_account_management
+    ),
+    can_view_customer_management: Boolean(
+      permissionContext.canViewCustomerManagement ?? permissionContext.can_view_customer_management
+    ),
+    can_operate_customer_management: Boolean(
+      permissionContext.canOperateCustomerManagement ?? permissionContext.can_operate_customer_management
+    ),
+    can_view_customer_scope_my: Boolean(
+      permissionContext.canViewCustomerScopeMy ?? permissionContext.can_view_customer_scope_my
+    ),
+    can_operate_customer_scope_my: Boolean(
+      permissionContext.canOperateCustomerScopeMy ?? permissionContext.can_operate_customer_scope_my
+    ),
+    can_view_customer_scope_assist: Boolean(
+      permissionContext.canViewCustomerScopeAssist ?? permissionContext.can_view_customer_scope_assist
+    ),
+    can_operate_customer_scope_assist: Boolean(
+      permissionContext.canOperateCustomerScopeAssist
+      ?? permissionContext.can_operate_customer_scope_assist
+    ),
+    can_view_customer_scope_all: Boolean(
+      permissionContext.canViewCustomerScopeAll ?? permissionContext.can_view_customer_scope_all
+    ),
+    can_operate_customer_scope_all: Boolean(
+      permissionContext.canOperateCustomerScopeAll ?? permissionContext.can_operate_customer_scope_all
     ),
     can_view_role_management: Boolean(
       permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management

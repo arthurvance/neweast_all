@@ -50,6 +50,36 @@
       "reason": "Tenant config is in placeholder mode and only keeps extension registry.",
       "exit_condition": "Remove when tenant config exposes user-visible capabilities.",
       "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "tenant.account.account",
+      "domain": "tenant",
+      "module": "account",
+      "capability": "account",
+      "owner": "tenant-core",
+      "reason": "Tenant account matrix is a tenant-specific governance capability.",
+      "exit_condition": "Remove when platform introduces mirrored account capability.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "tenant.account.workbench",
+      "domain": "tenant",
+      "module": "account",
+      "capability": "workbench",
+      "owner": "tenant-core",
+      "reason": "Tenant account workbench is currently tenant-console specific.",
+      "exit_condition": "Remove when workbench becomes cross-domain parity capability.",
+      "review_at": "2026-06-30"
+    },
+    {
+      "capability_id": "tenant.customer.profile",
+      "domain": "tenant",
+      "module": "customer",
+      "capability": "profile",
+      "owner": "tenant-core",
+      "reason": "Tenant customer profile management is introduced as tenant-only extension.",
+      "exit_condition": "Remove when customer profile reaches platform/tenant parity.",
+      "review_at": "2026-06-30"
     }
   ]
 }

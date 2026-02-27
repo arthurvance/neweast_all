@@ -7,6 +7,14 @@ const TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.user_management.view
 const TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.user_management.operate';
 const TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.account_management.view';
 const TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.account_management.operate';
+const TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.customer_management.view';
+const TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.customer_management.operate';
+const TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE = 'tenant.customer_scope_my.view';
+const TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE = 'tenant.customer_scope_my.operate';
+const TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE = 'tenant.customer_scope_assist.view';
+const TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE = 'tenant.customer_scope_assist.operate';
+const TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE = 'tenant.customer_scope_all.view';
+const TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE = 'tenant.customer_scope_all.operate';
 const TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
 const TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
 
@@ -47,6 +55,40 @@ const readPermissionCodeSet = (permissionContext) => {
     return new Set(permissionCodeSet.map((permissionCode) => toPermissionCodeKey(permissionCode)));
   }
   return null;
+};
+
+const hasAnyCustomerScopeViewGrant = (permissionContext) => {
+  const permissionCodeSet = readPermissionCodeSet(permissionContext);
+  const hasPermissionCode = (permissionCode) =>
+    permissionCodeSet instanceof Set
+    && permissionCodeSet.has(toPermissionCodeKey(permissionCode));
+
+  return readBooleanPermissionField(permissionContext, 'can_view_customer_scope_my')
+    || readBooleanPermissionField(permissionContext, 'canViewCustomerScopeMy')
+    || readBooleanPermissionField(permissionContext, 'can_view_customer_scope_assist')
+    || readBooleanPermissionField(permissionContext, 'canViewCustomerScopeAssist')
+    || readBooleanPermissionField(permissionContext, 'can_view_customer_scope_all')
+    || readBooleanPermissionField(permissionContext, 'canViewCustomerScopeAll')
+    || hasPermissionCode(TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE)
+    || hasPermissionCode(TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE)
+    || hasPermissionCode(TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE);
+};
+
+const hasAnyCustomerScopeOperateGrant = (permissionContext) => {
+  const permissionCodeSet = readPermissionCodeSet(permissionContext);
+  const hasPermissionCode = (permissionCode) =>
+    permissionCodeSet instanceof Set
+    && permissionCodeSet.has(toPermissionCodeKey(permissionCode));
+
+  return readBooleanPermissionField(permissionContext, 'can_operate_customer_scope_my')
+    || readBooleanPermissionField(permissionContext, 'canOperateCustomerScopeMy')
+    || readBooleanPermissionField(permissionContext, 'can_operate_customer_scope_assist')
+    || readBooleanPermissionField(permissionContext, 'canOperateCustomerScopeAssist')
+    || readBooleanPermissionField(permissionContext, 'can_operate_customer_scope_all')
+    || readBooleanPermissionField(permissionContext, 'canOperateCustomerScopeAll')
+    || hasPermissionCode(TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE)
+    || hasPermissionCode(TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE)
+    || hasPermissionCode(TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE);
 };
 
 const hasPermissionCodeGrant = ({ permissionContext = null, permissionCode }) => {
@@ -101,6 +143,32 @@ const hasPermissionCodeGrant = ({ permissionContext = null, permissionCode }) =>
     case TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_operate_account_management')
         || readBooleanPermissionField(permissionContext, 'canOperateAccountManagement');
+    case TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_customer_management')
+        || readBooleanPermissionField(permissionContext, 'canViewCustomerManagement')
+        || hasAnyCustomerScopeViewGrant(permissionContext);
+    case TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_customer_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateCustomerManagement')
+        || hasAnyCustomerScopeOperateGrant(permissionContext);
+    case TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_customer_scope_my')
+        || readBooleanPermissionField(permissionContext, 'canViewCustomerScopeMy');
+    case TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_customer_scope_my')
+        || readBooleanPermissionField(permissionContext, 'canOperateCustomerScopeMy');
+    case TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_customer_scope_assist')
+        || readBooleanPermissionField(permissionContext, 'canViewCustomerScopeAssist');
+    case TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_customer_scope_assist')
+        || readBooleanPermissionField(permissionContext, 'canOperateCustomerScopeAssist');
+    case TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_customer_scope_all')
+        || readBooleanPermissionField(permissionContext, 'canViewCustomerScopeAll');
+    case TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_customer_scope_all')
+        || readBooleanPermissionField(permissionContext, 'canOperateCustomerScopeAll');
     case TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_view_role_management')
         || readBooleanPermissionField(permissionContext, 'canViewRoleManagement')
@@ -329,6 +397,80 @@ const ROUTE_PERMISSION_DEFINITIONS = Object.freeze([
     order: 170
   }),
   createPermissionDefinition({
+    code: TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    assignable: false,
+    groupKey: 'customer_management',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.customer_management.view',
+    order: 180
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    assignable: false,
+    groupKey: 'customer_management',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.customer_management.operate',
+    order: 189
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'customer_scope_my',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.customer_scope_my.view',
+    order: 191
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'customer_scope_my',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.customer_scope_my.operate',
+    order: 192
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'customer_scope_assist',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.customer_scope_assist.view',
+    order: 193
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'customer_scope_assist',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.customer_scope_assist.operate',
+    order: 194
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'customer_scope_all',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.customer_scope_all.view',
+    order: 195
+  }),
+  createPermissionDefinition({
+    code: TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'customer_scope_all',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.customer_scope_all.operate',
+    order: 196
+  }),
+  createPermissionDefinition({
     code: TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
     scopes: [PERMISSION_SCOPE_TENANT],
     contextKey: 'tenant',
@@ -418,6 +560,14 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
     canOperateUserManagement: false,
     canViewAccountManagement: false,
     canOperateAccountManagement: false,
+    canViewCustomerManagement: false,
+    canOperateCustomerManagement: false,
+    canViewCustomerScopeMy: false,
+    canOperateCustomerScopeMy: false,
+    canViewCustomerScopeAssist: false,
+    canOperateCustomerScopeAssist: false,
+    canViewCustomerScopeAll: false,
+    canOperateCustomerScopeAll: false,
     canViewRoleManagement: false,
     canOperateRoleManagement: false
   };
@@ -437,6 +587,33 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
         snapshot.canViewAccountManagement = true;
         snapshot.canOperateAccountManagement = true;
         break;
+      case TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewCustomerManagement = true;
+        break;
+      case TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canOperateCustomerManagement = true;
+        break;
+      case TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE:
+        snapshot.canViewCustomerScopeMy = true;
+        break;
+      case TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE:
+        snapshot.canOperateCustomerScopeMy = true;
+        snapshot.canOperateCustomerManagement = true;
+        break;
+      case TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE:
+        snapshot.canViewCustomerScopeAssist = true;
+        break;
+      case TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE:
+        snapshot.canOperateCustomerScopeAssist = true;
+        snapshot.canOperateCustomerManagement = true;
+        break;
+      case TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE:
+        snapshot.canViewCustomerScopeAll = true;
+        break;
+      case TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE:
+        snapshot.canOperateCustomerScopeAll = true;
+        snapshot.canOperateCustomerManagement = true;
+        break;
       case TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE:
         snapshot.canViewRoleManagement = true;
         break;
@@ -447,6 +624,13 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
       default:
         break;
     }
+  }
+  if (
+    snapshot.canViewCustomerScopeMy
+    || snapshot.canViewCustomerScopeAssist
+    || snapshot.canViewCustomerScopeAll
+  ) {
+    snapshot.canViewCustomerManagement = true;
   }
   return snapshot;
 };
@@ -530,7 +714,10 @@ const listSupportedPlatformPermissionCodes = () =>
 const listSupportedTenantPermissionCodes = ({
   includeTenantContextCodes = false
 } = {}) =>
-  listTenantPermissionCatalogItems({ includeTenantContextCodes })
+  listTenantPermissionCatalogItems({
+    includeTenantContextCodes,
+    includeUnassignable: true
+  })
     .map((item) => item.code)
     .sort((left, right) => left.localeCompare(right));
 
@@ -551,6 +738,14 @@ module.exports = {
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,

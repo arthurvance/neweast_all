@@ -12,7 +12,8 @@ const createTenantDomainRuntime = ({ authService, options = {} } = {}) => {
     handlers: createTenantRouteHandlers({
       tenantUser: runtime.tenantUser,
       tenantRole: runtime.tenantRole,
-      tenantAccount: runtime.tenantAccount
+      tenantAccount: runtime.tenantAccount,
+      tenantCustomer: runtime.tenantCustomer
     })
   };
 };

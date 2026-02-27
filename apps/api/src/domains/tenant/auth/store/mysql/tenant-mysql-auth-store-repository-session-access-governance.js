@@ -5,6 +5,14 @@ const {
   TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
 } = require('../../../../../modules/auth/permission-catalog');
@@ -151,6 +159,48 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
     const canOperateAccountManagement = permissionCodeSet.has(
       TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
     );
+    const canViewCustomerScopeMy = permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE
+    );
+    const canOperateCustomerScopeMy = permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE
+    );
+    const canViewCustomerScopeAssist = permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE
+    );
+    const canOperateCustomerScopeAssist = permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    );
+    const canViewCustomerScopeAll = permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE
+    );
+    const canOperateCustomerScopeAll = permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE
+    );
+    if (
+      canViewCustomerScopeMy
+      || canViewCustomerScopeAssist
+      || canViewCustomerScopeAll
+    ) {
+      permissionCodeSet.add(TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (
+      canOperateCustomerScopeMy
+      || canOperateCustomerScopeAssist
+      || canOperateCustomerScopeAll
+    ) {
+      permissionCodeSet.add(TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE);
+    }
+    const canViewCustomerManagement = permissionCodeSet.has(
+      TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || canViewCustomerScopeMy
+      || canViewCustomerScopeAssist
+      || canViewCustomerScopeAll;
+    const canOperateCustomerManagement = permissionCodeSet.has(
+      TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE
+    ) || canOperateCustomerScopeMy
+      || canOperateCustomerScopeAssist
+      || canOperateCustomerScopeAll;
     const canViewRoleManagement = permissionCodeSet.has(
       TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
     ) || permissionCodeSet.has(
@@ -166,6 +216,14 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
       canOperateUserManagement,
       canViewAccountManagement,
       canOperateAccountManagement,
+      canViewCustomerManagement,
+      canOperateCustomerManagement,
+      canViewCustomerScopeMy,
+      canOperateCustomerScopeMy,
+      canViewCustomerScopeAssist,
+      canOperateCustomerScopeAssist,
+      canViewCustomerScopeAll,
+      canOperateCustomerScopeAll,
       canViewRoleManagement,
       canOperateRoleManagement
     };

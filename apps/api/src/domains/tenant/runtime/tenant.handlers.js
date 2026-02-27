@@ -1,7 +1,8 @@
 const createTenantRouteHandlers = ({
   tenantUser,
   tenantRole,
-  tenantAccount
+  tenantAccount,
+  tenantCustomer
 }) => ({
   tenantListUsers: async (
     requestId,
@@ -275,6 +276,96 @@ const createTenantRouteHandlers = ({
     authorizationContext
   ) =>
     tenantAccount.listAccountOperationLogs({
+      requestId,
+      authorization,
+      params: params || {},
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantListCustomers: async (
+    requestId,
+    authorization,
+    query,
+    authorizationContext
+  ) =>
+    tenantCustomer.listCustomers({
+      requestId,
+      authorization,
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantCreateCustomer: async (
+    requestId,
+    authorization,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantCustomer.createCustomer({
+      requestId,
+      authorization,
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantGetCustomerDetail: async (
+    requestId,
+    authorization,
+    params,
+    authorizationContext
+  ) =>
+    tenantCustomer.getCustomerDetail({
+      requestId,
+      authorization,
+      params: params || {},
+      authorizationContext
+    }),
+
+  tenantUpdateCustomerBasic: async (
+    requestId,
+    authorization,
+    params,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantCustomer.updateCustomerBasic({
+      requestId,
+      authorization,
+      params: params || {},
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantUpdateCustomerRealname: async (
+    requestId,
+    authorization,
+    params,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantCustomer.updateCustomerRealname({
+      requestId,
+      authorization,
+      params: params || {},
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantListCustomerOperationLogs: async (
+    requestId,
+    authorization,
+    params,
+    query,
+    authorizationContext
+  ) =>
+    tenantCustomer.listCustomerOperationLogs({
       requestId,
       authorization,
       params: params || {},
