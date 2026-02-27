@@ -120,6 +120,48 @@
   },
   {
     "method": "GET",
+    "path": "/tenant/accounts",
+    "access": "protected",
+    "permission_code": "tenant.account_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/accounts",
+    "access": "protected",
+    "permission_code": "tenant.account_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/accounts/:account_id",
+    "access": "protected",
+    "permission_code": "tenant.account_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/accounts/:account_id",
+    "access": "protected",
+    "permission_code": "tenant.account_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "PATCH",
+    "path": "/tenant/accounts/:account_id/status",
+    "access": "protected",
+    "permission_code": "tenant.account_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/accounts/:account_id/operation-logs",
+    "access": "protected",
+    "permission_code": "tenant.account_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
     "path": "/tenant/audit/events",
     "access": "protected",
     "permission_code": "tenant.user_management.view",

@@ -18,7 +18,14 @@ const {
   TENANT_ROLE_PERMISSION_PATH,
   TENANT_ROLE_VIEW_PERMISSION_CODE,
   TENANT_ROLE_OPERATE_PERMISSION_CODE,
-  TENANT_ROLE_SCOPE
+  TENANT_ROLE_SCOPE,
+  TENANT_ACCOUNT_BASE_PATH,
+  TENANT_ACCOUNT_ITEM_PATH,
+  TENANT_ACCOUNT_STATUS_PATH,
+  TENANT_ACCOUNT_OPERATION_LOG_PATH,
+  TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_SCOPE
 } = require('../domains/tenant');
 
 const TENANT_ROUTE_MANIFEST = Object.freeze([
@@ -140,6 +147,48 @@ const TENANT_ROUTE_MANIFEST = Object.freeze([
     access: 'protected',
     permission_code: TENANT_ROLE_OPERATE_PERMISSION_CODE,
     scope: TENANT_ROLE_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_ACCOUNT_BASE_PATH,
+    access: 'protected',
+    permission_code: TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
+    scope: TENANT_ACCOUNT_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_ACCOUNT_BASE_PATH,
+    access: 'protected',
+    permission_code: TENANT_ACCOUNT_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ACCOUNT_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_ACCOUNT_ITEM_PATH,
+    access: 'protected',
+    permission_code: TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
+    scope: TENANT_ACCOUNT_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_ACCOUNT_ITEM_PATH,
+    access: 'protected',
+    permission_code: TENANT_ACCOUNT_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ACCOUNT_SCOPE
+  },
+  {
+    method: 'PATCH',
+    path: TENANT_ACCOUNT_STATUS_PATH,
+    access: 'protected',
+    permission_code: TENANT_ACCOUNT_OPERATE_PERMISSION_CODE,
+    scope: TENANT_ACCOUNT_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_ACCOUNT_OPERATION_LOG_PATH,
+    access: 'protected',
+    permission_code: TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
+    scope: TENANT_ACCOUNT_SCOPE
   },
   {
     method: 'GET',

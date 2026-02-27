@@ -1,0 +1,31 @@
+const TENANT_ACCOUNT_BASE_PATH = '/tenant/accounts';
+const TENANT_ACCOUNT_ITEM_PATH = '/tenant/accounts/:account_id';
+const TENANT_ACCOUNT_STATUS_PATH = '/tenant/accounts/:account_id/status';
+const TENANT_ACCOUNT_OPERATION_LOG_PATH = '/tenant/accounts/:account_id/operation-logs';
+
+const TENANT_ACCOUNT_LIST_ROUTE_KEY = 'GET /tenant/accounts';
+const TENANT_ACCOUNT_CREATE_ROUTE_KEY = 'POST /tenant/accounts';
+const TENANT_ACCOUNT_DETAIL_ROUTE_KEY = 'GET /tenant/accounts/:account_id';
+const TENANT_ACCOUNT_UPDATE_ROUTE_KEY = 'PATCH /tenant/accounts/:account_id';
+const TENANT_ACCOUNT_STATUS_ROUTE_KEY = 'PATCH /tenant/accounts/:account_id/status';
+const TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY = 'GET /tenant/accounts/:account_id/operation-logs';
+
+const TENANT_ACCOUNT_VIEW_PERMISSION_CODE = 'tenant.account_management.view';
+const TENANT_ACCOUNT_OPERATE_PERMISSION_CODE = 'tenant.account_management.operate';
+const TENANT_ACCOUNT_SCOPE = 'tenant';
+
+module.exports = {
+  TENANT_ACCOUNT_BASE_PATH,
+  TENANT_ACCOUNT_ITEM_PATH,
+  TENANT_ACCOUNT_STATUS_PATH,
+  TENANT_ACCOUNT_OPERATION_LOG_PATH,
+  TENANT_ACCOUNT_LIST_ROUTE_KEY,
+  TENANT_ACCOUNT_CREATE_ROUTE_KEY,
+  TENANT_ACCOUNT_DETAIL_ROUTE_KEY,
+  TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
+  TENANT_ACCOUNT_STATUS_ROUTE_KEY,
+  TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY,
+  TENANT_ACCOUNT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_SCOPE
+};

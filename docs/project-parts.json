@@ -1,0 +1,46 @@
+{
+  "repository_type": "monorepo",
+  "parts": [
+    {
+      "part_id": "api",
+      "name": "API Service",
+      "project_type_id": "backend",
+      "root_path": "apps/api",
+      "entry_points": [
+        "apps/api/src/main.js",
+        "apps/api/src/app.js"
+      ]
+    },
+    {
+      "part_id": "web",
+      "name": "Web Application",
+      "project_type_id": "web",
+      "root_path": "apps/web",
+      "entry_points": [
+        "apps/web/src/main.jsx",
+        "apps/web/server.js"
+      ]
+    }
+  ],
+  "integration_points": [
+    {
+      "from": "web",
+      "to": "api",
+      "type": "http-proxy",
+      "detail": "Web server proxies /api/* requests to API service"
+    },
+    {
+      "from": "api",
+      "to": "mysql",
+      "type": "database",
+      "detail": "Business data persistence and migrations"
+    },
+    {
+      "from": "api",
+      "to": "redis",
+      "type": "cache-temporary-store",
+      "detail": "OTP, rate-limit, idempotency storage"
+    }
+  ]
+}
+

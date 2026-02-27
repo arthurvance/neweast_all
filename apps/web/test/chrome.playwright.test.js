@@ -308,14 +308,18 @@ const createOtpApiServer = async () => {
       can_view_user_management: true,
       can_operate_user_management: true,
       can_view_role_management: true,
-      can_operate_role_management: false
+      can_operate_role_management: false,
+      can_view_account_management: false,
+      can_operate_account_management: false
     },
     'tenant-202': {
       scope_label: '组织权限（Tenant 202）',
       can_view_user_management: false,
       can_operate_user_management: true,
       can_view_role_management: true,
-      can_operate_role_management: true
+      can_operate_role_management: true,
+      can_view_account_management: false,
+      can_operate_account_management: false
     }
   };
   const currentTenantPermissionContext = () => {
@@ -325,7 +329,9 @@ const createOtpApiServer = async () => {
         can_view_user_management: false,
         can_operate_user_management: false,
         can_view_role_management: false,
-        can_operate_role_management: false
+        can_operate_role_management: false,
+        can_view_account_management: false,
+        can_operate_account_management: false
       };
     }
     return tenantPermissionById[activeTenantId] || {
@@ -333,7 +339,9 @@ const createOtpApiServer = async () => {
       can_view_user_management: false,
       can_operate_user_management: false,
       can_view_role_management: false,
-      can_operate_role_management: false
+      can_operate_role_management: false,
+      can_view_account_management: false,
+      can_operate_account_management: false
     };
   };
   const server = http.createServer(async (req, res) => {
@@ -497,7 +505,9 @@ const createOtpApiServer = async () => {
                 can_view_user_management: false,
                 can_operate_user_management: false,
                 can_view_role_management: false,
-                can_operate_role_management: false
+                can_operate_role_management: false,
+                can_view_account_management: false,
+                can_operate_account_management: false
               },
             request_id: 'chrome-regression-password-login'
           }
@@ -1574,7 +1584,9 @@ const createTenantManagementApiServer = async () => {
     'tenant.user_management.view',
     'tenant.user_management.operate',
     'tenant.role_management.view',
-    'tenant.role_management.operate'
+    'tenant.role_management.operate',
+    'tenant.account_management.view',
+    'tenant.account_management.operate'
   ];
   const protectedRoleIds = new Set(['tenant_owner', 'tenant_admin', 'tenant_member']);
   const sessionMembershipByTenantId = {
@@ -1585,6 +1597,7 @@ const createTenantManagementApiServer = async () => {
   let activeTenantId = null;
   let nextMemberId = 3;
   let nextRoleSequence = 3;
+  let nextAccountSequence = 3;
 
   const membersByTenantId = new Map([
     [
@@ -1725,8 +1738,22 @@ const createTenantManagementApiServer = async () => {
       'tenant-101',
       new Map([
         ['tenant_owner', [...permissionCatalog]],
-        ['tenant_user_management', ['tenant.user_management.view', 'tenant.user_management.operate']],
-        ['tenant_role_management_admin', ['tenant.role_management.view', 'tenant.role_management.operate']]
+        [
+          'tenant_user_management',
+          [
+            'tenant.user_management.view',
+            'tenant.user_management.operate'
+          ]
+        ],
+        [
+          'tenant_role_management_admin',
+          [
+            'tenant.role_management.view',
+            'tenant.role_management.operate',
+            'tenant.account_management.view',
+            'tenant.account_management.operate'
+          ]
+        ]
       ])
     ],
     [
@@ -1749,6 +1776,120 @@ const createTenantManagementApiServer = async () => {
       'tenant-202',
       new Map([
         ['membership-tenant-202-admin', ['tenant_member']]
+      ])
+    ]
+  ]);
+  const accountsByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'account-tenant-101-1',
+          {
+            account_id: 'account-tenant-101-1',
+            tenant_id: 'tenant-101',
+            wechat_id: 'wx_tenant_101_admin',
+            nickname: '管理员主号',
+            avatar_url: '',
+            owner_membership_id: 'membership-tenant-101-admin',
+            owner_name: '组织管理员',
+            assistant_membership_ids: ['membership-tenant-101-member'],
+            assistant_names: ['成员乙'],
+            customer_count: 12,
+            group_chat_count: 4,
+            status: 'active',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        [
+          'account-tenant-101-2',
+          {
+            account_id: 'account-tenant-101-2',
+            tenant_id: 'tenant-101',
+            wechat_id: 'wx_tenant_101_sales',
+            nickname: '销售号',
+            avatar_url: '',
+            owner_membership_id: 'membership-tenant-101-member',
+            owner_name: '成员乙',
+            assistant_membership_ids: [],
+            assistant_names: [],
+            customer_count: 8,
+            group_chat_count: 2,
+            status: 'disabled',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'account-tenant-202-1',
+          {
+            account_id: 'account-tenant-202-1',
+            tenant_id: 'tenant-202',
+            wechat_id: 'wx_tenant_202_admin',
+            nickname: '租户202主号',
+            avatar_url: '',
+            owner_membership_id: 'membership-tenant-202-admin',
+            owner_name: '组织管理员',
+            assistant_membership_ids: [],
+            assistant_names: [],
+            customer_count: 5,
+            group_chat_count: 1,
+            status: 'active',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ]
+      ])
+    ]
+  ]);
+  const accountOperationLogsByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'account-tenant-101-1',
+          [
+            {
+              operation_type: '新建账号',
+              operated_at: new Date().toISOString(),
+              operator_name: '系统',
+              content: '初始化账号'
+            }
+          ]
+        ],
+        [
+          'account-tenant-101-2',
+          [
+            {
+              operation_type: '新建账号',
+              operated_at: new Date().toISOString(),
+              operator_name: '系统',
+              content: '初始化账号'
+            }
+          ]
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'account-tenant-202-1',
+          [
+            {
+              operation_type: '新建账号',
+              operated_at: new Date().toISOString(),
+              operator_name: '系统',
+              content: '初始化账号'
+            }
+          ]
+        ]
       ])
     ]
   ]);
@@ -1817,6 +1958,12 @@ const createTenantManagementApiServer = async () => {
     if (!memberRoleBindingsByTenantId.has(tenantId)) {
       memberRoleBindingsByTenantId.set(tenantId, new Map());
     }
+    if (!accountsByTenantId.has(tenantId)) {
+      accountsByTenantId.set(tenantId, new Map());
+    }
+    if (!accountOperationLogsByTenantId.has(tenantId)) {
+      accountOperationLogsByTenantId.set(tenantId, new Map());
+    }
   };
 
   const getCurrentTenantMaps = () => {
@@ -1827,7 +1974,9 @@ const createTenantManagementApiServer = async () => {
       members: membersByTenantId.get(tenantId),
       roles: rolesByTenantId.get(tenantId),
       rolePermissions: rolePermissionsByTenantId.get(tenantId),
-      memberRoleBindings: memberRoleBindingsByTenantId.get(tenantId)
+      memberRoleBindings: memberRoleBindingsByTenantId.get(tenantId),
+      accounts: accountsByTenantId.get(tenantId),
+      accountOperationLogs: accountOperationLogsByTenantId.get(tenantId)
     };
   };
 
@@ -1838,7 +1987,9 @@ const createTenantManagementApiServer = async () => {
         can_view_user_management: false,
         can_operate_user_management: false,
         can_view_role_management: false,
-        can_operate_role_management: false
+        can_operate_role_management: false,
+        can_view_account_management: false,
+        can_operate_account_management: false
       };
     }
     const { tenantId, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
@@ -1856,7 +2007,9 @@ const createTenantManagementApiServer = async () => {
       can_view_user_management: permissionSet.has('tenant.user_management.view'),
       can_operate_user_management: permissionSet.has('tenant.user_management.operate'),
       can_view_role_management: permissionSet.has('tenant.role_management.view'),
-      can_operate_role_management: permissionSet.has('tenant.role_management.operate')
+      can_operate_role_management: permissionSet.has('tenant.role_management.operate'),
+      can_view_account_management: permissionSet.has('tenant.account_management.view'),
+      can_operate_account_management: permissionSet.has('tenant.account_management.operate')
     };
   };
 
@@ -2019,7 +2172,15 @@ const createTenantManagementApiServer = async () => {
     if (!ensureTenantSelected()) {
       return;
     }
-    const { tenantId, members, roles, rolePermissions, memberRoleBindings } = getCurrentTenantMaps();
+    const {
+      tenantId,
+      members,
+      roles,
+      rolePermissions,
+      memberRoleBindings,
+      accounts,
+      accountOperationLogs
+    } = getCurrentTenantMaps();
 
     if (method === 'GET' && pathname === '/tenant/users') {
       const page = Number(url.searchParams.get('page') || 1);
@@ -2254,6 +2415,321 @@ const createTenantManagementApiServer = async () => {
         payload: {
           membership_id: membershipId,
           role_ids: roleIds,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/tenant/accounts') {
+      const page = Number(url.searchParams.get('page') || 1);
+      const pageSize = Number(url.searchParams.get('page_size') || 20);
+      const wechatIdFilter = String(url.searchParams.get('wechat_id') || '').trim();
+      const nicknameFilter = String(url.searchParams.get('nickname') || '').trim().toLowerCase();
+      const ownerKeywordFilter = String(url.searchParams.get('owner_keyword') || '').trim().toLowerCase();
+      const assistantKeywordFilter = String(url.searchParams.get('assistant_keyword') || '').trim().toLowerCase();
+      const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
+      const createdTimeStart = Date.parse(String(url.searchParams.get('created_time_start') || '').trim());
+      const createdTimeEnd = Date.parse(String(url.searchParams.get('created_time_end') || '').trim());
+      const hasCreatedTimeStart = !Number.isNaN(createdTimeStart);
+      const hasCreatedTimeEnd = !Number.isNaN(createdTimeEnd);
+
+      const listedAccounts = [...accounts.values()];
+      const filteredAccounts = listedAccounts.filter((account) => {
+        const accountWechatId = String(account?.wechat_id || '').trim();
+        const accountNickname = String(account?.nickname || '').trim().toLowerCase();
+        const accountOwner = String(account?.owner_name || '').trim().toLowerCase();
+        const accountAssistantJoined = String(
+          (Array.isArray(account?.assistant_names) ? account.assistant_names : []).join(' ')
+        ).trim().toLowerCase();
+        const accountStatus = String(account?.status || '').trim().toLowerCase();
+        const accountCreatedAt = Date.parse(String(account?.created_at || '').trim());
+        if (wechatIdFilter && accountWechatId !== wechatIdFilter) {
+          return false;
+        }
+        if (nicknameFilter && !accountNickname.includes(nicknameFilter)) {
+          return false;
+        }
+        if (ownerKeywordFilter && !accountOwner.includes(ownerKeywordFilter)) {
+          return false;
+        }
+        if (assistantKeywordFilter && !accountAssistantJoined.includes(assistantKeywordFilter)) {
+          return false;
+        }
+        if (statusFilter && accountStatus !== statusFilter) {
+          return false;
+        }
+        if ((hasCreatedTimeStart || hasCreatedTimeEnd) && Number.isNaN(accountCreatedAt)) {
+          return false;
+        }
+        if (hasCreatedTimeStart && accountCreatedAt < createdTimeStart) {
+          return false;
+        }
+        if (hasCreatedTimeEnd && accountCreatedAt > createdTimeEnd) {
+          return false;
+        }
+        return true;
+      });
+      filteredAccounts.sort((left, right) => {
+        const leftCreatedAt = Date.parse(String(left?.created_at || '').trim());
+        const rightCreatedAt = Date.parse(String(right?.created_at || '').trim());
+        if (!Number.isNaN(leftCreatedAt) && !Number.isNaN(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
+          return rightCreatedAt - leftCreatedAt;
+        }
+        return String(left?.account_id || '').localeCompare(String(right?.account_id || ''));
+      });
+      const offset = (Math.max(1, page) - 1) * Math.max(1, pageSize);
+      const pageItems = filteredAccounts.slice(offset, offset + Math.max(1, pageSize));
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          tenant_id: tenantId,
+          page: Math.max(1, page),
+          page_size: Math.max(1, pageSize),
+          total: filteredAccounts.length,
+          accounts: pageItems,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/tenant/accounts') {
+      const wechatId = String(body.wechat_id || '').trim();
+      const nickname = String(body.nickname || '').trim();
+      const ownerMembershipId = String(body.owner_membership_id || '').trim();
+      const assistantMembershipIds = [...new Set(
+        (Array.isArray(body.assistant_membership_ids) ? body.assistant_membership_ids : [])
+          .map((membershipId) => String(membershipId || '').trim())
+          .filter(Boolean)
+      )];
+      if (!wechatId || !nickname || !ownerMembershipId) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'TACCOUNT-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const ownerMember = members.get(ownerMembershipId);
+      if (!ownerMember) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      const invalidAssistant = assistantMembershipIds.find(
+        (membershipId) => !members.has(membershipId)
+      );
+      if (invalidAssistant) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      const accountId = `account-${tenantId}-${nextAccountSequence++}`;
+      const now = new Date().toISOString();
+      const assistantNames = assistantMembershipIds.map((membershipId) =>
+        String(members.get(membershipId)?.display_name || members.get(membershipId)?.phone || membershipId)
+      );
+      const createdAccount = {
+        account_id: accountId,
+        tenant_id: tenantId,
+        wechat_id: wechatId,
+        nickname,
+        avatar_url: '',
+        owner_membership_id: ownerMembershipId,
+        owner_name: String(ownerMember?.display_name || ownerMember?.phone || ownerMembershipId),
+        assistant_membership_ids: assistantMembershipIds,
+        assistant_names: assistantNames,
+        customer_count: 0,
+        group_chat_count: 0,
+        status: 'active',
+        created_at: now,
+        updated_at: now
+      };
+      accounts.set(accountId, createdAccount);
+      accountOperationLogs.set(accountId, [
+        {
+          operation_type: '新建账号',
+          operated_at: now,
+          operator_name: '当前用户',
+          content: `request_id: ${requestId}`
+        }
+      ]);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...createdAccount,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const accountMatch = pathname.match(/^\/tenant\/accounts\/([^/]+)$/);
+    if (accountMatch && method === 'GET') {
+      const accountId = decodeURIComponent(accountMatch[1] || '').trim();
+      const account = accounts.get(accountId);
+      if (!account) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标账号不存在',
+          errorCode: 'TACCOUNT-404-ACCOUNT-NOT-FOUND'
+        });
+        return;
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...account,
+          operation_logs: accountOperationLogs.get(accountId) || [],
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (accountMatch && method === 'PATCH') {
+      const accountId = decodeURIComponent(accountMatch[1] || '').trim();
+      const account = accounts.get(accountId);
+      if (!account) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标账号不存在',
+          errorCode: 'TACCOUNT-404-ACCOUNT-NOT-FOUND'
+        });
+        return;
+      }
+      const wechatId = String(body.wechat_id || '').trim();
+      const nickname = String(body.nickname || '').trim();
+      const ownerMembershipId = String(body.owner_membership_id || '').trim();
+      const assistantMembershipIds = [...new Set(
+        (Array.isArray(body.assistant_membership_ids) ? body.assistant_membership_ids : [])
+          .map((membershipId) => String(membershipId || '').trim())
+          .filter(Boolean)
+      )];
+      if (!wechatId || !nickname || !ownerMembershipId) {
+        sendProblem({
+          status: 400,
+          detail: '请求参数不完整或格式错误',
+          errorCode: 'TACCOUNT-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const ownerMember = members.get(ownerMembershipId);
+      if (!ownerMember) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      const invalidAssistant = assistantMembershipIds.find(
+        (membershipId) => !members.has(membershipId)
+      );
+      if (invalidAssistant) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标成员关系不存在',
+          errorCode: 'AUTH-404-TENANT-MEMBERSHIP-NOT-FOUND'
+        });
+        return;
+      }
+      const updatedAt = new Date().toISOString();
+      const assistantNames = assistantMembershipIds.map((membershipId) =>
+        String(members.get(membershipId)?.display_name || members.get(membershipId)?.phone || membershipId)
+      );
+      const updatedAccount = {
+        ...account,
+        wechat_id: wechatId,
+        nickname,
+        owner_membership_id: ownerMembershipId,
+        owner_name: String(ownerMember?.display_name || ownerMember?.phone || ownerMembershipId),
+        assistant_membership_ids: assistantMembershipIds,
+        assistant_names: assistantNames,
+        updated_at: updatedAt
+      };
+      accounts.set(accountId, updatedAccount);
+      const logs = accountOperationLogs.get(accountId) || [];
+      logs.unshift({
+        operation_type: '编辑账号',
+        operated_at: updatedAt,
+        operator_name: '当前用户',
+        content: `request_id: ${requestId}`
+      });
+      accountOperationLogs.set(accountId, logs);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          ...updatedAccount,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const accountStatusMatch = pathname.match(/^\/tenant\/accounts\/([^/]+)\/status$/);
+    if (accountStatusMatch && method === 'PATCH') {
+      const accountId = decodeURIComponent(accountStatusMatch[1] || '').trim();
+      const account = accounts.get(accountId);
+      if (!account) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标账号不存在',
+          errorCode: 'TACCOUNT-404-ACCOUNT-NOT-FOUND'
+        });
+        return;
+      }
+      const nextStatus = String(body.status || '').trim().toLowerCase();
+      if (!['active', 'disabled'].includes(nextStatus)) {
+        sendProblem({
+          status: 400,
+          detail: 'status 必须为 active 或 disabled',
+          errorCode: 'TACCOUNT-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+      const previousStatus = String(account.status || '').trim().toLowerCase();
+      const updatedAt = new Date().toISOString();
+      const updatedAccount = {
+        ...account,
+        status: nextStatus,
+        updated_at: updatedAt
+      };
+      accounts.set(accountId, updatedAccount);
+      const logs = accountOperationLogs.get(accountId) || [];
+      logs.unshift({
+        operation_type: '状态变更',
+        operated_at: updatedAt,
+        operator_name: '当前用户',
+        content: `${previousStatus} -> ${nextStatus}`
+      });
+      accountOperationLogs.set(accountId, logs);
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          account_id: accountId,
+          tenant_id: tenantId,
+          previous_status: previousStatus,
+          current_status: nextStatus,
           request_id: requestId
         }
       });
@@ -4878,6 +5354,13 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     5000,
     'tenant user profile save should not auto-open detail drawer'
   );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => !document.querySelector('[data-testid="tenant-menu-account-matrix"]'))()`,
+    8000,
+    'tenant account matrix menu should stay hidden before account permissions are granted'
+  );
 
   await evaluate(
     cdp,
@@ -4976,6 +5459,246 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     })()`,
     15000,
     'tenant permission panel should converge immediately after role assignment'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-menu-account-matrix"]'))`,
+    10000,
+    'tenant account management menu should become visible after account permissions are granted'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-menu-account-matrix"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-tab-accounts"]'))`,
+    8000,
+    'tenant account submenu item should be visible after expanding account matrix menu'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-tab-accounts"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-accounts-module"]'))`,
+    10000,
+    'tenant account management module should be visible'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-account-id-account-tenant-101-1"]'))`,
+    10000,
+    'tenant account list should render initial records'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-account-create-open"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-account-edit-wechat-id"]'))`,
+    8000,
+    'tenant account create modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const wechatInput = document.querySelector('[data-testid="tenant-account-edit-wechat-id"]');
+      const nicknameInput = document.querySelector('[data-testid="tenant-account-edit-nickname"]');
+      const ownerSelect = document.querySelector('[data-testid="tenant-account-edit-owner-membership-id"]');
+      const ownerTrigger = ownerSelect?.querySelector('.ant-select-selector') || ownerSelect;
+      setter.call(wechatInput, 'wx_tenant_101_new');
+      wechatInput.dispatchEvent(new Event('input', { bubbles: true }));
+      wechatInput.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(nicknameInput, '新建账号甲');
+      nicknameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nicknameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      ownerTrigger?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      ownerTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      return Boolean(document.querySelector('.ant-select-item-option'));
+    })()`,
+    12000,
+    'tenant account owner selector should expose owner option'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const optionTexts = Array.from(
+        document.querySelectorAll('.ant-select-item-option .ant-select-item-option-content')
+      ).map((node) => String(node.textContent || '').trim()).filter(Boolean);
+      if (optionTexts.length < 1) {
+        return false;
+      }
+      const hasPhoneLabel = optionTexts.some((text) => /\\d{11}/.test(text));
+      const hasMembershipIdLabel = optionTexts.some((text) => text.includes('membership-'));
+      const hasDisabledMemberLabel = optionTexts.some((text) => text.includes('组织管理员（更新）'));
+      return hasPhoneLabel && !hasMembershipIdLabel && !hasDisabledMemberLabel;
+    })()`,
+    12000,
+    'tenant account owner options should use phone labels and only include active members'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const ownerOption = document.querySelector('.ant-select-item-option');
+      ownerOption?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      ownerOption?.click();
+      return Boolean(ownerOption);
+    })()`
+  );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-account-create-confirm',
+    10000,
+    'tenant account create confirm should be enabled before submission'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-account-create-confirm"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/accounts' && request.method === 'POST',
+    10000,
+    'tenant account create request should reach API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-account-id-account-tenant-101-3"]'))`,
+    10000,
+    'tenant account list should render newly created account'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-account-edit-account-tenant-101-3"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-account-edit-confirm"]'))`,
+    8000,
+    'tenant account edit modal should be visible'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const nicknameInput = document.querySelector('[data-testid="tenant-account-edit-nickname"]');
+      setter.call(nicknameInput, '新建账号甲-已编辑');
+      nicknameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      nicknameInput.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`
+  );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-account-edit-confirm',
+    10000,
+    'tenant account edit confirm should be enabled before submission'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-account-edit-confirm"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/accounts/account-tenant-101-3' && request.method === 'PATCH',
+    10000,
+    'tenant account edit request should reach API stub'
+  );
+  await waitForRequest(
+    api.responses,
+    (response) => response.path === '/tenant/accounts/account-tenant-101-3' && response.method === 'PATCH' && response.status === 200,
+    10000,
+    'tenant account edit request should succeed'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const row = document.querySelector('[data-row-key="account-tenant-101-3"]');
+      return Boolean(row && String(row.textContent || '').includes('新建账号甲-已编辑'));
+    })()`,
+    10000,
+    'tenant account row should reflect edited nickname'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-account-status-account-tenant-101-3"]')?.click(); return true; })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) => request.path === '/tenant/accounts/account-tenant-101-3/status' && request.method === 'PATCH',
+    10000,
+    'tenant account status toggle request should reach API stub'
+  );
+  await waitForRequest(
+    api.responses,
+    (response) => response.path === '/tenant/accounts/account-tenant-101-3/status' && response.method === 'PATCH' && response.status === 200,
+    10000,
+    'tenant account status toggle request should succeed'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const row = document.querySelector('[data-row-key="account-tenant-101-3"]');
+      return Boolean(row && String(row.textContent || '').includes('禁用'));
+    })()`,
+    10000,
+    'tenant account row should reflect disabled status after toggle'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-account-id-account-tenant-101-3"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-account-detail-drawer"]'))`,
+    8000,
+    'tenant account row click should open detail drawer'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('.ant-drawer .ant-drawer-close')?.click();
+      return true;
+    })()`
   );
 
   await evaluate(
@@ -5406,6 +6129,54 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   await waitForCondition(
     cdp,
     sessionId,
+    `(() => {
+      const tree = document.querySelector('[data-testid="tenant-role-permission-tree"]');
+      if (!tree) {
+        return false;
+      }
+      const nodes = Array.from(tree.querySelectorAll('.ant-tree-treenode'))
+        .map((node) => {
+          const ariaLevel = Number(node.getAttribute('aria-level') || 0);
+          const fallbackLevel = node.querySelectorAll('.ant-tree-indent-unit').length + 1;
+          return {
+            title: String(node.querySelector('.ant-tree-title')?.textContent || '').trim(),
+            level: ariaLevel > 0 ? ariaLevel : fallbackLevel
+          };
+        })
+        .filter((node) => Boolean(node.title));
+      if (nodes.length < 3) {
+        return false;
+      }
+      const accountMatrixNodeIndex = nodes.findIndex((node) => node.title === '账号矩阵');
+      const settingsNodeIndex = nodes.findIndex((node) => node.title === '设置');
+      if (accountMatrixNodeIndex < 0 || settingsNodeIndex < 0 || accountMatrixNodeIndex > settingsNodeIndex) {
+        return false;
+      }
+      const rootLevel = nodes[accountMatrixNodeIndex].level;
+      if (rootLevel < 1 || nodes[settingsNodeIndex].level !== rootLevel) {
+        return false;
+      }
+      const accountManagementNodeIndex = nodes.findIndex(
+        (node) => node.title === '账号管理' && node.level === rootLevel + 1
+      );
+      if (accountManagementNodeIndex < 0) {
+        return false;
+      }
+      let parentRootNodeIndex = -1;
+      for (let index = accountManagementNodeIndex - 1; index >= 0; index -= 1) {
+        if (nodes[index].level === rootLevel) {
+          parentRootNodeIndex = index;
+          break;
+        }
+      }
+      return parentRootNodeIndex === accountMatrixNodeIndex;
+    })()`,
+    8000,
+    'tenant role permission tree should place account menu under account matrix before settings'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
     `(() => !document.querySelector('[data-testid="tenant-role-permission-save"]'))()`,
     8000,
     'tenant role detail drawer should hide permission save action'
@@ -5474,6 +6245,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
           tenant_member_status_modal: true,
           tenant_member_profile_failure_and_retry: true,
           tenant_member_roles_assignment: true,
+          tenant_account_management_create_and_detail: true,
           tenant_write_idempotency_keys: true,
           tenant_permission_context_refresh: true,
           tenant_role_create_modal: true,

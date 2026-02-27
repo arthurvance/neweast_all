@@ -107,7 +107,8 @@ const createRouteHandlers = (config, options = {}) => {
       platformIntegrationFreezeService,
       auditService,
       tenantUserService,
-      tenantRoleService
+      tenantRoleService,
+      tenantAccountService
     }
   } = createRouteRuntime({
     options,
@@ -181,7 +182,8 @@ const createRouteHandlers = (config, options = {}) => {
     platformIntegrationFreezeService,
     auditService,
     tenantUserService,
-    tenantRoleService
+    tenantRoleService,
+    tenantAccountService
   };
 
   return handlers;

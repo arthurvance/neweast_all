@@ -1,5 +1,14 @@
 'use strict';
 
+const {
+  TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+} = require('../../../../../modules/auth/permission-catalog');
+
 const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
   dbClient,
   runTenantUsershipQuery,
@@ -45,6 +54,7 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
       sqlWithOrgGuard: `
           SELECT tenant_id,
                  tenant_name,
+                 membership_id,
                  can_view_user_management,
                  can_operate_user_management,
                  can_view_role_management,
@@ -60,6 +70,7 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
       sqlWithoutOrgGuard: `
           SELECT tenant_id,
                  tenant_name,
+                 membership_id,
                  can_view_user_management,
                  can_operate_user_management,
                  can_view_role_management,
@@ -76,13 +87,99 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
     if (!row) {
       return null;
     }
-    return {
+    const permissionCodeSet = new Set();
+    const membershipId = String(row.membership_id || '').trim();
+
+    const hasLegacyViewUserManagement = toBoolean(row.can_view_user_management);
+    const hasLegacyOperateUserManagement = toBoolean(row.can_operate_user_management);
+    const hasLegacyViewRoleManagement = toBoolean(row.can_view_role_management);
+    const hasLegacyOperateRoleManagement = toBoolean(row.can_operate_role_management);
+
+    if (hasLegacyViewUserManagement) {
+      permissionCodeSet.add(TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (hasLegacyOperateUserManagement) {
+      permissionCodeSet.add(TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE);
+    }
+    if (hasLegacyViewRoleManagement) {
+      permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (hasLegacyOperateRoleManagement) {
+      permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE);
+    }
+
+    if (membershipId) {
+      const grantRows = await dbClient.query(
+        `
+          SELECT trg.permission_code
+          FROM tenant_membership_roles tmr
+          JOIN tenant_role_permission_grants trg
+            ON trg.role_id = tmr.role_id
+          JOIN platform_roles pr
+            ON pr.role_id = tmr.role_id
+          WHERE tmr.membership_id = ?
+            AND pr.scope = 'tenant'
+            AND pr.tenant_id = ?
+            AND pr.status IN ('active', 'enabled')
+          ORDER BY trg.permission_code ASC
+        `,
+        [membershipId, normalizedTenantId]
+      );
+      for (const grantRow of Array.isArray(grantRows) ? grantRows : []) {
+        const permissionCode = String(grantRow?.permission_code || '').trim().toLowerCase();
+        if (permissionCode) {
+          permissionCodeSet.add(permissionCode);
+        }
+      }
+    }
+
+    const canViewUserManagement = permissionCodeSet.has(
+      TENANT_USER_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    const canOperateUserManagement = permissionCodeSet.has(
+      TENANT_USER_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    const canViewAccountManagement = permissionCodeSet.has(
+      TENANT_ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    const canOperateAccountManagement = permissionCodeSet.has(
+      TENANT_ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    const canViewRoleManagement = permissionCodeSet.has(
+      TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+    const canOperateRoleManagement = permissionCodeSet.has(
+      TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+    );
+
+    const context = {
       scopeLabel: `组织权限（${String(row.tenant_name || normalizedTenantId)}）`,
-      canViewUserManagement: toBoolean(row.can_view_user_management),
-      canOperateUserManagement: toBoolean(row.can_operate_user_management),
-      canViewRoleManagement: toBoolean(row.can_view_role_management),
-      canOperateRoleManagement: toBoolean(row.can_operate_role_management)
+      canViewUserManagement,
+      canOperateUserManagement,
+      canViewAccountManagement,
+      canOperateAccountManagement,
+      canViewRoleManagement,
+      canOperateRoleManagement
     };
+    Object.defineProperty(context, 'permission_code_set', {
+      value: permissionCodeSet,
+      enumerable: false,
+      configurable: true
+    });
+    Object.defineProperty(context, 'permissionCodeSet', {
+      value: permissionCodeSet,
+      enumerable: false,
+      configurable: true
+    });
+    return context;
   },
 
   listTenantOptionsByUserId: async (userId) => {

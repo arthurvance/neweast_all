@@ -123,6 +123,24 @@ export const TENANT_PERMISSION_CATALOG_ITEMS = deepFreeze([
     "label_key": "permission.tenant.role_management.operate",
     "order": 220,
     "assignable": true
+  },
+  {
+    "code": "tenant.account_management.view",
+    "scope": "tenant",
+    "group_key": "account_management",
+    "action_key": "view",
+    "label_key": "permission.tenant.account_management.view",
+    "order": 310,
+    "assignable": true
+  },
+  {
+    "code": "tenant.account_management.operate",
+    "scope": "tenant",
+    "group_key": "account_management",
+    "action_key": "operate",
+    "label_key": "permission.tenant.account_management.operate",
+    "order": 320,
+    "assignable": true
   }
 ]);
 
@@ -142,6 +160,10 @@ export const PLATFORM_PERMISSION_CODE_BY_GROUP_ACTION = deepFreeze({
 });
 
 export const TENANT_PERMISSION_CODE_BY_GROUP_ACTION = deepFreeze({
+  "account_management": {
+    "operate": "tenant.account_management.operate",
+    "view": "tenant.account_management.view"
+  },
   "role_management": {
     "operate": "tenant.role_management.operate",
     "view": "tenant.role_management.view"

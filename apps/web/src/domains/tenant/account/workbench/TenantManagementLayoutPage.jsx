@@ -191,6 +191,7 @@ export default function TenantManagementLayoutPage({
             >
               <ActivePageComponent
                 accessToken={accessToken}
+                tenantPermissionContext={tenantPermissionContext}
                 onTenantPermissionContextRefresh={onTenantPermissionContextRefresh}
               />
             </Suspense>

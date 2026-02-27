@@ -12,6 +12,8 @@ const buildTenantUnselectedPermissionContext = () => ({
   scope_label: '组织未选择（无可操作权限）',
   can_view_user_management: false,
   can_operate_user_management: false,
+  can_view_account_management: false,
+  can_operate_account_management: false,
   can_view_role_management: false,
   can_operate_role_management: false
 });
@@ -20,15 +22,53 @@ const buildTenantPlatformEntryPermissionContext = () => ({
   scope_label: '平台入口（无组织侧权限上下文）',
   can_view_user_management: false,
   can_operate_user_management: false,
+  can_view_account_management: false,
+  can_operate_account_management: false,
   can_view_role_management: false,
   can_operate_role_management: false
 });
+
+const readPermissionCodeSet = (permissionContext) => {
+  const permissionCodeSet = permissionContext?.permission_code_set
+    ?? permissionContext?.permissionCodeSet;
+  if (permissionCodeSet instanceof Set) {
+    return permissionCodeSet;
+  }
+  if (Array.isArray(permissionCodeSet)) {
+    return new Set(
+      permissionCodeSet
+        .map((permissionCode) => String(permissionCode || '').trim().toLowerCase())
+        .filter((permissionCode) => permissionCode.length > 0)
+    );
+  }
+  return null;
+};
+
+const attachPermissionCodeSet = ({ source, target }) => {
+  const permissionCodeSet = readPermissionCodeSet(source);
+  if (!(permissionCodeSet instanceof Set) || permissionCodeSet.size < 1) {
+    return target;
+  }
+  Object.defineProperty(target, 'permission_code_set', {
+    value: permissionCodeSet,
+    enumerable: false,
+    configurable: true
+  });
+  Object.defineProperty(target, 'permissionCodeSet', {
+    value: permissionCodeSet,
+    enumerable: false,
+    configurable: true
+  });
+  return target;
+};
 
 const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel) => {
   if (!permissionContext || typeof permissionContext !== 'object') {
     return null;
   }
-  return {
+  return attachPermissionCodeSet({
+    source: permissionContext,
+    target: {
     scope_label: permissionContext.scopeLabel
       || permissionContext.scope_label
       || fallbackScopeLabel
@@ -39,13 +79,20 @@ const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel)
     can_operate_user_management: Boolean(
       permissionContext.canOperateUserManagement ?? permissionContext.can_operate_user_management
     ),
+    can_view_account_management: Boolean(
+      permissionContext.canViewAccountManagement ?? permissionContext.can_view_account_management
+    ),
+    can_operate_account_management: Boolean(
+      permissionContext.canOperateAccountManagement ?? permissionContext.can_operate_account_management
+    ),
     can_view_role_management: Boolean(
       permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management
     ),
     can_operate_role_management: Boolean(
       permissionContext.canOperateRoleManagement ?? permissionContext.can_operate_role_management
     )
-  };
+  }
+  });
 };
 
 const normalizePlatformPermissionContext = (permissionContext, fallbackScopeLabel) => {

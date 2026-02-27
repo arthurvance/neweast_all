@@ -59,7 +59,8 @@ const createRouteRuntime = ({
       platformIntegrationFreezeService: platformRuntime.platformIntegrationFreezeService,
       auditService: auditRuntime.auditService,
       tenantUserService: tenantRuntime.tenantUserService,
-      tenantRoleService: tenantRuntime.tenantRoleService
+      tenantRoleService: tenantRuntime.tenantRoleService,
+      tenantAccountService: tenantRuntime.tenantAccountService
     }
   };
 };

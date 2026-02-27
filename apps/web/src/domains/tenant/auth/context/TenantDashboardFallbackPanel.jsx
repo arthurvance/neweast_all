@@ -79,7 +79,12 @@ export default function TenantDashboardFallbackPanel({
                 {permissionUiState?.menu?.role_management ? (
                   <li data-testid="menu-role_management">角色管理</li>
                 ) : null}
-                {!permissionUiState?.menu?.user_management && !permissionUiState?.menu?.role_management ? (
+                {permissionUiState?.menu?.account_management ? (
+                  <li data-testid="menu-account_management">账号管理</li>
+                ) : null}
+                {!permissionUiState?.menu?.user_management
+                && !permissionUiState?.menu?.role_management
+                && !permissionUiState?.menu?.account_management ? (
                   <li data-testid="menu-empty">当前无可见菜单</li>
                 ) : null}
               </ul>
@@ -100,6 +105,15 @@ export default function TenantDashboardFallbackPanel({
                 style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
               >
                 角色管理
+              </button>
+            ) : null}
+            {permissionUiState?.action?.account_management ? (
+              <button
+                data-testid="permission-account_management-button"
+                type="button"
+                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d0d7de' }}
+              >
+                账号管理
               </button>
             ) : null}
           </section>
