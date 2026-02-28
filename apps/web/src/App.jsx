@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from 'antd';
 import AuthApp from './features/auth/AuthApp';
-import { createApiRequest } from './shared-kernel/http/request-json.mjs';
+import {
+  createApiRequest,
+  configureAuthRequestHooks
+} from './shared-kernel/http/request-json.mjs';
 import { PlatformApp } from './domains/platform/index.mjs';
 import {
   TenantApp,
@@ -23,8 +26,12 @@ import {
   readEntryDomainFromLocation,
   readPersistedAuthSession
 } from './features/auth/auth-session-storage';
+import { asTenantOptions, normalizeUserName } from './features/auth/session-model';
 
 const GLOBAL_TOAST_DURATION_SECONDS = 3;
+const ACCESS_TOKEN_REFRESH_LEAD_TIME_MS = 60 * 1000;
+const ACCESS_TOKEN_REFRESH_RETRY_DELAY_MS = 30 * 1000;
+const AUTH_INVALID_ACCESS_ERROR_CODE = 'AUTH-401-INVALID-ACCESS';
 const requestJson = createApiRequest();
 
 const postJson = async (path, payload) => requestJson({ path, payload, method: 'POST' });
@@ -36,6 +43,45 @@ const formatRetryMessage = (detail) => {
     return base;
   }
   return `${base}，${RETRY_SUFFIX}`;
+};
+
+const isInvalidAccessProblem = (error) =>
+  String(error?.payload?.error_code || '').trim().toUpperCase() === AUTH_INVALID_ACCESS_ERROR_CODE;
+
+const decodeJwtPayload = (token) => {
+  const normalizedToken = String(token || '').trim();
+  if (!normalizedToken) {
+    return null;
+  }
+  const parts = normalizedToken.split('.');
+  if (parts.length < 2) {
+    return null;
+  }
+  try {
+    const normalizedPayload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const paddedPayload = normalizedPayload.padEnd(
+      Math.ceil(normalizedPayload.length / 4) * 4,
+      '='
+    );
+    const decodedPayload = typeof window !== 'undefined' && typeof window.atob === 'function'
+      ? window.atob(paddedPayload)
+      : '';
+    if (!decodedPayload) {
+      return null;
+    }
+    return JSON.parse(decodedPayload);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const resolveJwtExpirationAtMs = (token) => {
+  const payload = decodeJwtPayload(token);
+  const exp = Number(payload?.exp);
+  if (!Number.isFinite(exp) || exp <= 0) {
+    return 0;
+  }
+  return Math.floor(exp * 1000);
 };
 
 export default function App() {
@@ -62,6 +108,8 @@ export default function App() {
   const [isTenantSubmitting, setIsTenantSubmitting] = useState(false);
   const [globalMessage, setGlobalMessage] = useState(null);
   const sessionStateRef = useRef(initialPersistedAuth?.sessionState || null);
+  const refreshInFlightRef = useRef(null);
+  const accessTokenRefreshTimerRef = useRef(null);
   const permissionState = readTenantPermissionState(sessionState);
   const permissionUiState = selectPermissionUiState(permissionState);
   const [messageApi, messageContextHolder] = message.useMessage();
@@ -79,6 +127,12 @@ export default function App() {
   }, [globalMessage, messageApi]);
 
   const clearAuthSession = useCallback((nextGlobalMessage = null) => {
+    if (accessTokenRefreshTimerRef.current) {
+      clearTimeout(accessTokenRefreshTimerRef.current);
+      accessTokenRefreshTimerRef.current = null;
+    }
+    refreshInFlightRef.current = null;
+    configureAuthRequestHooks();
     clearPersistedAuthSession();
     sessionStateRef.current = null;
     setSessionState(null);
@@ -88,6 +142,155 @@ export default function App() {
     setIsTenantSubmitting(false);
     setGlobalMessage(nextGlobalMessage);
   }, []);
+
+  const applyRefreshedAuthPayload = useCallback((payload = {}) => {
+    const normalizedPayload = payload && typeof payload === 'object' ? payload : {};
+    const hasUserNameField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      'user_name'
+    );
+    const hasActiveTenantIdField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      'active_tenant_id'
+    );
+    const hasTenantPermissionContextField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      'tenant_permission_context'
+    );
+    const hasPlatformPermissionContextField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      'platform_permission_context'
+    );
+    const hasTenantSelectionRequiredField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      'tenant_selection_required'
+    );
+    const hasTenantOptionsField = Array.isArray(normalizedPayload.tenant_options);
+    const nextTenantOptions = hasTenantOptionsField
+      ? asTenantOptions(normalizedPayload.tenant_options)
+      : null;
+
+    setSessionState((previous) => {
+      const previousSession = previous && typeof previous === 'object' ? previous : {};
+      const nextSessionState = {
+        ...previousSession,
+        access_token: String(
+          normalizedPayload.access_token || previousSession.access_token || ''
+        ).trim() || null,
+        refresh_token: String(
+          normalizedPayload.refresh_token || previousSession.refresh_token || ''
+        ).trim() || null,
+        session_id: String(
+          normalizedPayload.session_id || previousSession.session_id || ''
+        ).trim() || null,
+        entry_domain: String(
+          normalizedPayload.entry_domain || previousSession.entry_domain || 'tenant'
+        ).trim().toLowerCase() === 'tenant'
+          ? 'tenant'
+          : 'platform',
+        user_name: hasUserNameField
+          ? normalizeUserName(normalizedPayload.user_name)
+          : normalizeUserName(previousSession.user_name),
+        active_tenant_id: hasActiveTenantIdField
+          ? (String(normalizedPayload.active_tenant_id || '').trim() || null)
+          : (String(previousSession.active_tenant_id || '').trim() || null),
+        tenant_selection_required: hasTenantSelectionRequiredField
+          ? Boolean(normalizedPayload.tenant_selection_required)
+          : Boolean(previousSession.tenant_selection_required),
+        tenant_permission_context: hasTenantPermissionContextField
+          ? (normalizedPayload.tenant_permission_context || null)
+          : (previousSession.tenant_permission_context || null),
+        platform_permission_context: hasPlatformPermissionContextField
+          ? (normalizedPayload.platform_permission_context || null)
+          : (previousSession.platform_permission_context || null)
+      };
+      sessionStateRef.current = nextSessionState;
+      return nextSessionState;
+    });
+
+    if (hasTenantOptionsField && nextTenantOptions) {
+      setTenantOptions(nextTenantOptions);
+      setTenantSwitchValue((previous) => {
+        const normalizedPrevious = String(previous || '').trim();
+        const normalizedActiveTenantId = String(
+          normalizedPayload.active_tenant_id || ''
+        ).trim();
+        if (
+          normalizedActiveTenantId
+          && nextTenantOptions.some(
+            (option) => String(option?.tenant_id || '').trim() === normalizedActiveTenantId
+          )
+        ) {
+          return normalizedActiveTenantId;
+        }
+        if (
+          normalizedPrevious
+          && nextTenantOptions.some(
+            (option) => String(option?.tenant_id || '').trim() === normalizedPrevious
+          )
+        ) {
+          return normalizedPrevious;
+        }
+        return String(nextTenantOptions[0]?.tenant_id || '').trim();
+      });
+    }
+  }, [setSessionState, setTenantOptions, setTenantSwitchValue]);
+
+  const refreshAccessTokenIfPossible = useCallback(async ({
+    reason = 'manual',
+    silent = false
+  } = {}) => {
+    const currentSession = sessionStateRef.current;
+    const refreshToken = String(currentSession?.refresh_token || '').trim();
+    if (!refreshToken) {
+      const error = new Error('当前会话无 refresh_token，无法续期');
+      error.payload = {
+        detail: '当前会话无 refresh_token，无法续期'
+      };
+      throw error;
+    }
+
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const refreshPromise = (async () => {
+      try {
+        const payload = await requestJson({
+          path: '/auth/refresh',
+          method: 'POST',
+          payload: {
+            refresh_token: refreshToken
+          },
+          accessToken: ''
+        });
+        const nextAccessToken = String(payload?.access_token || '').trim();
+        if (!nextAccessToken) {
+          throw new Error('refresh 返回缺少 access_token');
+        }
+        applyRefreshedAuthPayload(payload);
+        return nextAccessToken;
+      } catch (error) {
+        if (isInvalidAccessProblem(error) || Number(error?.status) === 401) {
+          clearAuthSession({
+            type: 'error',
+            text: '会话已失效，请重新登录'
+          });
+        } else if (!silent) {
+          setGlobalMessage({
+            type: 'error',
+            text: formatRetryMessage(error?.payload?.detail || '会话续期失败')
+          });
+        }
+        throw error;
+      }
+    })().finally(() => {
+      refreshInFlightRef.current = null;
+    });
+
+    refreshInFlightRef.current = refreshPromise;
+    return refreshPromise;
+  }, [applyRefreshedAuthPayload, clearAuthSession, setGlobalMessage]);
 
   const handleLoginFailure = useCallback(() => {
     sessionStateRef.current = null;
@@ -134,9 +337,91 @@ export default function App() {
     setScreen,
     setGlobalMessage,
     requestJson,
+    recoverInvalidAccess: async () => {
+      await refreshAccessTokenIfPossible({
+        reason: 'tenant-session-recover',
+        silent: true
+      });
+    },
     formatRetryMessage,
     clearAuthSession
   });
+
+  useEffect(() => {
+    configureAuthRequestHooks({
+      getAccessToken: () => String(sessionStateRef.current?.access_token || '').trim(),
+      refreshAccessToken: async () =>
+        refreshAccessTokenIfPossible({
+          reason: 'api-auto-refresh',
+          silent: true
+        })
+    });
+    return () => {
+      configureAuthRequestHooks();
+    };
+  }, [refreshAccessTokenIfPossible]);
+
+  useEffect(() => {
+    if (accessTokenRefreshTimerRef.current) {
+      clearTimeout(accessTokenRefreshTimerRef.current);
+      accessTokenRefreshTimerRef.current = null;
+    }
+
+    const accessToken = String(sessionState?.access_token || '').trim();
+    const refreshToken = String(sessionState?.refresh_token || '').trim();
+    if (!accessToken || !refreshToken) {
+      return;
+    }
+
+    const expiresAtMs = resolveJwtExpirationAtMs(accessToken);
+    if (expiresAtMs <= 0) {
+      return;
+    }
+
+    const refreshDelayMs = expiresAtMs - Date.now() - ACCESS_TOKEN_REFRESH_LEAD_TIME_MS;
+    if (refreshDelayMs <= 0) {
+      void refreshAccessTokenIfPossible({
+        reason: 'startup-expired-access',
+        silent: true
+      }).catch((error) => {
+        if (!(isInvalidAccessProblem(error) || Number(error?.status) === 401)) {
+          setGlobalMessage({
+            type: 'error',
+            text: formatRetryMessage(error?.payload?.detail || '会话续期失败')
+          });
+        }
+      });
+      return;
+    }
+
+    accessTokenRefreshTimerRef.current = setTimeout(() => {
+      void refreshAccessTokenIfPossible({
+        reason: 'scheduled-refresh',
+        silent: true
+      }).catch((error) => {
+        if (isInvalidAccessProblem(error) || Number(error?.status) === 401) {
+          return;
+        }
+        setGlobalMessage({
+          type: 'error',
+          text: formatRetryMessage(error?.payload?.detail || '会话续期失败')
+        });
+        accessTokenRefreshTimerRef.current = setTimeout(() => {
+          void refreshAccessTokenIfPossible({
+            reason: 'scheduled-refresh-retry',
+            silent: true
+          }).catch(() => {});
+        }, ACCESS_TOKEN_REFRESH_RETRY_DELAY_MS);
+      });
+    }, refreshDelayMs);
+
+    return () => {
+      if (accessTokenRefreshTimerRef.current) {
+        clearTimeout(accessTokenRefreshTimerRef.current);
+        accessTokenRefreshTimerRef.current = null;
+      }
+    };
+  }, [sessionState, refreshAccessTokenIfPossible]);
 
   const refreshPlatformPermissionContextFailClosed = useCallback(async () => {
     const currentSession = sessionStateRef.current;

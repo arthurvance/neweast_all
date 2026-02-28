@@ -17,6 +17,9 @@ import {
 const normalizeTenantMutationPayload = (payload) =>
   payload && typeof payload === 'object' ? payload : {};
 
+const isInvalidAccessProblem = (error) =>
+  String(error?.payload?.error_code || '').trim().toUpperCase() === 'AUTH-401-INVALID-ACCESS';
+
 export const useTenantSessionFlow = ({
   initialPersistedAuth,
   sessionState,
@@ -31,6 +34,7 @@ export const useTenantSessionFlow = ({
   setScreen,
   setGlobalMessage,
   requestJson,
+  recoverInvalidAccess,
   formatRetryMessage,
   clearAuthSession
 }) => {
@@ -116,18 +120,51 @@ export const useTenantSessionFlow = ({
     }
     void refreshTenantContext(restoredAccessToken, {
       expectedSession: restoredSession
-    }).catch(() => {
+    }).catch(async (error) => {
+      if (
+        isInvalidAccessProblem(error)
+        && typeof recoverInvalidAccess === 'function'
+      ) {
+        try {
+          const recoveredAccessTokenCandidate = await recoverInvalidAccess({
+            reason: 'tenant-context-restore'
+          });
+          const recoveredAccessToken = String(
+            recoveredAccessTokenCandidate
+            || sessionStateRef.current?.access_token
+            || ''
+          ).trim();
+          if (!recoveredAccessToken) {
+            throw new Error('租户上下文恢复失败：未获得可用 access_token');
+          }
+          const recoveredSession = sessionStateRef.current || restoredSession;
+          await refreshTenantContext(recoveredAccessToken, {
+            expectedSession: recoveredSession,
+            forceApply: true
+          });
+          return;
+        } catch (_recoverError) {
+          // Fall through to fail-closed cleanup.
+        }
+      }
       clearAuthSession({
         type: 'error',
         text: '会话已失效，请重新登录'
       });
     });
-  }, [clearAuthSession, initialPersistedAuth, refreshTenantContext]);
+  }, [
+    clearAuthSession,
+    initialPersistedAuth,
+    recoverInvalidAccess,
+    sessionStateRef,
+    refreshTenantContext
+  ]);
 
   const applyLoginPayload = useCallback((payload) => {
     const options = asTenantOptions(payload.tenant_options);
     const resolvedSession = {
       access_token: payload.access_token,
+      refresh_token: payload.refresh_token || null,
       session_id: payload.session_id,
       entry_domain: payload.entry_domain,
       user_name: normalizeUserName(payload.user_name),

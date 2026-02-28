@@ -55,12 +55,14 @@ export const readPersistedAuthSession = () => {
       ? snapshot.sessionState
       : null;
     const accessToken = String(rawSession?.access_token || '').trim();
+    const refreshToken = String(rawSession?.refresh_token || '').trim();
     if (!accessToken) {
       clearPersistedAuthSession();
       return null;
     }
     const sessionState = {
       access_token: accessToken,
+      refresh_token: refreshToken || null,
       session_id: rawSession?.session_id ? String(rawSession.session_id) : null,
       entry_domain: normalizeEntryDomain(rawSession?.entry_domain),
       user_name: normalizeUserName(rawSession?.user_name),
@@ -105,6 +107,7 @@ export const persistAuthSession = ({
     return;
   }
   const accessToken = String(sessionState?.access_token || '').trim();
+  const refreshToken = String(sessionState?.refresh_token || '').trim();
   if (!accessToken) {
     clearPersistedAuthSession();
     return;
@@ -112,6 +115,7 @@ export const persistAuthSession = ({
   const snapshot = {
     sessionState: {
       access_token: accessToken,
+      refresh_token: refreshToken || null,
       session_id: sessionState?.session_id ? String(sessionState.session_id) : null,
       entry_domain: normalizeEntryDomain(sessionState?.entry_domain),
       user_name: normalizeUserName(sessionState?.user_name),
