@@ -2186,6 +2186,44 @@ test('GET/PUT /tenant/roles/:role_id/permissions manages tenant role permission 
   );
 });
 
+test('PUT /tenant/roles/:role_id/permissions rejects is_system role even when role_id is outside protected constant list', async () => {
+  const harness = createHarness();
+  const login = await loginByPhone(
+    harness.authService,
+    'req-tenant-role-login-protected-permissions-by-is-system',
+    TENANT_OPERATOR_A_PHONE
+  );
+  await harness.authService.createPlatformRoleCatalogEntry({
+    roleId: 'tenant_a_custom_system_role_permissions',
+    code: 'TENANT_A_CUSTOM_SYSTEM_ROLE_PERMISSIONS',
+    name: '租户A系统角色权限保护',
+    status: 'active',
+    scope: 'tenant',
+    tenantId: 'tenant-a',
+    isSystem: true,
+    operatorUserId: 'seed-user',
+    operatorSessionId: 'seed-session'
+  });
+
+  const replaceRoute = await dispatchApiRoute({
+    pathname: '/tenant/roles/tenant_a_custom_system_role_permissions/permissions',
+    method: 'PUT',
+    requestId: 'req-tenant-role-protected-permissions-by-is-system-put',
+    headers: {
+      authorization: `Bearer ${login.access_token}`
+    },
+    body: {
+      permission_codes: ['tenant.user_management.view']
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(replaceRoute.status, 403);
+  const payload = JSON.parse(replaceRoute.body);
+  assert.equal(payload.error_code, 'TROLE-403-SYSTEM-ROLE-PROTECTED');
+  assert.equal(payload.retryable, false);
+});
+
 test('GET /tenant/roles/:role_id/permissions keeps tenant isolation and rejects cross-tenant lookup', async () => {
   const harness = createHarness();
   const loginA = await loginByPhone(

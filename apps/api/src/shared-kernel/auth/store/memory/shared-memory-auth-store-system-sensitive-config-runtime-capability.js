@@ -19,8 +19,11 @@ const createSharedMemoryAuthStoreSystemSensitiveConfigRuntimeCapability = ({
   const cloneSystemSensitiveConfigRecord = (record = null) =>
     record
       ? {
+        key: record.key || record.configKey,
         configKey: record.configKey,
+        value: record.value || record.encryptedValue,
         encryptedValue: record.encryptedValue,
+        remark: record.remark || null,
         version: Number(record.version),
         previousVersion: Number(record.previousVersion || 0),
         status: record.status,

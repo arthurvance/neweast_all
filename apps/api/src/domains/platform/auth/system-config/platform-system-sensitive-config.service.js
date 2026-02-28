@@ -17,6 +17,7 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
   REJECTED_SYSTEM_CONFIG_AUDIT_EVENT_TYPES,
   CONTROL_CHAR_PATTERN
 } = {}) => {
+  const MAX_SYSTEM_SENSITIVE_CONFIG_REMARK_LENGTH = 255;
   const recordSystemSensitiveConfigAuditEvent = async ({
     requestId = 'request_id_unset',
     traceparent = null,
@@ -83,6 +84,8 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
     traceparent = null,
     configKey = DEFAULT_PASSWORD_CONFIG_KEY,
     encryptedValue,
+    remark,
+    hasRemark = false,
     expectedVersion,
     updatedByUserId,
     updatedBySessionId = null,
@@ -112,6 +115,22 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
     if (!Number.isInteger(parsedExpectedVersion) || parsedExpectedVersion < 0) {
       throw errors.invalidPayload();
     }
+    let normalizedRemark = '';
+    if (hasRemark) {
+      if (remark === null || remark === undefined) {
+        normalizedRemark = '';
+      } else if (typeof remark === 'string') {
+        normalizedRemark = remark.trim();
+      } else {
+        throw errors.invalidPayload();
+      }
+      if (
+        CONTROL_CHAR_PATTERN.test(normalizedRemark)
+        || normalizedRemark.length > MAX_SYSTEM_SENSITIVE_CONFIG_REMARK_LENGTH
+      ) {
+        throw errors.invalidPayload();
+      }
+    }
     const normalizedStatus = normalizeSystemSensitiveConfigStatus(status);
     if (!normalizedStatus) {
       throw errors.invalidPayload();
@@ -128,6 +147,8 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
       const savedRecord = await authStore.upsertSystemSensitiveConfig({
         configKey: normalizedConfigKey,
         encryptedValue: normalizedEncryptedValue,
+        remark: hasRemark ? normalizedRemark : undefined,
+        hasRemark,
         expectedVersion: parsedExpectedVersion,
         updatedByUserId: normalizedUpdatedByUserId,
         status: normalizedStatus
@@ -153,7 +174,7 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
           ? 'system sensitive config version conflict'
           : 'system sensitive config update failed',
         metadata: {
-          config_key: normalizedConfigKey,
+          key: normalizedConfigKey,
           expected_version: expectedVersionValue,
           current_version: Number.isInteger(currentVersion) && currentVersion >= 0
             ? currentVersion
@@ -176,7 +197,7 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
           : null,
         afterState: null,
         metadata: {
-          config_key: normalizedConfigKey,
+          key: normalizedConfigKey,
           expected_version: expectedVersionValue,
           current_version: Number.isInteger(currentVersion) && currentVersion >= 0
             ? currentVersion
@@ -197,7 +218,7 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
       sessionId: normalizedUpdatedBySessionId,
       detail: 'system sensitive config updated',
       metadata: {
-        config_key: normalizedConfigKey,
+        key: normalizedConfigKey,
         previous_version: normalizedSavedRecord.previousVersion,
         current_version: normalizedSavedRecord.version,
         status: normalizedSavedRecord.status
@@ -220,7 +241,7 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
           status: normalizedSavedRecord.status
         },
         metadata: {
-          config_key: normalizedConfigKey,
+          key: normalizedConfigKey,
           previous_version: normalizedSavedRecord.previousVersion,
           current_version: normalizedSavedRecord.version,
           status: normalizedSavedRecord.status
@@ -235,7 +256,7 @@ const createPlatformSystemSensitiveConfigCapabilities = ({
         sessionId: normalizedUpdatedBySessionId,
         detail: 'system sensitive config persistent audit degraded',
         metadata: {
-          config_key: normalizedConfigKey,
+          key: normalizedConfigKey,
           previous_version: normalizedSavedRecord.previousVersion,
           current_version: normalizedSavedRecord.version,
           status: normalizedSavedRecord.status,

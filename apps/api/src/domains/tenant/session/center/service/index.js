@@ -15,6 +15,7 @@ const {
 
 const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const CONVERSATION_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
+const MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const OUTBOUND_MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const CLIENT_MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const MAX_WECHAT_ID_LENGTH = 128;
@@ -53,6 +54,7 @@ const ENQUEUE_STATUS_SET = new Set([
   'cancelled'
 ]);
 const DEFAULT_PULL_STATUS_LIST = Object.freeze(['pending', 'retrying']);
+const MESSAGE_CURSOR_PREFIX = 'msg_v1';
 
 const CONVERSATION_INGEST_ALLOWED_FIELDS = new Set([
   'account_wechat_id',
@@ -387,6 +389,114 @@ const normalizeOptionalTimestamp = (value) => {
     return null;
   }
   return normalizedTimestamp;
+};
+
+const normalizeMessageId = (value) => {
+  const normalized = normalizeStrictRequiredString(value);
+  if (!normalized || !MESSAGE_ID_PATTERN.test(normalized)) {
+    return '';
+  }
+  return normalized;
+};
+
+const toBase64Url = (value) =>
+  Buffer.from(String(value || ''), 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+
+const fromBase64Url = (value) => {
+  const normalized = String(value || '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  if (!normalized) {
+    return '';
+  }
+  const paddingLength = normalized.length % 4;
+  const padded =
+    normalized + (paddingLength === 0 ? '' : '='.repeat(4 - paddingLength));
+  return Buffer.from(padded, 'base64').toString('utf8');
+};
+
+const encodeMessageCursor = ({
+  messageTime = null,
+  createdAt = null,
+  messageId = ''
+} = {}) => {
+  const normalizedMessageTime = normalizeOptionalTimestamp(messageTime);
+  const normalizedCreatedAt = normalizeOptionalTimestamp(createdAt);
+  const normalizedMessageId = normalizeMessageId(messageId);
+  if (!normalizedMessageTime || !normalizedCreatedAt || !normalizedMessageId) {
+    return '';
+  }
+  return `${MESSAGE_CURSOR_PREFIX}.${toBase64Url(
+    JSON.stringify({
+      v: 1,
+      message_time: normalizedMessageTime,
+      created_at: normalizedCreatedAt,
+      message_id: normalizedMessageId
+    })
+  )}`;
+};
+
+const parseMessageCursor = (cursor) => {
+  if (cursor === undefined || cursor === null || cursor === '') {
+    return {
+      cursorRaw: null,
+      cursorTime: null,
+      cursorCreatedAt: null,
+      cursorMessageId: ''
+    };
+  }
+  if (typeof cursor !== 'string') {
+    return null;
+  }
+
+  const cursorRaw = cursor.trim();
+  if (!cursorRaw) {
+    return null;
+  }
+
+  const legacyCursorTime = normalizeOptionalTimestamp(cursorRaw);
+  if (legacyCursorTime) {
+    return {
+      cursorRaw,
+      cursorTime: legacyCursorTime,
+      cursorCreatedAt: null,
+      cursorMessageId: ''
+    };
+  }
+
+  const prefix = `${MESSAGE_CURSOR_PREFIX}.`;
+  if (!cursorRaw.startsWith(prefix)) {
+    return null;
+  }
+
+  let payload = null;
+  try {
+    payload = JSON.parse(fromBase64Url(cursorRaw.slice(prefix.length)));
+  } catch (_error) {
+    return null;
+  }
+
+  if (!payload || typeof payload !== 'object' || Number(payload.v) !== 1) {
+    return null;
+  }
+
+  const cursorTime = normalizeOptionalTimestamp(payload.message_time);
+  const cursorCreatedAt = normalizeOptionalTimestamp(payload.created_at);
+  const cursorMessageId = normalizeMessageId(payload.message_id);
+  if (!cursorTime || !cursorCreatedAt || !cursorMessageId) {
+    return null;
+  }
+
+  return {
+    cursorRaw,
+    cursorTime,
+    cursorCreatedAt,
+    cursorMessageId
+  };
 };
 
 const toPositiveInteger = (value, fallbackValue, maxValue) => {
@@ -1448,8 +1558,13 @@ const parseChatMessagesInput = ({ params = {}, query = {} } = {}) => {
   if (!accountWechatId) {
     throw tenantSessionErrors.invalidPayload('account_wechat_id 为必填');
   }
-  const cursor = normalizeOptionalTimestamp(query.cursor);
-  if (query.cursor !== undefined && query.cursor !== null && query.cursor !== '' && !cursor) {
+  const parsedCursor = parseMessageCursor(query.cursor);
+  if (
+    query.cursor !== undefined
+    && query.cursor !== null
+    && query.cursor !== ''
+    && !parsedCursor
+  ) {
     throw tenantSessionErrors.invalidPayload('cursor 参数格式错误');
   }
   const limit = toPositiveInteger(query.limit, DEFAULT_MESSAGE_LIMIT, MAX_PAGE_SIZE);
@@ -1457,7 +1572,10 @@ const parseChatMessagesInput = ({ params = {}, query = {} } = {}) => {
     conversationId,
     scope,
     accountWechatId,
-    cursor,
+    cursor: parsedCursor?.cursorTime || null,
+    cursorCreatedAt: parsedCursor?.cursorCreatedAt || null,
+    cursorMessageId: parsedCursor?.cursorMessageId || '',
+    cursorToken: parsedCursor?.cursorRaw || null,
     limit
   };
 };
@@ -2019,6 +2137,8 @@ const createTenantSessionService = ({ authService } = {}) => {
         tenantId: activeTenantId,
         conversationId: parsedInput.conversationId,
         cursor: parsedInput.cursor,
+        cursorCreatedAt: parsedInput.cursorCreatedAt,
+        cursorMessageId: parsedInput.cursorMessageId,
         limit: parsedInput.limit
       });
     } catch (error) {
@@ -2028,8 +2148,20 @@ const createTenantSessionService = ({ authService } = {}) => {
     const normalizedMessages = (Array.isArray(messages) ? messages : [])
       .map((record) => normalizeHistoryMessageRecordFromStore(record))
       .filter(Boolean);
+    const lastMessage = normalizedMessages.at(-1) || null;
     const nextCursor = normalizedMessages.length >= parsedInput.limit
-      ? normalizedMessages.at(-1)?.message_time || null
+      ? (
+        encodeMessageCursor({
+          messageTime: lastMessage?.message_time,
+          createdAt:
+            lastMessage?.created_at
+            || lastMessage?.ingested_at
+            || lastMessage?.message_time,
+          messageId: lastMessage?.message_id
+        })
+        || lastMessage?.message_time
+        || null
+      )
       : null;
 
     return {
@@ -2038,7 +2170,7 @@ const createTenantSessionService = ({ authService } = {}) => {
       scope: parsedInput.scope,
       account_wechat_id: selectedAccount.wechat_id,
       conversation_id: parsedInput.conversationId,
-      cursor: parsedInput.cursor,
+      cursor: parsedInput.cursorToken,
       limit: parsedInput.limit,
       next_cursor: nextCursor,
       messages: normalizedMessages

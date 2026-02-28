@@ -253,3 +253,79 @@ test('memory tenant session store enforces unique conversation identity per tena
 
   assert.equal(groupConversation.conversation_id, 'conv_session_unique_003');
 });
+
+test('memory tenant session store sorts conversations by updated_at when last_message_time is the same', async () => {
+  const store = createStore();
+
+  const account = await store.createTenantAccount({
+    tenantId: 'tenant-session-a',
+    wechatId: 'wx_session_account_same_second_1',
+    nickname: '会话账号SameSecond',
+    ownerMembershipId: 'membership-session-owner-1',
+    assistantMembershipIds: [],
+    operatorUserId: 'tenant-session-user-owner',
+    operatorName: '会话负责人A'
+  });
+
+  await store.createTenantSessionConversation({
+    tenantId: 'tenant-session-a',
+    accountWechatId: account.wechat_id,
+    conversationId: 'conv_same_second_z',
+    conversationType: 'direct',
+    conversationName: '同秒会话Z',
+    syncSource: 'external'
+  });
+
+  await store.createTenantSessionConversation({
+    tenantId: 'tenant-session-a',
+    accountWechatId: account.wechat_id,
+    conversationId: 'conv_same_second_a',
+    conversationType: 'direct',
+    conversationName: '同秒会话A',
+    syncSource: 'external'
+  });
+
+  const sameMessageTime = '2026-02-27T08:20:00.000Z';
+  await store.createTenantSessionHistoryMessage({
+    tenantId: 'tenant-session-a',
+    conversationId: 'conv_same_second_z',
+    senderName: '客户Z',
+    senderNameNormalized: '客户z',
+    isSelf: 0,
+    messageType: 'text',
+    messagePayloadJson: {
+      text: '同秒消息-Z'
+    },
+    messagePreview: '同秒消息-Z',
+    messageTime: sameMessageTime,
+    sourceEventId: 'src_event_same_second_z',
+    ingestSource: 'external'
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  await store.createTenantSessionHistoryMessage({
+    tenantId: 'tenant-session-a',
+    conversationId: 'conv_same_second_a',
+    senderName: '客户A',
+    senderNameNormalized: '客户a',
+    isSelf: 0,
+    messageType: 'text',
+    messagePayloadJson: {
+      text: '同秒消息-A'
+    },
+    messagePreview: '同秒消息-A',
+    messageTime: sameMessageTime,
+    sourceEventId: 'src_event_same_second_a',
+    ingestSource: 'external'
+  });
+
+  const conversations = await store.listTenantSessionConversationsByAccountWechatId({
+    tenantId: 'tenant-session-a',
+    accountWechatId: account.wechat_id
+  });
+
+  assert.equal(conversations.length, 2);
+  assert.equal(conversations[0].conversation_id, 'conv_same_second_a');
+  assert.equal(conversations[1].conversation_id, 'conv_same_second_z');
+});

@@ -445,7 +445,7 @@ test('0018 down migration drops audit_events table', () => {
   assert.match(sql, /DROP TABLE IF EXISTS audit_events/i);
 });
 
-test('0019 migration defines system_sensitive_configs table and seeds sys_admin permissions', () => {
+test('0019 migration defines system_sensitive_configs table and seeds default auth password config + sys_admin permissions', () => {
   const sqlPath = resolve(
     __dirname,
     '..',
@@ -455,13 +455,24 @@ test('0019 migration defines system_sensitive_configs table and seeds sys_admin 
   const sql = readFileSync(sqlPath, 'utf8');
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS system_sensitive_configs/i);
-  assert.match(sql, /config_key/i);
-  assert.match(sql, /encrypted_value/i);
+  assert.match(sql, /`key`/i);
+  assert.match(sql, /`value`/i);
+  assert.match(sql, /remark/i);
   assert.match(sql, /version/i);
   assert.match(sql, /updated_by_user_id/i);
+  assert.match(sql, /updated_by_user_id VARCHAR\(64\)\s+NULL/i);
   assert.match(sql, /updated_at/i);
   assert.match(sql, /status/i);
-  assert.match(sql, /CHECK \(config_key IN \('auth\.default_password'\)\)/i);
+  assert.match(sql, /CHECK \(`key` IN \(/i);
+  assert.match(sql, /'auth\.default_password'/i);
+  assert.match(sql, /'auth\.access_ttl_seconds'/i);
+  assert.match(sql, /'auth\.refresh_ttl_seconds'/i);
+  assert.match(sql, /'auth\.otp_ttl_seconds'/i);
+  assert.match(sql, /'auth\.rate_limit_window_seconds'/i);
+  assert.match(sql, /'auth\.rate_limit_max_attempts'/i);
+  assert.match(sql, /INSERT INTO system_sensitive_configs/i);
+  assert.match(sql, /'auth\.default_password'/i);
+  assert.match(sql, /enc:v1:/i);
   assert.match(sql, /INSERT INTO platform_role_permission_grants/i);
   assert.match(sql, /platform\.role_management\.view/i);
   assert.match(sql, /platform\.role_management\.operate/i);
@@ -766,6 +777,7 @@ test('0028 migration defines tenant customer tables and tenant-scoped governance
   const sql = readFileSync(sqlPath, 'utf8');
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_customers/i);
+  assert.match(sql, /wechat_id VARCHAR\(128\)\s+NULL/i);
   assert.match(sql, /UNIQUE KEY uk_tenant_customers_tenant_wechat\s*\(\s*tenant_id,\s*wechat_id\s*\)/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_customer_profiles/i);
   assert.match(sql, /KEY idx_tenant_customer_profiles_tenant_real_name/i);
@@ -853,6 +865,28 @@ test('0032 migration backfills tenant sys_admin session scope operate permission
   assert.match(sql, /tenant\.session_scope_assist\.operate/i);
   assert.match(sql, /tenant\.session_scope_all\.view/i);
   assert.match(sql, /tenant\.session_scope_all\.operate/i);
+  assert.match(sql, /FROM platform_roles/i);
+  assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
+});
+
+test('0033 migration backfills tenant sys_admin scoped customer operate permissions for all scopes', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0033_tenant_sys_admin_customer_scope_operate_permissions_backfill.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
+  assert.match(sql, /tenant\.customer_management\.view/i);
+  assert.match(sql, /tenant\.customer_management\.operate/i);
+  assert.match(sql, /tenant\.customer_scope_my\.view/i);
+  assert.match(sql, /tenant\.customer_scope_my\.operate/i);
+  assert.match(sql, /tenant\.customer_scope_assist\.view/i);
+  assert.match(sql, /tenant\.customer_scope_assist\.operate/i);
+  assert.match(sql, /tenant\.customer_scope_all\.view/i);
+  assert.match(sql, /tenant\.customer_scope_all\.operate/i);
   assert.match(sql, /FROM platform_roles/i);
   assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
 });

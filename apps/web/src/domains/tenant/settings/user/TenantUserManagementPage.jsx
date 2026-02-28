@@ -14,7 +14,7 @@ import {
   Typography,
   message
 } from 'antd';
-import CustomCardTable from '../../../../components/CustomCardTable';
+import CustomPanelTable from '../../../../components/CustomPanelTable';
 import CustomFilter from '../../../../components/CustomFilter';
 import CustomForm from '../../../../components/CustomForm';
 import {
@@ -795,7 +795,7 @@ export default function TenantUserManagementPage({
         </Form.Item>
       </CustomFilter>
 
-      <CustomCardTable
+      <CustomPanelTable
         key={memberTableQueryKey}
         title="组织成员列表"
         rowKey="membership_id"

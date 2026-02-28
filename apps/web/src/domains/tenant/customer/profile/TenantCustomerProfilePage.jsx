@@ -18,7 +18,7 @@ import {
   message
 } from 'antd';
 import { EditOutlined, UserOutlined } from '@ant-design/icons';
-import CustomCardTable from '../../../../components/CustomCardTable';
+import CustomPanelTable from '../../../../components/CustomPanelTable';
 import CustomFilter from '../../../../components/CustomFilter';
 import CustomForm from '../../../../components/CustomForm';
 import {
@@ -90,6 +90,7 @@ const CUSTOMER_CREATE_INITIAL_VALUES = Object.freeze({
 });
 const CUSTOMER_BASIC_EDIT_INITIAL_VALUES = Object.freeze({
   customer_id: '',
+  account_label: '',
   wechat_id: '',
   nickname: '',
   source: undefined
@@ -205,6 +206,39 @@ const toAccountDisplayLabel = ({
     return String(accountId || '').trim();
   }
   return '';
+};
+
+const resolveCustomerAccountLabel = ({
+  customer = {},
+  accountLabelById = {}
+} = {}) => {
+  const directLabel = String(
+    customer?.account_label || customer?.accountLabel || ''
+  ).trim();
+  if (directLabel) {
+    return directLabel;
+  }
+  const accountId = String(customer?.account_id || customer?.accountId || '').trim();
+  const accountLabelFromMap = String(accountLabelById?.[accountId] || '').trim();
+  if (accountLabelFromMap) {
+    return accountLabelFromMap;
+  }
+  return toAccountDisplayLabel({
+    accountId,
+    accountNickname:
+      customer?.account_nickname
+      || customer?.accountNickname
+      || customer?.account_name
+      || customer?.accountName
+      || customer?.account?.nickname
+      || '',
+    accountWechatId:
+      customer?.account_wechat_id
+      || customer?.accountWechatId
+      || customer?.account?.wechat_id
+      || customer?.account?.wechatId
+      || ''
+  });
 };
 
 const normalizeCustomerRecord = (customer = {}) => {
@@ -345,6 +379,7 @@ export default function TenantCustomerProfilePage({
   const [customerDetailOpen, setCustomerDetailOpen] = useState(false);
   const [customerDetailLoading, setCustomerDetailLoading] = useState(false);
   const [customerDetail, setCustomerDetail] = useState(null);
+  const [customerDetailTargetId, setCustomerDetailTargetId] = useState('');
   const [latestCustomerActionById, setLatestCustomerActionById] = useState({});
 
   const hasTenantPermissionContext =
@@ -568,8 +603,10 @@ export default function TenantCustomerProfilePage({
   const openCustomerDetail = useCallback(async (customerId, latestActionOverride = null) => {
     const normalizedCustomerId = String(customerId || '').trim();
     if (!normalizedCustomerId) {
+      setCustomerDetailTargetId('');
       return;
     }
+    setCustomerDetailTargetId(normalizedCustomerId);
     setCustomerDetailOpen(true);
     setCustomerDetailLoading(true);
     try {
@@ -623,7 +660,10 @@ export default function TenantCustomerProfilePage({
     }
     const normalizedRecord = normalizeCustomerRecord(record);
     const normalizedCustomerId = String(
-      normalizedRecord.customer_id || customerDetail?.customer_id || ''
+      normalizedRecord.customer_id
+      || customerDetail?.customer_id
+      || customerDetailTargetId
+      || ''
     ).trim();
     if (!normalizedCustomerId) {
       return;
@@ -632,6 +672,10 @@ export default function TenantCustomerProfilePage({
     setCustomerBasicEditTarget(normalizedRecord);
     customerBasicEditForm.setFieldsValue({
       customer_id: normalizedCustomerId,
+      account_label: resolveCustomerAccountLabel({
+        customer: normalizedRecord,
+        accountLabelById
+      }) || '-',
       wechat_id: normalizedRecord.wechat_id,
       nickname: normalizedRecord.nickname,
       source: normalizedRecord.source || undefined
@@ -645,6 +689,10 @@ export default function TenantCustomerProfilePage({
       setCustomerBasicEditTarget(normalizedDetail);
       customerBasicEditForm.setFieldsValue({
         customer_id: normalizedDetail.customer_id,
+        account_label: resolveCustomerAccountLabel({
+          customer: normalizedDetail,
+          accountLabelById
+        }) || '-',
         wechat_id: normalizedDetail.wechat_id,
         nickname: normalizedDetail.nickname,
         source: normalizedDetail.source || undefined
@@ -657,8 +705,10 @@ export default function TenantCustomerProfilePage({
   }, [
     api,
     canOperateCustomerManagement,
+    accountLabelById,
     customerBasicEditForm,
     customerDetail,
+    customerDetailTargetId,
     notifyError
   ]);
 
@@ -668,7 +718,10 @@ export default function TenantCustomerProfilePage({
     }
     const normalizedRecord = normalizeCustomerRecord(record);
     const normalizedCustomerId = String(
-      normalizedRecord.customer_id || customerDetail?.customer_id || ''
+      normalizedRecord.customer_id
+      || customerDetail?.customer_id
+      || customerDetailTargetId
+      || ''
     ).trim();
     if (!normalizedCustomerId) {
       return;
@@ -709,15 +762,16 @@ export default function TenantCustomerProfilePage({
     api,
     canOperateCustomerManagement,
     customerDetail,
+    customerDetailTargetId,
     customerRealnameEditForm,
     notifyError
   ]);
 
-  const toCustomerCreatePayload = (values = {}) => ({
-    account_id: String(values.account_id || '').trim(),
-    wechat_id: String(values.wechat_id || '').trim(),
-    nickname: String(values.nickname || '').trim(),
-    source: normalizeCustomerSource(values.source),
+const toCustomerCreatePayload = (values = {}) => ({
+  account_id: String(values.account_id || '').trim(),
+  wechat_id: toNullableString(values.wechat_id),
+  nickname: String(values.nickname || '').trim(),
+  source: normalizeCustomerSource(values.source),
     real_name: toNullableString(values.real_name),
     school: toNullableString(values.school),
     class_name: toNullableString(values.class_name),
@@ -781,9 +835,10 @@ export default function TenantCustomerProfilePage({
         return;
       }
       setCustomerBasicEditSubmitting(true);
-      const updatedPayload = await api.updateCustomerBasic({
+      const updatedPayload = await api.updateCustomer({
         customerId: normalizedCustomerId,
         payload: {
+          nickname: String(values.nickname || customerBasicEditTarget?.nickname || '').trim(),
           source: normalizeCustomerSource(values.source)
         }
       });
@@ -839,10 +894,24 @@ export default function TenantCustomerProfilePage({
       if (!normalizedCustomerId) {
         return;
       }
+      const normalizedNickname = String(
+        customerRealnameEditTarget?.nickname
+        || customerDetail?.nickname
+        || ''
+      ).trim();
+      const normalizedSource = normalizeCustomerSource(
+        customerRealnameEditTarget?.source
+        || customerDetail?.source
+      );
+      if (!normalizedNickname || !normalizedSource) {
+        throw new Error('缺少客户基础信息，无法提交编辑');
+      }
       setCustomerRealnameEditSubmitting(true);
-      const updatedPayload = await api.updateCustomerRealname({
+      const updatedPayload = await api.updateCustomer({
         customerId: normalizedCustomerId,
         payload: {
+          nickname: normalizedNickname,
+          source: normalizedSource,
           real_name: toNullableString(values.real_name),
           school: toNullableString(values.school),
           class_name: toNullableString(values.class_name),
@@ -995,6 +1064,22 @@ export default function TenantCustomerProfilePage({
         )
       },
       {
+        title: '所属账号',
+        dataIndex: 'account_label',
+        key: 'account_label',
+        width: 220,
+        render: (value, record) =>
+          String(value || '').trim()
+          || accountLabelById[String(record?.account_id || '').trim()]
+          || toAccountDisplayLabel({
+            accountId: record?.account_id,
+            accountNickname: record?.account_nickname,
+            accountWechatId: record?.account_wechat_id,
+            fallbackToAccountId: true
+          })
+          || '-'
+      },
+      {
         title: '微信号',
         dataIndex: 'wechat_id',
         key: 'wechat_id',
@@ -1063,35 +1148,16 @@ export default function TenantCustomerProfilePage({
         key: 'created_at',
         width: 180,
         render: (value) => formatDateTimeMinute(value)
-      },
-      {
-        title: '操作',
-        key: 'actions',
-        width: 110,
-        render: (_value, record) => {
-          if (!canOperateCustomerManagement) {
-            return <Text type="secondary">仅查看</Text>;
-          }
-          return (
-            <Button
-              data-testid={`tenant-customer-edit-${record.customer_id}`}
-              size="small"
-              type="link"
-              onClick={(event) => {
-                event.stopPropagation();
-                void openCustomerBasicEditModal(record);
-              }}
-            >
-              编辑
-            </Button>
-          );
-        }
       }
     ],
-    [canOperateCustomerManagement, openCustomerBasicEditModal]
+    [accountLabelById]
   );
 
-  const customerDetailCustomerId = String(customerDetail?.customer_id || '').trim();
+  const customerDetailCustomerId = String(
+    customerDetail?.customer_id
+    || customerDetailTargetId
+    || ''
+  ).trim();
   const customerDetailOperationLogs = useMemo(
     () => normalizeCustomerOperationLogs(customerDetail?.operation_logs),
     [customerDetail]
@@ -1173,13 +1239,6 @@ export default function TenantCustomerProfilePage({
               refreshCustomerTable();
             }}
           >
-            <Form.Item label="微信号" name="wechat_id">
-              <Input
-                data-testid="tenant-customer-filter-wechat-id"
-                placeholder="请输入微信号（精确）"
-                allowClear
-              />
-            </Form.Item>
             <Form.Item label="所属账号" name="account_ids">
               <Select
                 data-testid="tenant-customer-filter-account-ids"
@@ -1190,6 +1249,13 @@ export default function TenantCustomerProfilePage({
                 options={accountOptions}
                 loading={accountOptionsLoading}
                 placeholder="请选择所属账号（可多选）"
+              />
+            </Form.Item>
+            <Form.Item label="微信号" name="wechat_id">
+              <Input
+                data-testid="tenant-customer-filter-wechat-id"
+                placeholder="请输入微信号（精确）"
+                allowClear
               />
             </Form.Item>
             <Form.Item label="昵称" name="nickname">
@@ -1239,7 +1305,7 @@ export default function TenantCustomerProfilePage({
             </Form.Item>
           </CustomFilter>
 
-          <CustomCardTable
+          <CustomPanelTable
             key={customerTableQueryKey}
             title="客户列表"
             rowKey="customer_id"
@@ -1311,7 +1377,6 @@ export default function TenantCustomerProfilePage({
             label="微信号"
             name="wechat_id"
             rules={[
-              { required: true, message: '请输入微信号' },
               { max: 128, message: '微信号长度不能超过 128' }
             ]}
           >
@@ -1376,7 +1441,7 @@ export default function TenantCustomerProfilePage({
 
       <Modal
         open={customerBasicEditOpen}
-        title="编辑基本信息"
+        title="编辑"
         onCancel={() => {
           setCustomerBasicEditOpen(false);
           setCustomerBasicEditTarget(null);
@@ -1404,6 +1469,12 @@ export default function TenantCustomerProfilePage({
             layout="vertical"
             submitter={false}
           >
+            <CustomForm.Item label="客户ID" name="customer_id">
+              <Input data-testid="tenant-customer-basic-customer-id" disabled />
+            </CustomForm.Item>
+            <CustomForm.Item label="所属账号" name="account_label">
+              <Input data-testid="tenant-customer-basic-account-label" disabled />
+            </CustomForm.Item>
             <CustomForm.Item label="微信号" name="wechat_id">
               <Input data-testid="tenant-customer-basic-wechat-id" disabled />
             </CustomForm.Item>
@@ -1429,7 +1500,7 @@ export default function TenantCustomerProfilePage({
 
       <Modal
         open={customerRealnameEditOpen}
-        title="编辑实名信息"
+        title="编辑"
         onCancel={() => {
           setCustomerRealnameEditOpen(false);
           setCustomerRealnameEditTarget(null);
@@ -1489,39 +1560,12 @@ export default function TenantCustomerProfilePage({
 
       <Drawer
         open={customerDetailOpen}
-        title={(
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-            <span>{customerDetailCustomerId ? `客户ID:${customerDetailCustomerId}` : '客户ID:-'}</span>
-            {canOperateCustomerManagement ? (
-              <Space>
-                <Button
-                  data-testid="tenant-customer-detail-edit-basic"
-                  size="small"
-                  disabled={!customerDetailCustomerId}
-                  onClick={() => {
-                    void openCustomerBasicEditModal(customerDetail || {});
-                  }}
-                >
-                  编辑基本信息
-                </Button>
-                <Button
-                  data-testid="tenant-customer-detail-edit-realname"
-                  size="small"
-                  disabled={!customerDetailCustomerId}
-                  onClick={() => {
-                    void openCustomerRealnameEditModal(customerDetail || {});
-                  }}
-                >
-                  编辑实名信息
-                </Button>
-              </Space>
-            ) : null}
-          </div>
-        )}
+        title={customerDetailCustomerId ? `客户ID:${customerDetailCustomerId}` : '客户ID:-'}
         size="large"
         onClose={() => {
           setCustomerDetailOpen(false);
           setCustomerDetail(null);
+          setCustomerDetailTargetId('');
         }}
         destroyOnClose
       >
@@ -1564,6 +1608,12 @@ export default function TenantCustomerProfilePage({
                             ) : null}
                           </div>
                           <Descriptions column={2}>
+                            <Descriptions.Item label="所属账号">
+                              {resolveCustomerAccountLabel({
+                                customer: customerDetail || {},
+                                accountLabelById
+                              }) || '-'}
+                            </Descriptions.Item>
                             <Descriptions.Item label="微信号">
                               {String(customerDetail?.wechat_id || '').trim() || '-'}
                             </Descriptions.Item>
@@ -1572,16 +1622,6 @@ export default function TenantCustomerProfilePage({
                             </Descriptions.Item>
                             <Descriptions.Item label="来源">
                               {customerSourceLabel(customerDetail?.source)}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="所属账号">
-                              {String(customerDetail?.account_label || '').trim()
-                                || accountLabelById[String(customerDetail?.account_id || '').trim()]
-                                || toAccountDisplayLabel({
-                                  accountId: customerDetail?.account_id,
-                                  accountNickname: customerDetail?.account_nickname,
-                                  accountWechatId: customerDetail?.account_wechat_id
-                                })
-                                || '-'}
                             </Descriptions.Item>
                             <Descriptions.Item label="状态">
                               {customerStatusLabel(customerDetail?.status)}

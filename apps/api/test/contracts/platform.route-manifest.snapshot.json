@@ -57,14 +57,14 @@
   },
   {
     "method": "GET",
-    "path": "/platform/system-configs/:config_key",
+    "path": "/platform/system-configs/:key",
     "access": "protected",
     "permission_code": "platform.role_management.view",
     "scope": "platform"
   },
   {
     "method": "PUT",
-    "path": "/platform/system-configs/:config_key",
+    "path": "/platform/system-configs/:key",
     "access": "protected",
     "permission_code": "platform.role_management.operate",
     "scope": "platform"

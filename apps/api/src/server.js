@@ -70,9 +70,9 @@ const {
   TENANT_ACCOUNT_OPERATION_LOG_ROUTE_KEY,
   TENANT_CUSTOMER_LIST_ROUTE_KEY,
   TENANT_CUSTOMER_CREATE_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_BY_ACCOUNT_NICKNAME_ROUTE_KEY,
   TENANT_CUSTOMER_DETAIL_ROUTE_KEY,
-  TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
-  TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_ROUTE_KEY,
   TENANT_CUSTOMER_OPERATION_LOG_ROUTE_KEY,
   TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
   TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
@@ -199,8 +199,8 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
   TENANT_ACCOUNT_STATUS_ROUTE_KEY,
   TENANT_CUSTOMER_CREATE_ROUTE_KEY,
-  TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
-  TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_BY_ACCOUNT_NICKNAME_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_ROUTE_KEY,
   TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
   TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
   TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
@@ -242,8 +242,8 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_ACCOUNT_UPDATE_ROUTE_KEY,
   TENANT_ACCOUNT_STATUS_ROUTE_KEY,
   TENANT_CUSTOMER_CREATE_ROUTE_KEY,
-  TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
-  TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_BY_ACCOUNT_NICKNAME_ROUTE_KEY,
+  TENANT_CUSTOMER_UPDATE_ROUTE_KEY,
   TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
   TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
   TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
@@ -877,9 +877,12 @@ const normalizeRouteParamsForRoute = ({
       normalizedRouteParams.role_id || ''
     ).trim().toLowerCase();
   }
-  if (routeKey === PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY) {
-    normalizedRouteParams.config_key = String(
-      normalizedRouteParams.config_key || ''
+  if (
+    routeKey === PLATFORM_SYSTEM_CONFIG_GET_ROUTE_KEY
+    || routeKey === PLATFORM_SYSTEM_CONFIG_PUT_ROUTE_KEY
+  ) {
+    normalizedRouteParams.key = String(
+      normalizedRouteParams.key || ''
     ).trim().toLowerCase();
   }
   if (
@@ -2601,6 +2604,22 @@ const createRouteTable = ({
             requestId
           )
       }),
+    [TENANT_CUSTOMER_UPDATE_BY_ACCOUNT_NICKNAME_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_CUSTOMER_UPDATE_BY_ACCOUNT_NICKNAME_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantUpdateCustomerByAccountNickname(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
     [TENANT_CUSTOMER_DETAIL_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>
@@ -2612,30 +2631,13 @@ const createRouteTable = ({
           ),
         requestId
       ),
-    [TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY]: async () =>
+    [TENANT_CUSTOMER_UPDATE_ROUTE_KEY]: async () =>
       executeIdempotentAuthRoute({
-        routeKey: TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
+        routeKey: TENANT_CUSTOMER_UPDATE_ROUTE_KEY,
         execute: () =>
           runAuthRouteWithTrace(
             () =>
-              handlers.tenantUpdateCustomerBasic(
-                requestId,
-                headers.authorization,
-                getRouteParams(),
-                body || {},
-                getAuthorizationContext(),
-                traceparent
-              ),
-            requestId
-          )
-      }),
-    [TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY]: async () =>
-      executeIdempotentAuthRoute({
-        routeKey: TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
-        execute: () =>
-          runAuthRouteWithTrace(
-            () =>
-              handlers.tenantUpdateCustomerRealname(
+              handlers.tenantUpdateCustomer(
                 requestId,
                 headers.authorization,
                 getRouteParams(),

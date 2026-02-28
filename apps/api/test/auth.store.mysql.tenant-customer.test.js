@@ -162,6 +162,94 @@ test('mysql tenant customer create persists datetime strings and updates account
   assert.equal(operationLogInsertParams[8], '2026-02-27 04:29:45.068');
 });
 
+test('mysql tenant customer create allows nullable wechat_id', async () => {
+  let customerInsertParams = null;
+  let createdCustomerId = '';
+
+  const store = createStore({
+    dbClient: {
+      query: async (sql) => {
+        const normalizedSql = String(sql).replace(/\s+/g, ' ').trim();
+        if (
+          normalizedSql.includes('SELECT account_id, status')
+          && normalizedSql.includes('FROM tenant_accounts')
+        ) {
+          return [
+            {
+              account_id: 'acc_1',
+              status: 'enabled'
+            }
+          ];
+        }
+        if (
+          normalizedSql.includes('SELECT c.customer_id')
+          && normalizedSql.includes('FROM tenant_customers c')
+          && normalizedSql.includes('WHERE c.tenant_id = ?')
+          && normalizedSql.includes('AND c.customer_id = ?')
+        ) {
+          return [
+            {
+              customer_id: createdCustomerId || 'cus_fallback',
+              tenant_id: 'tenant_1',
+              account_id: 'acc_1',
+              wechat_id: null,
+              nickname: '客户乙',
+              source: 'ground',
+              status: 'enabled',
+              created_by_user_id: 'user_1',
+              updated_by_user_id: 'user_1',
+              created_at: '2026-02-27T04:29:45.068Z',
+              updated_at: '2026-02-27T04:29:45.068Z',
+              real_name: null,
+              school: null,
+              class_name: null,
+              relation: null,
+              phone: null,
+              address: null
+            }
+          ];
+        }
+        assert.fail(`unexpected dbClient.query SQL: ${normalizedSql}`);
+        return [];
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async (sql, params = []) => {
+            const normalizedSql = String(sql).replace(/\s+/g, ' ').trim();
+            if (normalizedSql.includes('INSERT INTO tenant_customers')) {
+              customerInsertParams = params;
+              createdCustomerId = String(params?.[0] || '');
+              return { affectedRows: 1 };
+            }
+            if (
+              normalizedSql.includes('UPDATE tenant_accounts')
+              || normalizedSql.includes('INSERT INTO tenant_customer_profiles')
+              || normalizedSql.includes('INSERT INTO tenant_customer_operation_logs')
+            ) {
+              return { affectedRows: 1 };
+            }
+            assert.fail(`unexpected tx.query SQL: ${normalizedSql}`);
+            return [];
+          }
+        })
+    }
+  });
+
+  const created = await store.createTenantCustomer({
+    tenantId: 'tenant_1',
+    accountId: 'acc_1',
+    nickname: '客户乙',
+    source: 'ground',
+    operatorUserId: 'user_1',
+    operatorName: '系统管理员',
+    operationAt: '2026-02-27T04:29:45.068Z'
+  });
+
+  assert.ok(createdCustomerId.length > 0);
+  assert.equal(customerInsertParams[3], null);
+  assert.equal(created.wechat_id, null);
+});
+
 test('mysql tenant customer scope restrictions deny detail and logs when operator has no membership', async () => {
   let membershipQueryCount = 0;
   let customerQueryCount = 0;

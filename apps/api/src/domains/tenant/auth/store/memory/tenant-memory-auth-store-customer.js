@@ -72,11 +72,19 @@ const createTenantMemoryAuthStoreCustomer = ({
     return normalized;
   };
 
-  const normalizeWechatId = (wechatId) => {
+  const normalizeOptionalWechatId = (wechatId, { allowUndefined = false } = {}) => {
+    if (wechatId === undefined) {
+      return allowUndefined ? undefined : null;
+    }
+    if (wechatId === null) {
+      return null;
+    }
     const normalized = normalizeRequiredString(wechatId);
+    if (!normalized) {
+      return null;
+    }
     if (
-      !normalized
-      || normalized.length > MAX_WECHAT_ID_LENGTH
+      normalized.length > MAX_WECHAT_ID_LENGTH
       || CONTROL_CHAR_PATTERN.test(normalized)
     ) {
       return '';
@@ -545,14 +553,16 @@ const createTenantMemoryAuthStoreCustomer = ({
   } = {}) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
     const normalizedAccountId = normalizeAccountId(accountId);
-    const normalizedWechatId = normalizeWechatId(wechatId);
+    const normalizedWechatId = normalizeOptionalWechatId(wechatId, {
+      allowUndefined: true
+    });
     const normalizedNickname = normalizeNickname(nickname);
     const normalizedSource = normalizeSource(source);
     const normalizedStatus = normalizeStatus(status) || 'enabled';
     if (
       !normalizedTenantId
       || !normalizedAccountId
-      || !normalizedWechatId
+      || normalizedWechatId === ''
       || !normalizedNickname
       || !normalizedSource
       || !normalizedStatus
@@ -570,8 +580,10 @@ const createTenantMemoryAuthStoreCustomer = ({
     }
 
     const tenantWechatIndex = toWechatIndexForTenant(normalizedTenantId);
-    const normalizedWechatKey = normalizedWechatId.toLowerCase();
-    if (tenantWechatIndex.has(normalizedWechatKey)) {
+    const normalizedWechatKey = typeof normalizedWechatId === 'string'
+      ? normalizedWechatId.toLowerCase()
+      : '';
+    if (normalizedWechatKey && tenantWechatIndex.has(normalizedWechatKey)) {
       throw createWechatConflictError();
     }
 
@@ -588,7 +600,7 @@ const createTenantMemoryAuthStoreCustomer = ({
       customerId: normalizedCustomerId,
       tenantId: normalizedTenantId,
       accountId: normalizedAccountId,
-      wechatId: normalizedWechatId,
+      wechatId: normalizedWechatId === undefined ? null : normalizedWechatId,
       nickname: normalizedNickname,
       source: normalizedSource,
       status: normalizedStatus,
@@ -600,7 +612,9 @@ const createTenantMemoryAuthStoreCustomer = ({
 
     tenantCustomersByCustomerId.set(normalizedCustomerId, customerRecord);
     toCustomerIdSetForTenant(normalizedTenantId).add(normalizedCustomerId);
-    tenantWechatIndex.set(normalizedWechatKey, normalizedCustomerId);
+    if (normalizedWechatKey) {
+      tenantWechatIndex.set(normalizedWechatKey, normalizedCustomerId);
+    }
     const normalizedAccountCustomerCount = Number.isFinite(Number(accountRecord.customer_count))
       ? Math.max(0, Math.floor(Number(accountRecord.customer_count)))
       : 0;
@@ -694,20 +708,38 @@ const createTenantMemoryAuthStoreCustomer = ({
     return toCombinedCustomerRecord(customerRecord);
   };
 
-  const updateTenantCustomerBasic = async ({
+  const updateTenantCustomer = async ({
     tenantId,
     customerId,
     scopes = ['all'],
+    wechatId = undefined,
+    nickname,
     source,
+    realName = undefined,
+    school = undefined,
+    className = undefined,
+    relation = undefined,
+    phone = undefined,
+    address = undefined,
     operatorUserId = null,
     operatorName = null,
     operationAt = new Date()
   } = {}) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
     const normalizedCustomerId = normalizeCustomerId(customerId);
+    const normalizedWechatId = normalizeOptionalWechatId(wechatId, {
+      allowUndefined: true
+    });
+    const normalizedNickname = normalizeNickname(nickname);
     const normalizedSource = normalizeSource(source);
-    if (!normalizedTenantId || !normalizedCustomerId || !normalizedSource) {
-      throw new Error('invalid customer basic payload');
+    if (
+      !normalizedTenantId
+      || !normalizedCustomerId
+      || normalizedWechatId === ''
+      || !normalizedNickname
+      || !normalizedSource
+    ) {
+      throw new Error('invalid customer update payload');
     }
     const existing = tenantCustomersByCustomerId.get(normalizedCustomerId);
     if (!existing || normalizeTenantId(existing.tenant_id) !== normalizedTenantId) {
@@ -728,72 +760,28 @@ const createTenantMemoryAuthStoreCustomer = ({
       return null;
     }
     const normalizedOperationAt = toIsoTimestamp(operationAt) || new Date().toISOString();
-    const nextRecord = toCustomerRecord({
-      customerId: normalizedCustomerId,
-      tenantId: normalizedTenantId,
-      accountId: existing.account_id,
-      wechatId: existing.wechat_id,
-      nickname: existing.nickname,
-      source: normalizedSource,
-      status: existing.status,
-      createdByUserId: existing.created_by_user_id,
-      updatedByUserId: operatorUserId,
-      createdAt: existing.created_at,
-      updatedAt: normalizedOperationAt
-    });
-    tenantCustomersByCustomerId.set(normalizedCustomerId, nextRecord);
-    appendOperationLog({
-      tenantId: normalizedTenantId,
-      customerId: normalizedCustomerId,
-      operationType: 'update_basic',
-      operationContent: JSON.stringify({
-        source: normalizedSource
-      }),
-      operatorUserId,
-      operatorName,
-      operationAt: normalizedOperationAt
-    });
-    return toCombinedCustomerRecord(nextRecord);
-  };
+    const existingWechatId = normalizeOptionalWechatId(existing.wechat_id);
+    if (existingWechatId === '') {
+      throw new Error('invalid persisted customer wechat_id');
+    }
+    const resolvedWechatId =
+      normalizedWechatId === undefined
+        ? existingWechatId
+        : normalizedWechatId;
+    const existingWechatKey = typeof existingWechatId === 'string'
+      ? existingWechatId.toLowerCase()
+      : '';
+    const resolvedWechatKey = typeof resolvedWechatId === 'string'
+      ? resolvedWechatId.toLowerCase()
+      : '';
+    const tenantWechatIndex = toWechatIndexForTenant(normalizedTenantId);
+    if (resolvedWechatKey && resolvedWechatKey !== existingWechatKey) {
+      const existingWechatOwnerId = normalizeCustomerId(tenantWechatIndex.get(resolvedWechatKey));
+      if (existingWechatOwnerId && existingWechatOwnerId !== normalizedCustomerId) {
+        throw createWechatConflictError();
+      }
+    }
 
-  const updateTenantCustomerRealname = async ({
-    tenantId,
-    customerId,
-    scopes = ['all'],
-    realName = null,
-    school = null,
-    className = null,
-    relation = null,
-    phone = null,
-    address = null,
-    operatorUserId = null,
-    operatorName = null,
-    operationAt = new Date()
-  } = {}) => {
-    const normalizedTenantId = normalizeTenantId(tenantId);
-    const normalizedCustomerId = normalizeCustomerId(customerId);
-    if (!normalizedTenantId || !normalizedCustomerId) {
-      throw new Error('invalid customer realname payload');
-    }
-    const existing = tenantCustomersByCustomerId.get(normalizedCustomerId);
-    if (!existing || normalizeTenantId(existing.tenant_id) !== normalizedTenantId) {
-      return null;
-    }
-    const scopeSet = toScopeSet(scopes);
-    const operatorMembershipIdSet = resolveMembershipIdSetForOperator({
-      tenantId: normalizedTenantId,
-      operatorUserId
-    });
-    if (
-      !hasAnyScopeAccess({
-        customerRecord: existing,
-        operatorMembershipIdSet,
-        scopeSet
-      })
-    ) {
-      return null;
-    }
-    const normalizedOperationAt = toIsoTimestamp(operationAt) || new Date().toISOString();
     const existingProfile = tenantCustomerProfileByCustomerId.get(normalizedCustomerId) || {};
     const nextRealName = normalizeOptionalProfileField({
       value: realName,
@@ -839,9 +827,9 @@ const createTenantMemoryAuthStoreCustomer = ({
       customerId: normalizedCustomerId,
       tenantId: normalizedTenantId,
       accountId: existing.account_id,
-      wechatId: existing.wechat_id,
-      nickname: existing.nickname,
-      source: existing.source,
+      wechatId: resolvedWechatId,
+      nickname: normalizedNickname,
+      source: normalizedSource,
       status: existing.status,
       createdByUserId: existing.created_by_user_id,
       updatedByUserId: operatorUserId,
@@ -849,11 +837,20 @@ const createTenantMemoryAuthStoreCustomer = ({
       updatedAt: normalizedOperationAt
     });
     tenantCustomersByCustomerId.set(normalizedCustomerId, nextRecord);
+    if (existingWechatKey && existingWechatKey !== resolvedWechatKey) {
+      tenantWechatIndex.delete(existingWechatKey);
+    }
+    if (resolvedWechatKey) {
+      tenantWechatIndex.set(resolvedWechatKey, normalizedCustomerId);
+    }
     appendOperationLog({
       tenantId: normalizedTenantId,
       customerId: normalizedCustomerId,
-      operationType: 'update_realname',
+      operationType: 'update',
       operationContent: JSON.stringify({
+        wechat_id: normalizedWechatId,
+        nickname: normalizedNickname,
+        source: normalizedSource,
         real_name: nextRealName,
         school: nextSchool,
         class_name: nextClassName,
@@ -910,8 +907,7 @@ const createTenantMemoryAuthStoreCustomer = ({
     listTenantCustomersByTenantId,
     createTenantCustomer,
     findTenantCustomerByCustomerId,
-    updateTenantCustomerBasic,
-    updateTenantCustomerRealname,
+    updateTenantCustomer,
     listTenantCustomerOperationLogs
   };
 };

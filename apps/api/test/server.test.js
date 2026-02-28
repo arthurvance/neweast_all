@@ -134,7 +134,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
   assert.ok(payload.paths['/platform/orgs/status']);
   assert.ok(payload.paths['/platform/orgs/owner-transfer']);
   assert.ok(payload.paths['/platform/audit/events']);
-  assert.ok(payload.paths['/platform/system-configs/{config_key}']);
+  assert.ok(payload.paths['/platform/system-configs/{key}']);
   assert.ok(payload.paths['/platform/integrations']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}']);
   assert.ok(payload.paths['/platform/integrations/{integration_id}/lifecycle']);
@@ -314,7 +314,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     )
   );
   assert.ok(
-    payload.paths['/platform/system-configs/{config_key}'].put.parameters.some(
+    payload.paths['/platform/system-configs/{key}'].put.parameters.some(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     )
   );
@@ -460,7 +460,7 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
-    payload.paths['/platform/system-configs/{config_key}'].put.parameters.find(
+    payload.paths['/platform/system-configs/{key}'].put.parameters.find(
       (parameter) => parameter.in === 'header' && parameter.name === 'Idempotency-Key'
     ).schema.pattern,
     '^(?=.*\\S)[^,]{1,128}$'
@@ -485,8 +485,12 @@ test('openapi endpoint is exposed with auth placeholder', () => {
     '^(?=.*\\S)[^,]{1,128}$'
   );
   assert.equal(
-    payload.components.schemas.UpdateSystemConfigRequest.properties.encrypted_value.pattern,
-    '^enc:v1:[A-Za-z0-9_-]{16}:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]+$'
+    payload.components.schemas.UpdateSystemConfigRequest.properties.value.type,
+    'string'
+  );
+  assert.match(
+    payload.components.schemas.UpdateSystemConfigRequest.properties.value.description,
+    /auth\.default_password/i
   );
   assert.deepEqual(
     payload.components.schemas.UpdateSystemConfigRequest.properties.status.enum,
@@ -3748,7 +3752,7 @@ test('dispatchApiRoute does not reserve idempotency key for system config versio
         detail: 'system config version conflict',
         errorCode: 'SYSCFG-409-VERSION-CONFLICT',
         extensions: {
-          config_key: 'auth.default_password',
+          key: 'auth.default_password',
           expected_version: 0,
           current_version: 1
         }
@@ -3776,14 +3780,14 @@ test('dispatchApiRoute does not reserve idempotency key for system config versio
   const first = await dispatchSystemConfigUpdate({
     requestId: 'req-system-config-idem-conflict-1',
     body: {
-      encrypted_value: 'enc:v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:QQ',
+      value: 'enc:v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:QQ',
       expected_version: 0
     }
   });
   const second = await dispatchSystemConfigUpdate({
     requestId: 'req-system-config-idem-conflict-2',
     body: {
-      encrypted_value: 'enc:v1:BBBBBBBBBBBBBBBB:BBBBBBBBBBBBBBBBBBBBBB:QQ',
+      value: 'enc:v1:BBBBBBBBBBBBBBBB:BBBBBBBBBBBBBBBBBBBBBB:QQ',
       expected_version: 1
     }
   });

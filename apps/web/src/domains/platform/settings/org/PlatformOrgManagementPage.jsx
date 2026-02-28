@@ -9,7 +9,7 @@ import {
   Select,
   message
 } from 'antd';
-import CustomCardTable from '../../../../components/CustomCardTable';
+import CustomPanelTable from '../../../../components/CustomPanelTable';
 import CustomFilter from '../../../../components/CustomFilter';
 import {
   createPlatformManagementApi,
@@ -284,7 +284,7 @@ export default function PlatformOrgManagementPage({ accessToken }) {
           </Form.Item>
         </CustomFilter>
 
-        <CustomCardTable
+        <CustomPanelTable
           title="组织列表"
           extra={(
             <Button
@@ -323,15 +323,8 @@ export default function PlatformOrgManagementPage({ accessToken }) {
               rules={[
                 {
                   required: true,
+                  whitespace: true,
                   message: '请输入组织名称'
-                },
-                {
-                  validator: (_rule, value) => {
-                    if (typeof value !== 'string' || value.trim()) {
-                      return Promise.resolve();
-                    }
-                    return Promise.reject(new Error('请输入组织名称'));
-                  }
                 }
               ]}
             >
@@ -347,15 +340,8 @@ export default function PlatformOrgManagementPage({ accessToken }) {
               rules={[
                 {
                   required: true,
+                  whitespace: true,
                   message: '请输入负责人姓名'
-                },
-                {
-                  validator: (_rule, value) => {
-                    if (typeof value !== 'string' || value.trim()) {
-                      return Promise.resolve();
-                    }
-                    return Promise.reject(new Error('请输入负责人姓名'));
-                  }
                 }
               ]}
             >

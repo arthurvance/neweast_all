@@ -3,7 +3,6 @@ const {
   createAuthHandlers,
   createAuthRouteHandlers
 } = require('../shared-kernel/auth/auth-route-handlers');
-const { createAuthService } = require('../shared-kernel/auth/auth-facade');
 
 const assertAlignedPlatformServicesAuthService = ({
   authService,
@@ -449,7 +448,7 @@ const resolveSharedAuthService = (options = {}) => {
   const preferredTenantUserAuthService = options.tenantUserService?._internals?.authService;
   const preferredTenantRoleAuthService = options.tenantRoleService?._internals?.authService;
 
-  return (
+  const resolvedAuthService = (
     options.authService
     || preferredPlatformOrgAuthService
     || preferredPlatformRoleAuthService
@@ -461,8 +460,11 @@ const resolveSharedAuthService = (options = {}) => {
     || preferredAuditAuthService
     || preferredTenantUserAuthService
     || preferredTenantRoleAuthService
-    || createAuthService()
   );
+  if (!resolvedAuthService) {
+    throw new Error('resolveSharedAuthService requires explicit authService');
+  }
+  return resolvedAuthService;
 };
 
 const createSharedKernelRuntime = ({ authService } = {}) => {

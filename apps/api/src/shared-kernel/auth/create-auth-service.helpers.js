@@ -157,6 +157,11 @@ const TENANT_MEMBERSHIP_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
+const ACCESS_TTL_SECONDS_CONFIG_KEY = 'auth.access_ttl_seconds';
+const REFRESH_TTL_SECONDS_CONFIG_KEY = 'auth.refresh_ttl_seconds';
+const OTP_TTL_SECONDS_CONFIG_KEY = 'auth.otp_ttl_seconds';
+const RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY = 'auth.rate_limit_window_seconds';
+const RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY = 'auth.rate_limit_max_attempts';
 
 const SENSITIVE_CONFIG_ENVELOPE_VERSION = 'enc:v1';
 
@@ -164,7 +169,14 @@ const SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS = 210000;
 
 const SENSITIVE_CONFIG_KEY_DERIVATION_SALT = DEFAULT_PASSWORD_CONFIG_KEY;
 
-const SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set([DEFAULT_PASSWORD_CONFIG_KEY]);
+const SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set([
+  DEFAULT_PASSWORD_CONFIG_KEY,
+  ACCESS_TTL_SECONDS_CONFIG_KEY,
+  REFRESH_TTL_SECONDS_CONFIG_KEY,
+  OTP_TTL_SECONDS_CONFIG_KEY,
+  RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY,
+  RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY
+]);
 
 const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
 
@@ -268,6 +280,14 @@ const normalizeAuditStringOrNull = (value, maxLength = 256) => {
   }
   const normalized = String(value).trim();
   if (!normalized || normalized.length > maxLength) {
+    return null;
+  }
+  return normalized;
+};
+
+const normalizeAuditRequestIdOrNull = (value) => {
+  const normalized = normalizeAuditStringOrNull(value, 128);
+  if (!normalized || CONTROL_CHAR_PATTERN.test(normalized)) {
     return null;
   }
   return normalized;
@@ -478,7 +498,7 @@ const toSystemSensitiveConfigRecord = (record = null) => {
     return null;
   }
   const normalizedConfigKey = normalizeSystemSensitiveConfigKey(
-    record.configKey ?? record.config_key
+    record.key ?? record.configKey ?? record.config_key
   );
   if (
     !normalizedConfigKey
@@ -506,7 +526,7 @@ const toSystemSensitiveConfigRecord = (record = null) => {
     return null;
   }
   const normalizedEncryptedValue = String(
-    record.encryptedValue ?? record.encrypted_value ?? ''
+    record.value ?? record.encryptedValue ?? record.encrypted_value ?? ''
   ).trim();
   if (!normalizedEncryptedValue) {
     return null;
@@ -528,9 +548,13 @@ const toSystemSensitiveConfigRecord = (record = null) => {
   const normalizedCreatedAt = normalizeStrictRequiredStringField(
     createdAtRaw instanceof Date ? createdAtRaw.toISOString() : createdAtRaw
   );
+  const normalizedRemark = String(record.remark || '').trim() || null;
   return {
+    key: normalizedConfigKey,
     configKey: normalizedConfigKey,
+    value: normalizedEncryptedValue,
     encryptedValue: normalizedEncryptedValue,
+    remark: normalizedRemark,
     version: normalizedVersion,
     previousVersion: normalizedPreviousVersion,
     status: normalizedStatus,
@@ -1495,6 +1519,11 @@ module.exports = {
   AUDIT_EVENT_REDACTION_KEY_PATTERN,
   CONTROL_CHAR_PATTERN,
   DEFAULT_PASSWORD_CONFIG_KEY,
+  ACCESS_TTL_SECONDS_CONFIG_KEY,
+  REFRESH_TTL_SECONDS_CONFIG_KEY,
+  OTP_TTL_SECONDS_CONFIG_KEY,
+  RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY,
+  RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY,
   DEFAULT_SEED_USERS,
   MAX_AUDIT_QUERY_PAGE_SIZE,
   MAX_AUTH_AUDIT_TRAIL_ENTRIES,
@@ -1575,6 +1604,7 @@ module.exports = {
   maskPhone,
   normalizeAuditDomain,
   normalizeAuditOccurredAt,
+  normalizeAuditRequestIdOrNull,
   normalizeAuditResult,
   normalizeAuditStringOrNull,
   normalizeAuditTraceparentOrNull,

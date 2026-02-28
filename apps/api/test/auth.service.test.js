@@ -8,11 +8,23 @@ const {
   randomBytes
 } = require('node:crypto');
 const {
-  createAuthService,
-  AuthProblemError,
-  REFRESH_TTL_SECONDS
+  createAuthService: createRawAuthService,
+  AuthProblemError
 } = require('../src/shared-kernel/auth/create-auth-service');
 const { createInMemoryAuthStore } = require('../src/shared-kernel/auth/store/create-in-memory-auth-store');
+
+const RUNTIME_AUTH_NUMERIC_CONFIG = Object.freeze({
+  accessTtlSeconds: 900,
+  refreshTtlSeconds: 604800,
+  otpTtlSeconds: 900,
+  rateLimitWindowSeconds: 60,
+  rateLimitMaxAttempts: 10
+});
+const REFRESH_TTL_SECONDS = RUNTIME_AUTH_NUMERIC_CONFIG.refreshTtlSeconds;
+const createAuthService = (options = {}) => createRawAuthService({
+  ...RUNTIME_AUTH_NUMERIC_CONFIG,
+  ...(options || {})
+});
 
 const seedUsers = [
   {

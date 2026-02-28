@@ -232,13 +232,9 @@ test('tenant customer governance routes expose explicit permission declarations'
     method: 'GET',
     path: '/tenant/customers/:customer_id'
   });
-  const tenantCustomerUpdateBasic = findRouteDefinition({
+  const tenantCustomerUpdate = findRouteDefinition({
     method: 'PATCH',
-    path: '/tenant/customers/:customer_id/basic'
-  });
-  const tenantCustomerUpdateRealname = findRouteDefinition({
-    method: 'PATCH',
-    path: '/tenant/customers/:customer_id/realname'
+    path: '/tenant/customers/:customer_id'
   });
   const tenantCustomerOperationLogs = findRouteDefinition({
     method: 'GET',
@@ -252,7 +248,7 @@ test('tenant customer governance routes expose explicit permission declarations'
     assert.equal(route.permission_code, 'tenant.customer_management.view');
   }
 
-  for (const route of [tenantCustomerCreate, tenantCustomerUpdateBasic, tenantCustomerUpdateRealname]) {
+  for (const route of [tenantCustomerCreate, tenantCustomerUpdate]) {
     assert.ok(route);
     assert.equal(route.access, 'protected');
     assert.equal(route.scope, 'tenant');

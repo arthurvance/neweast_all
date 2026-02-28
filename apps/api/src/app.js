@@ -50,6 +50,34 @@ const parseJsonBody = (rawBody) => {
 };
 
 const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
+const ACCESS_TTL_SECONDS_CONFIG_KEY = 'auth.access_ttl_seconds';
+const REFRESH_TTL_SECONDS_CONFIG_KEY = 'auth.refresh_ttl_seconds';
+const OTP_TTL_SECONDS_CONFIG_KEY = 'auth.otp_ttl_seconds';
+const RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY = 'auth.rate_limit_window_seconds';
+const RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY = 'auth.rate_limit_max_attempts';
+const MAX_RUNTIME_AUTH_NUMERIC_CONFIG = 2147483647;
+const RUNTIME_AUTH_NUMERIC_CONFIG_SPECS = Object.freeze([
+  {
+    key: ACCESS_TTL_SECONDS_CONFIG_KEY,
+    optionName: 'accessTtlSeconds'
+  },
+  {
+    key: REFRESH_TTL_SECONDS_CONFIG_KEY,
+    optionName: 'refreshTtlSeconds'
+  },
+  {
+    key: OTP_TTL_SECONDS_CONFIG_KEY,
+    optionName: 'otpTtlSeconds'
+  },
+  {
+    key: RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY,
+    optionName: 'rateLimitWindowSeconds'
+  },
+  {
+    key: RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY,
+    optionName: 'rateLimitMaxAttempts'
+  }
+]);
 const normalizeRuntimeSensitiveConfigStatus = (status) => {
   const normalizedStatus = String(status || '').trim().toLowerCase();
   if (!normalizedStatus || normalizedStatus === 'active' || normalizedStatus === 'enabled') {
@@ -70,10 +98,81 @@ const resolveRuntimeAuthStoreFromAuthService = (authService = null) => {
   }
   return authStore;
 };
-const createEnvSensitiveConfigProvider = (config = {}, options = {}) => ({
+const parseRuntimeAuthNumericConfigValue = (rawValue) => {
+  const normalizedRawValue = String(rawValue || '').trim();
+  if (!/^\d+$/.test(normalizedRawValue)) {
+    return null;
+  }
+  const parsed = Number(normalizedRawValue);
+  if (
+    !Number.isInteger(parsed)
+    || parsed <= 0
+    || parsed > MAX_RUNTIME_AUTH_NUMERIC_CONFIG
+  ) {
+    return null;
+  }
+  return parsed;
+};
+const resolveRuntimeAuthNumericConfigOverrides = async ({
+  runtimeAuthStore = null
+} = {}) => {
+  if (
+    !runtimeAuthStore
+    || typeof runtimeAuthStore.getSystemSensitiveConfig !== 'function'
+  ) {
+    throw new Error(
+      'Runtime auth numeric config resolution failed: auth store getSystemSensitiveConfig unavailable'
+    );
+  }
+
+  const resolvedOverrides = {};
+  for (const configSpec of RUNTIME_AUTH_NUMERIC_CONFIG_SPECS) {
+    const configKey = String(configSpec?.key || '').trim();
+    const optionName = String(configSpec?.optionName || '').trim();
+    if (!configKey || !optionName) {
+      continue;
+    }
+    let record = null;
+    try {
+      record = await runtimeAuthStore.getSystemSensitiveConfig({
+        configKey
+      });
+    } catch (error) {
+      throw new Error(
+        `Runtime auth numeric config lookup failed for ${configKey}: ${
+          String(error?.message || error || '')
+        }`
+      );
+    }
+    const normalizedRecordStatus = normalizeRuntimeSensitiveConfigStatus(
+      record?.status
+    );
+    if (normalizedRecordStatus !== 'active') {
+      throw new Error(
+        `Runtime auth numeric config status invalid for ${configKey}: ${
+          String(record?.status || '').trim() || 'unknown'
+        }`
+      );
+    }
+    const parsedValue = parseRuntimeAuthNumericConfigValue(
+      record?.value
+      ?? record?.encryptedValue
+      ?? record?.encrypted_value
+      ?? ''
+    );
+    if (parsedValue === null) {
+      throw new Error(
+        `Runtime auth numeric config value invalid for ${configKey}; expected positive integer`
+      );
+    }
+    resolvedOverrides[optionName] = parsedValue;
+  }
+
+  return resolvedOverrides;
+};
+const createEnvSensitiveConfigProvider = (_config = {}, options = {}) => ({
   getEncryptedConfig: async (configKey) => {
     const normalizedConfigKey = String(configKey || '').trim();
-    const fallbackEncryptedValue = String(config.AUTH_DEFAULT_PASSWORD_ENCRYPTED || '').trim();
     if (normalizedConfigKey !== DEFAULT_PASSWORD_CONFIG_KEY) {
       return '';
     }
@@ -94,31 +193,31 @@ const createEnvSensitiveConfigProvider = (config = {}, options = {}) => ({
           const normalizedRecordStatus = normalizeRuntimeSensitiveConfigStatus(
             record?.status
           );
-          if (normalizedRecordStatus === 'disabled') {
-            return fallbackEncryptedValue;
-          }
-          if (!normalizedRecordStatus) {
-            log('warn', 'Runtime sensitive config status invalid; fallback to env', {
-              config_key: normalizedConfigKey,
+          if (normalizedRecordStatus !== 'active') {
+            log('warn', 'Runtime sensitive config status invalid', {
+              key: normalizedConfigKey,
               status: String(record?.status || '').trim() || null
             });
-            return fallbackEncryptedValue;
+            return '';
           }
           const encryptedValue = String(
-            record?.encryptedValue ?? record?.encrypted_value ?? ''
+            record?.value
+            ?? record?.encryptedValue
+            ?? record?.encrypted_value
+            ?? ''
           ).trim();
           if (encryptedValue) {
             return encryptedValue;
           }
         } catch (error) {
-          log('warn', 'Runtime sensitive config lookup failed; fallback to env', {
-            config_key: normalizedConfigKey,
+          log('warn', 'Runtime sensitive config lookup failed', {
+            key: normalizedConfigKey,
             error: String(error?.message || error || '')
           });
         }
       }
     }
-    return fallbackEncryptedValue;
+    return '';
   }
 });
 
@@ -327,13 +426,9 @@ const createApiApp = async (config, options = {}) => {
 
   if (!authService) {
     if (config.ALLOW_MOCK_BACKENDS && !requirePersistentAuthStore) {
-      authService = createAuthServiceFactory({
-        allowInMemoryOtpStores: true,
-        requireSecureOtpStores: false,
-        sensitiveConfigProvider,
-        sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY
-      });
-      runtimeAuthStore = resolveRuntimeAuthStoreFromAuthService(authService);
+      throw new Error(
+        'createApiApp requires persistent auth store for runtime auth numeric config; provide authService explicitly when ALLOW_MOCK_BACKENDS=true'
+      );
     } else {
       let dbClient = null;
       let redisClient = null;
@@ -366,6 +461,10 @@ const createApiApp = async (config, options = {}) => {
 
         const authStore = createMySqlAuthStore({ dbClient });
         runtimeAuthStore = authStore;
+        const runtimeAuthNumericConfigOverrides =
+          await resolveRuntimeAuthNumericConfigOverrides({
+            runtimeAuthStore: authStore
+          });
         const privateKey = normalizePem(config.AUTH_JWT_PRIVATE_KEY);
         const publicKey = normalizePem(config.AUTH_JWT_PUBLIC_KEY);
         const hasExternalJwtKeys = privateKey.length > 0 && publicKey.length > 0;
@@ -399,7 +498,8 @@ const createApiApp = async (config, options = {}) => {
           requireSecureOtpStores: !config.ALLOW_MOCK_BACKENDS,
           allowInMemoryOtpStores: Boolean(config.ALLOW_MOCK_BACKENDS),
           sensitiveConfigProvider,
-          sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY
+          sensitiveConfigDecryptionKey: config.AUTH_SENSITIVE_CONFIG_DECRYPTION_KEY,
+          ...runtimeAuthNumericConfigOverrides
         });
         runtimeAuthStore =
           resolveRuntimeAuthStoreFromAuthService(authService) || runtimeAuthStore;

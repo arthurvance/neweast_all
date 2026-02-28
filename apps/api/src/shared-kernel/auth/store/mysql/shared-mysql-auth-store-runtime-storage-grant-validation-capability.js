@@ -76,7 +76,9 @@ const toSystemSensitiveConfigRecord = (row) => {
   if (!row) {
     return null;
   }
-  const configKey = normalizeSystemSensitiveConfigKey(row.config_key ?? row.configKey);
+  const configKey = normalizeSystemSensitiveConfigKey(
+    row.key ?? row.config_key ?? row.configKey
+  );
   if (!configKey || !ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS.has(configKey)) {
     return null;
   }
@@ -84,7 +86,10 @@ const toSystemSensitiveConfigRecord = (row) => {
   const createdAtValue = row.created_at ?? row.createdAt;
   return {
     configKey,
-    encryptedValue: String(row.encrypted_value ?? row.encryptedValue ?? '').trim(),
+    encryptedValue: String(
+      row.value ?? row.encrypted_value ?? row.encryptedValue ?? ''
+    ).trim(),
+    remark: String(row.remark || '').trim() || null,
     version: Number(row.version || 0),
     previousVersion: Number(row.previous_version || row.previousVersion || 0),
     status: normalizeSystemSensitiveConfigStatus(row.status || 'active') || 'active',

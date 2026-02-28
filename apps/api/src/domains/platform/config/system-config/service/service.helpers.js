@@ -17,15 +17,23 @@ const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const MAX_AUDIT_TRAIL_ENTRIES = 200;
 
 const SYSTEM_CONFIG_ENVELOPE_VERSION = 'enc:v1';
+const DEFAULT_PASSWORD_CONFIG_KEY = 'auth.default_password';
+const ACCESS_TTL_SECONDS_CONFIG_KEY = 'auth.access_ttl_seconds';
+const REFRESH_TTL_SECONDS_CONFIG_KEY = 'auth.refresh_ttl_seconds';
+const OTP_TTL_SECONDS_CONFIG_KEY = 'auth.otp_ttl_seconds';
+const RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY = 'auth.rate_limit_window_seconds';
+const RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY = 'auth.rate_limit_max_attempts';
+const MAX_RUNTIME_AUTH_NUMERIC_CONFIG = 2147483647;
 
 const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const MYSQL_DUP_ENTRY_ERRNO = 1062;
 
 const UPDATE_SYSTEM_CONFIG_ALLOWED_FIELDS = new Set([
-  'encrypted_value',
+  'value',
   'expected_version',
-  'status'
+  'status',
+  'remark'
 ]);
 
 const VALID_SYSTEM_CONFIG_STATUS = new Set(['active', 'disabled']);
@@ -35,6 +43,13 @@ const ALLOWED_CONFIG_KEY_SET = new Set(
     String(configKey || '').trim().toLowerCase()
   )
 );
+const RUNTIME_AUTH_NUMERIC_CONFIG_KEY_SET = new Set([
+  ACCESS_TTL_SECONDS_CONFIG_KEY,
+  REFRESH_TTL_SECONDS_CONFIG_KEY,
+  OTP_TTL_SECONDS_CONFIG_KEY,
+  RATE_LIMIT_WINDOW_SECONDS_CONFIG_KEY,
+  RATE_LIMIT_MAX_ATTEMPTS_CONFIG_KEY
+]);
 
 const isPlainObject = (candidate) =>
   candidate !== null
@@ -90,6 +105,59 @@ const isValidEncryptedEnvelope = (encryptedValue) => {
   return iv.length === 12 && authTag.length === 16 && cipherText.length > 0;
 };
 
+const parsePositiveIntegerConfigValue = (rawValue) => {
+  const normalizedRawValue = String(rawValue || '').trim();
+  if (!/^\d+$/.test(normalizedRawValue)) {
+    return null;
+  }
+  const parsed = Number(normalizedRawValue);
+  if (
+    !Number.isInteger(parsed)
+    || parsed <= 0
+    || parsed > MAX_RUNTIME_AUTH_NUMERIC_CONFIG
+  ) {
+    return null;
+  }
+  return parsed;
+};
+
+const normalizeSystemConfigValueForKey = ({
+  configKey,
+  value
+} = {}) => {
+  const normalizedConfigKey = normalizeConfigKey(configKey);
+  const normalizedValue = String(value || '').trim();
+  if (normalizedConfigKey === DEFAULT_PASSWORD_CONFIG_KEY) {
+    if (!isValidEncryptedEnvelope(normalizedValue)) {
+      return {
+        normalizedValue: '',
+        detail: 'value 必须为有效 enc:v1 密文信封'
+      };
+    }
+    return {
+      normalizedValue,
+      detail: ''
+    };
+  }
+  if (RUNTIME_AUTH_NUMERIC_CONFIG_KEY_SET.has(normalizedConfigKey)) {
+    const parsedNumericValue = parsePositiveIntegerConfigValue(normalizedValue);
+    if (parsedNumericValue === null) {
+      return {
+        normalizedValue: '',
+        detail: 'value 必须为大于 0 的整数'
+      };
+    }
+    return {
+      normalizedValue: String(parsedNumericValue),
+      detail: ''
+    };
+  }
+  return {
+    normalizedValue: '',
+    detail: 'key 非受控白名单项'
+  };
+};
+
 const toIsoTimestamp = (value) => {
   if (value instanceof Date) {
     return value.toISOString();
@@ -133,7 +201,7 @@ const systemConfigErrors = {
       errorCode: 'SYSCFG-404-CONFIG-NOT-FOUND',
       extensions: {
         retryable: false,
-        config_key: configKey ? String(configKey).trim() : null
+        key: configKey ? String(configKey).trim() : null
       }
     }),
 
@@ -149,7 +217,7 @@ const systemConfigErrors = {
       errorCode: 'SYSCFG-409-VERSION-CONFLICT',
       extensions: {
         retryable: true,
-        config_key: configKey ? String(configKey).trim() : null,
+        key: configKey ? String(configKey).trim() : null,
         expected_version:
           Number.isInteger(expectedVersion) && expectedVersion >= 0
             ? expectedVersion
@@ -223,7 +291,12 @@ const mapReadDependencyError = (error) => {
   });
 };
 
-const parseUpdatePayload = (payload) => {
+const parseUpdatePayload = (
+  payload,
+  {
+    configKey = ''
+  } = {}
+) => {
   if (!isPlainObject(payload)) {
     throw systemConfigErrors.invalidPayload();
   }
@@ -235,24 +308,33 @@ const parseUpdatePayload = (payload) => {
     throw systemConfigErrors.invalidPayload();
   }
 
-  if (!Object.prototype.hasOwnProperty.call(payload, 'encrypted_value')) {
-    throw systemConfigErrors.invalidPayload('encrypted_value 必填');
+  if (!Object.prototype.hasOwnProperty.call(payload, 'value')) {
+    throw systemConfigErrors.invalidPayload('value 必填');
   }
   if (!Object.prototype.hasOwnProperty.call(payload, 'expected_version')) {
     throw systemConfigErrors.invalidPayload('expected_version 必填');
   }
 
-  if (typeof payload.encrypted_value !== 'string') {
-    throw systemConfigErrors.invalidPayload('encrypted_value 必须为字符串');
+  if (typeof payload.value !== 'string') {
+    throw systemConfigErrors.invalidPayload('value 必须为字符串');
   }
-  const encryptedValue = payload.encrypted_value.trim();
+  const value = payload.value.trim();
   if (
-    !encryptedValue
-    || encryptedValue !== payload.encrypted_value
-    || CONTROL_CHAR_PATTERN.test(encryptedValue)
-    || !isValidEncryptedEnvelope(encryptedValue)
+    !value
+    || value !== payload.value
+    || CONTROL_CHAR_PATTERN.test(value)
   ) {
-    throw systemConfigErrors.invalidPayload('encrypted_value 必须为有效 enc:v1 密文信封');
+    throw systemConfigErrors.invalidPayload('value 格式错误');
+  }
+  const normalizedValueResolution = normalizeSystemConfigValueForKey({
+    configKey,
+    value
+  });
+  if (!normalizedValueResolution.detail && !normalizedValueResolution.normalizedValue) {
+    throw systemConfigErrors.invalidPayload('value 格式错误');
+  }
+  if (normalizedValueResolution.detail) {
+    throw systemConfigErrors.invalidPayload(normalizedValueResolution.detail);
   }
 
   if (
@@ -274,15 +356,38 @@ const parseUpdatePayload = (payload) => {
     }
   }
 
+  let hasRemark = false;
+  let remark = null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'remark')) {
+    hasRemark = true;
+    if (payload.remark === null || payload.remark === undefined) {
+      remark = null;
+    } else if (typeof payload.remark === 'string') {
+      const normalizedRemark = payload.remark.trim();
+      if (
+        CONTROL_CHAR_PATTERN.test(normalizedRemark)
+        || normalizedRemark.length > 255
+      ) {
+        throw systemConfigErrors.invalidPayload('remark 长度不能超过 255 且不能包含控制字符');
+      }
+      remark = normalizedRemark || null;
+    } else {
+      throw systemConfigErrors.invalidPayload('remark 必须为字符串或 null');
+    }
+  }
+
   return {
-    encryptedValue,
+    value: normalizedValueResolution.normalizedValue,
     expectedVersion: payload.expected_version,
-    status
+    status,
+    remark,
+    hasRemark
   };
 };
 
 const toReadResponse = ({
   configKey,
+  remark,
   version,
   status,
   updatedByUserId,
@@ -290,7 +395,8 @@ const toReadResponse = ({
   requestId
 }) => ({
   data: {
-    config_key: configKey,
+    key: configKey,
+    remark: remark ?? null,
     version,
     status,
     updated_by_user_id: updatedByUserId,
@@ -303,6 +409,7 @@ const toReadResponse = ({
 
 const toWriteResponse = ({
   configKey,
+  remark,
   version,
   previousVersion,
   status,
@@ -311,7 +418,8 @@ const toWriteResponse = ({
   requestId
 }) => ({
   data: {
-    config_key: configKey,
+    key: configKey,
+    remark: remark ?? null,
     previous_version: previousVersion,
     version,
     status,
@@ -327,7 +435,9 @@ const normalizeSystemSensitiveConfigRecord = (record = null) => {
   if (!record || typeof record !== 'object') {
     return null;
   }
-  const configKey = normalizeConfigKey(record.configKey || record.config_key);
+  const configKey = normalizeConfigKey(
+    record.key || record.configKey || record.config_key
+  );
   if (!configKey || !isWhitelistedConfigKey(configKey)) {
     return null;
   }
@@ -355,8 +465,21 @@ const normalizeSystemSensitiveConfigRecord = (record = null) => {
   if (!updatedByUserId) {
     return null;
   }
+  let remark = null;
+  if (Object.prototype.hasOwnProperty.call(record, 'remark')) {
+    const normalizedRemark = String(record.remark || '').trim();
+    if (
+      CONTROL_CHAR_PATTERN.test(normalizedRemark)
+      || normalizedRemark.length > 255
+    ) {
+      return null;
+    }
+    remark = normalizedRemark || null;
+  }
   return {
+    key: configKey,
     configKey,
+    remark,
     version: normalizedVersion,
     previousVersion: normalizedPreviousVersion,
     status,

@@ -172,6 +172,49 @@ test('mysql tenant session store creates conversation and history records with t
   assert.equal(updatedConversationSummaryParams[0], '2026-02-27 09:10:00.000');
 });
 
+test('mysql tenant session store uses composite cursor condition for same-second history pagination', async () => {
+  let capturedSql = '';
+  let capturedParams = [];
+
+  const store = createStore({
+    dbClient: {
+      query: async (sql, params = []) => {
+        capturedSql = String(sql).replace(/\s+/g, ' ').trim();
+        capturedParams = params;
+        return [];
+      }
+    }
+  });
+
+  const historyList = await store.listTenantSessionHistoryMessagesByConversationId({
+    tenantId: 'tenant_mysql_a',
+    conversationId: 'conv_mysql_cursor_001',
+    cursor: '2026-02-27T09:10:00.000Z',
+    cursorCreatedAt: '2026-02-27T09:10:00.321Z',
+    cursorMessageId: 'hmsg_mysql_cursor_001',
+    limit: 20
+  });
+
+  assert.deepEqual(historyList, []);
+  assert.match(
+    capturedSql,
+    /ORDER BY message_time DESC, created_at DESC, message_id DESC LIMIT \?/
+  );
+  assert.match(
+    capturedSql,
+    /message_time < \? OR \(message_time = \? AND created_at < \?\) OR \(message_time = \? AND created_at = \? AND message_id < \?\)/
+  );
+  assert.equal(capturedParams[0], 'tenant_mysql_a');
+  assert.equal(capturedParams[1], 'conv_mysql_cursor_001');
+  assert.equal(capturedParams[2], '2026-02-27 09:10:00.000');
+  assert.equal(capturedParams[3], '2026-02-27 09:10:00.000');
+  assert.equal(capturedParams[4], '2026-02-27 09:10:00.321');
+  assert.equal(capturedParams[5], '2026-02-27 09:10:00.000');
+  assert.equal(capturedParams[6], '2026-02-27 09:10:00.321');
+  assert.equal(capturedParams[7], 'hmsg_mysql_cursor_001');
+  assert.equal(capturedParams[8], 20);
+});
+
 test('mysql tenant session store replays outbound message on duplicate client_message_id', async () => {
   const duplicateError = new Error("Duplicate entry 'dup' for key 'uk_tenant_session_outbound_messages_client'");
   duplicateError.code = 'ER_DUP_ENTRY';

@@ -14,8 +14,8 @@ test('createEnvSensitiveConfigProvider prefers runtime active config over env', 
     {
       resolveAuthStore: () => ({
         getSystemSensitiveConfig: async () => ({
-          config_key: DEFAULT_PASSWORD_CONFIG_KEY,
-          encrypted_value: 'enc:v1:runtime:tag:value',
+          key: DEFAULT_PASSWORD_CONFIG_KEY,
+          value: 'enc:v1:runtime:tag:value',
           status: 'active'
         })
       })
@@ -26,14 +26,14 @@ test('createEnvSensitiveConfigProvider prefers runtime active config over env', 
   assert.equal(encrypted, 'enc:v1:runtime:tag:value');
 });
 
-test('createEnvSensitiveConfigProvider falls back to env when runtime config is disabled', async () => {
+test('createEnvSensitiveConfigProvider returns empty when runtime config is disabled', async () => {
   const provider = createEnvSensitiveConfigProvider(
     { AUTH_DEFAULT_PASSWORD_ENCRYPTED: 'enc:v1:env:tag:value' },
     {
       resolveAuthStore: () => ({
         getSystemSensitiveConfig: async () => ({
-          config_key: DEFAULT_PASSWORD_CONFIG_KEY,
-          encrypted_value: 'enc:v1:runtime:tag:value',
+          key: DEFAULT_PASSWORD_CONFIG_KEY,
+          value: 'enc:v1:runtime:tag:value',
           status: 'disabled'
         })
       })
@@ -41,10 +41,10 @@ test('createEnvSensitiveConfigProvider falls back to env when runtime config is 
   );
 
   const encrypted = await provider.getEncryptedConfig(DEFAULT_PASSWORD_CONFIG_KEY);
-  assert.equal(encrypted, 'enc:v1:env:tag:value');
+  assert.equal(encrypted, '');
 });
 
-test('createEnvSensitiveConfigProvider falls back to env when runtime store lookup fails', async () => {
+test('createEnvSensitiveConfigProvider returns empty when runtime store lookup fails', async () => {
   const provider = createEnvSensitiveConfigProvider(
     { AUTH_DEFAULT_PASSWORD_ENCRYPTED: 'enc:v1:env:tag:value' },
     {
@@ -57,7 +57,19 @@ test('createEnvSensitiveConfigProvider falls back to env when runtime store look
   );
 
   const encrypted = await provider.getEncryptedConfig(DEFAULT_PASSWORD_CONFIG_KEY);
-  assert.equal(encrypted, 'enc:v1:env:tag:value');
+  assert.equal(encrypted, '');
+});
+
+test('createEnvSensitiveConfigProvider returns empty when runtime store is unavailable', async () => {
+  const provider = createEnvSensitiveConfigProvider(
+    { AUTH_DEFAULT_PASSWORD_ENCRYPTED: 'enc:v1:env:tag:value' },
+    {
+      resolveAuthStore: () => null
+    }
+  );
+
+  const encrypted = await provider.getEncryptedConfig(DEFAULT_PASSWORD_CONFIG_KEY);
+  assert.equal(encrypted, '');
 });
 
 test('resolveRuntimeAuthStoreFromAuthService extracts only compatible runtime stores', () => {

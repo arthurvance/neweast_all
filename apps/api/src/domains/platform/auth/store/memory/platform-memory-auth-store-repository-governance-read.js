@@ -47,6 +47,7 @@ const createPlatformMemoryAuthStoreRepositoryGovernanceRead = ({
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
 } = {}) => {
+  const MAX_SYSTEM_SENSITIVE_CONFIG_REMARK_LENGTH = 255;
   return {
     getSystemSensitiveConfig: async ({ configKey } = {}) => {
       const normalizedConfigKey = normalizeSystemSensitiveConfigKey(configKey);
@@ -61,6 +62,8 @@ const createPlatformMemoryAuthStoreRepositoryGovernanceRead = ({
     upsertSystemSensitiveConfig: async ({
       configKey,
       encryptedValue,
+      remark,
+      hasRemark = false,
       expectedVersion,
       updatedByUserId,
       status = 'active'
@@ -105,9 +108,30 @@ const createPlatformMemoryAuthStoreRepositoryGovernanceRead = ({
 
       const nextVersion = currentVersion + 1;
       const nowIso = new Date().toISOString();
+      let normalizedRemark = '';
+      if (hasRemark) {
+        if (remark === null || remark === undefined) {
+          normalizedRemark = '';
+        } else if (typeof remark === 'string') {
+          normalizedRemark = remark.trim();
+        } else {
+          throw new Error('upsertSystemSensitiveConfig received invalid remark');
+        }
+        if (
+          CONTROL_CHAR_PATTERN.test(normalizedRemark)
+          || normalizedRemark.length > MAX_SYSTEM_SENSITIVE_CONFIG_REMARK_LENGTH
+        ) {
+          throw new Error('upsertSystemSensitiveConfig received invalid remark');
+        }
+      }
       const nextRecord = {
+        key: normalizedConfigKey,
         configKey: normalizedConfigKey,
+        value: normalizedEncryptedValue,
         encryptedValue: normalizedEncryptedValue,
+        remark: hasRemark
+          ? (normalizedRemark || null)
+          : (existingRecord?.remark || null),
         version: nextVersion,
         previousVersion: currentVersion,
         status: normalizedStatus,

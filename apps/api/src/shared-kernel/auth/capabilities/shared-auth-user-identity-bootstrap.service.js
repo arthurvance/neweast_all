@@ -33,7 +33,7 @@ const createSharedAuthUserIdentityBootstrapCapabilities = ({
         sessionId: operatorSessionId || 'unknown',
         detail: 'default password config provider unavailable',
         metadata: {
-          config_key: DEFAULT_PASSWORD_CONFIG_KEY,
+          key: DEFAULT_PASSWORD_CONFIG_KEY,
           failure_reason: 'config-provider-unavailable'
         }
       });
@@ -60,7 +60,7 @@ const createSharedAuthUserIdentityBootstrapCapabilities = ({
         sessionId: operatorSessionId || 'unknown',
         detail: 'default password resolution failed',
         metadata: {
-          config_key: DEFAULT_PASSWORD_CONFIG_KEY,
+          key: DEFAULT_PASSWORD_CONFIG_KEY,
           failure_reason: failureReason
         }
       });

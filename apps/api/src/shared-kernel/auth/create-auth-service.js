@@ -66,13 +66,54 @@ const {
 } = require('./capabilities/shared-auth-service-facade-composition.service');
 const { ACCESS_SESSION_CACHE_TTL_MS, AUDIT_EVENT_ALLOWED_DOMAINS, AUDIT_EVENT_ALLOWED_RESULTS, AUDIT_EVENT_REDACTION_KEY_PATTERN, CONTROL_CHAR_PATTERN, DEFAULT_PASSWORD_CONFIG_KEY, DEFAULT_SEED_USERS, MAX_AUDIT_QUERY_PAGE_SIZE, MAX_AUTH_AUDIT_TRAIL_ENTRIES, MAX_ORG_STATUS_CASCADE_COUNT, MAX_OWNER_TRANSFER_ORG_ID_LENGTH, MAX_OWNER_TRANSFER_REASON_LENGTH, MAX_PLATFORM_ROLE_FACTS_PER_USER, MAX_PLATFORM_ROLE_ID_LENGTH, MAX_PLATFORM_USER_ID_LENGTH, MAX_ROLE_PERMISSION_ATOMIC_AFFECTED_USERS, MAX_ROLE_PERMISSION_CODES_PER_REQUEST, MAX_TENANT_MEMBERSHIP_ID_LENGTH, MAX_TENANT_MEMBERSHIP_ROLE_BINDINGS, MAX_TENANT_NAME_LENGTH, MAX_TENANT_USER_DEPARTMENT_NAME_LENGTH, MAX_TENANT_USER_DISPLAY_NAME_LENGTH, MYSQL_DATA_TOO_LONG_ERRNO, MYSQL_DUP_ENTRY_ERRNO, OTP_CODE_LENGTH, OTP_RESEND_COOLDOWN_SECONDS, OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES, OWNER_TRANSFER_TAKEOVER_ROLE_CODE, OWNER_TRANSFER_TAKEOVER_ROLE_ID_DIGEST_LENGTH, OWNER_TRANSFER_TAKEOVER_ROLE_ID_PREFIX, OWNER_TRANSFER_TAKEOVER_ROLE_NAME, PASSWORD_MIN_LENGTH, PBKDF2_DIGEST, PBKDF2_ITERATIONS, PBKDF2_KEYLEN, PLATFORM_ROLE_ASSIGNMENT_ALLOWED_FIELDS, PLATFORM_ROLE_CATALOG_SCOPE, PLATFORM_ROLE_FACTS_REPLACE_PERMISSION_CODE, PLATFORM_ROLE_PERMISSION_FIELD_KEYS, REJECTED_SYSTEM_CONFIG_AUDIT_EVENT_TYPES, ROLE_ID_ADDRESSABLE_PATTERN, SENSITIVE_CONFIG_ENVELOPE_VERSION, SENSITIVE_CONFIG_KEY_DERIVATION_ITERATIONS, SENSITIVE_CONFIG_KEY_DERIVATION_SALT, SUPPORTED_PLATFORM_PERMISSION_CODE_SET, SUPPORTED_SYSTEM_SENSITIVE_CONFIG_KEYS, SUPPORTED_TENANT_PERMISSION_CODE_SET, TENANT_MEMBERSHIP_ID_PATTERN, TENANT_ROLE_SCOPE, UNSET_EXPECTED_TENANT_USER_PROFILE_FIELD, VALID_ORG_STATUS, VALID_PLATFORM_ROLE_CATALOG_SCOPE, VALID_PLATFORM_ROLE_CATALOG_STATUS, VALID_PLATFORM_ROLE_FACT_STATUS, VALID_PLATFORM_USER_STATUS, VALID_SYSTEM_SENSITIVE_CONFIG_STATUS, WHITESPACE_PATTERN, AuthProblemError, assertOptionalBooleanRolePermission, assertOtpStoreContract, assertStoreMethod, authError, createInMemoryOtpStore, createInMemoryRateLimitStore, createJwtError, decryptSensitiveConfigValue, deriveLegacySensitiveConfigKey, derivePrimarySensitiveConfigKey, deriveSensitiveConfigKeys, errors, fromBase64Url, hasOwnProperty, hasTopLevelPlatformRolePermissionField, hashPassword, isDataTooLongRoleFactError, isDuplicateRoleFactEntryError, isMissingPlatformRoleCatalogTableError, isMissingTableError, isPlainObject, isPlatformPermissionCode, isTenantPermissionCode, isUserActive, isValidTenantUsershipId, maskPhone, normalizeAuditDomain, normalizeAuditOccurredAt, normalizeAuditResult, normalizeAuditStringOrNull, normalizeAuditTraceparentOrNull, normalizeEntryDomain, normalizeMemberListInteger, normalizeOrgStatus, normalizePhone, normalizePlatformPermissionCode, normalizePlatformRoleCatalogScope, normalizePlatformRoleCatalogStatus, normalizePlatformRoleCatalogTenantIdForScope, normalizePlatformRoleIdKey, normalizeRequiredStringField, normalizeStrictAddressableTenantRoleIdFromInput, normalizeStrictRequiredStringField, normalizeStrictTenantUsershipIdFromInput, normalizeSystemSensitiveConfigKey, normalizeSystemSensitiveConfigStatus, normalizeTenantId, normalizeTenantPermissionCode, normalizeTenantUsershipRecordFromStore, normalizeTenantUsershipStatus, parseAuditQueryTimestamp, parseOptionalTenantName, parseOptionalTenantUserProfileField, parseProvisionPayload, resolveProvisioningConfigFailureReason, resolveRawCamelSnakeField, resolveRawRoleIdCandidate, sanitizeAuditState, signJwt, toBase64Url, toOwnerTransferTakeoverRoleId, toPlatformPermissionCodeKey, toSystemSensitiveConfigRecord, toTenantPermissionCodeKey, tokenHash, verifyJwt, verifyPassword } = require('./create-auth-service.helpers');
 
-const ACCESS_TTL_SECONDS = 15 * 60;
-const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
-const OTP_TTL_SECONDS = 15 * 60;
-const RATE_LIMIT_WINDOW_SECONDS = 60;
-const RATE_LIMIT_MAX_ATTEMPTS = 10;
+const MAX_RUNTIME_AUTH_NUMERIC_CONFIG = 2147483647;
+
+const parseRuntimeAuthNumericConfig = (candidate) => {
+  const parsed = Number(candidate);
+  if (
+    !Number.isInteger(parsed)
+    || parsed <= 0
+    || parsed > MAX_RUNTIME_AUTH_NUMERIC_CONFIG
+  ) {
+    return null;
+  }
+  return parsed;
+};
+
+const resolveRuntimeAuthNumericConfig = ({
+  candidate,
+  configName
+}) => {
+  const parsed = parseRuntimeAuthNumericConfig(candidate);
+  if (parsed === null) {
+    throw new Error(
+      `createAuthService requires runtime auth numeric config "${String(configName || 'unknown')}" as positive integer`
+    );
+  }
+  return parsed;
+};
 
 const createAuthService = (options = {}) => {
+  const accessTtlSeconds = resolveRuntimeAuthNumericConfig({
+    candidate: options.accessTtlSeconds,
+    configName: 'accessTtlSeconds'
+  });
+  const refreshTtlSeconds = resolveRuntimeAuthNumericConfig({
+    candidate: options.refreshTtlSeconds,
+    configName: 'refreshTtlSeconds'
+  });
+  const otpTtlSeconds = resolveRuntimeAuthNumericConfig({
+    candidate: options.otpTtlSeconds,
+    configName: 'otpTtlSeconds'
+  });
+  const rateLimitWindowSeconds = resolveRuntimeAuthNumericConfig({
+    candidate: options.rateLimitWindowSeconds,
+    configName: 'rateLimitWindowSeconds'
+  });
+  const rateLimitMaxAttempts = resolveRuntimeAuthNumericConfig({
+    candidate: options.rateLimitMaxAttempts,
+    configName: 'rateLimitMaxAttempts'
+  });
   const {
     now,
     authStore,
@@ -146,8 +187,8 @@ const createAuthService = (options = {}) => {
     accessSessionCacheTtlMs,
     addAccessInvalidAuditEvent,
     errors,
-    accessTtlSeconds: ACCESS_TTL_SECONDS,
-    refreshTtlSeconds: REFRESH_TTL_SECONDS
+    accessTtlSeconds,
+    refreshTtlSeconds
   });
 
   const tenantContextService = createTenantContextService({
@@ -254,11 +295,11 @@ const createAuthService = (options = {}) => {
     OTP_CODE_LENGTH,
     OTP_RESEND_COOLDOWN_SECONDS,
     PASSWORD_MIN_LENGTH,
-    OTP_TTL_SECONDS,
-    RATE_LIMIT_WINDOW_SECONDS,
-    RATE_LIMIT_MAX_ATTEMPTS,
-    ACCESS_TTL_SECONDS,
-    REFRESH_TTL_SECONDS
+    OTP_TTL_SECONDS: otpTtlSeconds,
+    RATE_LIMIT_WINDOW_SECONDS: rateLimitWindowSeconds,
+    RATE_LIMIT_MAX_ATTEMPTS: rateLimitMaxAttempts,
+    ACCESS_TTL_SECONDS: accessTtlSeconds,
+    REFRESH_TTL_SECONDS: refreshTtlSeconds
   });
   const {
     validatePasswordPolicy,
@@ -433,11 +474,6 @@ const createAuthService = (options = {}) => {
 };
 
 module.exports = {
-  ACCESS_TTL_SECONDS,
-  REFRESH_TTL_SECONDS,
-  OTP_TTL_SECONDS,
-  RATE_LIMIT_WINDOW_SECONDS,
-  RATE_LIMIT_MAX_ATTEMPTS,
   listSupportedRoutePermissionCodes,
   listSupportedRoutePermissionScopes,
   AuthProblemError,

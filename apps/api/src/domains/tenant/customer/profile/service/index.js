@@ -90,9 +90,11 @@ const CREATE_CUSTOMER_ALLOWED_FIELDS = new Set([
   'address'
 ]);
 
-const UPDATE_CUSTOMER_BASIC_ALLOWED_FIELDS = new Set(['source']);
-
-const UPDATE_CUSTOMER_REALNAME_ALLOWED_FIELDS = new Set([
+const UPDATE_CUSTOMER_ALLOWED_FIELDS = new Set([
+  'wechat_id',
+  'wechatId',
+  'nickname',
+  'source',
   'real_name',
   'realName',
   'school',
@@ -101,6 +103,13 @@ const UPDATE_CUSTOMER_REALNAME_ALLOWED_FIELDS = new Set([
   'relation',
   'phone',
   'address'
+]);
+
+const UPDATE_BY_ACCOUNT_NICKNAME_ALLOWED_FIELDS = new Set([
+  'account_id',
+  'accountId',
+  'nickname',
+  'updates'
 ]);
 
 const customerProblem = ({ status, title, detail, errorCode, extensions = {} }) =>
@@ -148,6 +157,17 @@ const tenantCustomerErrors = {
       }
     }),
 
+  customerNotUnique: () =>
+    customerProblem({
+      status: 409,
+      title: 'Conflict',
+      detail: 'account_id + nickname 命中多条客户，请改用 customer_id 更新',
+      errorCode: 'TCUSTOMER-409-NON-UNIQUE-MATCH',
+      extensions: {
+        retryable: false
+      }
+    }),
+
   wechatConflict: () =>
     customerProblem({
       status: 409,
@@ -175,6 +195,9 @@ const isPlainObject = (candidate) =>
   candidate !== null
   && typeof candidate === 'object'
   && !Array.isArray(candidate);
+
+const hasOwnField = (source, fieldKey) =>
+  Boolean(source && Object.prototype.hasOwnProperty.call(source, fieldKey));
 
 const normalizeRequiredString = (candidate) => {
   if (typeof candidate !== 'string') {
@@ -484,11 +507,22 @@ const normalizeStrictAccountId = (accountId) => {
   return normalizedAccountId;
 };
 
-const normalizeStrictWechatId = (wechatId) => {
-  const normalizedWechatId = normalizeStrictRequiredString(wechatId);
+const normalizeOptionalWechatId = (wechatId) => {
+  if (wechatId === undefined) {
+    return undefined;
+  }
+  if (wechatId === null) {
+    return null;
+  }
+  if (typeof wechatId !== 'string') {
+    throw tenantCustomerErrors.invalidPayload('微信号格式错误');
+  }
+  const normalizedWechatId = wechatId.trim();
+  if (!normalizedWechatId) {
+    return null;
+  }
   if (
-    !normalizedWechatId
-    || normalizedWechatId.length > MAX_WECHAT_ID_LENGTH
+    normalizedWechatId.length > MAX_WECHAT_ID_LENGTH
     || CONTROL_CHAR_PATTERN.test(normalizedWechatId)
   ) {
     throw tenantCustomerErrors.invalidPayload('微信号格式错误');
@@ -737,7 +771,7 @@ const parseCreatePayload = (payload = {}) => {
   const accountId = normalizeStrictAccountId(
     resolveRawCamelSnakeField(payload, 'accountId', 'account_id')
   );
-  const wechatId = normalizeStrictWechatId(
+  const wechatId = normalizeOptionalWechatId(
     resolveRawCamelSnakeField(payload, 'wechatId', 'wechat_id')
   );
   const nickname = normalizeStrictNickname(
@@ -785,32 +819,26 @@ const parseCreatePayload = (payload = {}) => {
   };
 };
 
-const parseUpdateBasicPayload = (payload = {}) => {
+const parseUpdatePayload = (payload = {}) => {
   if (!isPlainObject(payload)) {
     throw tenantCustomerErrors.invalidPayload();
   }
   for (const fieldKey of Object.keys(payload)) {
-    if (!UPDATE_CUSTOMER_BASIC_ALLOWED_FIELDS.has(fieldKey)) {
-      throw tenantCustomerErrors.invalidPayload();
-    }
-  }
-  const source = normalizeStrictSource(
-    resolveRawCamelSnakeField(payload, 'source', 'source')
-  );
-  return { source };
-};
-
-const parseUpdateRealnamePayload = (payload = {}) => {
-  if (!isPlainObject(payload)) {
-    throw tenantCustomerErrors.invalidPayload();
-  }
-  for (const fieldKey of Object.keys(payload)) {
-    if (!UPDATE_CUSTOMER_REALNAME_ALLOWED_FIELDS.has(fieldKey)) {
+    if (!UPDATE_CUSTOMER_ALLOWED_FIELDS.has(fieldKey)) {
       throw tenantCustomerErrors.invalidPayload();
     }
   }
 
-  const parsed = {
+  return {
+    wechatId: normalizeOptionalWechatId(
+      resolveRawCamelSnakeField(payload, 'wechatId', 'wechat_id')
+    ),
+    nickname: normalizeStrictNickname(
+      resolveRawCamelSnakeField(payload, 'nickname', 'nickname')
+    ),
+    source: normalizeStrictSource(
+      resolveRawCamelSnakeField(payload, 'source', 'source')
+    ),
     realName: normalizeOptionalProfileField({
       value: resolveRawCamelSnakeField(payload, 'realName', 'real_name'),
       maxLength: MAX_REAL_NAME_LENGTH,
@@ -842,12 +870,139 @@ const parseUpdateRealnamePayload = (payload = {}) => {
       fieldLabel: 'address'
     })
   };
+};
 
-  const hasAnyField = Object.values(parsed).some((value) => value !== undefined);
-  if (!hasAnyField) {
+const parsePartialUpdateFields = (payload = {}) => {
+  if (!isPlainObject(payload)) {
+    throw tenantCustomerErrors.invalidPayload('updates 参数格式错误');
+  }
+  for (const fieldKey of Object.keys(payload)) {
+    if (!UPDATE_CUSTOMER_ALLOWED_FIELDS.has(fieldKey)) {
+      throw tenantCustomerErrors.invalidPayload('updates 包含不支持的字段');
+    }
+  }
+
+  const hasWechatId =
+    hasOwnField(payload, 'wechat_id') || hasOwnField(payload, 'wechatId');
+  const hasNickname = hasOwnField(payload, 'nickname');
+  const hasSource = hasOwnField(payload, 'source');
+  const hasRealName =
+    hasOwnField(payload, 'real_name') || hasOwnField(payload, 'realName');
+  const hasSchool = hasOwnField(payload, 'school');
+  const hasClassName =
+    hasOwnField(payload, 'class_name') || hasOwnField(payload, 'className');
+  const hasRelation = hasOwnField(payload, 'relation');
+  const hasPhone = hasOwnField(payload, 'phone');
+  const hasAddress = hasOwnField(payload, 'address');
+
+  const updatedFieldCount = [
+    hasWechatId,
+    hasNickname,
+    hasSource,
+    hasRealName,
+    hasSchool,
+    hasClassName,
+    hasRelation,
+    hasPhone,
+    hasAddress
+  ].filter(Boolean).length;
+  if (updatedFieldCount < 1) {
+    throw tenantCustomerErrors.invalidPayload('updates 至少包含一个可更新字段');
+  }
+
+  return {
+    hasWechatId,
+    hasNickname,
+    hasSource,
+    hasRealName,
+    hasSchool,
+    hasClassName,
+    hasRelation,
+    hasPhone,
+    hasAddress,
+    wechatId: hasWechatId
+      ? normalizeOptionalWechatId(
+        resolveRawCamelSnakeField(payload, 'wechatId', 'wechat_id')
+      )
+      : undefined,
+    nickname: hasNickname
+      ? normalizeStrictNickname(
+        resolveRawCamelSnakeField(payload, 'nickname', 'nickname')
+      )
+      : undefined,
+    source: hasSource
+      ? normalizeStrictSource(
+        resolveRawCamelSnakeField(payload, 'source', 'source')
+      )
+      : undefined,
+    realName: hasRealName
+      ? normalizeOptionalProfileField({
+        value: resolveRawCamelSnakeField(payload, 'realName', 'real_name'),
+        maxLength: MAX_REAL_NAME_LENGTH,
+        fieldLabel: 'real_name'
+      })
+      : undefined,
+    school: hasSchool
+      ? normalizeOptionalProfileField({
+        value: resolveRawCamelSnakeField(payload, 'school', 'school'),
+        maxLength: MAX_SCHOOL_LENGTH,
+        fieldLabel: 'school'
+      })
+      : undefined,
+    className: hasClassName
+      ? normalizeOptionalProfileField({
+        value: resolveRawCamelSnakeField(payload, 'className', 'class_name'),
+        maxLength: MAX_CLASS_NAME_LENGTH,
+        fieldLabel: 'class_name'
+      })
+      : undefined,
+    relation: hasRelation
+      ? normalizeOptionalProfileField({
+        value: resolveRawCamelSnakeField(payload, 'relation', 'relation'),
+        maxLength: MAX_RELATION_LENGTH,
+        fieldLabel: 'relation'
+      })
+      : undefined,
+    phone: hasPhone
+      ? normalizeOptionalProfileField({
+        value: resolveRawCamelSnakeField(payload, 'phone', 'phone'),
+        maxLength: MAX_PHONE_LENGTH,
+        fieldLabel: 'phone'
+      })
+      : undefined,
+    address: hasAddress
+      ? normalizeOptionalProfileField({
+        value: resolveRawCamelSnakeField(payload, 'address', 'address'),
+        maxLength: MAX_ADDRESS_LENGTH,
+        fieldLabel: 'address'
+      })
+      : undefined
+  };
+};
+
+const parseUpdateByAccountNicknamePayload = (payload = {}) => {
+  if (!isPlainObject(payload)) {
     throw tenantCustomerErrors.invalidPayload();
   }
-  return parsed;
+  for (const fieldKey of Object.keys(payload)) {
+    if (!UPDATE_BY_ACCOUNT_NICKNAME_ALLOWED_FIELDS.has(fieldKey)) {
+      throw tenantCustomerErrors.invalidPayload();
+    }
+  }
+
+  const accountId = normalizeStrictAccountId(
+    resolveRawCamelSnakeField(payload, 'accountId', 'account_id')
+  );
+  const nickname = normalizeStrictNickname(
+    resolveRawCamelSnakeField(payload, 'nickname', 'nickname')
+  );
+  const updates = parsePartialUpdateFields(payload.updates);
+
+  return {
+    accountId,
+    nickname,
+    updates
+  };
 };
 
 const toOperationLogsLimit = (value) => {
@@ -978,9 +1133,12 @@ const normalizeCustomerRecordFromStore = ({
   const accountId = normalizeStrictRequiredString(
     customer.account_id || customer.accountId
   ).toLowerCase();
-  const wechatId = normalizeStrictRequiredString(
-    customer.wechat_id || customer.wechatId
-  );
+  const rawWechatId = customer.wechat_id === undefined
+    ? customer.wechatId
+    : customer.wechat_id;
+  const wechatId = rawWechatId === undefined || rawWechatId === null
+    ? null
+    : normalizeStrictRequiredString(rawWechatId);
   const nickname = normalizeStrictRequiredString(customer.nickname);
   const source = normalizeRequiredString(customer.source).toLowerCase();
   const status = normalizeRequiredString(customer.status).toLowerCase();
@@ -991,7 +1149,12 @@ const normalizeCustomerRecordFromStore = ({
     || !customerId
     || (expectedCustomerId && customerId !== expectedCustomerId)
     || !accountId
-    || !wechatId
+    || (wechatId !== null
+      && (
+        !wechatId
+        || wechatId.length > MAX_WECHAT_ID_LENGTH
+        || CONTROL_CHAR_PATTERN.test(wechatId)
+      ))
     || !nickname
     || !SOURCE_VALUE_SET.has(source)
     || !CUSTOMER_STATUS_SET.has(status)
@@ -1118,6 +1281,53 @@ const mapCustomerForResponse = ({ normalizedCustomer }) => ({
   updated_at: normalizedCustomer.updated_at
 });
 
+const findUniqueCustomerByAccountNickname = async ({
+  authStore,
+  tenantId,
+  operatorUserId,
+  scopes = [],
+  accountId,
+  nickname
+}) => {
+  const matchedByCustomerId = new Map();
+  for (const scope of scopes) {
+    const customers = await authStore.listTenantCustomersByTenantId({
+      tenantId,
+      operatorUserId,
+      scope,
+      filters: {
+        accountIds: [accountId],
+        nickname
+      }
+    });
+    for (const customer of Array.isArray(customers) ? customers : []) {
+      const normalizedCustomer = normalizeCustomerRecordFromStore({
+        customer,
+        expectedTenantId: tenantId
+      });
+      if (!normalizedCustomer) {
+        continue;
+      }
+      if (
+        normalizedCustomer.account_id !== accountId
+        || normalizedCustomer.nickname !== nickname
+      ) {
+        continue;
+      }
+      matchedByCustomerId.set(normalizedCustomer.customer_id, normalizedCustomer);
+    }
+  }
+
+  const matchedCustomers = [...matchedByCustomerId.values()];
+  if (matchedCustomers.length < 1) {
+    return null;
+  }
+  if (matchedCustomers.length > 1) {
+    throw tenantCustomerErrors.customerNotUnique();
+  }
+  return matchedCustomers[0];
+};
+
 const createTenantCustomerService = ({ authService } = {}) => {
   const authStore = authService?._internals?.authStore;
   if (
@@ -1127,8 +1337,7 @@ const createTenantCustomerService = ({ authService } = {}) => {
     || typeof authStore.listTenantCustomersByTenantId !== 'function'
     || typeof authStore.createTenantCustomer !== 'function'
     || typeof authStore.findTenantCustomerByCustomerId !== 'function'
-    || typeof authStore.updateTenantCustomerBasic !== 'function'
-    || typeof authStore.updateTenantCustomerRealname !== 'function'
+    || typeof authStore.updateTenantCustomer !== 'function'
     || typeof authStore.listTenantCustomerOperationLogs !== 'function'
   ) {
     throw new TypeError(
@@ -1383,7 +1592,7 @@ const createTenantCustomerService = ({ authService } = {}) => {
     };
   };
 
-  const updateCustomerBasic = async ({
+  const updateCustomer = async ({
     requestId,
     accessToken,
     params = {},
@@ -1394,7 +1603,7 @@ const createTenantCustomerService = ({ authService } = {}) => {
     const customerId = normalizeStrictCustomerId(
       resolveRawCamelSnakeField(params || {}, 'customerId', 'customer_id')
     );
-    const parsedPayload = parseUpdateBasicPayload(payload || {});
+    const parsedPayload = parseUpdatePayload(payload || {});
 
     const {
       operatorUserId,
@@ -1417,11 +1626,19 @@ const createTenantCustomerService = ({ authService } = {}) => {
 
     let storeResult = null;
     try {
-      storeResult = await authStore.updateTenantCustomerBasic({
+      storeResult = await authStore.updateTenantCustomer({
         tenantId: activeTenantId,
         customerId,
         scopes: permittedScopes,
+        wechatId: parsedPayload.wechatId,
+        nickname: parsedPayload.nickname,
         source: parsedPayload.source,
+        realName: parsedPayload.realName,
+        school: parsedPayload.school,
+        className: parsedPayload.className,
+        relation: parsedPayload.relation,
+        phone: parsedPayload.phone,
+        address: parsedPayload.address,
         operatorUserId,
         operatorName: null,
         requestId,
@@ -1450,18 +1667,14 @@ const createTenantCustomerService = ({ authService } = {}) => {
     };
   };
 
-  const updateCustomerRealname = async ({
+  const updateCustomerByAccountNickname = async ({
     requestId,
     accessToken,
-    params = {},
     payload,
     traceparent = null,
     authorizationContext = null
   }) => {
-    const customerId = normalizeStrictCustomerId(
-      resolveRawCamelSnakeField(params || {}, 'customerId', 'customer_id')
-    );
-    const parsedPayload = parseUpdateRealnamePayload(payload || {});
+    const parsedPayload = parseUpdateByAccountNicknamePayload(payload || {});
 
     const {
       operatorUserId,
@@ -1482,18 +1695,68 @@ const createTenantCustomerService = ({ authService } = {}) => {
       throw tenantCustomerErrors.forbidden();
     }
 
+    let matchedCustomer = null;
+    try {
+      matchedCustomer = await findUniqueCustomerByAccountNickname({
+        authStore,
+        tenantId: activeTenantId,
+        operatorUserId,
+        scopes: permittedScopes,
+        accountId: parsedPayload.accountId,
+        nickname: parsedPayload.nickname
+      });
+    } catch (error) {
+      throw mapStoreErrorToDomainError(error);
+    }
+    if (!matchedCustomer) {
+      throw tenantCustomerErrors.customerNotFound();
+    }
+
+    const mergedUpdatePayload = parseUpdatePayload({
+      wechat_id: parsedPayload.updates.hasWechatId
+        ? parsedPayload.updates.wechatId
+        : matchedCustomer.wechat_id,
+      nickname: parsedPayload.updates.hasNickname
+        ? parsedPayload.updates.nickname
+        : matchedCustomer.nickname,
+      source: parsedPayload.updates.hasSource
+        ? parsedPayload.updates.source
+        : matchedCustomer.source,
+      real_name: parsedPayload.updates.hasRealName
+        ? parsedPayload.updates.realName
+        : matchedCustomer.real_name,
+      school: parsedPayload.updates.hasSchool
+        ? parsedPayload.updates.school
+        : matchedCustomer.school,
+      class_name: parsedPayload.updates.hasClassName
+        ? parsedPayload.updates.className
+        : matchedCustomer.class_name,
+      relation: parsedPayload.updates.hasRelation
+        ? parsedPayload.updates.relation
+        : matchedCustomer.relation,
+      phone: parsedPayload.updates.hasPhone
+        ? parsedPayload.updates.phone
+        : matchedCustomer.phone,
+      address: parsedPayload.updates.hasAddress
+        ? parsedPayload.updates.address
+        : matchedCustomer.address
+    });
+
     let storeResult = null;
     try {
-      storeResult = await authStore.updateTenantCustomerRealname({
+      storeResult = await authStore.updateTenantCustomer({
         tenantId: activeTenantId,
-        customerId,
+        customerId: matchedCustomer.customer_id,
         scopes: permittedScopes,
-        realName: parsedPayload.realName,
-        school: parsedPayload.school,
-        className: parsedPayload.className,
-        relation: parsedPayload.relation,
-        phone: parsedPayload.phone,
-        address: parsedPayload.address,
+        wechatId: mergedUpdatePayload.wechatId,
+        nickname: mergedUpdatePayload.nickname,
+        source: mergedUpdatePayload.source,
+        realName: mergedUpdatePayload.realName,
+        school: mergedUpdatePayload.school,
+        className: mergedUpdatePayload.className,
+        relation: mergedUpdatePayload.relation,
+        phone: mergedUpdatePayload.phone,
+        address: mergedUpdatePayload.address,
         operatorUserId,
         operatorName: null,
         requestId,
@@ -1510,7 +1773,7 @@ const createTenantCustomerService = ({ authService } = {}) => {
     const normalizedCustomer = normalizeCustomerRecordFromStore({
       customer: storeResult,
       expectedTenantId: activeTenantId,
-      expectedCustomerId: customerId
+      expectedCustomerId: matchedCustomer.customer_id
     });
     if (!normalizedCustomer) {
       throw tenantCustomerErrors.dependencyUnavailable();
@@ -1616,8 +1879,8 @@ const createTenantCustomerService = ({ authService } = {}) => {
     listCustomers,
     createCustomer,
     getCustomerDetail,
-    updateCustomerBasic,
-    updateCustomerRealname,
+    updateCustomer,
+    updateCustomerByAccountNickname,
     listCustomerOperationLogs,
     _internals: {
       tenantCustomerErrors,

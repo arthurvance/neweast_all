@@ -53,6 +53,8 @@ const SESSION_SCOPE_CONFIG = Object.freeze({
 const SESSION_LIST_DEFAULT_PAGE_SIZE = 20;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 50;
 const SESSION_MESSAGE_COMPOSER_HEIGHT = 172;
+const SESSION_LIST_POLL_INTERVAL_MS = 5000;
+const SESSION_DETAIL_POLL_INTERVAL_MS = 3000;
 
 const readPermissionFlag = (permissionContext, snakeCase, camelCase) =>
   Boolean(permissionContext?.[snakeCase] || permissionContext?.[camelCase]);
@@ -146,7 +148,8 @@ const normalizeConversationRecord = (record = {}) => {
     last_message_preview: lastMessagePreview,
     unread_count: Math.max(0, Number(record.unread_count ?? record.unreadCount ?? 0) || 0),
     last_message_time: toNullableText(record.last_message_time || record.lastMessageTime || record.updated_at || record.updatedAt),
-    updated_at: toNullableText(record.updated_at || record.updatedAt || record.last_message_time || record.lastMessageTime)
+    updated_at: toNullableText(record.updated_at || record.updatedAt || record.last_message_time || record.lastMessageTime),
+    created_at: toNullableText(record.created_at || record.createdAt)
   };
 };
 
@@ -172,6 +175,8 @@ const normalizeMessageRecord = (record = {}, fallbackIndex = 0) => {
     message_type: messageType || 'text',
     message_payload_json: messagePayloadJson,
     message_time: toNullableText(record.message_time || record.messageTime || record.sent_at || record.sentAt || record.created_at || record.createdAt),
+    created_at: toNullableText(record.created_at || record.createdAt || record.ingested_at || record.ingestedAt),
+    ingested_at: toNullableText(record.ingested_at || record.ingestedAt || record.created_at || record.createdAt),
     is_self: isSelf,
     content_preview: toMessagePayloadPreview(messageType || 'text', messagePayloadJson)
   };
@@ -183,6 +188,35 @@ const toTimestamp = (value) => {
     return 0;
   }
   return timestamp;
+};
+
+const compareConversationByRecentDesc = (left = {}, right = {}) => {
+  const byLastMessageTime =
+    toTimestamp(right?.last_message_time) - toTimestamp(left?.last_message_time);
+  if (byLastMessageTime !== 0) {
+    return byLastMessageTime;
+  }
+  const byUpdatedAt = toTimestamp(right?.updated_at) - toTimestamp(left?.updated_at);
+  if (byUpdatedAt !== 0) {
+    return byUpdatedAt;
+  }
+  return String(right?.conversation_id || '').localeCompare(
+    String(left?.conversation_id || '')
+  );
+};
+
+const compareMessageByTimelineAsc = (left = {}, right = {}) => {
+  const byMessageTime = toTimestamp(left?.message_time) - toTimestamp(right?.message_time);
+  if (byMessageTime !== 0) {
+    return byMessageTime;
+  }
+  const byCreatedAt =
+    toTimestamp(left?.created_at || left?.ingested_at || left?.message_time)
+    - toTimestamp(right?.created_at || right?.ingested_at || right?.message_time);
+  if (byCreatedAt !== 0) {
+    return byCreatedAt;
+  }
+  return String(left?.message_id || '').localeCompare(String(right?.message_id || ''));
 };
 
 const padTimeUnit = (value) => String(Number(value || 0)).padStart(2, '0');
@@ -345,6 +379,12 @@ export default function TenantSessionCenterPage({
   const [sendContent, setSendContent] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   const [moduleViewportHeight, setModuleViewportHeight] = useState(0);
+  const [isPageVisible, setIsPageVisible] = useState(() => {
+    if (typeof document === 'undefined') {
+      return true;
+    }
+    return document.visibilityState !== 'hidden';
+  });
   const latestMessageRequestRef = useRef({
     requestId: 0,
     conversationId: ''
@@ -362,6 +402,19 @@ export default function TenantSessionCenterPage({
       ? conversationList
       : [];
   }, [conversationList]);
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return undefined;
+    }
+    const syncPageVisibility = () => {
+      setIsPageVisible(document.visibilityState !== 'hidden');
+    };
+    syncPageVisibility();
+    document.addEventListener('visibilitychange', syncPageVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', syncPageVisibility);
+    };
+  }, []);
 
   const activeConversationDisplayName = useMemo(
     () => resolveConversationDisplayName(selectedConversation, conversationMessages),
@@ -566,7 +619,8 @@ export default function TenantSessionCenterPage({
     conversationRecord,
     {
       appendOlder = false,
-      cursor = ''
+      cursor = '',
+      silent = false
     } = {}
   ) => {
     const normalizedConversationId = toNullableText(conversationRecord?.conversation_id);
@@ -587,7 +641,7 @@ export default function TenantSessionCenterPage({
         return;
       }
       setConversationMessagesLoadingMore(true);
-    } else {
+    } else if (!silent) {
       setConversationMessages([]);
       setConversationMessagesLoading(true);
       setConversationMessagesLoadingMore(false);
@@ -614,7 +668,7 @@ export default function TenantSessionCenterPage({
       const nextCursor = toNullableText(payload?.next_cursor || payload?.nextCursor);
       const normalizedMessages = messageList
         .map((sessionMessage, index) => normalizeMessageRecord(sessionMessage, index))
-        .sort((left, right) => toTimestamp(left.message_time) - toTimestamp(right.message_time));
+        .sort((left, right) => compareMessageByTimelineAsc(left, right));
       const latestRequest = latestMessageRequestRef.current;
       if (
         latestRequest.requestId !== requestId
@@ -631,8 +685,8 @@ export default function TenantSessionCenterPage({
           for (const messageRecord of previousMessages) {
             mergedMessageMap.set(messageRecord.message_id, messageRecord);
           }
-          return [...mergedMessageMap.values()].sort(
-            (left, right) => toTimestamp(left.message_time) - toTimestamp(right.message_time)
+          return [...mergedMessageMap.values()].sort((left, right) =>
+            compareMessageByTimelineAsc(left, right)
           );
         });
       } else {
@@ -649,11 +703,15 @@ export default function TenantSessionCenterPage({
         return;
       }
       if (!appendOlder) {
-        setConversationMessages([]);
-        setConversationMessagesNextCursor('');
-        setConversationMessagesHasMore(false);
+        if (!silent) {
+          setConversationMessages([]);
+          setConversationMessagesNextCursor('');
+          setConversationMessagesHasMore(false);
+        }
       }
-      notifyError(error, '加载会话消息失败');
+      if (!silent) {
+        notifyError(error, '加载会话消息失败');
+      }
     } finally {
       const latestRequest = latestMessageRequestRef.current;
       if (
@@ -662,7 +720,7 @@ export default function TenantSessionCenterPage({
       ) {
         if (appendOlder) {
           setConversationMessagesLoadingMore(false);
-        } else {
+        } else if (!silent) {
           setConversationMessagesLoading(false);
         }
       }
@@ -756,13 +814,16 @@ export default function TenantSessionCenterPage({
           return [...mergedMap.values()];
         })()
         : normalizedConversations;
-      setConversationList(nextConversationList);
+      const sortedConversationList = [...nextConversationList].sort((left, right) =>
+        compareConversationByRecentDesc(left, right)
+      );
+      setConversationList(sortedConversationList);
       setConversationListTotal(resolvedTotal);
       const selectedConversationId = toNullableText(
         selectedConversationRef.current?.conversation_id
       );
       if (selectedConversationId) {
-        const matchedConversation = nextConversationList.find(
+        const matchedConversation = sortedConversationList.find(
           (conversation) => toNullableText(conversation?.conversation_id) === selectedConversationId
         );
         if (matchedConversation) {
@@ -845,6 +906,86 @@ export default function TenantSessionCenterPage({
     loadConversationList,
     sessionTableRefreshToken,
     visibleScopes.length
+  ]);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined'
+      || !accessToken
+      || !canViewSessionManagement
+      || !isPageVisible
+      || visibleScopes.length < 1
+      || conversationListPage !== 1
+    ) {
+      return undefined;
+    }
+    const currentScope = toNullableText(activeScope);
+    const accountWechatId = toNullableText(sessionFilters.account_wechat_id);
+    if (!currentScope || !accountWechatId) {
+      return undefined;
+    }
+    const timerId = window.setInterval(() => {
+      if (conversationListLoading) {
+        return;
+      }
+      void loadConversationList({
+        page: 1,
+        pageSize: conversationListPageSize,
+        append: false
+      });
+    }, SESSION_LIST_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [
+    accessToken,
+    activeScope,
+    canViewSessionManagement,
+    conversationListLoading,
+    conversationListPage,
+    conversationListPageSize,
+    isPageVisible,
+    loadConversationList,
+    sessionFilters.account_wechat_id,
+    visibleScopes.length
+  ]);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined'
+      || !accessToken
+      || !canViewSessionManagement
+      || !isPageVisible
+    ) {
+      return undefined;
+    }
+    const selectedConversationId = toNullableText(selectedConversation?.conversation_id);
+    if (!selectedConversationId) {
+      return undefined;
+    }
+    const timerId = window.setInterval(() => {
+      if (conversationMessagesLoading || conversationMessagesLoadingMore) {
+        return;
+      }
+      const targetConversation = selectedConversationRef.current;
+      if (!toNullableText(targetConversation?.conversation_id)) {
+        return;
+      }
+      void loadConversationMessages(targetConversation, {
+        silent: true
+      });
+    }, SESSION_DETAIL_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [
+    accessToken,
+    canViewSessionManagement,
+    conversationMessagesLoading,
+    conversationMessagesLoadingMore,
+    isPageVisible,
+    loadConversationMessages,
+    selectedConversation?.conversation_id
   ]);
 
   const loadOlderConversationMessages = useCallback(async () => {
@@ -1176,9 +1317,29 @@ export default function TenantSessionCenterPage({
                   </List>
                 </div>
               ) : conversationListLoading ? (
-                <Spin size="small" />
+                <section
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <Spin size="small" />
+                </section>
               ) : (
-                <Empty description="暂无会话" />
+                <section
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <Empty description="暂无会话" />
+                </section>
               )}
             </CustomCard>
 
@@ -1380,7 +1541,6 @@ export default function TenantSessionCenterPage({
                         sendingMessage
                         || !canOperateSessionManagement
                         || !toNullableText(selectedConversation?.conversation_id)
-                        || !sendContent.trim()
                       }
                       onClick={() => {
                         void handleSendMessage();

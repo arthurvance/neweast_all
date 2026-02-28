@@ -1,6 +1,7 @@
 'use strict';
 
 const CONVERSATION_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
+const MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const OUTBOUND_MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const CLIENT_MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const MAX_WECHAT_ID_LENGTH = 128;
@@ -185,6 +186,14 @@ const createTenantMemoryAuthStoreSession = ({
   const normalizeOutboundMessageId = (outboundMessageId) => {
     const normalized = normalizeStrictRequiredString(outboundMessageId);
     if (!normalized || !OUTBOUND_MESSAGE_ID_PATTERN.test(normalized)) {
+      return '';
+    }
+    return normalized;
+  };
+
+  const normalizeMessageId = (messageId) => {
+    const normalized = normalizeStrictRequiredString(messageId);
+    if (!normalized || !MESSAGE_ID_PATTERN.test(normalized)) {
       return '';
     }
     return normalized;
@@ -422,15 +431,45 @@ const createTenantMemoryAuthStoreSession = ({
     }
   };
 
-  const sortByTimestampDesc = (left, right, fieldKey) => {
-    const leftValue = toIsoTimestamp(left?.[fieldKey]) || '';
-    const rightValue = toIsoTimestamp(right?.[fieldKey]) || '';
-    if (leftValue !== rightValue) {
-      return rightValue.localeCompare(leftValue);
+  const compareIsoDesc = (leftValue, rightValue) => {
+    const normalizedLeft = toIsoTimestamp(leftValue) || '';
+    const normalizedRight = toIsoTimestamp(rightValue) || '';
+    if (normalizedLeft === normalizedRight) {
+      return 0;
     }
-    return String(right?.message_id || right?.conversation_id || '').localeCompare(
-      String(left?.message_id || left?.conversation_id || '')
+    return normalizedRight.localeCompare(normalizedLeft);
+  };
+
+  const sortConversationByRecentDesc = (left, right) => {
+    const byLastMessageTime = compareIsoDesc(
+      left?.last_message_time,
+      right?.last_message_time
     );
+    if (byLastMessageTime !== 0) {
+      return byLastMessageTime;
+    }
+    const byUpdatedAt = compareIsoDesc(left?.updated_at, right?.updated_at);
+    if (byUpdatedAt !== 0) {
+      return byUpdatedAt;
+    }
+    return String(right?.conversation_id || '').localeCompare(
+      String(left?.conversation_id || '')
+    );
+  };
+
+  const sortHistoryByTimelineDesc = (left, right) => {
+    const byMessageTime = compareIsoDesc(left?.message_time, right?.message_time);
+    if (byMessageTime !== 0) {
+      return byMessageTime;
+    }
+    const byCreatedAt = compareIsoDesc(
+      left?.created_at || left?.ingested_at || left?.message_time,
+      right?.created_at || right?.ingested_at || right?.message_time
+    );
+    if (byCreatedAt !== 0) {
+      return byCreatedAt;
+    }
+    return String(right?.message_id || '').localeCompare(String(left?.message_id || ''));
   };
 
   const createTenantSessionConversation = async ({
@@ -569,7 +608,7 @@ const createTenantMemoryAuthStoreSession = ({
         }
         return normalizeNameForCompare(record.conversation_name).includes(keywordNormalized);
       })
-      .sort((left, right) => sortByTimestampDesc(left, right, 'last_message_time'));
+      .sort((left, right) => sortConversationByRecentDesc(left, right));
   };
 
   const createTenantSessionHistoryMessage = async ({
@@ -683,6 +722,8 @@ const createTenantMemoryAuthStoreSession = ({
     tenantId,
     conversationId,
     cursor = null,
+    cursorCreatedAt = null,
+    cursorMessageId = '',
     limit = 50
   } = {}) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
@@ -691,6 +732,8 @@ const createTenantMemoryAuthStoreSession = ({
       return [];
     }
     const normalizedCursor = toIsoTimestamp(cursor);
+    const normalizedCursorCreatedAt = toIsoTimestamp(cursorCreatedAt);
+    const normalizedCursorMessageId = normalizeMessageId(cursorMessageId);
     const normalizedLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     const messageIds = toHistoryMessageIdListByConversationId({
       conversationId: normalizedConversationId
@@ -707,9 +750,29 @@ const createTenantMemoryAuthStoreSession = ({
           return true;
         }
         const recordMessageTime = toIsoTimestamp(record.message_time);
-        return recordMessageTime < normalizedCursor;
+        if (recordMessageTime < normalizedCursor) {
+          return true;
+        }
+        if (recordMessageTime > normalizedCursor) {
+          return false;
+        }
+        if (normalizedCursorCreatedAt) {
+          const recordCreatedAt = toIsoTimestamp(
+            record.created_at || record.ingested_at || record.message_time
+          );
+          if (recordCreatedAt < normalizedCursorCreatedAt) {
+            return true;
+          }
+          if (recordCreatedAt > normalizedCursorCreatedAt) {
+            return false;
+          }
+        }
+        if (normalizedCursorMessageId) {
+          return String(record.message_id || '') < normalizedCursorMessageId;
+        }
+        return false;
       })
-      .sort((left, right) => sortByTimestampDesc(left, right, 'message_time'))
+      .sort((left, right) => sortHistoryByTimelineDesc(left, right))
       .slice(0, normalizedLimit);
   };
 

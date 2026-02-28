@@ -15,7 +15,7 @@ import {
   Tree,
   message
 } from 'antd';
-import CustomCardTable from '../../../../components/CustomCardTable';
+import CustomPanelTable from '../../../../components/CustomPanelTable';
 import CustomFilter from '../../../../components/CustomFilter';
 import CustomForm from '../../../../components/CustomForm';
 import {
@@ -376,20 +376,6 @@ export default function PlatformRoleManagementPage({ accessToken }) {
       return true;
     });
   }, [roleFilters, roleList]);
-
-  const validateRoleCodeRequired = useCallback((_rule, value) => {
-    if (typeof value !== 'string' || value.trim()) {
-      return Promise.resolve();
-    }
-    return Promise.reject(new Error('请输入角色编码'));
-  }, []);
-
-  const validateRoleNameRequired = useCallback((_rule, value) => {
-    if (typeof value !== 'string' || value.trim()) {
-      return Promise.resolve();
-    }
-    return Promise.reject(new Error('请输入角色名称'));
-  }, []);
 
   const validateRoleCodeUnique = useCallback((_rule, value) => {
     const normalizedCode = String(value || '').trim().toLowerCase();
@@ -882,7 +868,7 @@ export default function PlatformRoleManagementPage({ accessToken }) {
           </Form.Item>
         </CustomFilter>
 
-        <CustomCardTable
+        <CustomPanelTable
           title="平台角色列表"
           rowKey="role_id"
           columns={roleColumns}
@@ -943,10 +929,8 @@ export default function PlatformRoleManagementPage({ accessToken }) {
               rules={[
                 {
                   required: true,
+                  whitespace: true,
                   message: '请输入角色编码'
-                },
-                {
-                  validator: validateRoleCodeRequired
                 },
                 {
                   validator: validateRoleCodeUnique
@@ -961,10 +945,8 @@ export default function PlatformRoleManagementPage({ accessToken }) {
               rules={[
                 {
                   required: true,
+                  whitespace: true,
                   message: '请输入角色名称'
-                },
-                {
-                  validator: validateRoleNameRequired
                 },
                 {
                   validator: validateRoleNameUnique

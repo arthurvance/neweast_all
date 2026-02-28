@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS tenant_customers (
   customer_id VARCHAR(64) NOT NULL,
   tenant_id VARCHAR(64) NOT NULL,
   account_id VARCHAR(64) NOT NULL,
-  wechat_id VARCHAR(128) NOT NULL,
+  wechat_id VARCHAR(128) NULL,
   nickname VARCHAR(128) NOT NULL,
   source VARCHAR(16) NOT NULL,
   status VARCHAR(16) NOT NULL DEFAULT 'enabled',

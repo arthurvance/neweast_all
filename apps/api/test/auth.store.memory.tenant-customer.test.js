@@ -127,19 +127,23 @@ test('memory auth store supports tenant customer CRUD, scope filters, and operat
   assert.equal(assistScopeList.length, 1);
   assert.equal(assistScopeList[0].customer_id, created.customer_id);
 
-  const basicUpdated = await store.updateTenantCustomerBasic({
+  const basicUpdated = await store.updateTenantCustomer({
     tenantId: 'tenant-customer-a',
     customerId: created.customer_id,
+    nickname: '内存客户A-更新',
     source: 'fission',
     operatorUserId: 'tenant-customer-user-1',
     operatorName: '客户负责人A',
     operationAt: '2026-02-12T09:00:00.000Z'
   });
   assert.equal(basicUpdated.source, 'fission');
+  assert.equal(basicUpdated.nickname, '内存客户A-更新');
 
-  const realnameUpdated = await store.updateTenantCustomerRealname({
+  const realnameUpdated = await store.updateTenantCustomer({
     tenantId: 'tenant-customer-a',
     customerId: created.customer_id,
+    nickname: '内存客户A-更新',
+    source: 'fission',
     realName: '学生乙',
     school: '实验中学',
     className: '七年一班',
@@ -169,7 +173,7 @@ test('memory auth store supports tenant customer CRUD, scope filters, and operat
   });
   assert.equal(Array.isArray(operationLogs), true);
   assert.equal(operationLogs.length >= 3, true);
-  assert.equal(operationLogs[0].operation_type, 'update_realname');
+  assert.equal(operationLogs[0].operation_type, 'update');
 });
 
 test('memory tenant customer store rejects create on non-existent account', async () => {
@@ -190,6 +194,41 @@ test('memory tenant customer store rejects create on non-existent account', asyn
       error
       && error.code === 'ERR_TENANT_CUSTOMER_ACCOUNT_NOT_FOUND'
   );
+});
+
+test('memory tenant customer store allows nullable wechat_id on create and update', async () => {
+  const store = createStore();
+
+  const account = await store.createTenantAccount({
+    tenantId: 'tenant-customer-a',
+    wechatId: 'wx_customer_account_nullable_1',
+    nickname: '客户账号C',
+    ownerMembershipId: 'membership-customer-owner-1',
+    assistantMembershipIds: [],
+    operatorUserId: 'tenant-customer-user-1',
+    operatorName: '客户负责人A'
+  });
+
+  const created = await store.createTenantCustomer({
+    tenantId: 'tenant-customer-a',
+    accountId: account.account_id,
+    nickname: '无微信客户',
+    source: 'ground',
+    operatorUserId: 'tenant-customer-user-1',
+    operatorName: '客户负责人A'
+  });
+  assert.equal(created.wechat_id, null);
+
+  const updated = await store.updateTenantCustomer({
+    tenantId: 'tenant-customer-a',
+    customerId: created.customer_id,
+    wechatId: 'wx_customer_nullable_1',
+    nickname: '无微信客户',
+    source: 'ground',
+    operatorUserId: 'tenant-customer-user-1',
+    operatorName: '客户负责人A'
+  });
+  assert.equal(updated.wechat_id, 'wx_customer_nullable_1');
 });
 
 test('memory tenant customer store enforces scope checks for detail and operation logs', async () => {

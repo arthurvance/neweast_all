@@ -3522,7 +3522,7 @@ const createTenantManagementApiServer = async () => {
       const wechatId = String(body.wechat_id || '').trim();
       const nickname = String(body.nickname || '').trim();
       const source = normalizeCustomerSource(body.source);
-      if (!accountId || !wechatId || !nickname || !source) {
+      if (!accountId || !nickname || !source) {
         sendProblem({
           status: 400,
           detail: '请求参数不完整或格式错误',
@@ -3549,7 +3549,7 @@ const createTenantManagementApiServer = async () => {
         account_id: accountId,
         account_wechat_id: String(account.wechat_id || '').trim(),
         account_nickname: String(account.nickname || '').trim(),
-        wechat_id: wechatId,
+        wechat_id: wechatId || null,
         nickname,
         source,
         school: String(body.school || '').trim(),
@@ -3617,12 +3617,11 @@ const createTenantManagementApiServer = async () => {
       return;
     }
 
-    const customerBasicMatch = pathname.match(/^\/tenant\/customers\/([^/]+)\/basic$/);
-    if (customerBasicMatch && method === 'PATCH') {
+    if (customerMatch && method === 'PATCH') {
       if (!ensureCustomerViewPermission() || !ensureCustomerOperatePermission()) {
         return;
       }
-      const customerId = decodeURIComponent(customerBasicMatch[1] || '').trim();
+      const customerId = decodeURIComponent(customerMatch[1] || '').trim();
       const customer = customers.get(customerId);
       if (!customer) {
         sendProblem({
@@ -3633,72 +3632,56 @@ const createTenantManagementApiServer = async () => {
         });
         return;
       }
+      const nickname = String(body.nickname || '').trim();
       const source = normalizeCustomerSource(body.source);
-      if (!source) {
+      if (!nickname || !source) {
         sendProblem({
           status: 400,
-          detail: 'source 必须为 ground、fission 或 other',
+          detail: 'nickname 与 source 为必填项',
           errorCode: 'TCUSTOMER-400-INVALID-PAYLOAD'
         });
         return;
       }
+      const hasWechatIdField = Object.prototype.hasOwnProperty.call(body || {}, 'wechat_id');
+      const normalizedWechatId = hasWechatIdField
+        ? (() => {
+          if (body.wechat_id === null || body.wechat_id === undefined) {
+            return null;
+          }
+          const candidateWechatId = String(body.wechat_id).trim();
+          return candidateWechatId || null;
+        })()
+        : customer.wechat_id ?? null;
       const now = new Date().toISOString();
       const updatedCustomer = {
         ...customer,
+        wechat_id: normalizedWechatId,
+        nickname,
         source,
+        real_name: Object.prototype.hasOwnProperty.call(body || {}, 'real_name')
+          ? String(body.real_name || '').trim()
+          : customer.real_name,
+        school: Object.prototype.hasOwnProperty.call(body || {}, 'school')
+          ? String(body.school || '').trim()
+          : customer.school,
+        class_name: Object.prototype.hasOwnProperty.call(body || {}, 'class_name')
+          ? String(body.class_name || '').trim()
+          : customer.class_name,
+        relation: Object.prototype.hasOwnProperty.call(body || {}, 'relation')
+          ? String(body.relation || '').trim()
+          : customer.relation,
+        phone: Object.prototype.hasOwnProperty.call(body || {}, 'phone')
+          ? String(body.phone || '').trim()
+          : customer.phone,
+        address: Object.prototype.hasOwnProperty.call(body || {}, 'address')
+          ? String(body.address || '').trim()
+          : customer.address,
         updated_at: now
       };
       customers.set(customerId, updatedCustomer);
       const logs = customerOperationLogs.get(customerId) || [];
       logs.unshift({
-        operation_type: 'update_basic',
-        operated_at: now,
-        operator_name: '当前用户',
-        content: `source -> ${source}`
-      });
-      customerOperationLogs.set(customerId, logs);
-      sendJson({
-        status: 200,
-        contentType: 'application/json',
-        payload: {
-          ...updatedCustomer,
-          request_id: requestId
-        }
-      });
-      return;
-    }
-
-    const customerRealnameMatch = pathname.match(/^\/tenant\/customers\/([^/]+)\/realname$/);
-    if (customerRealnameMatch && method === 'PATCH') {
-      if (!ensureCustomerViewPermission() || !ensureCustomerOperatePermission()) {
-        return;
-      }
-      const customerId = decodeURIComponent(customerRealnameMatch[1] || '').trim();
-      const customer = customers.get(customerId);
-      if (!customer) {
-        sendProblem({
-          status: 404,
-          title: 'Not Found',
-          detail: '目标客户不存在',
-          errorCode: 'TCUSTOMER-404-CUSTOMER-NOT-FOUND'
-        });
-        return;
-      }
-      const now = new Date().toISOString();
-      const updatedCustomer = {
-        ...customer,
-        real_name: String(body.real_name || '').trim(),
-        school: String(body.school || '').trim(),
-        class_name: String(body.class_name || '').trim(),
-        relation: String(body.relation || '').trim(),
-        phone: String(body.phone || '').trim(),
-        address: String(body.address || '').trim(),
-        updated_at: now
-      };
-      customers.set(customerId, updatedCustomer);
-      const logs = customerOperationLogs.get(customerId) || [];
-      logs.unshift({
-        operation_type: 'update_realname',
+        operation_type: 'update',
         operated_at: now,
         operator_name: '当前用户',
         content: `request_id: ${requestId}`
@@ -3997,11 +3980,8 @@ const ensureAuthStoreCustomerCapabilities = (authService) => {
   if (typeof authStore.findTenantCustomerByCustomerId !== 'function') {
     authStore.findTenantCustomerByCustomerId = async () => null;
   }
-  if (typeof authStore.updateTenantCustomerBasic !== 'function') {
-    authStore.updateTenantCustomerBasic = async () => null;
-  }
-  if (typeof authStore.updateTenantCustomerRealname !== 'function') {
-    authStore.updateTenantCustomerRealname = async () => null;
+  if (typeof authStore.updateTenantCustomer !== 'function') {
+    authStore.updateTenantCustomer = async () => null;
   }
   if (typeof authStore.listTenantCustomerOperationLogs !== 'function') {
     authStore.listTenantCustomerOperationLogs = async () => [];
@@ -6932,7 +6912,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-customer-detail-edit-basic"]')?.click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="tenant-customer-overview-edit-basic"]')?.click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -6981,9 +6961,12 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   );
   await waitForRequest(
     api.requests,
-    (request) => request.path === '/tenant/customers/customer-tenant-101-3/basic' && request.method === 'PATCH',
+    (request) =>
+      request.path === '/tenant/customers/customer-tenant-101-3'
+      && request.method === 'PATCH'
+      && request.body?.source === 'fission',
     10000,
-    'tenant customer basic edit request should reach API stub'
+    'tenant customer edit request should reach API stub'
   );
   await waitForCondition(
     cdp,
@@ -6998,7 +6981,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-customer-detail-edit-realname"]')?.click(); return true; })()`
+    `(() => { document.querySelector('[data-testid="tenant-customer-overview-edit-realname"]')?.click(); return true; })()`
   );
   await waitForCondition(
     cdp,
@@ -7030,7 +7013,10 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   );
   await waitForRequest(
     api.requests,
-    (request) => request.path === '/tenant/customers/customer-tenant-101-3/realname' && request.method === 'PATCH',
+    (request) =>
+      request.path === '/tenant/customers/customer-tenant-101-3'
+      && request.method === 'PATCH'
+      && request.body?.real_name === '王五',
     10000,
     'tenant customer realname edit request should reach API stub'
   );
@@ -7983,15 +7969,27 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   assert.equal(createCustomerRequest?.body?.source, 'ground');
 
   const updateCustomerBasicRequest = api.requests.find(
-    (request) => request.path === '/tenant/customers/customer-tenant-101-3/basic' && request.method === 'PATCH'
+    (request) =>
+      request.path === '/tenant/customers/customer-tenant-101-3'
+      && request.method === 'PATCH'
+      && request.body?.source === 'fission'
   );
   assert.equal(updateCustomerBasicRequest?.body?.source, 'fission');
+  assert.equal(typeof updateCustomerBasicRequest?.body?.nickname, 'string');
+  assert.equal(updateCustomerBasicRequest?.body?.nickname.length > 0, true);
 
   const updateCustomerRealnameRequest = api.requests.find(
-    (request) => request.path === '/tenant/customers/customer-tenant-101-3/realname' && request.method === 'PATCH'
+    (request) =>
+      request.path === '/tenant/customers/customer-tenant-101-3'
+      && request.method === 'PATCH'
+      && request.body?.real_name === '王五'
   );
   assert.equal(updateCustomerRealnameRequest?.body?.real_name, '王五');
   assert.equal(updateCustomerRealnameRequest?.body?.school, '第三中学');
+  assert.equal(typeof updateCustomerRealnameRequest?.body?.nickname, 'string');
+  assert.equal(updateCustomerRealnameRequest?.body?.nickname.length > 0, true);
+  assert.equal(typeof updateCustomerRealnameRequest?.body?.source, 'string');
+  assert.equal(updateCustomerRealnameRequest?.body?.source.length > 0, true);
 
   const sendSessionMessageRequest = api.requests.find(
     (request) =>

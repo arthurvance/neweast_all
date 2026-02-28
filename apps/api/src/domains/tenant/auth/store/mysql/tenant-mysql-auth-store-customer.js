@@ -60,11 +60,19 @@ const createTenantMysqlAuthStoreCustomer = ({
     return normalized;
   };
 
-  const normalizeWechatId = (wechatId) => {
+  const normalizeOptionalWechatId = (wechatId, { allowUndefined = false } = {}) => {
+    if (wechatId === undefined) {
+      return allowUndefined ? undefined : null;
+    }
+    if (wechatId === null) {
+      return null;
+    }
     const normalized = normalizeRequiredString(wechatId);
+    if (!normalized) {
+      return null;
+    }
     if (
-      !normalized
-      || normalized.length > MAX_WECHAT_ID_LENGTH
+      normalized.length > MAX_WECHAT_ID_LENGTH
       || CONTROL_CHAR_PATTERN.test(normalized)
     ) {
       return '';
@@ -192,7 +200,7 @@ const createTenantMysqlAuthStoreCustomer = ({
     const customerId = normalizeCustomerId(row.customer_id);
     const tenantId = normalizeTenantId(row.tenant_id);
     const accountId = normalizeAccountId(row.account_id);
-    const wechatId = normalizeWechatId(row.wechat_id);
+    const wechatId = normalizeOptionalWechatId(row.wechat_id);
     const nickname = normalizeNickname(row.nickname);
     const source = normalizeSource(row.source);
     const status = normalizeStatus(row.status);
@@ -202,7 +210,7 @@ const createTenantMysqlAuthStoreCustomer = ({
       !customerId
       || !tenantId
       || !accountId
-      || !wechatId
+      || wechatId === ''
       || !nickname
       || !source
       || !status
@@ -655,14 +663,16 @@ const createTenantMysqlAuthStoreCustomer = ({
   } = {}) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
     const normalizedAccountId = normalizeAccountId(accountId);
-    const normalizedWechatId = normalizeWechatId(wechatId);
+    const normalizedWechatId = normalizeOptionalWechatId(wechatId, {
+      allowUndefined: true
+    });
     const normalizedNickname = normalizeNickname(nickname);
     const normalizedSource = normalizeSource(source);
     const normalizedStatus = normalizeStatus(status) || 'enabled';
     if (
       !normalizedTenantId
       || !normalizedAccountId
-      || !normalizedWechatId
+      || normalizedWechatId === ''
       || !normalizedNickname
       || !normalizedSource
       || !normalizedStatus
@@ -745,7 +755,7 @@ const createTenantMysqlAuthStoreCustomer = ({
                   normalizedCustomerId,
                   normalizedTenantId,
                   normalizedAccountId,
-                  normalizedWechatId,
+                  normalizedWechatId === undefined ? null : normalizedWechatId,
                   normalizedNickname,
                   normalizedSource,
                   normalizedStatus,
@@ -834,100 +844,38 @@ const createTenantMysqlAuthStoreCustomer = ({
     throw new Error('tenant customer id generation exhausted');
   };
 
-  const updateTenantCustomerBasic = async ({
+  const updateTenantCustomer = async ({
     tenantId,
     customerId,
     scopes = ['all'],
+    wechatId = undefined,
+    nickname,
     source,
+    realName = undefined,
+    school = undefined,
+    className = undefined,
+    relation = undefined,
+    phone = undefined,
+    address = undefined,
     operatorUserId = null,
     operatorName = null,
     operationAt = new Date()
   } = {}) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
     const normalizedCustomerId = normalizeCustomerId(customerId);
+    const normalizedWechatId = normalizeOptionalWechatId(wechatId, {
+      allowUndefined: true
+    });
+    const normalizedNickname = normalizeNickname(nickname);
     const normalizedSource = normalizeSource(source);
-    if (!normalizedTenantId || !normalizedCustomerId || !normalizedSource) {
-      throw new Error('invalid customer basic payload');
-    }
-    const normalizedOperationAt = resolveOperationTimestampForWrite(operationAt);
-    const updated = await executeWriteWithRetry({
-      operation: 'updateTenantCustomerBasic',
-      execute: async () =>
-        dbClient.inTransaction(async (tx) => {
-          const existingCustomer = await loadCustomerRowByTenantAndCustomerId({
-            tenantId: normalizedTenantId,
-            customerId: normalizedCustomerId,
-            operatorUserId,
-            scopes,
-            queryClient: tx,
-            lockForUpdate: true
-          });
-          if (!existingCustomer) {
-            return false;
-          }
-
-          await tx.query(
-            `
-              UPDATE tenant_customers
-              SET source = ?,
-                  updated_by_user_id = ?,
-                  updated_at = ?
-              WHERE tenant_id = ?
-                AND customer_id = ?
-            `,
-            [
-              normalizedSource,
-              normalizeRequiredString(operatorUserId) || null,
-              normalizedOperationAt,
-              normalizedTenantId,
-              normalizedCustomerId
-            ]
-          );
-
-          await insertCustomerOperationLogTx({
-            txClient: tx,
-            tenantId: normalizedTenantId,
-            customerId: normalizedCustomerId,
-            operationType: 'update_basic',
-            operationContent: JSON.stringify({
-              source: normalizedSource
-            }),
-            operatorUserId,
-            operatorName,
-            operationAt: normalizedOperationAt
-          });
-
-          return true;
-        })
-    });
-    if (!updated) {
-      return null;
-    }
-    return findTenantCustomerByCustomerId({
-      tenantId: normalizedTenantId,
-      customerId: normalizedCustomerId,
-      scopes: ['all']
-    });
-  };
-
-  const updateTenantCustomerRealname = async ({
-    tenantId,
-    customerId,
-    scopes = ['all'],
-    realName = null,
-    school = null,
-    className = null,
-    relation = null,
-    phone = null,
-    address = null,
-    operatorUserId = null,
-    operatorName = null,
-    operationAt = new Date()
-  } = {}) => {
-    const normalizedTenantId = normalizeTenantId(tenantId);
-    const normalizedCustomerId = normalizeCustomerId(customerId);
-    if (!normalizedTenantId || !normalizedCustomerId) {
-      throw new Error('invalid customer realname payload');
+    if (
+      !normalizedTenantId
+      || !normalizedCustomerId
+      || normalizedWechatId === ''
+      || !normalizedNickname
+      || !normalizedSource
+    ) {
+      throw new Error('invalid customer update payload');
     }
     const normalizedOperationAt = resolveOperationTimestampForWrite(operationAt);
     const nextRealName = normalizeOptionalProfileField({
@@ -955,161 +903,187 @@ const createTenantMysqlAuthStoreCustomer = ({
       maxLength: MAX_ADDRESS_LENGTH
     });
 
-    const updated = await executeWriteWithRetry({
-      operation: 'updateTenantCustomerRealname',
-      execute: async () =>
-        dbClient.inTransaction(async (tx) => {
-          const existingCustomer = await loadCustomerRowByTenantAndCustomerId({
-            tenantId: normalizedTenantId,
-            customerId: normalizedCustomerId,
-            operatorUserId,
-            scopes,
-            queryClient: tx,
-            lockForUpdate: true
-          });
-          if (!existingCustomer) {
-            return false;
-          }
+    let updated = false;
+    try {
+      updated = await executeWriteWithRetry({
+        operation: 'updateTenantCustomer',
+        execute: async () =>
+          dbClient.inTransaction(async (tx) => {
+            const existingCustomer = await loadCustomerRowByTenantAndCustomerId({
+              tenantId: normalizedTenantId,
+              customerId: normalizedCustomerId,
+              operatorUserId,
+              scopes,
+              queryClient: tx,
+              lockForUpdate: true
+            });
+            if (!existingCustomer) {
+              return false;
+            }
+            const existingWechatId = normalizeOptionalWechatId(existingCustomer.wechat_id);
+            if (existingWechatId === '') {
+              throw new Error('invalid persisted customer wechat_id');
+            }
+            const resolvedWechatId =
+              normalizedWechatId === undefined
+                ? existingWechatId
+                : normalizedWechatId;
 
-          const profileRows = await tx.query(
-            `
-              SELECT customer_id,
-                     real_name,
-                     school,
-                     class_name,
-                     relation,
-                     phone,
-                     address,
-                     created_at
-              FROM tenant_customer_profiles
-              WHERE tenant_id = ?
-                AND customer_id = ?
-              LIMIT 1
-              FOR UPDATE
-            `,
-            [normalizedTenantId, normalizedCustomerId]
-          );
-          const existingProfile = profileRows?.[0] || null;
-          const resolvedRealName =
-            nextRealName === undefined
-              ? normalizeRequiredString(existingProfile?.real_name) || null
-              : nextRealName;
-          const resolvedSchool =
-            nextSchool === undefined
-              ? normalizeRequiredString(existingProfile?.school) || null
-              : nextSchool;
-          const resolvedClassName =
-            nextClassName === undefined
-              ? normalizeRequiredString(existingProfile?.class_name) || null
-              : nextClassName;
-          const resolvedRelation =
-            nextRelation === undefined
-              ? normalizeRequiredString(existingProfile?.relation) || null
-              : nextRelation;
-          const resolvedPhone =
-            nextPhone === undefined
-              ? normalizeRequiredString(existingProfile?.phone) || null
-              : nextPhone;
-          const resolvedAddress =
-            nextAddress === undefined
-              ? normalizeRequiredString(existingProfile?.address) || null
-              : nextAddress;
+            const profileRows = await tx.query(
+              `
+                SELECT customer_id,
+                       real_name,
+                       school,
+                       class_name,
+                       relation,
+                       phone,
+                       address,
+                       created_at
+                FROM tenant_customer_profiles
+                WHERE tenant_id = ?
+                  AND customer_id = ?
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [normalizedTenantId, normalizedCustomerId]
+            );
+            const existingProfile = profileRows?.[0] || null;
+            const resolvedRealName =
+              nextRealName === undefined
+                ? normalizeRequiredString(existingProfile?.real_name) || null
+                : nextRealName;
+            const resolvedSchool =
+              nextSchool === undefined
+                ? normalizeRequiredString(existingProfile?.school) || null
+                : nextSchool;
+            const resolvedClassName =
+              nextClassName === undefined
+                ? normalizeRequiredString(existingProfile?.class_name) || null
+                : nextClassName;
+            const resolvedRelation =
+              nextRelation === undefined
+                ? normalizeRequiredString(existingProfile?.relation) || null
+                : nextRelation;
+            const resolvedPhone =
+              nextPhone === undefined
+                ? normalizeRequiredString(existingProfile?.phone) || null
+                : nextPhone;
+            const resolvedAddress =
+              nextAddress === undefined
+                ? normalizeRequiredString(existingProfile?.address) || null
+                : nextAddress;
 
-          if (existingProfile) {
             await tx.query(
               `
-                UPDATE tenant_customer_profiles
-                SET real_name = ?,
-                    school = ?,
-                    class_name = ?,
-                    relation = ?,
-                    phone = ?,
-                    address = ?,
+                UPDATE tenant_customers
+                SET wechat_id = ?,
+                    nickname = ?,
+                    source = ?,
+                    updated_by_user_id = ?,
                     updated_at = ?
                 WHERE tenant_id = ?
                   AND customer_id = ?
               `,
               [
-                resolvedRealName,
-                resolvedSchool,
-                resolvedClassName,
-                resolvedRelation,
-                resolvedPhone,
-                resolvedAddress,
+                resolvedWechatId,
+                normalizedNickname,
+                normalizedSource,
+                normalizeRequiredString(operatorUserId) || null,
                 normalizedOperationAt,
                 normalizedTenantId,
                 normalizedCustomerId
               ]
             );
-          } else {
-            await tx.query(
-              `
-                INSERT INTO tenant_customer_profiles (
-                  customer_id,
-                  tenant_id,
-                  real_name,
-                  school,
-                  class_name,
-                  relation,
-                  phone,
-                  address,
-                  created_at,
-                  updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `,
-              [
-                normalizedCustomerId,
-                normalizedTenantId,
-                resolvedRealName,
-                resolvedSchool,
-                resolvedClassName,
-                resolvedRelation,
-                resolvedPhone,
-                resolvedAddress,
-                normalizedOperationAt,
-                normalizedOperationAt
-              ]
-            );
-          }
 
-          await tx.query(
-            `
-              UPDATE tenant_customers
-              SET updated_by_user_id = ?,
-                  updated_at = ?
-              WHERE tenant_id = ?
-                AND customer_id = ?
-            `,
-            [
-              normalizeRequiredString(operatorUserId) || null,
-              normalizedOperationAt,
-              normalizedTenantId,
-              normalizedCustomerId
-            ]
-          );
+            if (existingProfile) {
+              await tx.query(
+                `
+                  UPDATE tenant_customer_profiles
+                  SET real_name = ?,
+                      school = ?,
+                      class_name = ?,
+                      relation = ?,
+                      phone = ?,
+                      address = ?,
+                      updated_at = ?
+                  WHERE tenant_id = ?
+                    AND customer_id = ?
+                `,
+                [
+                  resolvedRealName,
+                  resolvedSchool,
+                  resolvedClassName,
+                  resolvedRelation,
+                  resolvedPhone,
+                  resolvedAddress,
+                  normalizedOperationAt,
+                  normalizedTenantId,
+                  normalizedCustomerId
+                ]
+              );
+            } else {
+              await tx.query(
+                `
+                  INSERT INTO tenant_customer_profiles (
+                    customer_id,
+                    tenant_id,
+                    real_name,
+                    school,
+                    class_name,
+                    relation,
+                    phone,
+                    address,
+                    created_at,
+                    updated_at
+                  )
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `,
+                [
+                  normalizedCustomerId,
+                  normalizedTenantId,
+                  resolvedRealName,
+                  resolvedSchool,
+                  resolvedClassName,
+                  resolvedRelation,
+                  resolvedPhone,
+                  resolvedAddress,
+                  normalizedOperationAt,
+                  normalizedOperationAt
+                ]
+              );
+            }
 
-          await insertCustomerOperationLogTx({
-            txClient: tx,
-            tenantId: normalizedTenantId,
-            customerId: normalizedCustomerId,
-            operationType: 'update_realname',
-            operationContent: JSON.stringify({
-              real_name: nextRealName,
-              school: nextSchool,
-              class_name: nextClassName,
-              relation: nextRelation,
-              phone: nextPhone,
-              address: nextAddress
-            }),
-            operatorUserId,
-            operatorName,
-            operationAt: normalizedOperationAt
-          });
+            await insertCustomerOperationLogTx({
+              txClient: tx,
+              tenantId: normalizedTenantId,
+              customerId: normalizedCustomerId,
+              operationType: 'update',
+              operationContent: JSON.stringify({
+                wechat_id: normalizedWechatId,
+                nickname: normalizedNickname,
+                source: normalizedSource,
+                real_name: nextRealName,
+                school: nextSchool,
+                class_name: nextClassName,
+                relation: nextRelation,
+                phone: nextPhone,
+                address: nextAddress
+              }),
+              operatorUserId,
+              operatorName,
+              operationAt: normalizedOperationAt
+            });
 
-          return true;
-        })
-    });
+            return true;
+          })
+      });
+    } catch (error) {
+      if (isWechatDuplicateError(error)) {
+        throw createWechatConflictError();
+      }
+      throw error;
+    }
+
     if (!updated) {
       return null;
     }
@@ -1172,8 +1146,7 @@ const createTenantMysqlAuthStoreCustomer = ({
     listTenantCustomersByTenantId,
     createTenantCustomer,
     findTenantCustomerByCustomerId,
-    updateTenantCustomerBasic,
-    updateTenantCustomerRealname,
+    updateTenantCustomer,
     listTenantCustomerOperationLogs
   };
 };

@@ -41,7 +41,14 @@ const ROLE_ID_ADDRESSABLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const VALID_ORG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
 const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
-const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set(['auth.default_password']);
+const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set([
+  'auth.default_password',
+  'auth.access_ttl_seconds',
+  'auth.refresh_ttl_seconds',
+  'auth.otp_ttl_seconds',
+  'auth.rate_limit_window_seconds',
+  'auth.rate_limit_max_attempts'
+]);
 const VALID_PLATFORM_ROLE_CATALOG_STATUS = new Set(['active', 'disabled']);
 const VALID_PLATFORM_ROLE_CATALOG_SCOPE = new Set(['platform', 'tenant']);
 const VALID_PLATFORM_INTEGRATION_DIRECTION = new Set([

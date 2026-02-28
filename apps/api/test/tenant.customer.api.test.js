@@ -48,6 +48,17 @@ const createNoopTenantAccountService = () => ({
   listAccountOperationLogs: async () => ({ operation_logs: [] })
 });
 
+const createNoopTenantSessionService = () => ({
+  ingestConversation: async () => ({}),
+  ingestHistoryMessage: async () => ({}),
+  listChats: async () => ({ chats: [] }),
+  listChatMessages: async () => ({ messages: [] }),
+  listAccountOptions: async () => ({ accounts: [] }),
+  createOutboundMessage: async () => ({}),
+  pullOutboundMessages: async () => ({ messages: [] }),
+  updateOutboundMessageStatus: async () => ({})
+});
+
 const createHarness = ({
   authorizeRoute = async () => ({
     user_id: 'tenant-customer-operator',
@@ -122,30 +133,14 @@ const createHarness = ({
     created_by_user_id: 'tenant-customer-operator',
     updated_by_user_id: 'tenant-customer-operator',
     created_at: '2026-02-10T08:00:00.000Z',
-    updated_at: '2026-02-10T08:00:00.000Z'
+      updated_at: '2026-02-10T08:00:00.000Z'
   }),
-  updateTenantCustomerBasic = async ({ tenantId, customerId, source }) => ({
-    customer_id: customerId,
-    tenant_id: tenantId,
-    account_id: 'acc_001',
-    wechat_id: 'wx_customer_001',
-    nickname: '客户甲',
-    source,
-    status: 'enabled',
-    real_name: '张三',
-    school: '测试小学',
-    class_name: '三年二班',
-    relation: '家长',
-    phone: '13800001111',
-    address: '测试路 100 号',
-    created_by_user_id: 'tenant-customer-operator',
-    updated_by_user_id: 'tenant-customer-operator',
-    created_at: '2026-02-10T08:00:00.000Z',
-    updated_at: '2026-02-12T09:00:00.000Z'
-  }),
-  updateTenantCustomerRealname = async ({
+  updateTenantCustomer = async ({
     tenantId,
     customerId,
+    wechatId,
+    nickname,
+    source,
     realName,
     school,
     className,
@@ -156,16 +151,16 @@ const createHarness = ({
     customer_id: customerId,
     tenant_id: tenantId,
     account_id: 'acc_001',
-    wechat_id: 'wx_customer_001',
-    nickname: '客户甲',
-    source: 'ground',
+    wechat_id: wechatId === undefined ? 'wx_customer_001' : wechatId,
+    nickname: nickname || '客户甲',
+    source,
     status: 'enabled',
-    real_name: realName,
-    school,
-    class_name: className,
-    relation,
-    phone,
-    address,
+    real_name: realName === undefined ? '张三' : realName,
+    school: school === undefined ? '测试小学' : school,
+    class_name: className === undefined ? '三年二班' : className,
+    relation: relation === undefined ? '家长' : relation,
+    phone: phone === undefined ? '13800001111' : phone,
+    address: address === undefined ? '测试路 100 号' : address,
     created_by_user_id: 'tenant-customer-operator',
     updated_by_user_id: 'tenant-customer-operator',
     created_at: '2026-02-10T08:00:00.000Z',
@@ -200,8 +195,7 @@ const createHarness = ({
   const listCalls = [];
   const createCalls = [];
   const detailCalls = [];
-  const updateBasicCalls = [];
-  const updateRealnameCalls = [];
+  const updateCalls = [];
   const logCalls = [];
 
   const authStore = {
@@ -217,13 +211,9 @@ const createHarness = ({
       detailCalls.push(payload);
       return findTenantCustomerByCustomerId(payload);
     },
-    updateTenantCustomerBasic: async (payload) => {
-      updateBasicCalls.push(payload);
-      return updateTenantCustomerBasic(payload);
-    },
-    updateTenantCustomerRealname: async (payload) => {
-      updateRealnameCalls.push(payload);
-      return updateTenantCustomerRealname(payload);
+    updateTenantCustomer: async (payload) => {
+      updateCalls.push(payload);
+      return updateTenantCustomer(payload);
     },
     listTenantCustomerOperationLogs: async (payload) => {
       logCalls.push(payload);
@@ -253,6 +243,7 @@ const createHarness = ({
     tenantUserService: createNoopTenantUserService(),
     tenantRoleService: createNoopTenantRoleService(),
     tenantAccountService: createNoopTenantAccountService(),
+    tenantSessionService: createNoopTenantSessionService(),
     tenantCustomerService
   });
 
@@ -262,8 +253,7 @@ const createHarness = ({
     listCalls,
     createCalls,
     detailCalls,
-    updateBasicCalls,
-    updateRealnameCalls,
+    updateCalls,
     logCalls
   };
 };
@@ -271,11 +261,11 @@ const createHarness = ({
 test('createTenantCustomerHandlers fails fast when service capability is missing', () => {
   assert.throws(
     () => createTenantCustomerHandlers(),
-    /requires a tenantCustomerService with listCustomers, createCustomer, getCustomerDetail, updateCustomerBasic, updateCustomerRealname and listCustomerOperationLogs/
+    /requires a tenantCustomerService with listCustomers, createCustomer, getCustomerDetail, updateCustomer, updateCustomerByAccountNickname and listCustomerOperationLogs/
   );
   assert.throws(
     () => createTenantCustomerHandlers({}),
-    /requires a tenantCustomerService with listCustomers, createCustomer, getCustomerDetail, updateCustomerBasic, updateCustomerRealname and listCustomerOperationLogs/
+    /requires a tenantCustomerService with listCustomers, createCustomer, getCustomerDetail, updateCustomer, updateCustomerByAccountNickname and listCustomerOperationLogs/
   );
 });
 
@@ -367,6 +357,52 @@ test('POST /tenant/customers creates customer with forced enabled status', async
   assert.equal(harness.authorizeCalls.at(-1).permissionCode, 'tenant.customer_management.operate');
   assert.equal(harness.createCalls.length, 1);
   assert.equal(harness.createCalls[0].status, 'enabled');
+});
+
+test('POST /tenant/customers allows optional wechat_id', async () => {
+  const harness = createHarness({
+    createTenantCustomer: async ({ tenantId, accountId, wechatId, nickname, source, status }) => ({
+      customer_id: 'cus_new_002',
+      tenant_id: tenantId,
+      account_id: accountId,
+      wechat_id: wechatId ?? null,
+      nickname,
+      source,
+      status,
+      real_name: null,
+      school: null,
+      class_name: null,
+      relation: null,
+      phone: null,
+      address: null,
+      created_by_user_id: 'tenant-customer-operator',
+      updated_by_user_id: 'tenant-customer-operator',
+      created_at: '2026-02-12T08:00:00.000Z',
+      updated_at: '2026-02-12T08:00:00.000Z'
+    })
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/customers',
+    method: 'POST',
+    requestId: 'req-tenant-customer-create-without-wechat',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      account_id: 'acc_001',
+      nickname: '无微信号客户',
+      source: 'ground'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.customer_id, 'cus_new_002');
+  assert.equal(payload.wechat_id, null);
+  assert.equal(harness.createCalls.length, 1);
+  assert.equal(harness.createCalls[0].wechatId, undefined);
 });
 
 test('POST /tenant/customers rejects external status input', async () => {
@@ -509,43 +545,19 @@ test('tenantCreateCustomer accepts trusted preauthorized context without requiri
   assert.equal(harness.createCalls.length, 1);
 });
 
-test('PATCH /tenant/customers/:customer_id/basic updates basic customer fields', async () => {
+test('PATCH /tenant/customers/:customer_id updates basic and realname fields', async () => {
   const harness = createHarness();
 
   const route = await dispatchApiRoute({
-    pathname: '/tenant/customers/cus_001/basic',
+    pathname: '/tenant/customers/cus_001',
     method: 'PATCH',
-    requestId: 'req-tenant-customer-update-basic',
+    requestId: 'req-tenant-customer-update',
     headers: {
       authorization: 'Bearer fake-access-token'
     },
     body: {
-      source: 'fission'
-    },
-    handlers: harness.handlers
-  });
-
-  assert.equal(route.status, 200);
-  const payload = JSON.parse(route.body);
-  assert.equal(payload.customer_id, 'cus_001');
-  assert.equal(payload.source, 'fission');
-  assert.equal(payload.request_id, 'req-tenant-customer-update-basic');
-  assert.equal(harness.updateBasicCalls.length, 1);
-  assert.equal(harness.updateBasicCalls[0].customerId, 'cus_001');
-  assert.deepEqual(harness.updateBasicCalls[0].scopes, ['my', 'assist', 'all']);
-});
-
-test('PATCH /tenant/customers/:customer_id/realname updates profile fields', async () => {
-  const harness = createHarness();
-
-  const route = await dispatchApiRoute({
-    pathname: '/tenant/customers/cus_001/realname',
-    method: 'PATCH',
-    requestId: 'req-tenant-customer-update-realname',
-    headers: {
-      authorization: 'Bearer fake-access-token'
-    },
-    body: {
+      nickname: '客户甲（新）',
+      source: 'fission',
       real_name: '李四',
       school: '实验小学',
       class_name: '四年一班',
@@ -559,16 +571,152 @@ test('PATCH /tenant/customers/:customer_id/realname updates profile fields', asy
   assert.equal(route.status, 200);
   const payload = JSON.parse(route.body);
   assert.equal(payload.customer_id, 'cus_001');
+  assert.equal(payload.nickname, '客户甲（新）');
+  assert.equal(payload.source, 'fission');
   assert.equal(payload.real_name, '李四');
   assert.equal(payload.school, '实验小学');
   assert.equal(payload.class_name, '四年一班');
-  assert.equal(payload.request_id, 'req-tenant-customer-update-realname');
-  assert.equal(harness.updateRealnameCalls.length, 1);
-  assert.equal(harness.updateRealnameCalls[0].customerId, 'cus_001');
-  assert.deepEqual(harness.updateRealnameCalls[0].scopes, ['my', 'assist', 'all']);
+  assert.equal(payload.request_id, 'req-tenant-customer-update');
+  assert.equal(harness.updateCalls.length, 1);
+  assert.equal(harness.updateCalls[0].customerId, 'cus_001');
+  assert.equal(harness.updateCalls[0].nickname, '客户甲（新）');
+  assert.equal(harness.updateCalls[0].source, 'fission');
+  assert.equal(harness.updateCalls[0].realName, '李四');
+  assert.deepEqual(harness.updateCalls[0].scopes, ['my', 'assist', 'all']);
 });
 
-test('PATCH /tenant/customers/:customer_id/basic returns 403 when no customer scope permission is granted', async () => {
+test('PATCH /tenant/customers/by-account-nickname updates customer via key-value updates', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/customers/by-account-nickname',
+    method: 'PATCH',
+    requestId: 'req-tenant-customer-update-by-account-nickname',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      account_id: 'acc_001',
+      nickname: '客户甲',
+      updates: {
+        real_name: '王五',
+        phone: '13800003333'
+      }
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 200);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.customer_id, 'cus_001');
+  assert.equal(payload.real_name, '王五');
+  assert.equal(payload.phone, '13800003333');
+  assert.equal(payload.request_id, 'req-tenant-customer-update-by-account-nickname');
+  assert.equal(harness.updateCalls.length, 1);
+  assert.equal(harness.updateCalls[0].customerId, 'cus_001');
+  assert.equal(harness.updateCalls[0].nickname, '客户甲');
+  assert.equal(harness.updateCalls[0].source, 'ground');
+  assert.equal(harness.updateCalls[0].realName, '王五');
+  assert.equal(harness.updateCalls[0].phone, '13800003333');
+  assert.deepEqual(harness.updateCalls[0].scopes, ['my', 'assist', 'all']);
+});
+
+test('PATCH /tenant/customers/by-account-nickname returns 404 when locator does not match any customer', async () => {
+  const harness = createHarness();
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/customers/by-account-nickname',
+    method: 'PATCH',
+    requestId: 'req-tenant-customer-update-by-account-nickname-not-found',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      account_id: 'acc_001',
+      nickname: '不存在的客户',
+      updates: {
+        relation: '母亲'
+      }
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 404);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'TCUSTOMER-404-NOT-FOUND');
+  assert.equal(payload.request_id, 'req-tenant-customer-update-by-account-nickname-not-found');
+  assert.equal(harness.updateCalls.length, 0);
+});
+
+test('PATCH /tenant/customers/by-account-nickname returns 409 when account_id + nickname is not unique', async () => {
+  const harness = createHarness({
+    listTenantCustomersByTenantId: async ({ tenantId }) => [
+      {
+        customer_id: 'cus_001',
+        tenant_id: tenantId,
+        account_id: 'acc_001',
+        wechat_id: 'wx_customer_001',
+        nickname: '同名客户',
+        source: 'ground',
+        status: 'enabled',
+        real_name: null,
+        school: null,
+        class_name: null,
+        relation: null,
+        phone: null,
+        address: null,
+        created_by_user_id: 'tenant-customer-operator',
+        updated_by_user_id: 'tenant-customer-operator',
+        created_at: '2026-02-10T08:00:00.000Z',
+        updated_at: '2026-02-10T08:00:00.000Z'
+      },
+      {
+        customer_id: 'cus_002',
+        tenant_id: tenantId,
+        account_id: 'acc_001',
+        wechat_id: 'wx_customer_002',
+        nickname: '同名客户',
+        source: 'ground',
+        status: 'enabled',
+        real_name: null,
+        school: null,
+        class_name: null,
+        relation: null,
+        phone: null,
+        address: null,
+        created_by_user_id: 'tenant-customer-operator',
+        updated_by_user_id: 'tenant-customer-operator',
+        created_at: '2026-02-10T08:00:00.000Z',
+        updated_at: '2026-02-10T08:00:00.000Z'
+      }
+    ]
+  });
+
+  const route = await dispatchApiRoute({
+    pathname: '/tenant/customers/by-account-nickname',
+    method: 'PATCH',
+    requestId: 'req-tenant-customer-update-by-account-nickname-non-unique',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    body: {
+      account_id: 'acc_001',
+      nickname: '同名客户',
+      updates: {
+        relation: '父亲'
+      }
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(route.status, 409);
+  const payload = JSON.parse(route.body);
+  assert.equal(payload.error_code, 'TCUSTOMER-409-NON-UNIQUE-MATCH');
+  assert.equal(payload.request_id, 'req-tenant-customer-update-by-account-nickname-non-unique');
+  assert.equal(harness.updateCalls.length, 0);
+});
+
+test('PATCH /tenant/customers/:customer_id returns 403 when no customer scope permission is granted', async () => {
   const harness = createHarness({
     authorizeRoute: async () => ({
       user_id: 'tenant-customer-operator',
@@ -586,13 +734,14 @@ test('PATCH /tenant/customers/:customer_id/basic returns 403 when no customer sc
   });
 
   const route = await dispatchApiRoute({
-    pathname: '/tenant/customers/cus_001/basic',
+    pathname: '/tenant/customers/cus_001',
     method: 'PATCH',
-    requestId: 'req-tenant-customer-update-basic-no-scope-forbidden',
+    requestId: 'req-tenant-customer-update-no-scope-forbidden',
     headers: {
       authorization: 'Bearer fake-access-token'
     },
     body: {
+      nickname: '客户甲',
       source: 'fission'
     },
     handlers: harness.handlers
@@ -601,8 +750,8 @@ test('PATCH /tenant/customers/:customer_id/basic returns 403 when no customer sc
   assert.equal(route.status, 403);
   const payload = JSON.parse(route.body);
   assert.equal(payload.error_code, 'AUTH-403-FORBIDDEN');
-  assert.equal(payload.request_id, 'req-tenant-customer-update-basic-no-scope-forbidden');
-  assert.equal(harness.updateBasicCalls.length, 0);
+  assert.equal(payload.request_id, 'req-tenant-customer-update-no-scope-forbidden');
+  assert.equal(harness.updateCalls.length, 0);
 });
 
 test('GET /tenant/customers/:customer_id returns detail with operation logs sorted desc', async () => {

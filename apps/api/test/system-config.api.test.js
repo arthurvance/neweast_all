@@ -37,9 +37,17 @@ const buildEncryptedSensitiveConfigValue = ({
 const OPERATOR_PHONE = '13837770001';
 const VIEWER_PHONE = '13837770002';
 const USER_MANAGEMENT_ONLY_PHONE = '13837770003';
+const RUNTIME_AUTH_NUMERIC_CONFIG = Object.freeze({
+  accessTtlSeconds: 900,
+  refreshTtlSeconds: 604800,
+  otpTtlSeconds: 900,
+  rateLimitWindowSeconds: 60,
+  rateLimitMaxAttempts: 10
+});
 
 const createHarness = () => {
   const authService = createAuthService({
+    ...RUNTIME_AUTH_NUMERIC_CONFIG,
     seedUsers: [
       {
         id: 'system-config-operator',
@@ -128,7 +136,7 @@ const loginByPhone = async ({
     entryDomain: 'platform'
   });
 
-test('PUT/GET /platform/system-configs/:config_key supports authorized write/read and audit trace linkage', async () => {
+test('PUT/GET /platform/system-configs/:key supports authorized write/read and audit trace linkage', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,
@@ -150,19 +158,19 @@ test('PUT/GET /platform/system-configs/:config_key supports authorized write/rea
       traceparent
     },
     body: {
-      encrypted_value: encryptedValue,
+      value: encryptedValue,
       expected_version: 0
     },
     handlers: harness.handlers
   });
   assert.equal(updateRoute.status, 200);
   const updatePayload = JSON.parse(updateRoute.body);
-  assert.equal(updatePayload.data.config_key, 'auth.default_password');
+  assert.equal(updatePayload.data.key, 'auth.default_password');
   assert.equal(updatePayload.data.previous_version, 0);
   assert.equal(updatePayload.data.version, 1);
   assert.equal(updatePayload.data.status, 'active');
   assert.equal(
-    Object.prototype.hasOwnProperty.call(updatePayload.data, 'encrypted_value'),
+    Object.prototype.hasOwnProperty.call(updatePayload.data, 'value'),
     false
   );
 
@@ -177,10 +185,10 @@ test('PUT/GET /platform/system-configs/:config_key supports authorized write/rea
   });
   assert.equal(getRoute.status, 200);
   const getPayload = JSON.parse(getRoute.body);
-  assert.equal(getPayload.data.config_key, 'auth.default_password');
+  assert.equal(getPayload.data.key, 'auth.default_password');
   assert.equal(getPayload.data.version, 1);
   assert.equal(
-    Object.prototype.hasOwnProperty.call(getPayload.data, 'encrypted_value'),
+    Object.prototype.hasOwnProperty.call(getPayload.data, 'value'),
     false
   );
 
@@ -201,7 +209,7 @@ test('PUT/GET /platform/system-configs/:config_key supports authorized write/rea
   assert.equal(auditPayload.events[0].traceparent, traceparent);
 });
 
-test('PUT /platform/system-configs/:config_key rejects version conflict with 409 problem details', async () => {
+test('PUT /platform/system-configs/:key rejects version conflict with 409 problem details', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,
@@ -221,7 +229,7 @@ test('PUT /platform/system-configs/:config_key rejects version conflict with 409
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      encrypted_value: encryptedValue,
+      value: encryptedValue,
       expected_version: 0
     },
     handlers: harness.handlers
@@ -236,7 +244,7 @@ test('PUT /platform/system-configs/:config_key rejects version conflict with 409
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      encrypted_value: encryptedValue,
+      value: encryptedValue,
       expected_version: 0
     },
     handlers: harness.handlers
@@ -264,7 +272,7 @@ test('PUT /platform/system-configs/:config_key rejects version conflict with 409
   assert.equal(auditPayload.events[0].request_id, 'req-system-config-conflict-second');
 });
 
-test('PUT /platform/system-configs/:config_key rejects unauthorized operator', async () => {
+test('PUT /platform/system-configs/:key rejects unauthorized operator', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,
@@ -284,7 +292,7 @@ test('PUT /platform/system-configs/:config_key rejects unauthorized operator', a
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      encrypted_value: encryptedValue,
+      value: encryptedValue,
       expected_version: 0
     },
     handlers: harness.handlers
@@ -294,7 +302,7 @@ test('PUT /platform/system-configs/:config_key rejects unauthorized operator', a
   assert.equal(payload.error_code, 'AUTH-403-FORBIDDEN');
 });
 
-test('GET /platform/system-configs/:config_key rejects user-management without system-config grant', async () => {
+test('GET /platform/system-configs/:key rejects user-management without system-config grant', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,
@@ -316,7 +324,7 @@ test('GET /platform/system-configs/:config_key rejects user-management without s
   assert.equal(payload.error_code, 'AUTH-403-FORBIDDEN');
 });
 
-test('PUT /platform/system-configs/:config_key rejects unknown key and invalid payload', async () => {
+test('PUT /platform/system-configs/:key rejects unknown key and invalid payload', async () => {
   const harness = createHarness();
   const login = await loginByPhone({
     authService: harness.authService,
@@ -332,7 +340,7 @@ test('PUT /platform/system-configs/:config_key rejects unknown key and invalid p
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      encrypted_value: 'enc:v1:iv:tag:cipher',
+      value: 'enc:v1:iv:tag:cipher',
       expected_version: 0
     },
     handlers: harness.handlers
@@ -363,7 +371,7 @@ test('PUT /platform/system-configs/:config_key rejects unknown key and invalid p
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      encrypted_value: '',
+      value: '',
       expected_version: 'not-integer'
     },
     handlers: harness.handlers
@@ -382,7 +390,7 @@ test('PUT /platform/system-configs/:config_key rejects unknown key and invalid p
       authorization: `Bearer ${login.access_token}`
     },
     body: {
-      encrypted_value: 'enc:v1:invalid:tag:cipher',
+      value: 'enc:v1:invalid:tag:cipher',
       expected_version: 0
     },
     handlers: harness.handlers

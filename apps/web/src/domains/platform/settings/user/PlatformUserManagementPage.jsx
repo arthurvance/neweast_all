@@ -15,7 +15,7 @@ import {
   Typography,
   message
 } from 'antd';
-import CustomCardTable from '../../../../components/CustomCardTable';
+import CustomPanelTable from '../../../../components/CustomPanelTable';
 import CustomFilter from '../../../../components/CustomFilter';
 import CustomForm from '../../../../components/CustomForm';
 import {
@@ -744,7 +744,7 @@ export default function PlatformUserManagementPage({
           </Form.Item>
         </CustomFilter>
 
-        <CustomCardTable
+        <CustomPanelTable
           key={userTableQueryKey}
           title="平台用户列表"
           rowKey="user_id"

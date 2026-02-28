@@ -67,7 +67,7 @@ const createPlatformSystemConfigHandlers = (platformSystemConfigService) => {
           authorizationContext,
           expectedPermissionCode: PLATFORM_SYSTEM_CONFIG_VIEW_PERMISSION_CODE
         }),
-        configKey: params.config_key,
+        configKey: params.key,
         traceparent,
         authorizationContext
       }),
@@ -87,7 +87,7 @@ const createPlatformSystemConfigHandlers = (platformSystemConfigService) => {
           authorizationContext,
           expectedPermissionCode: PLATFORM_SYSTEM_CONFIG_OPERATE_PERMISSION_CODE
         }),
-        configKey: params.config_key,
+        configKey: params.key,
         payload: body || {},
         traceparent,
         authorizationContext

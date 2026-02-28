@@ -1,4 +1,4 @@
-const { AuthProblemError, createAuthService } = require('../../shared-kernel/auth/create-auth-service');
+const { AuthProblemError } = require('../../shared-kernel/auth/create-auth-service');
 
 const authPing = (requestId) => ({
   module: 'auth',
@@ -74,7 +74,10 @@ const mapProvisionUnexpectedError = (error) => {
   throw toProvisionDependencyUnavailable();
 };
 
-const createAuthHandlers = (authService = createAuthService()) => {
+const createAuthHandlers = (authService = null) => {
+  if (!authService) {
+    throw new Error('createAuthHandlers requires authService');
+  }
   const handlers = {
     login: async ({ requestId, body, traceparent = null }) =>
       authService.login({

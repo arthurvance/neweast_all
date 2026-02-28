@@ -44,6 +44,7 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
 } = {}) => {
+  const MAX_SYSTEM_SENSITIVE_CONFIG_REMARK_LENGTH = 255;
   const deniedRoleManagementPermission = {
     canViewRoleManagement: false,
     canOperateRoleManagement: false,
@@ -58,8 +59,9 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
       }
       const rows = await dbClient.query(
         `
-          SELECT config_key,
-                 encrypted_value,
+          SELECT \`key\`,
+                 \`value\`,
+                 remark,
                  version,
                  status,
                  updated_by_user_id,
@@ -67,7 +69,7 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
                  created_by_user_id,
                  created_at
           FROM system_sensitive_configs
-          WHERE config_key = ?
+          WHERE \`key\` = ?
           LIMIT 1
         `,
         [normalizedConfigKey]
@@ -78,6 +80,8 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
     upsertSystemSensitiveConfig: async ({
       configKey,
       encryptedValue,
+      remark,
+      hasRemark = false,
       expectedVersion,
       updatedByUserId,
       status = 'active'
@@ -112,12 +116,13 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
 
         const existingRows = await tx.query(
           `
-            SELECT config_key,
+            SELECT \`key\`,
+                   remark,
                    version,
                    created_by_user_id,
                    created_at
             FROM system_sensitive_configs
-            WHERE config_key = ?
+            WHERE \`key\` = ?
             LIMIT 1
             FOR UPDATE
           `,
@@ -134,19 +139,40 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
         }
 
         const nextVersion = currentVersion + 1;
+        let normalizedRemark = '';
+        if (hasRemark) {
+          if (remark === null || remark === undefined) {
+            normalizedRemark = '';
+          } else if (typeof remark === 'string') {
+            normalizedRemark = remark.trim();
+          } else {
+            throw new Error('upsertSystemSensitiveConfig received invalid remark');
+          }
+          if (
+            CONTROL_CHAR_PATTERN.test(normalizedRemark)
+            || normalizedRemark.length > MAX_SYSTEM_SENSITIVE_CONFIG_REMARK_LENGTH
+          ) {
+            throw new Error('upsertSystemSensitiveConfig received invalid remark');
+          }
+        }
+        const nextRemark = hasRemark
+          ? (normalizedRemark || null)
+          : (existingRow?.remark ?? null);
         if (existingRow) {
           await tx.query(
             `
               UPDATE system_sensitive_configs
-              SET encrypted_value = ?,
+              SET \`value\` = ?,
+                  remark = ?,
                   version = ?,
                   status = ?,
                   updated_by_user_id = ?,
                   updated_at = CURRENT_TIMESTAMP(3)
-              WHERE config_key = ?
+              WHERE \`key\` = ?
             `,
             [
               normalizedEncryptedValue,
+              nextRemark,
               nextVersion,
               normalizedStatus,
               normalizedUpdatedByUserId,
@@ -158,18 +184,20 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
             await tx.query(
               `
                 INSERT INTO system_sensitive_configs (
-                  config_key,
-                  encrypted_value,
+                  \`key\`,
+                  \`value\`,
+                  remark,
                   version,
                   status,
                   updated_by_user_id,
                   created_by_user_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
               `,
               [
                 normalizedConfigKey,
                 normalizedEncryptedValue,
+                nextRemark,
                 nextVersion,
                 normalizedStatus,
                 normalizedUpdatedByUserId,
@@ -190,7 +218,7 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
                 `
                   SELECT version
                   FROM system_sensitive_configs
-                  WHERE config_key = ?
+                  WHERE \`key\` = ?
                   LIMIT 1
                 `,
                 [normalizedConfigKey]
@@ -210,8 +238,9 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
 
         const rows = await tx.query(
           `
-            SELECT config_key,
-                   encrypted_value,
+            SELECT \`key\`,
+                   \`value\`,
+                   remark,
                    version,
                    status,
                    updated_by_user_id,
@@ -219,7 +248,7 @@ const createPlatformMysqlAuthStoreRepositoryGovernanceRead = ({
                    created_by_user_id,
                    created_at
             FROM system_sensitive_configs
-            WHERE config_key = ?
+            WHERE \`key\` = ?
             LIMIT 1
           `,
           [normalizedConfigKey]

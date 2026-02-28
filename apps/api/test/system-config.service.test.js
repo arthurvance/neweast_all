@@ -41,15 +41,15 @@ const createService = ({
     active_tenant_id: null
   }),
   getSystemSensitiveConfig = async () => ({
-    config_key: 'auth.default_password',
-    encrypted_value: VALID_ENCRYPTED_VALUE,
+    key: 'auth.default_password',
+    value: VALID_ENCRYPTED_VALUE,
     version: 3,
     updated_by_user_id: 'platform-operator',
     updated_at: '2026-02-21T09:00:00.000Z',
     status: 'active'
   }),
   upsertSystemSensitiveConfig = async () => ({
-    config_key: 'auth.default_password',
+    key: 'auth.default_password',
     version: 4,
     previous_version: 3,
     updated_by_user_id: 'platform-operator',
@@ -67,7 +67,7 @@ const createService = ({
     }
   });
 
-test('getSystemConfig rejects non-whitelisted config_key', async () => {
+test('getSystemConfig rejects non-whitelisted key', async () => {
   const service = createService();
   await assert.rejects(
     () =>
@@ -85,19 +85,19 @@ test('getSystemConfig rejects non-whitelisted config_key', async () => {
   );
 });
 
-test('getSystemConfig returns redacted metadata without encrypted_value', async () => {
+test('getSystemConfig returns redacted metadata without value', async () => {
   const service = createService();
   const result = await service.getSystemConfig({
     requestId: 'req-system-config-service-get',
     accessToken: 'Bearer fake-access-token',
     configKey: 'auth.default_password'
   });
-  assert.equal(result.data.config_key, 'auth.default_password');
+  assert.equal(result.data.key, 'auth.default_password');
   assert.equal(result.data.version, 3);
   assert.equal(result.data.status, 'active');
   assert.equal(result.data.updated_by_user_id, 'platform-operator');
   assert.equal(result.data.updated_at, '2026-02-21T09:00:00.000Z');
-  assert.equal(Object.prototype.hasOwnProperty.call(result.data, 'encrypted_value'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.data, 'value'), false);
 });
 
 test('updateSystemConfig maps optimistic concurrency conflict to 409 Problem Details', async () => {
@@ -116,7 +116,7 @@ test('updateSystemConfig maps optimistic concurrency conflict to 409 Problem Det
         accessToken: 'Bearer fake-access-token',
         configKey: 'auth.default_password',
         payload: {
-          encrypted_value: VALID_ENCRYPTED_VALUE,
+          value: VALID_ENCRYPTED_VALUE,
           expected_version: 3
         }
       }),
@@ -124,7 +124,7 @@ test('updateSystemConfig maps optimistic concurrency conflict to 409 Problem Det
       assert.ok(error instanceof AuthProblemError);
       assert.equal(error.status, 409);
       assert.equal(error.errorCode, 'SYSCFG-409-VERSION-CONFLICT');
-      assert.equal(error.extensions?.config_key, 'auth.default_password');
+      assert.equal(error.extensions?.key, 'auth.default_password');
       assert.equal(error.extensions?.expected_version, 3);
       assert.equal(error.extensions?.current_version, 4);
       return true;
@@ -148,7 +148,7 @@ test('updateSystemConfig maps duplicate-entry conflict to 409 Problem Details', 
         accessToken: 'Bearer fake-access-token',
         configKey: 'auth.default_password',
         payload: {
-          encrypted_value: VALID_ENCRYPTED_VALUE,
+          value: VALID_ENCRYPTED_VALUE,
           expected_version: 3
         }
       }),
@@ -156,7 +156,7 @@ test('updateSystemConfig maps duplicate-entry conflict to 409 Problem Details', 
       assert.ok(error instanceof AuthProblemError);
       assert.equal(error.status, 409);
       assert.equal(error.errorCode, 'SYSCFG-409-VERSION-CONFLICT');
-      assert.equal(error.extensions?.config_key, 'auth.default_password');
+      assert.equal(error.extensions?.key, 'auth.default_password');
       assert.equal(error.extensions?.expected_version, 3);
       return true;
     }
@@ -215,7 +215,7 @@ test('updateSystemConfig writes rejected audit event for authorization failure',
         accessToken: 'Bearer fake-access-token',
         configKey: 'auth.default_password',
         payload: {
-          encrypted_value: VALID_ENCRYPTED_VALUE,
+          value: VALID_ENCRYPTED_VALUE,
           expected_version: 0
         }
       }),
@@ -248,7 +248,7 @@ test('updateSystemConfig persists rejected audit event when update capability is
         accessToken: 'Bearer fake-access-token',
         configKey: 'auth.default_password',
         payload: {
-          encrypted_value: VALID_ENCRYPTED_VALUE,
+          value: VALID_ENCRYPTED_VALUE,
           expected_version: 0
         }
       }),
@@ -274,7 +274,7 @@ test('updateSystemConfig rejects malformed encrypted envelope payload', async ()
         accessToken: 'Bearer fake-access-token',
         configKey: 'auth.default_password',
         payload: {
-          encrypted_value: 'enc:v1:invalid:tag:cipher',
+          value: 'enc:v1:invalid:tag:cipher',
           expected_version: 0
         }
       }),

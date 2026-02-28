@@ -226,7 +226,14 @@ const createInMemoryAuthStore = ({
   const VALID_ORG_STATUS = new Set(['active', 'disabled']);
   const VALID_PLATFORM_USER_STATUS = new Set(['active', 'disabled']);
   const VALID_SYSTEM_SENSITIVE_CONFIG_STATUS = new Set(['active', 'disabled']);
-  const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set(['auth.default_password']);
+  const ALLOWED_SYSTEM_SENSITIVE_CONFIG_KEYS = new Set([
+    'auth.default_password',
+    'auth.access_ttl_seconds',
+    'auth.refresh_ttl_seconds',
+    'auth.otp_ttl_seconds',
+    'auth.rate_limit_window_seconds',
+    'auth.rate_limit_max_attempts'
+  ]);
   const VALID_TENANT_MEMBERSHIP_STATUS = new Set(['active', 'disabled', 'left']);
   const MAX_ORG_NAME_LENGTH = 128;
   const MAX_TENANT_USER_DISPLAY_NAME_LENGTH = 64;

@@ -325,7 +325,7 @@ const createTenantRouteHandlers = ({
       authorizationContext
     }),
 
-  tenantUpdateCustomerBasic: async (
+  tenantUpdateCustomer: async (
     requestId,
     authorization,
     params,
@@ -333,7 +333,7 @@ const createTenantRouteHandlers = ({
     authorizationContext,
     traceparent = null
   ) =>
-    tenantCustomer.updateCustomerBasic({
+    tenantCustomer.updateCustomer({
       requestId,
       authorization,
       params: params || {},
@@ -342,18 +342,16 @@ const createTenantRouteHandlers = ({
       authorizationContext
     }),
 
-  tenantUpdateCustomerRealname: async (
+  tenantUpdateCustomerByAccountNickname: async (
     requestId,
     authorization,
-    params,
     body,
     authorizationContext,
     traceparent = null
   ) =>
-    tenantCustomer.updateCustomerRealname({
+    tenantCustomer.updateCustomerByAccountNickname({
       requestId,
       authorization,
-      params: params || {},
       body: body || {},
       traceparent,
       authorizationContext

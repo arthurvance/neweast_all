@@ -47,12 +47,12 @@ const createTenantCustomerHandlers = (tenantCustomerService) => {
     || typeof tenantCustomerService.listCustomers !== 'function'
     || typeof tenantCustomerService.createCustomer !== 'function'
     || typeof tenantCustomerService.getCustomerDetail !== 'function'
-    || typeof tenantCustomerService.updateCustomerBasic !== 'function'
-    || typeof tenantCustomerService.updateCustomerRealname !== 'function'
+    || typeof tenantCustomerService.updateCustomer !== 'function'
+    || typeof tenantCustomerService.updateCustomerByAccountNickname !== 'function'
     || typeof tenantCustomerService.listCustomerOperationLogs !== 'function'
   ) {
     throw new TypeError(
-      'createTenantCustomerHandlers requires a tenantCustomerService with listCustomers, createCustomer, getCustomerDetail, updateCustomerBasic, updateCustomerRealname and listCustomerOperationLogs'
+      'createTenantCustomerHandlers requires a tenantCustomerService with listCustomers, createCustomer, getCustomerDetail, updateCustomer, updateCustomerByAccountNickname and listCustomerOperationLogs'
     );
   }
 
@@ -110,7 +110,7 @@ const createTenantCustomerHandlers = (tenantCustomerService) => {
         authorizationContext
       }),
 
-    updateCustomerBasic: async ({
+    updateCustomer: async ({
       requestId,
       authorization,
       params,
@@ -118,7 +118,7 @@ const createTenantCustomerHandlers = (tenantCustomerService) => {
       traceparent = null,
       authorizationContext = null
     }) =>
-      tenantCustomerService.updateCustomerBasic({
+      tenantCustomerService.updateCustomer({
         requestId,
         accessToken: resolveAccessToken({
           authorization,
@@ -131,22 +131,20 @@ const createTenantCustomerHandlers = (tenantCustomerService) => {
         authorizationContext
       }),
 
-    updateCustomerRealname: async ({
+    updateCustomerByAccountNickname: async ({
       requestId,
       authorization,
-      params,
       body,
       traceparent = null,
       authorizationContext = null
     }) =>
-      tenantCustomerService.updateCustomerRealname({
+      tenantCustomerService.updateCustomerByAccountNickname({
         requestId,
         accessToken: resolveAccessToken({
           authorization,
           authorizationContext,
           permissionCode: TENANT_CUSTOMER_OPERATE_PERMISSION_CODE
         }),
-        params: params || {},
         payload: body || {},
         traceparent,
         authorizationContext

@@ -175,6 +175,13 @@
     "scope": "tenant"
   },
   {
+    "method": "PATCH",
+    "path": "/tenant/customers/by-account-nickname",
+    "access": "protected",
+    "permission_code": "tenant.customer_management.operate",
+    "scope": "tenant"
+  },
+  {
     "method": "GET",
     "path": "/tenant/customers/:customer_id",
     "access": "protected",
@@ -183,14 +190,7 @@
   },
   {
     "method": "PATCH",
-    "path": "/tenant/customers/:customer_id/basic",
-    "access": "protected",
-    "permission_code": "tenant.customer_management.operate",
-    "scope": "tenant"
-  },
-  {
-    "method": "PATCH",
-    "path": "/tenant/customers/:customer_id/realname",
+    "path": "/tenant/customers/:customer_id",
     "access": "protected",
     "permission_code": "tenant.customer_management.operate",
     "scope": "tenant"

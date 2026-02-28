@@ -5294,14 +5294,14 @@ const buildOpenApiSpec = () => {
         }
       }
     },
-    '/platform/system-configs/{config_key}': {
+    '/platform/system-configs/{key}': {
       get: {
         summary: 'Get platform controlled sensitive config metadata by key',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
             in: 'path',
-            name: 'config_key',
+            name: 'key',
             required: true,
             schema: {
               type: 'string',
@@ -5368,7 +5368,7 @@ const buildOpenApiSpec = () => {
         parameters: [
           {
             in: 'path',
-            name: 'config_key',
+            name: 'key',
             required: true,
             schema: {
               type: 'string',
@@ -10309,13 +10309,12 @@ const buildOpenApiSpec = () => {
       UpdateSystemConfigRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['encrypted_value', 'expected_version'],
+        required: ['value', 'expected_version'],
         properties: {
-          encrypted_value: {
+          value: {
             type: 'string',
             minLength: 1,
-            pattern: '^enc:v1:[A-Za-z0-9_-]{16}:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]+$',
-            description: '受控配置密文值（enc:v1 信封）'
+            description: '配置值；auth.default_password 需为 enc:v1 密文，其余受控 key 需为大于 0 的整数'
           },
           expected_version: {
             type: 'integer',
@@ -10326,6 +10325,13 @@ const buildOpenApiSpec = () => {
             type: 'string',
             enum: ['active', 'disabled', 'enabled'],
             description: '配置状态（enabled 作为 active 的兼容别名）'
+          },
+          remark: {
+            oneOf: [
+              { type: 'string', maxLength: 255 },
+              { type: 'null' }
+            ],
+            description: '配置用途备注，可选'
           }
         }
       },
@@ -10338,16 +10344,30 @@ const buildOpenApiSpec = () => {
             type: 'object',
             additionalProperties: false,
             required: [
-              'config_key',
+              'key',
+              'remark',
               'version',
               'status',
               'updated_by_user_id',
               'updated_at'
             ],
             properties: {
-              config_key: {
+              key: {
                 type: 'string',
-                enum: ['auth.default_password']
+                enum: [
+                  'auth.default_password',
+                  'auth.access_ttl_seconds',
+                  'auth.refresh_ttl_seconds',
+                  'auth.otp_ttl_seconds',
+                  'auth.rate_limit_window_seconds',
+                  'auth.rate_limit_max_attempts'
+                ]
+              },
+              remark: {
+                oneOf: [
+                  { type: 'string', maxLength: 255 },
+                  { type: 'null' }
+                ]
               },
               version: {
                 type: 'integer',
@@ -10385,7 +10405,8 @@ const buildOpenApiSpec = () => {
             type: 'object',
             additionalProperties: false,
             required: [
-              'config_key',
+              'key',
+              'remark',
               'previous_version',
               'version',
               'status',
@@ -10393,9 +10414,22 @@ const buildOpenApiSpec = () => {
               'updated_at'
             ],
             properties: {
-              config_key: {
+              key: {
                 type: 'string',
-                enum: ['auth.default_password']
+                enum: [
+                  'auth.default_password',
+                  'auth.access_ttl_seconds',
+                  'auth.refresh_ttl_seconds',
+                  'auth.otp_ttl_seconds',
+                  'auth.rate_limit_window_seconds',
+                  'auth.rate_limit_max_attempts'
+                ]
+              },
+              remark: {
+                oneOf: [
+                  { type: 'string', maxLength: 255 },
+                  { type: 'null' }
+                ]
               },
               previous_version: {
                 type: 'integer',

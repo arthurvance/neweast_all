@@ -292,13 +292,14 @@ export const createTenantManagementApi = ({ accessToken }) => {
         method: 'GET'
       }),
 
-    createCustomer: async (payload = {}) =>
-      withToken({
+    createCustomer: async (payload = {}) => {
+      const wechatId = String(payload.wechat_id || '').trim();
+      return withToken({
         path: '/tenant/customers',
         method: 'POST',
         payload: {
           account_id: String(payload.account_id || '').trim(),
-          wechat_id: String(payload.wechat_id || '').trim(),
+          ...(wechatId ? { wechat_id: wechatId } : {}),
           nickname: String(payload.nickname || '').trim(),
           source: String(payload.source || '').trim().toLowerCase(),
           real_name: payload.real_name == null ? null : String(payload.real_name).trim(),
@@ -309,7 +310,8 @@ export const createTenantManagementApi = ({ accessToken }) => {
           address: payload.address == null ? null : String(payload.address).trim()
         },
         idempotencyKey: buildIdempotencyKey('ui-tenant-customers-create')
-      }),
+      });
+    },
 
     getCustomerDetail: async (customerId) =>
       withToken({
@@ -317,21 +319,21 @@ export const createTenantManagementApi = ({ accessToken }) => {
         method: 'GET'
       }),
 
-    updateCustomerBasic: async ({ customerId, payload = {} }) =>
+    updateCustomer: async ({ customerId, payload = {} }) =>
       withToken({
-        path: `/tenant/customers/${withCustomerId(customerId)}/basic`,
+        path: `/tenant/customers/${withCustomerId(customerId)}`,
         method: 'PATCH',
         payload: {
-          source: String(payload.source || '').trim().toLowerCase()
-        },
-        idempotencyKey: buildIdempotencyKey('ui-tenant-customers-basic')
-      }),
-
-    updateCustomerRealname: async ({ customerId, payload = {} }) =>
-      withToken({
-        path: `/tenant/customers/${withCustomerId(customerId)}/realname`,
-        method: 'PATCH',
-        payload: {
+          ...(payload.wechat_id !== undefined
+            ? {
+              wechat_id:
+                payload.wechat_id == null
+                  ? null
+                  : String(payload.wechat_id).trim()
+            }
+            : {}),
+          nickname: String(payload.nickname || '').trim(),
+          source: String(payload.source || '').trim().toLowerCase(),
           real_name: payload.real_name == null ? null : String(payload.real_name).trim(),
           school: payload.school == null ? null : String(payload.school).trim(),
           class_name: payload.class_name == null ? null : String(payload.class_name).trim(),
@@ -339,7 +341,7 @@ export const createTenantManagementApi = ({ accessToken }) => {
           phone: payload.phone == null ? null : String(payload.phone).trim(),
           address: payload.address == null ? null : String(payload.address).trim()
         },
-        idempotencyKey: buildIdempotencyKey('ui-tenant-customers-realname')
+        idempotencyKey: buildIdempotencyKey('ui-tenant-customers-update')
       }),
 
     listCustomerOperationLogs: async (customerId) =>

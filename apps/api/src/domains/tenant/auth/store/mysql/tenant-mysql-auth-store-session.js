@@ -1,6 +1,7 @@
 'use strict';
 
 const CONVERSATION_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
+const MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const OUTBOUND_MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const CLIENT_MESSAGE_ID_PATTERN = /^[^\s\u0000-\u001F\u007F]{1,64}$/;
 const MAX_WECHAT_ID_LENGTH = 128;
@@ -168,6 +169,14 @@ const createTenantMysqlAuthStoreSession = ({
   const normalizeOutboundMessageId = (outboundMessageId) => {
     const normalized = normalizeStrictRequiredString(outboundMessageId);
     if (!normalized || !OUTBOUND_MESSAGE_ID_PATTERN.test(normalized)) {
+      return '';
+    }
+    return normalized;
+  };
+
+  const normalizeMessageId = (messageId) => {
+    const normalized = normalizeStrictRequiredString(messageId);
+    if (!normalized || !MESSAGE_ID_PATTERN.test(normalized)) {
       return '';
     }
     return normalized;
@@ -992,6 +1001,8 @@ const createTenantMysqlAuthStoreSession = ({
     tenantId,
     conversationId,
     cursor = null,
+    cursorCreatedAt = null,
+    cursorMessageId = '',
     limit = 50
   } = {}) => {
     const normalizedTenantId = normalizeTenantId(tenantId);
@@ -1002,12 +1013,28 @@ const createTenantMysqlAuthStoreSession = ({
 
     const normalizedLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     const cursorTime = toMySqlTimestamp(cursor);
+    const cursorCreatedAtTime = toMySqlTimestamp(cursorCreatedAt);
+    const normalizedCursorMessageId = normalizeMessageId(cursorMessageId);
     const whereClauses = [
       'tenant_id = ?',
       'conversation_id = ?'
     ];
     const params = [normalizedTenantId, normalizedConversationId];
-    if (cursorTime) {
+    if (cursorTime && cursorCreatedAtTime && normalizedCursorMessageId) {
+      whereClauses.push(`(
+        message_time < ?
+        OR (message_time = ? AND created_at < ?)
+        OR (message_time = ? AND created_at = ? AND message_id < ?)
+      )`);
+      params.push(
+        cursorTime,
+        cursorTime,
+        cursorCreatedAtTime,
+        cursorTime,
+        cursorCreatedAtTime,
+        normalizedCursorMessageId
+      );
+    } else if (cursorTime) {
       whereClauses.push('message_time < ?');
       params.push(cursorTime);
     }
@@ -1031,7 +1058,7 @@ const createTenantMysqlAuthStoreSession = ({
                created_at
         FROM tenant_session_history_messages
         WHERE ${whereClauses.join(' AND ')}
-        ORDER BY message_time DESC, message_id DESC
+        ORDER BY message_time DESC, created_at DESC, message_id DESC
         LIMIT ?
       `,
       params

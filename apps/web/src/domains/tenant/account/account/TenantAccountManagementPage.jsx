@@ -18,7 +18,7 @@ import {
   message
 } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
-import CustomCardTable from '../../../../components/CustomCardTable';
+import CustomPanelTable from '../../../../components/CustomPanelTable';
 import CustomFilter from '../../../../components/CustomFilter';
 import CustomForm from '../../../../components/CustomForm';
 import {
@@ -882,7 +882,7 @@ export default function TenantAccountManagementPage({
         </Form.Item>
       </CustomFilter>
 
-      <CustomCardTable
+      <CustomPanelTable
         key={accountTableQueryKey}
         title="账号列表"
         rowKey="account_id"

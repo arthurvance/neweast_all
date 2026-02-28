@@ -2,7 +2,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createApiApp } = require('../src/app');
 const { readConfig } = require('../src/config/env');
-const { RATE_LIMIT_WINDOW_SECONDS } = require('../src/shared-kernel/auth/create-auth-service');
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const RUNTIME_AUTH_NUMERIC_CONFIG = Object.freeze({
+  accessTtlSeconds: 900,
+  refreshTtlSeconds: 604800,
+  otpTtlSeconds: 900,
+  rateLimitWindowSeconds: RATE_LIMIT_WINDOW_SECONDS,
+  rateLimitMaxAttempts: 10
+});
 
 const config = readConfig({ ALLOW_MOCK_BACKENDS: 'true' });
 
@@ -25,6 +32,7 @@ const createExpressHarness = async () => {
   const app = await createApiApp(config, {
     dependencyProbe,
     authService: require('../src/shared-kernel/auth/create-auth-service').createAuthService({
+      ...RUNTIME_AUTH_NUMERIC_CONFIG,
       seedUsers,
       now: () => currentNow
     })

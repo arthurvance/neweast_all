@@ -1820,6 +1820,101 @@ const createTenantRoleService = ({ authService } = {}) => {
       throw mappedError;
     }
 
+    if (isProtectedRoleId(normalizedRoleId)) {
+      const error = tenantRoleErrors.protectedRoleMutationDenied();
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'protected role mutation denied',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: error.errorCode
+        }
+      });
+      throw error;
+    }
+
+    assertAuthServiceMethod('findPlatformRoleCatalogEntryByRoleId');
+    let existingRole;
+    try {
+      existingRole = await authService.findPlatformRoleCatalogEntryByRoleId({
+        roleId: normalizedRoleId,
+        scope: TENANT_ROLE_SCOPE,
+        tenantId: operatorContext.activeTenantId
+      });
+    } catch (_error) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant role lookup dependency unavailable',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
+
+    if (!existingRole) {
+      const error = tenantRoleErrors.roleNotFound();
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'role not found',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: error.errorCode
+        }
+      });
+      throw error;
+    }
+
+    const mappedExistingRole = mapRoleCatalogEntry(existingRole, resolvedRequestId);
+    if (!isValidRoleCatalogEntry({
+      role: mappedExistingRole,
+      activeTenantId: operatorContext.activeTenantId,
+      rawRole: existingRole
+    }) || !isExpectedMutationTarget({
+      role: mappedExistingRole,
+      expectedRoleId: normalizedRoleId,
+      activeTenantId: operatorContext.activeTenantId
+    })) {
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'tenant role lookup returned malformed catalog record',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: 'TROLE-503-DEPENDENCY-UNAVAILABLE'
+        }
+      });
+      throw tenantRoleErrors.dependencyUnavailable();
+    }
+
+    if (mappedExistingRole.is_system) {
+      const error = tenantRoleErrors.protectedRoleMutationDenied();
+      addAuditEvent({
+        type: 'tenant.role.permissions.update.rejected',
+        requestId: resolvedRequestId,
+        operatorUserId: operatorContext.operatorUserId,
+        targetRoleId: normalizedRoleId,
+        detail: 'protected role mutation denied',
+        metadata: {
+          tenant_id: operatorContext.activeTenantId,
+          error_code: error.errorCode
+        }
+      });
+      throw error;
+    }
+
     let parsedPayload;
     try {
       parsedPayload = parseReplaceRolePermissionsPayload(payload);

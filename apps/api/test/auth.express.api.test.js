@@ -801,16 +801,18 @@ const seedSystemDefaultPasswordConfig = async ({
   await adminConnection.execute(
     `
       INSERT INTO system_sensitive_configs (
-        config_key,
-        encrypted_value,
+        \`key\`,
+        \`value\`,
+        remark,
         version,
         status,
         updated_by_user_id,
         created_by_user_id
       )
-      VALUES ('auth.default_password', ?, ?, ?, ?, ?)
+      VALUES ('auth.default_password', ?, '测试默认密码密文', ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
-        encrypted_value = VALUES(encrypted_value),
+        \`value\` = VALUES(\`value\`),
+        remark = VALUES(remark),
         version = VALUES(version),
         status = VALUES(status),
         updated_by_user_id = VALUES(updated_by_user_id),

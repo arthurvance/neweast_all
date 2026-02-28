@@ -249,6 +249,71 @@ test('POST /tenant/sessions/history/ingest computes is_self and supports source_
   assert.equal(messageListPayload.messages[0].is_self, 1);
 });
 
+test('GET /tenant/sessions/chats/:conversation_id/messages paginates same-second messages without gaps', async () => {
+  const harness = await createHarness();
+  await seedConversation({
+    authStore: harness.authStore,
+    accountWechatId: harness.account.wechat_id,
+    conversationId: 'conv_api_cursor_001',
+    conversationName: '同秒分页测试'
+  });
+
+  const sameMessageTime = '2026-02-27T11:00:00.000Z';
+  for (const suffix of ['001', '002', '003']) {
+    await harness.authStore.createTenantSessionHistoryMessage({
+      tenantId: 'tenant-session-a',
+      conversationId: 'conv_api_cursor_001',
+      senderName: `客户${suffix}`,
+      senderNameNormalized: `客户${suffix}`,
+      isSelf: 0,
+      messageType: 'text',
+      messagePayloadJson: {
+        text: `同秒消息-${suffix}`
+      },
+      messagePreview: `同秒消息-${suffix}`,
+      messageTime: sameMessageTime,
+      sourceEventId: `source_event_cursor_${suffix}`,
+      ingestSource: 'external'
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+
+  const firstPageRoute = await dispatchApiRoute({
+    pathname: `/tenant/sessions/chats/conv_api_cursor_001/messages?scope=my&account_wechat_id=${encodeURIComponent(harness.account.wechat_id)}&limit=2`,
+    method: 'GET',
+    requestId: 'req-tenant-session-message-list-page-1',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(firstPageRoute.status, 200);
+  const firstPagePayload = JSON.parse(firstPageRoute.body);
+  assert.equal(firstPagePayload.messages.length, 2);
+  assert.equal(String(firstPagePayload.next_cursor || '').startsWith('msg_v1.'), true);
+
+  const secondPageRoute = await dispatchApiRoute({
+    pathname: `/tenant/sessions/chats/conv_api_cursor_001/messages?scope=my&account_wechat_id=${encodeURIComponent(harness.account.wechat_id)}&limit=2&cursor=${encodeURIComponent(firstPagePayload.next_cursor)}`,
+    method: 'GET',
+    requestId: 'req-tenant-session-message-list-page-2',
+    headers: {
+      authorization: 'Bearer fake-access-token'
+    },
+    handlers: harness.handlers
+  });
+
+  assert.equal(secondPageRoute.status, 200);
+  const secondPagePayload = JSON.parse(secondPageRoute.body);
+  assert.equal(secondPagePayload.messages.length, 1);
+
+  const allMessageIds = [
+    ...firstPagePayload.messages,
+    ...secondPagePayload.messages
+  ].map((item) => item.message_id);
+  assert.equal(new Set(allMessageIds).size, 3);
+});
+
 test('POST /tenant/sessions/messages supports client_message_id idempotency and outbound pull/status flow', async () => {
   const harness = await createHarness();
   await seedConversation({

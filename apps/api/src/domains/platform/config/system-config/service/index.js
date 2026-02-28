@@ -27,7 +27,7 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
       at: new Date().toISOString(),
       request_id: String(requestId || '').trim() || 'request_id_unset',
       operator_user_id: String(operatorUserId || '').trim() || 'unknown',
-      config_key: configKey ? String(configKey).trim() : null,
+      key: configKey ? String(configKey).trim() : null,
       detail: String(detail || '').trim(),
       ...metadata
     };
@@ -69,7 +69,7 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
         : null,
       afterState: null,
       metadata: {
-        config_key: configKey,
+        key: configKey,
         expected_version:
           Number.isInteger(expectedVersion) && expectedVersion >= 0
             ? expectedVersion
@@ -192,7 +192,7 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
     const { operatorUserId, operatorSessionId } = operatorContext;
 
     if (!isWhitelistedConfigKey(normalizedConfigKey)) {
-      const problem = systemConfigErrors.invalidPayload('config_key 非受控白名单项');
+      const problem = systemConfigErrors.invalidPayload('key 非受控白名单项');
       addAuditEvent({
         type: 'platform.system_config.read.rejected',
         requestId: resolvedRequestId,
@@ -292,6 +292,7 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
 
     return toReadResponse({
       configKey: normalizedRecord.configKey,
+      remark: normalizedRecord.remark,
       version: normalizedRecord.version,
       status: normalizedRecord.status,
       updatedByUserId: normalizedRecord.updatedByUserId,
@@ -345,7 +346,7 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
     const { operatorUserId, operatorSessionId } = operatorContext;
 
     if (!isWhitelistedConfigKey(normalizedConfigKey)) {
-      const problem = systemConfigErrors.invalidPayload('config_key 非受控白名单项');
+      const problem = systemConfigErrors.invalidPayload('key 非受控白名单项');
       addAuditEvent({
         type: 'platform.system_config.update.rejected',
         requestId: resolvedRequestId,
@@ -372,7 +373,9 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
 
     let parsedPayload;
     try {
-      parsedPayload = parseUpdatePayload(payload);
+      parsedPayload = parseUpdatePayload(payload, {
+        configKey: normalizedConfigKey
+      });
     } catch (error) {
       const mappedError = error instanceof AuthProblemError
         ? error
@@ -410,7 +413,9 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
         requestId: resolvedRequestId,
         traceparent,
         configKey: normalizedConfigKey,
-        encryptedValue: parsedPayload.encryptedValue,
+        encryptedValue: parsedPayload.value,
+        remark: parsedPayload.remark,
+        hasRemark: parsedPayload.hasRemark,
         expectedVersion: parsedPayload.expectedVersion,
         updatedByUserId: operatorUserId,
         updatedBySessionId: operatorSessionId,
@@ -493,6 +498,7 @@ const createPlatformSystemConfigService = ({ authService } = {}) => {
 
     return toWriteResponse({
       configKey: normalizedUpdatedRecord.configKey,
+      remark: normalizedUpdatedRecord.remark,
       version: normalizedUpdatedRecord.version,
       previousVersion: normalizedUpdatedRecord.previousVersion,
       status: normalizedUpdatedRecord.status,
