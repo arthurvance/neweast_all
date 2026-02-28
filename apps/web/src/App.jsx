@@ -317,6 +317,15 @@ export default function App() {
     });
   }, [clearAuthSession]);
 
+  const recoverInvalidAccess = useCallback(async ({
+    reason = 'tenant-session-recover'
+  } = {}) => {
+    return refreshAccessTokenIfPossible({
+      reason,
+      silent: true
+    });
+  }, [refreshAccessTokenIfPossible]);
+
   const {
     applyLoginPayload,
     refreshTenantPermissionContextFailClosed,
@@ -337,12 +346,7 @@ export default function App() {
     setScreen,
     setGlobalMessage,
     requestJson,
-    recoverInvalidAccess: async () => {
-      await refreshAccessTokenIfPossible({
-        reason: 'tenant-session-recover',
-        silent: true
-      });
-    },
+    recoverInvalidAccess,
     formatRetryMessage,
     clearAuthSession
   });

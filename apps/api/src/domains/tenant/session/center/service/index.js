@@ -4,6 +4,7 @@ const { AuthProblemError } = require('../../../../../shared-kernel/auth/auth-pro
 const {
   resolveRoutePreauthorizedContext
 } = require('../../../../../shared-kernel/auth/route-authz');
+const { log } = require('../../../../../common/logger');
 const {
   TENANT_SESSION_VIEW_PERMISSION_CODE,
   TENANT_SESSION_OPERATE_PERMISSION_CODE,
@@ -55,6 +56,7 @@ const ENQUEUE_STATUS_SET = new Set([
 ]);
 const DEFAULT_PULL_STATUS_LIST = Object.freeze(['pending', 'retrying']);
 const MESSAGE_CURSOR_PREFIX = 'msg_v1';
+const MAX_CONVERSATION_INGEST_PAYLOAD_LOG_CHARS = 4096;
 
 const CONVERSATION_INGEST_ALLOWED_FIELDS = new Set([
   'account_wechat_id',
@@ -154,6 +156,25 @@ const normalizeRequiredString = (candidate) => {
     return '';
   }
   return candidate.trim();
+};
+
+const toPayloadSnapshot = (
+  payload = {},
+  maxLength = MAX_CONVERSATION_INGEST_PAYLOAD_LOG_CHARS
+) => {
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(payload ?? {});
+  } catch (error) {
+    serialized = JSON.stringify({
+      unserializable_payload: true,
+      detail: String(error?.message || 'unknown')
+    });
+  }
+  if (serialized.length <= maxLength) {
+    return serialized;
+  }
+  return `${serialized.slice(0, maxLength)}...(truncated ${serialized.length - maxLength} chars)`;
 };
 
 const normalizeStrictRequiredString = (candidate) => {
@@ -1803,7 +1824,13 @@ const createTenantSessionService = ({ authService } = {}) => {
     traceparent = null,
     authorizationContext = null
   }) => {
-    const parsedPayload = parseConversationIngestPayload(payload || {});
+    const rawPayload = payload || {};
+    log('info', 'Tenant session conversation ingest request payload', {
+      request_id: requestId || 'request_id_unset',
+      traceparent,
+      payload_snapshot: toPayloadSnapshot(rawPayload)
+    });
+    const parsedPayload = parseConversationIngestPayload(rawPayload);
     const {
       operatorUserId,
       activeTenantId,

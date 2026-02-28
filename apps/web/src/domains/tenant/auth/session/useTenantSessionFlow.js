@@ -39,6 +39,7 @@ export const useTenantSessionFlow = ({
   clearAuthSession
 }) => {
   const tenantContextRefreshExecutorRef = useRef(createLatestRequestExecutor());
+  const hasRestoredTenantSessionRef = useRef(false);
 
   useEffect(() => {
     sessionStateRef.current = sessionState;
@@ -110,6 +111,10 @@ export const useTenantSessionFlow = ({
     if (!restoredSession || restoredSession.entry_domain !== 'tenant') {
       return;
     }
+    if (hasRestoredTenantSessionRef.current) {
+      return;
+    }
+    hasRestoredTenantSessionRef.current = true;
     const restoredAccessToken = String(restoredSession.access_token || '').trim();
     if (!restoredAccessToken) {
       clearAuthSession({
