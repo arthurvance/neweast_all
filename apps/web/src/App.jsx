@@ -231,7 +231,8 @@ export default function App() {
     screen === APP_SCREEN_DASHBOARD
     && sessionState?.entry_domain === 'tenant'
     && (
-      permissionUiState.menu.customer_management
+      permissionUiState.menu.session_management
+      || permissionUiState.menu.customer_management
       || permissionUiState.menu.account_management
       || permissionUiState.menu.user_management
       || permissionUiState.menu.role_management

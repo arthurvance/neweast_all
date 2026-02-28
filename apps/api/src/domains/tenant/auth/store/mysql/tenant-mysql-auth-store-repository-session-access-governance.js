@@ -14,7 +14,15 @@ const {
   TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
-  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
 } = require('../../../../../modules/auth/permission-catalog');
 
 const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
@@ -161,18 +169,24 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
     );
     const canViewCustomerScopeMy = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE
     );
     const canOperateCustomerScopeMy = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE
     );
     const canViewCustomerScopeAssist = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
     );
     const canOperateCustomerScopeAssist = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
     );
     const canViewCustomerScopeAll = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE
     );
     const canOperateCustomerScopeAll = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE
@@ -201,6 +215,56 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
     ) || canOperateCustomerScopeMy
       || canOperateCustomerScopeAssist
       || canOperateCustomerScopeAll;
+    const canViewSessionScopeMy = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE
+    );
+    const canOperateSessionScopeMy = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE
+    );
+    const canViewSessionScopeAssist = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    );
+    const canOperateSessionScopeAssist = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    );
+    const canViewSessionScopeAll = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
+    );
+    const canOperateSessionScopeAll = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
+    );
+    if (
+      canViewSessionScopeMy
+      || canViewSessionScopeAssist
+      || canViewSessionScopeAll
+    ) {
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (
+      canOperateSessionScopeMy
+      || canOperateSessionScopeAssist
+      || canOperateSessionScopeAll
+    ) {
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE);
+    }
+    const canViewSessionManagement = permissionCodeSet.has(
+      TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE
+    ) || canViewSessionScopeMy
+      || canViewSessionScopeAssist
+      || canViewSessionScopeAll;
+    const canOperateSessionManagement = permissionCodeSet.has(
+      TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE
+    ) || canOperateSessionScopeMy
+      || canOperateSessionScopeAssist
+      || canOperateSessionScopeAll;
     const canViewRoleManagement = permissionCodeSet.has(
       TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE
     ) || permissionCodeSet.has(
@@ -224,6 +288,14 @@ const createTenantMysqlAuthStoreRepositorySessionAccessGovernance = ({
       canOperateCustomerScopeAssist,
       canViewCustomerScopeAll,
       canOperateCustomerScopeAll,
+      canViewSessionManagement,
+      canOperateSessionManagement,
+      canViewSessionScopeMy,
+      canOperateSessionScopeMy,
+      canViewSessionScopeAssist,
+      canOperateSessionScopeAssist,
+      canViewSessionScopeAll,
+      canOperateSessionScopeAll,
       canViewRoleManagement,
       canOperateRoleManagement
     };

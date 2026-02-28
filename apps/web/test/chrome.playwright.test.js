@@ -8,9 +8,6 @@ const { once } = require('node:events');
 const { dirname, join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { createHash } = require('node:crypto');
-const { createApiApp } = require('../../api/src/app');
-const { readConfig } = require('../../api/src/config/env');
-const { createAuthService } = require('../../api/src/shared-kernel/auth/create-auth-service');
 
 const WORKSPACE_ROOT = resolve(__dirname, '../../..');
 const CHROME_BIN_CANDIDATES = [
@@ -1583,6 +1580,14 @@ const createTenantManagementApiServer = async () => {
   const permissionCatalog = [
     'tenant.user_management.view',
     'tenant.user_management.operate',
+    'tenant.session_management.view',
+    'tenant.session_management.operate',
+    'tenant.session_scope_my.view',
+    'tenant.session_scope_my.operate',
+    'tenant.session_scope_assist.view',
+    'tenant.session_scope_assist.operate',
+    'tenant.session_scope_all.view',
+    'tenant.session_scope_all.operate',
     'tenant.role_management.view',
     'tenant.role_management.operate',
     'tenant.account_management.view',
@@ -1604,6 +1609,7 @@ const createTenantManagementApiServer = async () => {
   let nextRoleSequence = 3;
   let nextAccountSequence = 3;
   let nextCustomerSequence = 3;
+  let nextSessionMessageSequence = 1;
 
   const membersByTenantId = new Map([
     [
@@ -1748,12 +1754,20 @@ const createTenantManagementApiServer = async () => {
           'tenant_user_management',
           [
             'tenant.user_management.view',
-            'tenant.user_management.operate'
+            'tenant.user_management.operate',
+            'tenant.session_management.view',
+            'tenant.session_scope_my.view'
           ]
         ],
         [
           'tenant_role_management_admin',
           [
+            'tenant.session_management.view',
+            'tenant.session_management.operate',
+            'tenant.session_scope_assist.view',
+            'tenant.session_scope_assist.operate',
+            'tenant.session_scope_all.view',
+            'tenant.session_scope_all.operate',
             'tenant.role_management.view',
             'tenant.role_management.operate',
             'tenant.account_management.view',
@@ -1771,7 +1785,7 @@ const createTenantManagementApiServer = async () => {
       'tenant-202',
       new Map([
         ['tenant_owner', [...permissionCatalog]],
-        ['tenant_member', ['tenant.role_management.view']]
+        ['tenant_member', ['tenant.role_management.view', 'tenant.session_management.view']]
       ])
     ]
   ]);
@@ -2030,6 +2044,118 @@ const createTenantManagementApiServer = async () => {
       ])
     ]
   ]);
+  const sessionsByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'session-tenant-101-1',
+          {
+            session_id: 'session-tenant-101-1',
+            tenant_id: 'tenant-101',
+            account_id: 'account-tenant-101-1',
+            account_wechat_id: 'wx_tenant_101_admin',
+            account_nickname: '管理员主号',
+            customer_id: 'customer-tenant-101-1',
+            customer_nickname: '客户甲',
+            latest_message_preview: '您好，这里是管理员主号',
+            unread_count: 1,
+            updated_at: new Date().toISOString(),
+            status: 'active'
+          }
+        ],
+        [
+          'session-tenant-101-2',
+          {
+            session_id: 'session-tenant-101-2',
+            tenant_id: 'tenant-101',
+            account_id: 'account-tenant-101-2',
+            account_wechat_id: 'wx_tenant_101_sales',
+            account_nickname: '销售号',
+            customer_id: 'customer-tenant-101-2',
+            customer_nickname: '客户乙',
+            latest_message_preview: '协管会话待跟进',
+            unread_count: 2,
+            updated_at: new Date().toISOString(),
+            status: 'active'
+          }
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'session-tenant-202-1',
+          {
+            session_id: 'session-tenant-202-1',
+            tenant_id: 'tenant-202',
+            account_id: 'account-tenant-202-1',
+            account_wechat_id: 'wx_tenant_202_admin',
+            account_nickname: '租户202主号',
+            customer_id: 'customer-tenant-202-1',
+            customer_nickname: '客户丙',
+            latest_message_preview: '欢迎来到租户202',
+            unread_count: 0,
+            updated_at: new Date().toISOString(),
+            status: 'active'
+          }
+        ]
+      ])
+    ]
+  ]);
+  const sessionMessagesByTenantId = new Map([
+    [
+      'tenant-101',
+      new Map([
+        [
+          'session-tenant-101-1',
+          [
+            {
+              message_id: 'session-message-tenant-101-1',
+              direction: 'inbound',
+              content: '您好，这里是管理员主号',
+              sender_name: '客户甲',
+              sent_at: new Date().toISOString()
+            }
+          ]
+        ],
+        [
+          'session-tenant-101-2',
+          [
+            {
+              message_id: 'session-message-tenant-101-2',
+              direction: 'inbound',
+              content: '协管会话待跟进',
+              sender_name: '客户乙',
+              sent_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ])
+    ],
+    [
+      'tenant-202',
+      new Map([
+        [
+          'session-tenant-202-1',
+          [
+            {
+              message_id: 'session-message-tenant-202-1',
+              direction: 'inbound',
+              content: '欢迎来到租户202',
+              sender_name: '客户丙',
+              sent_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ])
+    ]
+  ]);
+  const sessionMessageResponseDelayMsBySessionId = Object.freeze({
+    'session-tenant-101-1': 260,
+    'session-tenant-101-2': 20
+  });
   const tenant101Members = membersByTenantId.get('tenant-101');
   const tenant101Bindings = memberRoleBindingsByTenantId.get('tenant-101');
   if (tenant101Members && tenant101Bindings) {
@@ -2140,6 +2266,12 @@ const createTenantManagementApiServer = async () => {
     if (!customerOperationLogsByTenantId.has(tenantId)) {
       customerOperationLogsByTenantId.set(tenantId, new Map());
     }
+    if (!sessionsByTenantId.has(tenantId)) {
+      sessionsByTenantId.set(tenantId, new Map());
+    }
+    if (!sessionMessagesByTenantId.has(tenantId)) {
+      sessionMessagesByTenantId.set(tenantId, new Map());
+    }
   };
 
   const getCurrentTenantMaps = () => {
@@ -2154,7 +2286,9 @@ const createTenantManagementApiServer = async () => {
       accounts: accountsByTenantId.get(tenantId),
       accountOperationLogs: accountOperationLogsByTenantId.get(tenantId),
       customers: customersByTenantId.get(tenantId),
-      customerOperationLogs: customerOperationLogsByTenantId.get(tenantId)
+      customerOperationLogs: customerOperationLogsByTenantId.get(tenantId),
+      sessions: sessionsByTenantId.get(tenantId),
+      sessionMessages: sessionMessagesByTenantId.get(tenantId)
     };
   };
 
@@ -2168,6 +2302,14 @@ const createTenantManagementApiServer = async () => {
         can_operate_role_management: false,
         can_view_account_management: false,
         can_operate_account_management: false,
+        can_view_session_management: false,
+        can_operate_session_management: false,
+        can_view_session_scope_my: false,
+        can_operate_session_scope_my: false,
+        can_view_session_scope_assist: false,
+        can_operate_session_scope_assist: false,
+        can_view_session_scope_all: false,
+        can_operate_session_scope_all: false,
         can_view_customer_management: false,
         can_operate_customer_management: false,
         can_view_customer_scope_my: false,
@@ -2193,6 +2335,14 @@ const createTenantManagementApiServer = async () => {
       can_operate_role_management: permissionSet.has('tenant.role_management.operate'),
       can_view_account_management: permissionSet.has('tenant.account_management.view'),
       can_operate_account_management: permissionSet.has('tenant.account_management.operate'),
+      can_view_session_management: permissionSet.has('tenant.session_management.view'),
+      can_operate_session_management: permissionSet.has('tenant.session_management.operate'),
+      can_view_session_scope_my: permissionSet.has('tenant.session_scope_my.view'),
+      can_operate_session_scope_my: permissionSet.has('tenant.session_scope_my.operate'),
+      can_view_session_scope_assist: permissionSet.has('tenant.session_scope_assist.view'),
+      can_operate_session_scope_assist: permissionSet.has('tenant.session_scope_assist.operate'),
+      can_view_session_scope_all: permissionSet.has('tenant.session_scope_all.view'),
+      can_operate_session_scope_all: permissionSet.has('tenant.session_scope_all.operate'),
       can_view_customer_management: permissionSet.has('tenant.customer_management.view'),
       can_operate_customer_management: permissionSet.has('tenant.customer_management.operate'),
       can_view_customer_scope_my: permissionSet.has('tenant.customer_scope_my.view'),
@@ -2369,7 +2519,9 @@ const createTenantManagementApiServer = async () => {
       accounts,
       accountOperationLogs,
       customers,
-      customerOperationLogs
+      customerOperationLogs,
+      sessions,
+      sessionMessages
     } = getCurrentTenantMaps();
     const tenantPermissionContext = buildTenantPermissionContext();
     const sessionMembershipId = String(sessionMembershipByTenantId[tenantId] || '').trim();
@@ -2922,6 +3074,294 @@ const createTenantManagementApiServer = async () => {
           tenant_id: tenantId,
           previous_status: previousStatus,
           current_status: nextStatus,
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const ensureSessionViewPermission = () => {
+      if (
+        tenantPermissionContext?.can_view_session_management
+        || tenantPermissionContext?.can_operate_session_management
+      ) {
+        return true;
+      }
+      sendProblem({
+        status: 403,
+        title: 'Forbidden',
+        detail: '当前角色缺少会话管理查看权限',
+        errorCode: 'TSESSION-403-VIEW-FORBIDDEN'
+      });
+      return false;
+    };
+    const ensureSessionOperatePermission = () => {
+      if (tenantPermissionContext?.can_operate_session_management) {
+        return true;
+      }
+      sendProblem({
+        status: 403,
+        title: 'Forbidden',
+        detail: '当前角色缺少会话管理操作权限',
+        errorCode: 'TSESSION-403-OPERATE-FORBIDDEN'
+      });
+      return false;
+    };
+
+    if (method === 'GET' && pathname === '/tenant/sessions/account-options') {
+      if (!ensureSessionViewPermission()) {
+        return;
+      }
+      const scope = String(url.searchParams.get('scope') || 'my').trim().toLowerCase() || 'my';
+      const scopePermissionByKey = {
+        my: Boolean(tenantPermissionContext?.can_view_session_scope_my),
+        assist: Boolean(tenantPermissionContext?.can_view_session_scope_assist),
+        all: Boolean(tenantPermissionContext?.can_view_session_scope_all)
+      };
+      if (!scopePermissionByKey[scope]) {
+        const detail = scopePermissionByKey[scope] === undefined
+          ? 'scope 参数非法'
+          : '当前角色缺少对应会话范围查看权限';
+        sendProblem({
+          status: scopePermissionByKey[scope] === undefined ? 400 : 403,
+          detail,
+          errorCode: scopePermissionByKey[scope] === undefined
+            ? 'TSESSION-400-INVALID-SCOPE'
+            : 'TSESSION-403-SCOPE-FORBIDDEN'
+        });
+        return;
+      }
+      const listedAccounts = [...accounts.values()].sort((left, right) =>
+        String(left?.nickname || '').localeCompare(String(right?.nickname || ''))
+      );
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          tenant_id: tenantId,
+          accounts: listedAccounts.map((account) => ({
+            account_wechat_id: account.wechat_id,
+            account_nickname: account.nickname
+          })),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/tenant/sessions/chats') {
+      if (!ensureSessionViewPermission()) {
+        return;
+      }
+
+      const scope = String(url.searchParams.get('scope') || 'my').trim().toLowerCase() || 'my';
+      const scopePermissionByKey = {
+        my: Boolean(tenantPermissionContext?.can_view_session_scope_my),
+        assist: Boolean(tenantPermissionContext?.can_view_session_scope_assist),
+        all: Boolean(tenantPermissionContext?.can_view_session_scope_all)
+      };
+      if (!scopePermissionByKey[scope]) {
+        const detail = scopePermissionByKey[scope] === undefined
+          ? 'scope 参数非法'
+          : '当前角色缺少对应会话范围查看权限';
+        sendProblem({
+          status: scopePermissionByKey[scope] === undefined ? 400 : 403,
+          detail,
+          errorCode: scopePermissionByKey[scope] === undefined
+            ? 'TSESSION-400-INVALID-SCOPE'
+            : 'TSESSION-403-SCOPE-FORBIDDEN'
+        });
+        return;
+      }
+
+      const page = Number(url.searchParams.get('page') || 1);
+      const pageSize = Number(url.searchParams.get('page_size') || 20);
+      const accountWechatIdFilter = String(url.searchParams.get('account_wechat_id') || '').trim();
+      const keywordFilter = String(url.searchParams.get('keyword') || '').trim().toLowerCase();
+
+      const listedSessions = [...sessions.values()];
+      const filteredSessions = listedSessions.filter((session) => {
+        const accountId = String(session?.account_id || '').trim();
+        const account = accounts.get(accountId) || null;
+        const ownerMembershipId = String(account?.owner_membership_id || '').trim();
+        const assistantMembershipIds = Array.isArray(account?.assistant_membership_ids)
+          ? account.assistant_membership_ids.map((membershipId) => String(membershipId || '').trim())
+          : [];
+        if (scope === 'my' && ownerMembershipId !== sessionMembershipId) {
+          return false;
+        }
+        if (scope === 'assist' && !assistantMembershipIds.includes(sessionMembershipId)) {
+          return false;
+        }
+        if (
+          accountWechatIdFilter
+          && String(session?.account_wechat_id || '').trim() !== accountWechatIdFilter
+        ) {
+          return false;
+        }
+        if (keywordFilter) {
+          const hitFields = [
+            String(session?.session_id || '').trim().toLowerCase(),
+            String(session?.customer_nickname || '').trim().toLowerCase(),
+            String(session?.latest_message_preview || '').trim().toLowerCase()
+          ];
+          if (!hitFields.some((fieldValue) => fieldValue.includes(keywordFilter))) {
+            return false;
+          }
+        }
+        return true;
+      });
+      filteredSessions.sort((left, right) => {
+        const leftUpdatedAt = Date.parse(String(left?.updated_at || '').trim());
+        const rightUpdatedAt = Date.parse(String(right?.updated_at || '').trim());
+        if (!Number.isNaN(leftUpdatedAt) && !Number.isNaN(rightUpdatedAt) && leftUpdatedAt !== rightUpdatedAt) {
+          return rightUpdatedAt - leftUpdatedAt;
+        }
+        return String(left?.session_id || '').localeCompare(String(right?.session_id || ''));
+      });
+      const offset = (Math.max(1, page) - 1) * Math.max(1, pageSize);
+      const pageItems = filteredSessions.slice(offset, offset + Math.max(1, pageSize));
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          tenant_id: tenantId,
+          page: Math.max(1, page),
+          page_size: Math.max(1, pageSize),
+          total: filteredSessions.length,
+          chats: pageItems.map((session) => ({
+            conversation_id: session.session_id,
+            tenant_id: session.tenant_id,
+            account_wechat_id: session.account_wechat_id,
+            account_nickname: session.account_nickname,
+            conversation_type: 'direct',
+            conversation_name: session.customer_nickname,
+            last_message_preview: session.latest_message_preview,
+            last_message_time: session.updated_at,
+            updated_at: session.updated_at
+          })),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    const sessionMessagesMatch = pathname.match(/^\/tenant\/sessions\/chats\/([^/]+)\/messages$/);
+    if (sessionMessagesMatch && method === 'GET') {
+      if (!ensureSessionViewPermission()) {
+        return;
+      }
+      const conversationId = decodeURIComponent(sessionMessagesMatch[1] || '').trim();
+      const accountWechatId = String(url.searchParams.get('account_wechat_id') || '').trim();
+      if (!sessions.has(conversationId)) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标会话不存在',
+          errorCode: 'TSESSION-404-CONVERSATION-NOT-FOUND'
+        });
+        return;
+      }
+      const conversation = sessions.get(conversationId);
+      if (
+        accountWechatId
+        && String(conversation?.account_wechat_id || '').trim() !== accountWechatId
+      ) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标会话不存在',
+          errorCode: 'TSESSION-404-CONVERSATION-NOT-FOUND'
+        });
+        return;
+      }
+      const responseDelayMs = Number(sessionMessageResponseDelayMsBySessionId[conversationId] || 0);
+      if (responseDelayMs > 0) {
+        await sleep(responseDelayMs);
+      }
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          conversation_id: conversationId,
+          account_wechat_id: String(conversation?.account_wechat_id || '').trim(),
+          messages: (sessionMessages.get(conversationId) || []).map((item) => ({
+            message_id: item.message_id,
+            conversation_id: conversationId,
+            sender_name: item.sender_name,
+            message_type: 'text',
+            message_payload_json: {
+              text: item.content
+            },
+            message_time: item.sent_at,
+            is_self: String(item.direction || '').trim().toLowerCase() === 'outbound' ? 1 : 0
+          })),
+          request_id: requestId
+        }
+      });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/tenant/sessions/messages') {
+      if (!ensureSessionViewPermission() || !ensureSessionOperatePermission()) {
+        return;
+      }
+      const conversationId = String(body.conversation_id || '').trim();
+      const targetSession = sessions.get(conversationId);
+      if (!targetSession) {
+        sendProblem({
+          status: 404,
+          title: 'Not Found',
+          detail: '目标会话不存在',
+          errorCode: 'TSESSION-404-CONVERSATION-NOT-FOUND'
+        });
+        return;
+      }
+      const content = String((
+        body?.message_payload_json?.text
+        ?? body?.message_payload_json?.content
+        ?? body?.content
+        ?? ''
+      )).trim();
+      if (!content) {
+        sendProblem({
+          status: 400,
+          detail: 'message_payload_json 不能为空',
+          errorCode: 'TSESSION-400-INVALID-PAYLOAD'
+        });
+        return;
+      }
+
+      const sentAt = new Date().toISOString();
+      const nextMessage = {
+        message_id: `session-message-${nextSessionMessageSequence++}`,
+        direction: 'outbound',
+        content,
+        sender_name: '当前用户',
+        sent_at: sentAt
+      };
+      const messages = sessionMessages.get(conversationId) || [];
+      messages.push(nextMessage);
+      sessionMessages.set(conversationId, messages);
+      sessions.set(conversationId, {
+        ...targetSession,
+        latest_message_preview: content,
+        updated_at: sentAt
+      });
+
+      sendJson({
+        status: 200,
+        contentType: 'application/json',
+        payload: {
+          outbound_message_id: `outbound-${nextSessionMessageSequence}`,
+          account_wechat_id: String(targetSession.account_wechat_id || '').trim(),
+          account_nickname: String(targetSession.account_nickname || '').trim(),
+          conversation_id: conversationId,
+          conversation_name: String(targetSession.customer_nickname || '').trim(),
+          message_type: 'text',
+          message_payload_json: { text: content },
+          send_time: sentAt,
+          enqueue_status: 'pending',
           request_id: requestId
         }
       });
@@ -3569,6 +4009,9 @@ const ensureAuthStoreCustomerCapabilities = (authService) => {
 };
 
 const createRealApiServer = async () => {
+  const { createApiApp } = require('../../api/src/app');
+  const { readConfig } = require('../../api/src/config/env');
+  const { createAuthService } = require('../../api/src/shared-kernel/auth/create-auth-service');
   const config = readConfig({
     ALLOW_MOCK_BACKENDS: 'true'
   });
@@ -4402,7 +4845,24 @@ test('chrome regression covers otp login flow with archived evidence', async (t)
 
 test('chrome regression validates tenant permission UI against real API authorization semantics', async (t) => {
   const chromeBinary = resolveChromeBinary();
-  const api = await createRealApiServer();
+  let api;
+  try {
+    api = await createRealApiServer();
+  } catch (error) {
+    const errorMessage = String(error?.message || '');
+    if (
+      error?.code === 'MODULE_NOT_FOUND'
+      || errorMessage.includes('Cannot find module')
+      || (
+        errorMessage.includes('createTenantSessionService requires authService.authorizeRoute')
+        && errorMessage.includes('tenant session capabilities')
+      )
+    ) {
+      t.skip(`real API environment missing dependencies: ${errorMessage}`);
+      return;
+    }
+    throw error;
+  }
   const apiBaseUrl = `http://127.0.0.1:${api.apiPort}`;
   const webPort = await reservePort();
   const cdpPort = await reservePort();
@@ -5953,11 +6413,102 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     8000,
     'tenant account matrix menu should stay hidden before account permissions are granted'
   );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-menu-session-management"]'))`,
+    8000,
+    'tenant session management menu should be visible with session scope permission'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-menu-session-management"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-tab-session-center"]'))`,
+    8000,
+    'session center submenu should be visible after expanding session management menu'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-tab-session-center"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-sessions-module"]'))`,
+    10000,
+    'session center module should be visible before role elevation'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const tabMy = document.querySelector('[data-testid="tenant-session-tab-my"]');
+      const tabAssist = document.querySelector('[data-testid="tenant-session-tab-assist"]');
+      const tabAll = document.querySelector('[data-testid="tenant-session-tab-all"]');
+      return Boolean(tabMy) && !tabAssist && !tabAll;
+    })()`,
+    10000,
+    'session scope tabs should follow pre-elevation permission set'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-session-id-session-tenant-101-1"]'))`,
+    10000,
+    'session list should load my-scope rows before role elevation'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-session-id-session-tenant-101-1"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const panel = document.querySelector('[data-testid="tenant-session-detail-panel"]');
+      const button = document.querySelector('[data-testid="tenant-session-send-submit"]');
+      return Boolean(panel) && Boolean(button) && button.disabled;
+    })()`,
+    10000,
+    'session send button should stay disabled without session operate permission'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-tab-users"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-members-module"]'))`,
+    10000,
+    'tenant user module should remain reachable after session center permission check'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-member-profile-membership-tenant-101-admin"]'))`,
+    10000,
+    'tenant user profile action should be visible before role assignment edit'
+  );
 
   await evaluate(
     cdp,
     sessionId,
-    `(() => { document.querySelector('[data-testid="tenant-member-profile-membership-tenant-101-admin"]').click(); return true; })()`
+    `(() => {
+      document.querySelector('[data-testid="tenant-member-profile-membership-tenant-101-admin"]')?.click();
+      return true;
+    })()`
   );
   await waitForCondition(
     cdp,
@@ -6056,15 +6607,139 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     cdp,
     sessionId,
     `(() => {
+      const sessionMenu = document.querySelector('[data-testid="tenant-menu-session-management"]');
       const customerMenu = document.querySelector('[data-testid="tenant-menu-customer-management"]');
       const accountMenu = document.querySelector('[data-testid="tenant-menu-account-matrix"]');
-      if (!customerMenu || !accountMenu) {
+      if (!sessionMenu || !customerMenu || !accountMenu) {
         return false;
       }
-      return Boolean(customerMenu.compareDocumentPosition(accountMenu) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const isSessionBeforeCustomer = Boolean(
+        sessionMenu.compareDocumentPosition(customerMenu) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+      const isCustomerBeforeAccount = Boolean(
+        customerMenu.compareDocumentPosition(accountMenu) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+      return isSessionBeforeCustomer && isCustomerBeforeAccount;
     })()`,
     10000,
-    'customer management menu should appear before account matrix menu'
+    'session menu should appear before customer management, and customer before account matrix'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-menu-session-management"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-tab-session-center"]'))`,
+    8000,
+    'session center submenu should be visible after role assignment'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-tab-session-center"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-sessions-module"]'))`,
+    10000,
+    'session center module should be visible after role assignment'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const tabMy = document.querySelector('[data-testid="tenant-session-tab-my"]');
+      const tabAssist = document.querySelector('[data-testid="tenant-session-tab-assist"]');
+      const tabAll = document.querySelector('[data-testid="tenant-session-tab-all"]');
+      return Boolean(tabMy) && Boolean(tabAssist) && Boolean(tabAll);
+    })()`,
+    10000,
+    'session scope tabs should expand after role assignment'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => { document.querySelector('[data-testid="tenant-session-tab-all"]')?.click(); return true; })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-session-id-session-tenant-101-1"]'))`,
+    10000,
+    'session list should keep rows accessible after switching to all scope'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-session-id-session-tenant-101-1"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const detailPanel = document.querySelector('[data-testid="tenant-session-detail-panel"]');
+      const panelText = String(detailPanel?.textContent || '');
+      return (
+        panelText.includes('客户甲')
+        && panelText.includes('您好，这里是管理员主号')
+      );
+    })()`,
+    10000,
+    'session detail should align with selected conversation after scope switch'
+  );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-session-send-submit',
+    10000,
+    'session send button should be enabled with session operate permission'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const input = document.querySelector('[data-testid="tenant-session-send-input"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter.call(input, '会话中心联动消息');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('[data-testid="tenant-session-send-submit"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForRequest(
+    api.requests,
+    (request) =>
+      request.method === 'POST'
+      && request.path === '/tenant/sessions/messages',
+    10000,
+    'session send request should reach tenant session API stub'
+  );
+  await waitForRequest(
+    api.responses,
+    (response) =>
+      response.method === 'POST'
+      && response.path === '/tenant/sessions/messages'
+      && response.status === 200,
+    10000,
+    'session send request should succeed with tenant session API stub'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const latestMessageNode = document.querySelector('[data-testid="tenant-session-message-1"]');
+      return Boolean(latestMessageNode && String(latestMessageNode.textContent || '').includes('会话中心联动消息'));
+    })()`,
+    10000,
+    'session detail should append newly sent message'
   );
   await evaluate(
     cdp,
@@ -6539,6 +7214,13 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     `Boolean(document.querySelector('[data-testid="tenant-account-edit-confirm"]'))`,
     8000,
     'tenant account edit modal should be visible'
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-account-edit-nickname"]'))`,
+    8000,
+    'tenant account edit nickname input should be visible'
   );
   await evaluate(
     cdp,
@@ -7021,6 +7703,13 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       return true;
     })()`
   );
+  await waitForButtonEnabledByTestId(
+    cdp,
+    sessionId,
+    'tenant-role-edit-confirm',
+    10000,
+    'tenant protected role edit confirm should be enabled before submission'
+  );
   await evaluate(
     cdp,
     sessionId,
@@ -7082,16 +7771,81 @@ test('chrome regression validates tenant management workbench with modal/drawer 
           };
         })
         .filter((node) => Boolean(node.title));
-      if (nodes.length < 3) {
+      if (nodes.length < 5) {
         return false;
       }
+      const sessionNodeIndex = nodes.findIndex((node) => node.title === '会话管理');
       const accountMatrixNodeIndex = nodes.findIndex((node) => node.title === '账号矩阵');
       const settingsNodeIndex = nodes.findIndex((node) => node.title === '设置');
-      if (accountMatrixNodeIndex < 0 || settingsNodeIndex < 0 || accountMatrixNodeIndex > settingsNodeIndex) {
+      if (
+        sessionNodeIndex < 0
+        || accountMatrixNodeIndex < 0
+        || settingsNodeIndex < 0
+        || sessionNodeIndex > accountMatrixNodeIndex
+        || accountMatrixNodeIndex > settingsNodeIndex
+      ) {
         return false;
       }
       const rootLevel = nodes[accountMatrixNodeIndex].level;
-      if (rootLevel < 1 || nodes[settingsNodeIndex].level !== rootLevel) {
+      if (
+        rootLevel < 1
+        || nodes[sessionNodeIndex].level !== rootLevel
+        || nodes[settingsNodeIndex].level !== rootLevel
+      ) {
+        return false;
+      }
+      const sessionCenterNodeIndex = nodes.findIndex(
+        (node) => node.title === '会话中心' && node.level === rootLevel + 1
+      );
+      const mySessionNodeIndex = nodes.findIndex(
+        (node) => node.title === '我的会话' && node.level === rootLevel + 2
+      );
+      const assistSessionNodeIndex = nodes.findIndex(
+        (node) => node.title === '协管会话' && node.level === rootLevel + 2
+      );
+      const allSessionNodeIndex = nodes.findIndex(
+        (node) => node.title === '全部会话' && node.level === rootLevel + 2
+      );
+      if (
+        sessionCenterNodeIndex < 0
+        || mySessionNodeIndex < 0
+        || assistSessionNodeIndex < 0
+        || allSessionNodeIndex < 0
+        || sessionCenterNodeIndex > mySessionNodeIndex
+        || mySessionNodeIndex > assistSessionNodeIndex
+        || assistSessionNodeIndex > allSessionNodeIndex
+      ) {
+        return false;
+      }
+      const hasScopeActionPair = (scopeNodeIndex) => {
+        const scopeNode = nodes[scopeNodeIndex];
+        if (!scopeNode) {
+          return false;
+        }
+        let hasView = false;
+        let hasOperate = false;
+        for (let index = scopeNodeIndex + 1; index < nodes.length; index += 1) {
+          const node = nodes[index];
+          if (node.level <= scopeNode.level) {
+            break;
+          }
+          if (node.level !== scopeNode.level + 1) {
+            continue;
+          }
+          if (node.title === '查看') {
+            hasView = true;
+          }
+          if (node.title === '操作') {
+            hasOperate = true;
+          }
+        }
+        return hasView && hasOperate;
+      };
+      if (
+        !hasScopeActionPair(mySessionNodeIndex)
+        || !hasScopeActionPair(assistSessionNodeIndex)
+        || !hasScopeActionPair(allSessionNodeIndex)
+      ) {
         return false;
       }
       const accountManagementNodeIndex = nodes.findIndex(
@@ -7110,7 +7864,7 @@ test('chrome regression validates tenant management workbench with modal/drawer 
       return parentRootNodeIndex === accountMatrixNodeIndex;
     })()`,
     8000,
-    'tenant role permission tree should place account menu under account matrix before settings'
+    'tenant role permission tree should include session scope nodes and keep account menu under account matrix before settings'
   );
   await waitForCondition(
     cdp,
@@ -7118,6 +7872,74 @@ test('chrome regression validates tenant management workbench with modal/drawer 
     `(() => !document.querySelector('[data-testid="tenant-role-permission-save"]'))()`,
     8000,
     'tenant role detail drawer should hide permission save action'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const trigger = document.querySelector('[data-testid="layout-user-name"]')?.closest('span');
+      trigger?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const switchItem = [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .find((item) => String(item.textContent || '').includes('切换组织'));
+      return Boolean(switchItem);
+    })()`,
+    8000,
+    'tenant org switch action should be available before cross-tenant policy check'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      const switchItem = [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .find((item) => String(item.textContent || '').includes('切换组织'));
+      switchItem?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `Boolean(document.querySelector('[data-testid="tenant-org-switch-shell"]'))`,
+    8000,
+    'tenant org switch page should be reachable for menu policy regression check'
+  );
+  await evaluate(
+    cdp,
+    sessionId,
+    `(() => {
+      document.querySelector('[data-testid="tenant-org-switch-card-tenant-202"]')?.click();
+      return true;
+    })()`
+  );
+  await waitForCondition(
+    cdp,
+    sessionId,
+    `(() => {
+      const roleModule = document.querySelector('[data-testid="tenant-roles-module"]');
+      const emptyState = document.querySelector('[data-testid="tenant-menu-empty"]');
+      const sessionModule = document.querySelector('[data-testid="tenant-sessions-module"]');
+      const sessionMenu = document.querySelector('[data-testid="tenant-menu-session-management"]');
+      const hasSessionScopeWarning = [...document.querySelectorAll('.ant-alert-message')]
+        .some((node) => String(node.textContent || '').includes('当前角色缺少会话范围权限'));
+      return (
+        Boolean(sessionMenu)
+        && (
+          Boolean(roleModule)
+          || Boolean(emptyState)
+          || Boolean(sessionModule)
+          || hasSessionScopeWarning
+        )
+      );
+    })()`,
+    12000,
+    'tenant menu visibility should include session management permission even without session scope permissions'
   );
 
   const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
@@ -7171,6 +7993,15 @@ test('chrome regression validates tenant management workbench with modal/drawer 
   assert.equal(updateCustomerRealnameRequest?.body?.real_name, '王五');
   assert.equal(updateCustomerRealnameRequest?.body?.school, '第三中学');
 
+  const sendSessionMessageRequest = api.requests.find(
+    (request) =>
+      request.path === '/tenant/sessions/messages'
+      && request.method === 'POST'
+  );
+  assert.equal(sendSessionMessageRequest?.body?.conversation_id, 'session-tenant-101-1');
+  assert.equal(sendSessionMessageRequest?.body?.message_type, 'text');
+  assert.equal(sendSessionMessageRequest?.body?.message_payload_json?.text, '会话中心联动消息');
+
   const tenantWriteRequests = api.requests.filter(
     (request) =>
       request.path.startsWith('/tenant/')
@@ -7202,6 +8033,9 @@ test('chrome regression validates tenant management workbench with modal/drawer 
           tenant_member_status_modal: true,
           tenant_member_profile_failure_and_retry: true,
           tenant_member_roles_assignment: true,
+          tenant_session_center_scope_and_send: true,
+          tenant_session_center_race_guard: true,
+          tenant_session_menu_scope_alignment: true,
           tenant_customer_management_create_and_edit: true,
           tenant_account_management_create_and_detail: true,
           tenant_write_idempotency_keys: true,

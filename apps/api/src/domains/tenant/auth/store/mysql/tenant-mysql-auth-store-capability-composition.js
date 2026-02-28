@@ -12,12 +12,16 @@ const {
 const {
   createTenantMysqlAuthStoreCustomer
 } = require('./tenant-mysql-auth-store-customer.js');
+const {
+  createTenantMysqlAuthStoreSession
+} = require('./tenant-mysql-auth-store-session.js');
 
 const createTenantMysqlAuthStoreCapabilityComposition = (dependencies = {}) => ({
   ...createTenantMysqlAuthStoreUsershipGovernance(dependencies),
   ...createTenantMysqlAuthStoreRolePermission(dependencies),
   ...createTenantMysqlAuthStoreAccountMatrix(dependencies),
   ...createTenantMysqlAuthStoreCustomer(dependencies),
+  ...createTenantMysqlAuthStoreSession(dependencies),
 });
 
 module.exports = {

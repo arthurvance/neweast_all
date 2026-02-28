@@ -17,6 +17,14 @@ const TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE = 'tenant.customer_scope_al
 const TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE = 'tenant.customer_scope_all.operate';
 const TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.role_management.view';
 const TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.role_management.operate';
+const TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.session_management.view';
+const TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.session_management.operate';
+const TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE = 'tenant.session_scope_my.view';
+const TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE = 'tenant.session_scope_my.operate';
+const TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE = 'tenant.session_scope_assist.view';
+const TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE = 'tenant.session_scope_assist.operate';
+const TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE = 'tenant.session_scope_all.view';
+const TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE = 'tenant.session_scope_all.operate';
 
 const PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE = 'platform.user_management.view';
 const PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE = 'platform.user_management.operate';
@@ -177,6 +185,38 @@ const hasPermissionCodeGrant = ({ permissionContext = null, permissionCode }) =>
     case TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE:
       return readBooleanPermissionField(permissionContext, 'can_operate_role_management')
         || readBooleanPermissionField(permissionContext, 'canOperateRoleManagement');
+    case TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_session_management')
+        || readBooleanPermissionField(permissionContext, 'canViewSessionManagement')
+        || readBooleanPermissionField(permissionContext, 'can_operate_session_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionManagement');
+    case TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_session_management')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionManagement');
+    case TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_session_scope_my')
+        || readBooleanPermissionField(permissionContext, 'canViewSessionScopeMy')
+        || readBooleanPermissionField(permissionContext, 'can_operate_session_scope_my')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionScopeMy');
+    case TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_session_scope_my')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionScopeMy');
+    case TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_session_scope_assist')
+        || readBooleanPermissionField(permissionContext, 'canViewSessionScopeAssist')
+        || readBooleanPermissionField(permissionContext, 'can_operate_session_scope_assist')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionScopeAssist');
+    case TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_session_scope_assist')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionScopeAssist');
+    case TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_view_session_scope_all')
+        || readBooleanPermissionField(permissionContext, 'canViewSessionScopeAll')
+        || readBooleanPermissionField(permissionContext, 'can_operate_session_scope_all')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionScopeAll');
+    case TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE:
+      return readBooleanPermissionField(permissionContext, 'can_operate_session_scope_all')
+        || readBooleanPermissionField(permissionContext, 'canOperateSessionScopeAll');
     default:
       return false;
   }
@@ -487,6 +527,78 @@ const ROUTE_PERMISSION_DEFINITIONS = Object.freeze([
     actionKey: 'operate',
     labelKey: 'permission.tenant.role_management.operate',
     order: 220
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_management',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.session_management.view',
+    order: 230
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_management',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.session_management.operate',
+    order: 231
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_scope_my',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.session_scope_my.view',
+    order: 232
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_scope_my',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.session_scope_my.operate',
+    order: 233
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_scope_assist',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.session_scope_assist.view',
+    order: 234
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_scope_assist',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.session_scope_assist.operate',
+    order: 235
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_scope_all',
+    actionKey: 'view',
+    labelKey: 'permission.tenant.session_scope_all.view',
+    order: 236
+  }),
+  createPermissionDefinition({
+    code: TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE,
+    scopes: [PERMISSION_SCOPE_TENANT],
+    contextKey: 'tenant',
+    groupKey: 'session_scope_all',
+    actionKey: 'operate',
+    labelKey: 'permission.tenant.session_scope_all.operate',
+    order: 237
   })
 ]);
 
@@ -569,7 +681,15 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
     canViewCustomerScopeAll: false,
     canOperateCustomerScopeAll: false,
     canViewRoleManagement: false,
-    canOperateRoleManagement: false
+    canOperateRoleManagement: false,
+    canViewSessionManagement: false,
+    canOperateSessionManagement: false,
+    canViewSessionScopeMy: false,
+    canOperateSessionScopeMy: false,
+    canViewSessionScopeAssist: false,
+    canOperateSessionScopeAssist: false,
+    canViewSessionScopeAll: false,
+    canOperateSessionScopeAll: false
   };
   for (const permissionCode of normalizeDistinctPermissionCodeKeys(permissionCodes)) {
     switch (permissionCode) {
@@ -621,6 +741,37 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
         snapshot.canViewRoleManagement = true;
         snapshot.canOperateRoleManagement = true;
         break;
+      case TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE:
+        snapshot.canViewSessionManagement = true;
+        break;
+      case TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE:
+        snapshot.canViewSessionManagement = true;
+        snapshot.canOperateSessionManagement = true;
+        break;
+      case TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE:
+        snapshot.canViewSessionScopeMy = true;
+        break;
+      case TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE:
+        snapshot.canViewSessionScopeMy = true;
+        snapshot.canOperateSessionScopeMy = true;
+        snapshot.canOperateSessionManagement = true;
+        break;
+      case TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE:
+        snapshot.canViewSessionScopeAssist = true;
+        break;
+      case TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE:
+        snapshot.canViewSessionScopeAssist = true;
+        snapshot.canOperateSessionScopeAssist = true;
+        snapshot.canOperateSessionManagement = true;
+        break;
+      case TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE:
+        snapshot.canViewSessionScopeAll = true;
+        break;
+      case TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE:
+        snapshot.canViewSessionScopeAll = true;
+        snapshot.canOperateSessionScopeAll = true;
+        snapshot.canOperateSessionManagement = true;
+        break;
       default:
         break;
     }
@@ -631,6 +782,16 @@ const toTenantPermissionSnapshotFromCodes = (permissionCodes = []) => {
     || snapshot.canViewCustomerScopeAll
   ) {
     snapshot.canViewCustomerManagement = true;
+  }
+  if (
+    snapshot.canViewSessionScopeMy
+    || snapshot.canViewSessionScopeAssist
+    || snapshot.canViewSessionScopeAll
+    || snapshot.canOperateSessionScopeMy
+    || snapshot.canOperateSessionScopeAssist
+    || snapshot.canOperateSessionScopeAll
+  ) {
+    snapshot.canViewSessionManagement = true;
   }
   return snapshot;
 };
@@ -748,6 +909,14 @@ module.exports = {
   TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_USER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   PLATFORM_TENANT_MANAGEMENT_VIEW_PERMISSION_CODE,

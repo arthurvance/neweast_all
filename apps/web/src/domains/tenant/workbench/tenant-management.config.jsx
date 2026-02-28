@@ -2,6 +2,7 @@ import {
   AppstoreOutlined,
   ContactsOutlined,
   IdcardOutlined,
+  MessageOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined
@@ -9,10 +10,12 @@ import {
 import { lazy } from 'react';
 import {
   TENANT_PERMISSION_CODE_BY_GROUP_ACTION
-} from '../../../../features/auth/generated-permission-catalog';
+} from '../../../features/auth/generated-permission-catalog';
 
 const CUSTOMER_MANAGEMENT_MENU_KEY = 'customer';
 const CUSTOMER_PROFILE_MENU_KEY = 'customer/profile';
+const SESSION_MANAGEMENT_MENU_KEY = 'session';
+export const SESSION_CENTER_MENU_KEY = 'session/center';
 const ACCOUNT_MATRIX_MENU_KEY = 'account';
 const ACCOUNT_MENU_KEY = 'account/account';
 const LEGACY_ACCOUNT_MATRIX_MENU_KEY = 'account-matrix';
@@ -21,11 +24,14 @@ const SETTINGS_MENU_KEY = 'settings';
 const USER_MENU_KEY = 'settings/users';
 const ROLE_MENU_KEY = 'settings/roles';
 const TenantCustomerProfilePage = lazy(() =>
-  import('../../customer/profile/TenantCustomerProfilePage')
+  import('../customer/profile/TenantCustomerProfilePage')
 );
-const TenantAccountManagementPage = lazy(() => import('../account/TenantAccountManagementPage'));
-const TenantRoleManagementPage = lazy(() => import('../../settings/role/TenantRoleManagementPage'));
-const TenantUserManagementPage = lazy(() => import('../../settings/user/TenantUserManagementPage'));
+const TenantSessionCenterPage = lazy(() =>
+  import('../session/center/TenantSessionCenterPage')
+);
+const TenantAccountManagementPage = lazy(() => import('../account/account/TenantAccountManagementPage'));
+const TenantRoleManagementPage = lazy(() => import('../settings/role/TenantRoleManagementPage'));
+const TenantUserManagementPage = lazy(() => import('../settings/user/TenantUserManagementPage'));
 
 const readTenantPermissionCode = ({
   groupKey,
@@ -84,8 +90,49 @@ const CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
   actionKey: 'operate',
   fallbackCode: 'tenant.customer_management.operate'
 });
+const SESSION_MANAGEMENT_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_management',
+  actionKey: 'view',
+  fallbackCode: 'tenant.session_management.view'
+});
+const SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_management',
+  actionKey: 'operate',
+  fallbackCode: 'tenant.session_management.operate'
+});
+const SESSION_SCOPE_MY_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_scope_my',
+  actionKey: 'view',
+  fallbackCode: 'tenant.session_scope_my.view'
+});
+const SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_scope_my',
+  actionKey: 'operate',
+  fallbackCode: 'tenant.session_scope_my.operate'
+});
+const SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_scope_assist',
+  actionKey: 'view',
+  fallbackCode: 'tenant.session_scope_assist.view'
+});
+const SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_scope_assist',
+  actionKey: 'operate',
+  fallbackCode: 'tenant.session_scope_assist.operate'
+});
+const SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_scope_all',
+  actionKey: 'view',
+  fallbackCode: 'tenant.session_scope_all.view'
+});
+const SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE = readTenantPermissionCode({
+  groupKey: 'session_scope_all',
+  actionKey: 'operate',
+  fallbackCode: 'tenant.session_scope_all.operate'
+});
 
 const TENANT_MENU_ORDER = Object.freeze([
+  SESSION_CENTER_MENU_KEY,
   CUSTOMER_PROFILE_MENU_KEY,
   ACCOUNT_MENU_KEY,
   USER_MENU_KEY,
@@ -95,6 +142,7 @@ const TENANT_MENU_ORDER = Object.freeze([
 export const TENANT_DEFAULT_MENU_KEY = USER_MENU_KEY;
 
 export const TENANT_NAV_GROUP_FALLBACK = Object.freeze({
+  [SESSION_MANAGEMENT_MENU_KEY]: SESSION_CENTER_MENU_KEY,
   [CUSTOMER_MANAGEMENT_MENU_KEY]: CUSTOMER_PROFILE_MENU_KEY,
   [ACCOUNT_MATRIX_MENU_KEY]: ACCOUNT_MENU_KEY,
   [LEGACY_ACCOUNT_MATRIX_MENU_KEY]: ACCOUNT_MENU_KEY,
@@ -102,6 +150,8 @@ export const TENANT_NAV_GROUP_FALLBACK = Object.freeze({
 });
 
 export const TENANT_MENU_PERMISSION_REGISTRY = Object.freeze({
+  [SESSION_MANAGEMENT_MENU_KEY]: '',
+  [SESSION_CENTER_MENU_KEY]: SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
   [CUSTOMER_MANAGEMENT_MENU_KEY]: '',
   [CUSTOMER_PROFILE_MENU_KEY]: CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
   [ACCOUNT_MATRIX_MENU_KEY]: '',
@@ -160,6 +210,23 @@ const hasTenantAccountManagementAccess = (permissionContext = null) => {
   return canView;
 };
 
+const hasTenantSessionManagementAccess = (permissionContext = null) => {
+  if (!permissionContext || typeof permissionContext !== 'object') {
+    return false;
+  }
+  const canView = readPermissionFlag(
+    permissionContext,
+    'can_view_session_management',
+    'canViewSessionManagement'
+  );
+  const canOperate = readPermissionFlag(
+    permissionContext,
+    'can_operate_session_management',
+    'canOperateSessionManagement'
+  );
+  return canView || canOperate;
+};
+
 const hasTenantCustomerManagementAccess = (permissionContext = null) => {
   if (!permissionContext || typeof permissionContext !== 'object') {
     return false;
@@ -205,6 +272,18 @@ export const hasTenantMenuAccess = ({ menuKey, permissionContext = null }) => {
     return hasTenantRoleManagementAccess(permissionContext);
   }
   if (
+    permissionCode === SESSION_MANAGEMENT_VIEW_PERMISSION_CODE
+    || permissionCode === SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE
+    || permissionCode === SESSION_SCOPE_MY_VIEW_PERMISSION_CODE
+    || permissionCode === SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE
+    || permissionCode === SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE
+    || permissionCode === SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    || permissionCode === SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE
+    || permissionCode === SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
+  ) {
+    return hasTenantSessionManagementAccess(permissionContext);
+  }
+  if (
     permissionCode === ACCOUNT_MANAGEMENT_VIEW_PERMISSION_CODE
     || permissionCode === ACCOUNT_MANAGEMENT_OPERATE_PERMISSION_CODE
   ) {
@@ -220,6 +299,20 @@ export const hasTenantMenuAccess = ({ menuKey, permissionContext = null }) => {
 };
 
 export const TENANT_NAV_ITEMS = [
+  {
+    key: SESSION_MANAGEMENT_MENU_KEY,
+    permission_code: resolveTenantMenuPermissionCode(SESSION_MANAGEMENT_MENU_KEY),
+    icon: <MessageOutlined />,
+    label: <span data-testid="tenant-menu-session-management">会话管理</span>,
+    children: [
+      {
+        key: SESSION_CENTER_MENU_KEY,
+        permission_code: resolveTenantMenuPermissionCode(SESSION_CENTER_MENU_KEY),
+        icon: <IdcardOutlined />,
+        label: <span data-testid="tenant-tab-session-center">会话中心</span>
+      }
+    ]
+  },
   {
     key: CUSTOMER_MANAGEMENT_MENU_KEY,
     permission_code: resolveTenantMenuPermissionCode(CUSTOMER_MANAGEMENT_MENU_KEY),
@@ -271,6 +364,16 @@ export const TENANT_NAV_ITEMS = [
 ];
 
 export const TENANT_PAGE_REGISTRY = Object.freeze({
+  [SESSION_CENTER_MENU_KEY]: {
+    title: '会话中心',
+    subTitle: '会话管理 / 会话中心',
+    permission_code: resolveTenantMenuPermissionCode(SESSION_CENTER_MENU_KEY),
+    breadcrumbItems: [
+      { key: SESSION_MANAGEMENT_MENU_KEY, title: '会话管理' },
+      { key: SESSION_CENTER_MENU_KEY, title: '会话中心' }
+    ],
+    Component: TenantSessionCenterPage
+  },
   [CUSTOMER_PROFILE_MENU_KEY]: {
     title: '客户资料',
     subTitle: '客户管理 / 客户资料',

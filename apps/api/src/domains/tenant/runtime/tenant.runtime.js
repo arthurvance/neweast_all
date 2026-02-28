@@ -22,6 +22,12 @@ const {
 const {
   createTenantCustomerService
 } = require('../customer/profile/service');
+const {
+  createTenantSessionHandlers
+} = require('../session/center/session.routes');
+const {
+  createTenantSessionService
+} = require('../session/center/service');
 
 const createTenantRuntime = ({
   authService,
@@ -47,16 +53,23 @@ const createTenantRuntime = ({
     || createTenantCustomerService({
       authService
     });
+  const tenantSessionService =
+    options.tenantSessionService
+    || createTenantSessionService({
+      authService
+    });
 
   return {
     tenantUserService,
     tenantRoleService,
     tenantAccountService,
     tenantCustomerService,
+    tenantSessionService,
     tenantUser: createTenantUserHandlers(tenantUserService),
     tenantRole: createTenantRoleHandlers(tenantRoleService),
     tenantAccount: createTenantAccountHandlers(tenantAccountService),
-    tenantCustomer: createTenantCustomerHandlers(tenantCustomerService)
+    tenantCustomer: createTenantCustomerHandlers(tenantCustomerService),
+    tenantSession: createTenantSessionHandlers(tenantSessionService)
   };
 };
 

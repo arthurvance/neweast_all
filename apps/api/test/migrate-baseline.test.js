@@ -795,6 +795,68 @@ test('0029 migration backfills tenant sys_admin scoped customer view and operate
   assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
 });
 
+test('0030 migration defines tenant session management conversation/history/outbound tables', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0030_tenant_session_management.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_session_conversations/i);
+  assert.match(sql, /conversation_type VARCHAR\(16\) NOT NULL/i);
+  assert.match(sql, /UNIQUE KEY uk_tenant_session_conversations_tenant_account_type_name/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_session_history_messages/i);
+  assert.match(sql, /is_self TINYINT NULL/i);
+  assert.match(sql, /UNIQUE KEY uk_tenant_session_history_messages_source_event/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_session_outbound_messages/i);
+  assert.match(sql, /client_message_id VARCHAR\(64\) NULL/i);
+  assert.match(sql, /UNIQUE KEY uk_tenant_session_outbound_messages_client/i);
+  assert.match(sql, /enqueue_status VARCHAR\(16\) NOT NULL DEFAULT 'pending'/i);
+});
+
+test('0031 migration backfills tenant sys_admin session management permissions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0031_tenant_sys_admin_session_permissions_backfill.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
+  assert.match(sql, /tenant\.session_management\.view/i);
+  assert.match(sql, /tenant\.session_management\.operate/i);
+  assert.match(sql, /tenant\.session_scope_my\.view/i);
+  assert.match(sql, /tenant\.session_scope_assist\.view/i);
+  assert.match(sql, /tenant\.session_scope_all\.view/i);
+  assert.match(sql, /FROM platform_roles/i);
+  assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
+});
+
+test('0032 migration backfills tenant sys_admin session scope operate permissions', () => {
+  const sqlPath = resolve(
+    __dirname,
+    '..',
+    'migrations',
+    '0032_tenant_sys_admin_session_scope_operate_permissions_backfill.sql'
+  );
+  const sql = readFileSync(sqlPath, 'utf8');
+
+  assert.match(sql, /INSERT INTO tenant_role_permission_grants/i);
+  assert.match(sql, /tenant\.session_management\.view/i);
+  assert.match(sql, /tenant\.session_management\.operate/i);
+  assert.match(sql, /tenant\.session_scope_my\.view/i);
+  assert.match(sql, /tenant\.session_scope_my\.operate/i);
+  assert.match(sql, /tenant\.session_scope_assist\.view/i);
+  assert.match(sql, /tenant\.session_scope_assist\.operate/i);
+  assert.match(sql, /tenant\.session_scope_all\.view/i);
+  assert.match(sql, /tenant\.session_scope_all\.operate/i);
+  assert.match(sql, /FROM platform_roles/i);
+  assert.match(sql, /LOWER\(TRIM\(pr\.code\)\)\s*=\s*'sys_admin'/i);
+});
+
 test('0004 migration uses information_schema guards for auth_sessions context columns', () => {
   const sqlPath = resolve(
     __dirname,

@@ -33,7 +33,18 @@ const {
   TENANT_CUSTOMER_OPERATION_LOG_PATH,
   TENANT_CUSTOMER_VIEW_PERMISSION_CODE,
   TENANT_CUSTOMER_OPERATE_PERMISSION_CODE,
-  TENANT_CUSTOMER_SCOPE
+  TENANT_CUSTOMER_SCOPE,
+  TENANT_SESSION_CONVERSATION_INGEST_PATH,
+  TENANT_SESSION_HISTORY_INGEST_PATH,
+  TENANT_SESSION_CHAT_LIST_PATH,
+  TENANT_SESSION_CHAT_MESSAGES_PATH,
+  TENANT_SESSION_ACCOUNT_OPTIONS_PATH,
+  TENANT_SESSION_MESSAGE_CREATE_PATH,
+  TENANT_SESSION_OUTBOUND_PULL_PATH,
+  TENANT_SESSION_OUTBOUND_STATUS_PATH,
+  TENANT_SESSION_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE
 } = require('../domains/tenant');
 
 const TENANT_ROUTE_MANIFEST = Object.freeze([
@@ -239,6 +250,62 @@ const TENANT_ROUTE_MANIFEST = Object.freeze([
     access: 'protected',
     permission_code: TENANT_CUSTOMER_VIEW_PERMISSION_CODE,
     scope: TENANT_CUSTOMER_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_SESSION_CONVERSATION_INGEST_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_OPERATE_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_SESSION_HISTORY_INGEST_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_OPERATE_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_SESSION_CHAT_LIST_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_VIEW_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_SESSION_CHAT_MESSAGES_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_VIEW_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_SESSION_ACCOUNT_OPTIONS_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_VIEW_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_SESSION_MESSAGE_CREATE_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_OPERATE_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'GET',
+    path: TENANT_SESSION_OUTBOUND_PULL_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_OPERATE_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
+  },
+  {
+    method: 'POST',
+    path: TENANT_SESSION_OUTBOUND_STATUS_PATH,
+    access: 'protected',
+    permission_code: TENANT_SESSION_OPERATE_PERMISSION_CODE,
+    scope: TENANT_SESSION_SCOPE
   },
   {
     method: 'GET',

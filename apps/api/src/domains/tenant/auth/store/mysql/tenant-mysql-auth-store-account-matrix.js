@@ -90,6 +90,16 @@ const createTenantMysqlAuthStoreAccountMatrix = ({
     return mapped;
   };
 
+  const resolveAccountStatusFilterValues = (status) => {
+    if (status === 'enabled') {
+      return ['enabled', 'active'];
+    }
+    if (status === 'disabled') {
+      return ['disabled', 'inactive'];
+    }
+    return [status];
+  };
+
   const normalizeAssistantMembershipIds = (assistantMembershipIds = []) => {
     const deduped = new Set();
     for (const membershipId of Array.isArray(assistantMembershipIds)
@@ -342,8 +352,11 @@ const createTenantMysqlAuthStoreAccountMatrix = ({
 
     const status = normalizeAccountStatus(filters?.status);
     if (status) {
-      whereClauses.push('a.status = ?');
-      params.push(status);
+      const statusFilterValues = resolveAccountStatusFilterValues(status);
+      whereClauses.push(
+        `a.status IN (${statusFilterValues.map(() => '?').join(', ')})`
+      );
+      params.push(...statusFilterValues);
     }
 
     const createdAtStart = toMySqlTimestamp(filters?.createdAtStart);

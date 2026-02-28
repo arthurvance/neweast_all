@@ -73,7 +73,15 @@ const {
   TENANT_CUSTOMER_DETAIL_ROUTE_KEY,
   TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
   TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
-  TENANT_CUSTOMER_OPERATION_LOG_ROUTE_KEY
+  TENANT_CUSTOMER_OPERATION_LOG_ROUTE_KEY,
+  TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
+  TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
+  TENANT_SESSION_CHAT_LIST_ROUTE_KEY,
+  TENANT_SESSION_CHAT_MESSAGES_ROUTE_KEY,
+  TENANT_SESSION_ACCOUNT_OPTIONS_ROUTE_KEY,
+  TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
+  TENANT_SESSION_OUTBOUND_PULL_ROUTE_KEY,
+  TENANT_SESSION_OUTBOUND_STATUS_ROUTE_KEY
 } = require('./domains/tenant');
 const {
   listSupportedRoutePermissionCodes,
@@ -193,6 +201,10 @@ const IDEMPOTENCY_PROTECTED_ROUTE_KEYS = new Set([
   TENANT_CUSTOMER_CREATE_ROUTE_KEY,
   TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
   TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+  TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
+  TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
+  TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
+  TENANT_SESSION_OUTBOUND_STATUS_ROUTE_KEY,
   'POST /auth/platform/role-facts/replace',
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
@@ -232,6 +244,10 @@ const IDEMPOTENCY_USER_SCOPED_ROUTE_KEYS = new Set([
   TENANT_CUSTOMER_CREATE_ROUTE_KEY,
   TENANT_CUSTOMER_UPDATE_BASIC_ROUTE_KEY,
   TENANT_CUSTOMER_UPDATE_REALNAME_ROUTE_KEY,
+  TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
+  TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
+  TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
+  TENANT_SESSION_OUTBOUND_STATUS_ROUTE_KEY,
   PLATFORM_ORG_CREATE_ROUTE_KEY,
   PLATFORM_ORG_STATUS_ROUTE_KEY,
   PLATFORM_ORG_OWNER_TRANSFER_ROUTE_KEY,
@@ -291,6 +307,16 @@ const IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_BY_ROUTE = new Map([
   [TENANT_ACCOUNT_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [TENANT_ACCOUNT_UPDATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
   [TENANT_ACCOUNT_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT],
+  [
+    TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
+  [
+    TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
+    IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES_WITH_CONFLICT
+  ],
+  [TENANT_SESSION_OUTBOUND_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_CREATE_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [PLATFORM_ORG_STATUS_ROUTE_KEY, IDEMPOTENCY_NON_CACHEABLE_STATUS_CODES],
   [
@@ -2632,6 +2658,115 @@ const createRouteTable = ({
           ),
         requestId
       ),
+    [TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_SESSION_CONVERSATION_INGEST_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantIngestSessionConversation(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_SESSION_HISTORY_INGEST_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantIngestSessionHistoryMessage(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_SESSION_CHAT_LIST_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListSessionChats(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_SESSION_CHAT_MESSAGES_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListSessionChatMessages(
+            requestId,
+            headers.authorization,
+            getRouteParams(),
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_SESSION_ACCOUNT_OPTIONS_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantListSessionAccountOptions(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_SESSION_MESSAGE_CREATE_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantCreateSessionMessage(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
+    [TENANT_SESSION_OUTBOUND_PULL_ROUTE_KEY]: async () =>
+      runAuthRouteWithTrace(
+        () =>
+          handlers.tenantPullSessionOutboundMessages(
+            requestId,
+            headers.authorization,
+            getRouteQuery(),
+            getAuthorizationContext()
+          ),
+        requestId
+      ),
+    [TENANT_SESSION_OUTBOUND_STATUS_ROUTE_KEY]: async () =>
+      executeIdempotentAuthRoute({
+        routeKey: TENANT_SESSION_OUTBOUND_STATUS_ROUTE_KEY,
+        execute: () =>
+          runAuthRouteWithTrace(
+            () =>
+              handlers.tenantUpdateSessionOutboundMessageStatus(
+                requestId,
+                headers.authorization,
+                body || {},
+                getAuthorizationContext(),
+                traceparent
+              ),
+            requestId
+          )
+      }),
     [TENANT_AUDIT_EVENTS_ROUTE_KEY]: async () =>
       runAuthRouteWithTrace(
         () =>

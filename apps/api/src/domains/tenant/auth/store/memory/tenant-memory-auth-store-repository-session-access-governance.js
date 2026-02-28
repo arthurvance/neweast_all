@@ -14,7 +14,15 @@ const {
   TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
-  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
 } = require('../../../../../modules/auth/permission-catalog');
 
 const createTenantMemoryAuthStoreRepositorySessionAccessGovernance = ({
@@ -142,6 +150,14 @@ const createTenantMemoryAuthStoreRepositorySessionAccessGovernance = ({
       canOperateCustomerScopeAssist: Boolean(permissionSource?.canOperateCustomerScopeAssist),
       canViewCustomerScopeAll: Boolean(permissionSource?.canViewCustomerScopeAll),
       canOperateCustomerScopeAll: Boolean(permissionSource?.canOperateCustomerScopeAll),
+      canViewSessionManagement: Boolean(permissionSource?.canViewSessionManagement),
+      canOperateSessionManagement: Boolean(permissionSource?.canOperateSessionManagement),
+      canViewSessionScopeMy: Boolean(permissionSource?.canViewSessionScopeMy),
+      canOperateSessionScopeMy: Boolean(permissionSource?.canOperateSessionScopeMy),
+      canViewSessionScopeAssist: Boolean(permissionSource?.canViewSessionScopeAssist),
+      canOperateSessionScopeAssist: Boolean(permissionSource?.canOperateSessionScopeAssist),
+      canViewSessionScopeAll: Boolean(permissionSource?.canViewSessionScopeAll),
+      canOperateSessionScopeAll: Boolean(permissionSource?.canOperateSessionScopeAll),
       canViewRoleManagement: Boolean(permissionSource?.canViewRoleManagement),
       canOperateRoleManagement: Boolean(permissionSource?.canOperateRoleManagement)
     };
@@ -197,6 +213,49 @@ const createTenantMemoryAuthStoreRepositorySessionAccessGovernance = ({
     ) {
       permissionCodeSet.add(TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE);
     }
+    if (context.canViewSessionManagement) {
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (context.canOperateSessionManagement) {
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (context.canViewSessionScopeMy) {
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE);
+    }
+    if (context.canOperateSessionScopeMy) {
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE);
+    }
+    if (context.canViewSessionScopeAssist) {
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE);
+    }
+    if (context.canOperateSessionScopeAssist) {
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE);
+    }
+    if (context.canViewSessionScopeAll) {
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE);
+    }
+    if (context.canOperateSessionScopeAll) {
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE);
+    }
+    if (
+      context.canViewSessionScopeMy
+      || context.canViewSessionScopeAssist
+      || context.canViewSessionScopeAll
+    ) {
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
+    if (
+      context.canOperateSessionScopeMy
+      || context.canOperateSessionScopeAssist
+      || context.canOperateSessionScopeAll
+    ) {
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE);
+      permissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+    }
     if (context.canViewRoleManagement) {
       permissionCodeSet.add(TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE);
     }
@@ -247,6 +306,50 @@ const createTenantMemoryAuthStoreRepositorySessionAccessGovernance = ({
     );
     context.canOperateCustomerScopeAll = permissionCodeSet.has(
       TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE
+    );
+    context.canViewSessionManagement = permissionCodeSet.has(
+      TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE
+    );
+    context.canOperateSessionManagement = permissionCodeSet.has(
+      TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
+    );
+    context.canViewSessionScopeMy = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE
+    );
+    context.canOperateSessionScopeMy = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE
+    );
+    context.canViewSessionScopeAssist = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    );
+    context.canOperateSessionScopeAssist = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE
+    );
+    context.canViewSessionScopeAll = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE
+    ) || permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
+    );
+    context.canOperateSessionScopeAll = permissionCodeSet.has(
+      TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
     );
     Object.defineProperty(context, 'permission_code_set', {
       value: permissionCodeSet,

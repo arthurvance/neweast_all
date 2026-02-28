@@ -107,6 +107,78 @@ export const TENANT_PERMISSION_CATALOG_ITEMS = deepFreeze([
     "assignable": true
   },
   {
+    "code": "tenant.session_management.view",
+    "scope": "tenant",
+    "group_key": "session_management",
+    "action_key": "view",
+    "label_key": "permission.tenant.session_management.view",
+    "order": 130,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_management.operate",
+    "scope": "tenant",
+    "group_key": "session_management",
+    "action_key": "operate",
+    "label_key": "permission.tenant.session_management.operate",
+    "order": 140,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_scope_my.view",
+    "scope": "tenant",
+    "group_key": "session_scope_my",
+    "action_key": "view",
+    "label_key": "permission.tenant.session_scope_my.view",
+    "order": 141,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_scope_my.operate",
+    "scope": "tenant",
+    "group_key": "session_scope_my",
+    "action_key": "operate",
+    "label_key": "permission.tenant.session_scope_my.operate",
+    "order": 142,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_scope_assist.view",
+    "scope": "tenant",
+    "group_key": "session_scope_assist",
+    "action_key": "view",
+    "label_key": "permission.tenant.session_scope_assist.view",
+    "order": 143,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_scope_assist.operate",
+    "scope": "tenant",
+    "group_key": "session_scope_assist",
+    "action_key": "operate",
+    "label_key": "permission.tenant.session_scope_assist.operate",
+    "order": 144,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_scope_all.view",
+    "scope": "tenant",
+    "group_key": "session_scope_all",
+    "action_key": "view",
+    "label_key": "permission.tenant.session_scope_all.view",
+    "order": 145,
+    "assignable": true
+  },
+  {
+    "code": "tenant.session_scope_all.operate",
+    "scope": "tenant",
+    "group_key": "session_scope_all",
+    "action_key": "operate",
+    "label_key": "permission.tenant.session_scope_all.operate",
+    "order": 146,
+    "assignable": true
+  },
+  {
     "code": "tenant.customer_management.view",
     "scope": "tenant",
     "group_key": "customer_management",
@@ -255,6 +327,22 @@ export const TENANT_PERMISSION_CODE_BY_GROUP_ACTION = deepFreeze({
   "role_management": {
     "operate": "tenant.role_management.operate",
     "view": "tenant.role_management.view"
+  },
+  "session_management": {
+    "operate": "tenant.session_management.operate",
+    "view": "tenant.session_management.view"
+  },
+  "session_scope_all": {
+    "operate": "tenant.session_scope_all.operate",
+    "view": "tenant.session_scope_all.view"
+  },
+  "session_scope_assist": {
+    "operate": "tenant.session_scope_assist.operate",
+    "view": "tenant.session_scope_assist.view"
+  },
+  "session_scope_my": {
+    "operate": "tenant.session_scope_my.operate",
+    "view": "tenant.session_scope_my.view"
   },
   "user_management": {
     "operate": "tenant.user_management.operate",

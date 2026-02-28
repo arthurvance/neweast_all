@@ -2,7 +2,8 @@ const createTenantRouteHandlers = ({
   tenantUser,
   tenantRole,
   tenantAccount,
-  tenantCustomer
+  tenantCustomer,
+  tenantSession
 }) => ({
   tenantListUsers: async (
     requestId,
@@ -370,6 +371,120 @@ const createTenantRouteHandlers = ({
       authorization,
       params: params || {},
       query: query || {},
+      authorizationContext
+    }),
+
+  tenantIngestSessionConversation: async (
+    requestId,
+    authorization,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantSession.ingestConversation({
+      requestId,
+      authorization,
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantIngestSessionHistoryMessage: async (
+    requestId,
+    authorization,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantSession.ingestHistoryMessage({
+      requestId,
+      authorization,
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantListSessionChats: async (
+    requestId,
+    authorization,
+    query,
+    authorizationContext
+  ) =>
+    tenantSession.listChats({
+      requestId,
+      authorization,
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantListSessionChatMessages: async (
+    requestId,
+    authorization,
+    params,
+    query,
+    authorizationContext
+  ) =>
+    tenantSession.listChatMessages({
+      requestId,
+      authorization,
+      params: params || {},
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantListSessionAccountOptions: async (
+    requestId,
+    authorization,
+    query,
+    authorizationContext
+  ) =>
+    tenantSession.listAccountOptions({
+      requestId,
+      authorization,
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantCreateSessionMessage: async (
+    requestId,
+    authorization,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantSession.createOutboundMessage({
+      requestId,
+      authorization,
+      body: body || {},
+      traceparent,
+      authorizationContext
+    }),
+
+  tenantPullSessionOutboundMessages: async (
+    requestId,
+    authorization,
+    query,
+    authorizationContext
+  ) =>
+    tenantSession.pullOutboundMessages({
+      requestId,
+      authorization,
+      query: query || {},
+      authorizationContext
+    }),
+
+  tenantUpdateSessionOutboundMessageStatus: async (
+    requestId,
+    authorization,
+    body,
+    authorizationContext,
+    traceparent = null
+  ) =>
+    tenantSession.updateOutboundMessageStatus({
+      requestId,
+      authorization,
+      body: body || {},
+      traceparent,
       authorizationContext
     })
 });

@@ -260,6 +260,61 @@ test('tenant customer governance routes expose explicit permission declarations'
   }
 });
 
+test('tenant session management routes expose explicit permission declarations', () => {
+  const ingestConversation = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/sessions/conversations/ingest'
+  });
+  const ingestHistory = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/sessions/history/ingest'
+  });
+  const listChats = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/sessions/chats'
+  });
+  const listMessages = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/sessions/chats/demo-conversation/messages'
+  });
+  const listAccountOptions = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/sessions/account-options'
+  });
+  const createMessage = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/sessions/messages'
+  });
+  const pullOutbound = findRouteDefinition({
+    method: 'GET',
+    path: '/tenant/sessions/outbound-messages/pull'
+  });
+  const updateOutboundStatus = findRouteDefinition({
+    method: 'POST',
+    path: '/tenant/sessions/outbound-messages/status'
+  });
+
+  for (const route of [listChats, listMessages, listAccountOptions]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'tenant');
+    assert.equal(route.permission_code, 'tenant.session_management.view');
+  }
+
+  for (const route of [
+    ingestConversation,
+    ingestHistory,
+    createMessage,
+    pullOutbound,
+    updateOutboundStatus
+  ]) {
+    assert.ok(route);
+    assert.equal(route.access, 'protected');
+    assert.equal(route.scope, 'tenant');
+    assert.equal(route.permission_code, 'tenant.session_management.operate');
+  }
+});
+
 test('tenant audit query route exposes explicit permission declaration', () => {
   const tenantAuditEvents = findRouteDefinition({
     method: 'GET',

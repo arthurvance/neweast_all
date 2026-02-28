@@ -121,3 +121,62 @@ test('createTenantAccount persists MySQL datetime strings instead of ISO strings
   assert.equal(operationLogInsertParams[7], '2026-02-27 04:29:45.068');
 });
 
+test('listTenantAccountsByTenantId status filter keeps legacy active/inactive compatibility', async () => {
+  const capturedQueries = [];
+  const store = createTenantMysqlAuthStoreAccountMatrix({
+    CONTROL_CHAR_PATTERN: /[\u0000-\u001F\u007F]/,
+    dbClient: {
+      query: async (sql, params = []) => {
+        capturedQueries.push({
+          sql: String(sql),
+          params: [...params]
+        });
+        return [];
+      },
+      inTransaction: async (runner) =>
+        runner({
+          query: async () => ({ affectedRows: 1 })
+        })
+    },
+    executeWithDeadlockRetry: ({ execute }) => execute(),
+    escapeSqlLikePattern: (value) =>
+      String(value || '').replace(/([%_\\])/g, '\\$1'),
+    formatAuditDateTimeForMySql,
+    isDuplicateEntryError: () => false,
+    normalizeStoreIsoTimestamp,
+    randomUUID: () => '87654321-4321-4321-4321-ba0987654321'
+  });
+
+  await store.listTenantAccountsByTenantId({
+    tenantId: 'tenant_1',
+    filters: {
+      status: 'enabled'
+    }
+  });
+  await store.listTenantAccountsByTenantId({
+    tenantId: 'tenant_1',
+    filters: {
+      status: 'disabled'
+    }
+  });
+
+  const enabledQuery = capturedQueries.find((entry) =>
+    entry.sql.includes('FROM tenant_accounts a') && entry.params.includes('enabled')
+  );
+  const disabledQuery = capturedQueries.find((entry) =>
+    entry.sql.includes('FROM tenant_accounts a') && entry.params.includes('disabled')
+  );
+
+  assert.ok(enabledQuery, 'enabled status query should be issued');
+  assert.ok(disabledQuery, 'disabled status query should be issued');
+  assert.match(enabledQuery.sql, /a\.status IN \(\?, \?\)/);
+  assert.match(disabledQuery.sql, /a\.status IN \(\?, \?\)/);
+  assert.deepEqual(
+    enabledQuery.params.slice(0, 3),
+    ['tenant_1', 'enabled', 'active']
+  );
+  assert.deepEqual(
+    disabledQuery.params.slice(0, 3),
+    ['tenant_1', 'disabled', 'inactive']
+  );
+});
