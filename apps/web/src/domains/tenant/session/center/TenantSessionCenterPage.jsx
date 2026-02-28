@@ -55,6 +55,7 @@ const SESSION_MESSAGE_DEFAULT_LIMIT = 50;
 const SESSION_MESSAGE_COMPOSER_HEIGHT = 172;
 const SESSION_LIST_POLL_INTERVAL_MS = 5000;
 const SESSION_DETAIL_POLL_INTERVAL_MS = 3000;
+const SESSION_MESSAGE_AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 
 const readPermissionFlag = (permissionContext, snakeCase, camelCase) =>
   Boolean(permissionContext?.[snakeCase] || permissionContext?.[camelCase]);
@@ -217,6 +218,44 @@ const compareMessageByTimelineAsc = (left = {}, right = {}) => {
     return byCreatedAt;
   }
   return String(left?.message_id || '').localeCompare(String(right?.message_id || ''));
+};
+
+const mergeMessageByTimelineAsc = (baseMessages = [], incomingMessages = []) => {
+  const resolveMessageMergeKey = (messageRecord = {}, prefix = 'message', index = 0) => {
+    const messageId = String(messageRecord?.message_id || '').trim();
+    if (messageId) {
+      return `id:${messageId}`;
+    }
+    return [
+      prefix,
+      toNullableText(messageRecord?.message_time),
+      toNullableText(messageRecord?.created_at || messageRecord?.ingested_at),
+      toNullableText(messageRecord?.sender_name),
+      toNullableText(messageRecord?.content_preview),
+      String(index)
+    ].join(':');
+  };
+  const mergedMessageMap = new Map();
+  for (const [index, messageRecord] of (Array.isArray(baseMessages) ? baseMessages : []).entries()) {
+    mergedMessageMap.set(resolveMessageMergeKey(messageRecord, 'base', index), messageRecord);
+  }
+  for (const [index, messageRecord] of (Array.isArray(incomingMessages) ? incomingMessages : []).entries()) {
+    mergedMessageMap.set(resolveMessageMergeKey(messageRecord, 'incoming', index), messageRecord);
+  }
+  return [...mergedMessageMap.values()].sort((left, right) =>
+    compareMessageByTimelineAsc(left, right)
+  );
+};
+
+const isMessageListNearBottom = (scrollContainer) => {
+  if (!scrollContainer) {
+    return true;
+  }
+  const distanceToBottom =
+    Number(scrollContainer.scrollHeight || 0)
+    - Number(scrollContainer.scrollTop || 0)
+    - Number(scrollContainer.clientHeight || 0);
+  return distanceToBottom <= SESSION_MESSAGE_AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
 };
 
 const padTimeUnit = (value) => String(Number(value || 0)).padStart(2, '0');
@@ -393,6 +432,26 @@ export default function TenantSessionCenterPage({
   const selectedConversationRef = useRef(null);
   const conversationMessageListRef = useRef(null);
   const sessionModuleRef = useRef(null);
+
+  const scrollConversationMessagesToBottom = useCallback(() => {
+    if (typeof window === 'undefined') {
+      const container = conversationMessageListRef.current;
+      if (!container) {
+        return;
+      }
+      container.scrollTop = Math.max(0, container.scrollHeight || 0);
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const container = conversationMessageListRef.current;
+        if (!container) {
+          return;
+        }
+        container.scrollTop = Math.max(0, container.scrollHeight || 0);
+      });
+    });
+  }, []);
 
   useEffect(() => {
     selectedConversationRef.current = selectedConversation || null;
@@ -636,6 +695,13 @@ export default function TenantSessionCenterPage({
       return;
     }
 
+    const shouldAutoScrollToBottom =
+      !appendOlder
+      && (
+        !silent
+        || isMessageListNearBottom(conversationMessageListRef.current)
+      );
+
     if (appendOlder) {
       if (!cursor || conversationMessagesLoading || conversationMessagesLoadingMore) {
         return;
@@ -678,22 +744,20 @@ export default function TenantSessionCenterPage({
       }
       if (appendOlder) {
         setConversationMessages((previousMessages) => {
-          const mergedMessageMap = new Map();
-          for (const messageRecord of normalizedMessages) {
-            mergedMessageMap.set(messageRecord.message_id, messageRecord);
-          }
-          for (const messageRecord of previousMessages) {
-            mergedMessageMap.set(messageRecord.message_id, messageRecord);
-          }
-          return [...mergedMessageMap.values()].sort((left, right) =>
-            compareMessageByTimelineAsc(left, right)
-          );
+          return mergeMessageByTimelineAsc(previousMessages, normalizedMessages);
         });
+      } else if (silent) {
+        setConversationMessages((previousMessages) =>
+          mergeMessageByTimelineAsc(previousMessages, normalizedMessages)
+        );
       } else {
         setConversationMessages(normalizedMessages);
       }
       setConversationMessagesNextCursor(nextCursor);
       setConversationMessagesHasMore(Boolean(nextCursor));
+      if (shouldAutoScrollToBottom) {
+        scrollConversationMessagesToBottom();
+      }
     } catch (error) {
       const latestRequest = latestMessageRequestRef.current;
       if (
@@ -731,7 +795,8 @@ export default function TenantSessionCenterPage({
     conversationMessagesLoading,
     conversationMessagesLoadingMore,
     invalidateMessageRequest,
-    notifyError
+    notifyError,
+    scrollConversationMessagesToBottom
   ]);
 
   const loadConversationList = useCallback(async ({
