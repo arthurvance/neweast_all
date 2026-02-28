@@ -68,20 +68,27 @@ const isTenantSysAdminRole = (roleRecord) => {
   );
 };
 
+const SESSION_TREE_ROOT_KEY = 'session';
 const CUSTOMER_TREE_ROOT_KEY = 'customer';
 const ACCOUNT_MATRIX_TREE_ROOT_KEY = 'account';
 const SETTINGS_TREE_ROOT_KEY = 'settings';
 const TENANT_PERMISSION_MODULE_LABEL_MAP = Object.freeze({
+  [SESSION_TREE_ROOT_KEY]: '会话管理',
   [CUSTOMER_TREE_ROOT_KEY]: '客户管理',
   [ACCOUNT_MATRIX_TREE_ROOT_KEY]: '账号矩阵',
   [SETTINGS_TREE_ROOT_KEY]: '设置'
 });
 const TENANT_PERMISSION_MODULE_ORDER_MAP = Object.freeze({
-  [CUSTOMER_TREE_ROOT_KEY]: 0,
-  [ACCOUNT_MATRIX_TREE_ROOT_KEY]: 1,
-  [SETTINGS_TREE_ROOT_KEY]: 2
+  [SESSION_TREE_ROOT_KEY]: 0,
+  [CUSTOMER_TREE_ROOT_KEY]: 1,
+  [ACCOUNT_MATRIX_TREE_ROOT_KEY]: 2,
+  [SETTINGS_TREE_ROOT_KEY]: 3
 });
 const TENANT_PERMISSION_GROUP_MODULE_KEY_MAP = Object.freeze({
+  session_management: SESSION_TREE_ROOT_KEY,
+  session_scope_my: SESSION_TREE_ROOT_KEY,
+  session_scope_assist: SESSION_TREE_ROOT_KEY,
+  session_scope_all: SESSION_TREE_ROOT_KEY,
   customer_management: CUSTOMER_TREE_ROOT_KEY,
   customer_scope_my: CUSTOMER_TREE_ROOT_KEY,
   customer_scope_assist: CUSTOMER_TREE_ROOT_KEY,
@@ -91,6 +98,10 @@ const TENANT_PERMISSION_GROUP_MODULE_KEY_MAP = Object.freeze({
   role_management: SETTINGS_TREE_ROOT_KEY
 });
 const TENANT_PERMISSION_GROUP_LABEL_MAP = Object.freeze({
+  session_management: '会话中心',
+  session_scope_my: '我的会话',
+  session_scope_assist: '协管会话',
+  session_scope_all: '全部会话',
   customer_management: '客户资料',
   customer_scope_my: '我的客户',
   customer_scope_assist: '协管客户',
@@ -104,6 +115,14 @@ const TENANT_PERMISSION_ACTION_LABEL_MAP = Object.freeze({
   operate: '操作'
 });
 const TENANT_PERMISSION_LABEL_KEY_MAP = Object.freeze({
+  'permission.tenant.session_management.view': '查看会话中心',
+  'permission.tenant.session_management.operate': '操作会话中心',
+  'permission.tenant.session_scope_my.view': '查看我的会话',
+  'permission.tenant.session_scope_my.operate': '操作我的会话',
+  'permission.tenant.session_scope_assist.view': '查看协管会话',
+  'permission.tenant.session_scope_assist.operate': '操作协管会话',
+  'permission.tenant.session_scope_all.view': '查看全部会话',
+  'permission.tenant.session_scope_all.operate': '操作全部会话',
   'permission.tenant.user_management.view': '查看用户管理',
   'permission.tenant.user_management.operate': '操作用户管理',
   'permission.tenant.role_management.view': '查看角色管理',
@@ -119,16 +138,49 @@ const TENANT_PERMISSION_LABEL_KEY_MAP = Object.freeze({
   'permission.tenant.customer_scope_all.view': '查看全部客户',
   'permission.tenant.customer_scope_all.operate': '操作全部客户'
 });
-const HIDDEN_TENANT_PERMISSION_GROUP_KEY_SET = new Set(['customer_management']);
+const HIDDEN_TENANT_PERMISSION_GROUP_KEY_SET = new Set([
+  'customer_management',
+  'session_management'
+]);
 const CUSTOMER_SCOPE_GROUP_KEY_SET = new Set([
   'customer_scope_my',
   'customer_scope_assist',
   'customer_scope_all'
 ]);
+const SESSION_SCOPE_GROUP_KEY_SET = new Set([
+  'session_scope_my',
+  'session_scope_assist',
+  'session_scope_all'
+]);
 const TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP = new Map([
   ['tenant.customer_scope_my.operate', 'tenant.customer_scope_my.view'],
   ['tenant.customer_scope_assist.operate', 'tenant.customer_scope_assist.view'],
   ['tenant.customer_scope_all.operate', 'tenant.customer_scope_all.view']
+]);
+const TENANT_SESSION_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP = new Map([
+  ['tenant.session_scope_my.operate', 'tenant.session_scope_my.view'],
+  ['tenant.session_scope_assist.operate', 'tenant.session_scope_assist.view'],
+  ['tenant.session_scope_all.operate', 'tenant.session_scope_all.view']
+]);
+const TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE = 'tenant.session_management.view';
+const TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE = 'tenant.session_management.operate';
+const TENANT_SESSION_SCOPE_VIEW_PERMISSION_CODE_SET = new Set([
+  'tenant.session_scope_my.view',
+  'tenant.session_scope_assist.view',
+  'tenant.session_scope_all.view'
+]);
+const TENANT_SESSION_SCOPE_OPERATE_PERMISSION_CODE_SET = new Set([
+  'tenant.session_scope_my.operate',
+  'tenant.session_scope_assist.operate',
+  'tenant.session_scope_all.operate'
+]);
+const HIDDEN_TENANT_PERMISSION_CODE_SET = new Set([
+  TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE
+]);
+const TENANT_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP = new Map([
+  ...TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP.entries(),
+  ...TENANT_SESSION_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP.entries()
 ]);
 
 const toPermissionCodeParts = (permissionCode) => {
@@ -206,11 +258,19 @@ const normalizeTenantPermissionCatalogItems = ({
 };
 
 const toTenantPermissionActionLabel = (permissionItem = {}) => {
+  const groupKey = String(permissionItem.group_key || '').trim().toLowerCase();
+  const actionKey = String(permissionItem.action_key || '').trim().toLowerCase();
+  if (
+    SESSION_SCOPE_GROUP_KEY_SET.has(groupKey)
+    && actionKey
+    && TENANT_PERMISSION_ACTION_LABEL_MAP[actionKey]
+  ) {
+    return TENANT_PERMISSION_ACTION_LABEL_MAP[actionKey];
+  }
   const labelKey = String(permissionItem.label_key || '').trim();
   if (labelKey && TENANT_PERMISSION_LABEL_KEY_MAP[labelKey]) {
     return TENANT_PERMISSION_LABEL_KEY_MAP[labelKey];
   }
-  const actionKey = String(permissionItem.action_key || '').trim().toLowerCase();
   if (actionKey && TENANT_PERMISSION_ACTION_LABEL_MAP[actionKey]) {
     return TENANT_PERMISSION_ACTION_LABEL_MAP[actionKey];
   }
@@ -265,6 +325,9 @@ const toPermissionTreeData = (availablePermissions = []) => {
   for (const permissionItem of Array.isArray(availablePermissions) ? availablePermissions : []) {
     const permissionCode = String(permissionItem?.code || '').trim().toLowerCase();
     if (!permissionCode.startsWith('tenant.')) {
+      continue;
+    }
+    if (HIDDEN_TENANT_PERMISSION_CODE_SET.has(permissionCode)) {
       continue;
     }
     const parsed = toPermissionCodeParts(permissionCode);
@@ -362,6 +425,32 @@ const toPermissionTreeData = (availablePermissions = []) => {
               children: customerScopeGroups.map((groupNode) => toTreeGroupNode(groupNode))
             },
             ...nonScopeGroups
+          ];
+        }
+      }
+      if (moduleNode.key === SESSION_TREE_ROOT_KEY) {
+        const sessionScopeGroups = sortedGroupNodes.filter((groupNode) =>
+          SESSION_SCOPE_GROUP_KEY_SET.has(String(groupNode?.groupKey || '').trim().toLowerCase())
+        );
+        if (sessionScopeGroups.length > 0) {
+          const sessionScopeGroupKeySet = new Set(
+            sessionScopeGroups.map((groupNode) => String(groupNode.key || '').trim())
+          );
+          const nonSessionGroups = sortedGroupNodes
+            .filter((groupNode) => !sessionScopeGroupKeySet.has(String(groupNode.key || '').trim()))
+            .map((groupNode) => toTreeGroupNode(groupNode));
+          const sessionCenterOrder = sessionScopeGroups
+            .map((groupNode) => Number(groupNode?.order || 0))
+            .reduce((minOrder, currentOrder) => Math.min(minOrder, currentOrder), Number.MAX_SAFE_INTEGER);
+          resolvedGroupNodes = [
+            {
+              key: `${SESSION_TREE_ROOT_KEY}/session_management`,
+              title: toTenantPermissionGroupLabel('session_management'),
+              selectable: false,
+              order: Number.isFinite(sessionCenterOrder) ? sessionCenterOrder : 0,
+              children: sessionScopeGroups.map((groupNode) => toTreeGroupNode(groupNode))
+            },
+            ...nonSessionGroups
           ];
         }
       }
@@ -715,7 +804,7 @@ export default function TenantRoleManagementPage({ accessToken }) {
   const handleSubmitRoleEdit = useCallback(async () => {
     try {
       const values = await roleEditForm.validateFields();
-      const normalizedPermissionCodes = [...new Set(
+      let normalizedPermissionCodes = [...new Set(
         (Array.isArray(roleEditPermissionCodesChecked)
           ? roleEditPermissionCodesChecked
           : [])
@@ -724,15 +813,31 @@ export default function TenantRoleManagementPage({ accessToken }) {
       )];
       const normalizedPermissionCodeSet = new Set(normalizedPermissionCodes);
       for (const [operatePermissionCode, viewPermissionCode] of
-        TENANT_CUSTOMER_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP.entries()) {
+        TENANT_SCOPE_OPERATE_TO_VIEW_PERMISSION_MAP.entries()) {
         if (
           normalizedPermissionCodeSet.has(operatePermissionCode)
           && !normalizedPermissionCodeSet.has(viewPermissionCode)
         ) {
-          messageApi.error('客户范围操作权限必须搭配同范围查看权限');
+          messageApi.error('范围操作权限必须搭配同范围查看权限');
           return;
         }
       }
+      const hasAnySessionScopeViewPermission = [...normalizedPermissionCodeSet].some(
+        (permissionCode) => TENANT_SESSION_SCOPE_VIEW_PERMISSION_CODE_SET.has(permissionCode)
+      );
+      const hasAnySessionScopeOperatePermission = [...normalizedPermissionCodeSet].some(
+        (permissionCode) => TENANT_SESSION_SCOPE_OPERATE_PERMISSION_CODE_SET.has(permissionCode)
+      );
+      if (hasAnySessionScopeViewPermission || hasAnySessionScopeOperatePermission) {
+        normalizedPermissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+      }
+      if (hasAnySessionScopeOperatePermission) {
+        normalizedPermissionCodeSet.add(TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE);
+      }
+      if (normalizedPermissionCodeSet.has(TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE)) {
+        normalizedPermissionCodeSet.add(TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE);
+      }
+      normalizedPermissionCodes = [...normalizedPermissionCodeSet];
       setRoleEditSubmitting(true);
       if (roleEditMode === 'create') {
         const payload = await api.createRole({

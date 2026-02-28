@@ -13,7 +13,8 @@ const createTenantDomainRuntime = ({ authService, options = {} } = {}) => {
       tenantUser: runtime.tenantUser,
       tenantRole: runtime.tenantRole,
       tenantAccount: runtime.tenantAccount,
-      tenantCustomer: runtime.tenantCustomer
+      tenantCustomer: runtime.tenantCustomer,
+      tenantSession: runtime.tenantSession
     })
   };
 };

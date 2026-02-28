@@ -598,7 +598,7 @@ const createApiApp = async (config, options = {}) => {
   const dispatchRegisteredRoute = async (req, res, next) => {
     try {
       const route = await dispatchApiRoute({
-        pathname: req.path,
+        pathname: req.originalUrl || req.url || req.path,
         method: req.method,
         headers: req.headers,
         body: req.body || {},

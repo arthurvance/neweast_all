@@ -36,6 +36,46 @@ export const readTenantPermissionState = (sessionState) => {
         'can_operate_account_management',
         'canOperateAccountManagement'
       ),
+      can_view_session_management: readPermissionFlag(
+        permission,
+        'can_view_session_management',
+        'canViewSessionManagement'
+      ),
+      can_operate_session_management: readPermissionFlag(
+        permission,
+        'can_operate_session_management',
+        'canOperateSessionManagement'
+      ),
+      can_view_session_scope_my: readPermissionFlag(
+        permission,
+        'can_view_session_scope_my',
+        'canViewSessionScopeMy'
+      ),
+      can_operate_session_scope_my: readPermissionFlag(
+        permission,
+        'can_operate_session_scope_my',
+        'canOperateSessionScopeMy'
+      ),
+      can_view_session_scope_assist: readPermissionFlag(
+        permission,
+        'can_view_session_scope_assist',
+        'canViewSessionScopeAssist'
+      ),
+      can_operate_session_scope_assist: readPermissionFlag(
+        permission,
+        'can_operate_session_scope_assist',
+        'canOperateSessionScopeAssist'
+      ),
+      can_view_session_scope_all: readPermissionFlag(
+        permission,
+        'can_view_session_scope_all',
+        'canViewSessionScopeAll'
+      ),
+      can_operate_session_scope_all: readPermissionFlag(
+        permission,
+        'can_operate_session_scope_all',
+        'canOperateSessionScopeAll'
+      ),
       can_view_customer_management: readPermissionFlag(
         permission,
         'can_view_customer_management',
@@ -88,6 +128,14 @@ export const readTenantPermissionState = (sessionState) => {
       can_operate_role_management: false,
       can_view_account_management: false,
       can_operate_account_management: false,
+      can_view_session_management: false,
+      can_operate_session_management: false,
+      can_view_session_scope_my: false,
+      can_operate_session_scope_my: false,
+      can_view_session_scope_assist: false,
+      can_operate_session_scope_assist: false,
+      can_view_session_scope_all: false,
+      can_operate_session_scope_all: false,
       can_view_customer_management: false,
       can_operate_customer_management: false,
       can_view_customer_scope_my: false,
@@ -107,6 +155,14 @@ export const readTenantPermissionState = (sessionState) => {
     can_operate_role_management: false,
     can_view_account_management: false,
     can_operate_account_management: false,
+    can_view_session_management: false,
+    can_operate_session_management: false,
+    can_view_session_scope_my: false,
+    can_operate_session_scope_my: false,
+    can_view_session_scope_assist: false,
+    can_operate_session_scope_assist: false,
+    can_view_session_scope_all: false,
+    can_operate_session_scope_all: false,
     can_view_customer_management: false,
     can_operate_customer_management: false,
     can_view_customer_scope_my: false,
@@ -134,6 +190,13 @@ export const selectPermissionUiState = (permissionState) => {
     permissionState?.can_view_account_management
     && permissionState?.can_operate_account_management
   );
+  const canViewSessionManagement = Boolean(
+    permissionState?.can_view_session_management
+  );
+  const canOperateSessionManagement = Boolean(
+    canViewSessionManagement
+    && permissionState?.can_operate_session_management
+  );
   const hasAnyCustomerScope = Boolean(
     permissionState?.can_view_customer_scope_my
     || permissionState?.can_view_customer_scope_assist
@@ -155,12 +218,14 @@ export const selectPermissionUiState = (permissionState) => {
       user_management: canAccessUserManagement,
       role_management: canAccessRoleManagement,
       account_management: canViewAccountManagement,
+      session_management: canViewSessionManagement,
       customer_management: canViewCustomerManagement
     },
     action: {
       user_management: canAccessUserManagement,
       role_management: canAccessRoleManagement,
       account_management: canOperateAccountManagement,
+      session_management: canOperateSessionManagement,
       customer_management: canOperateCustomerManagement
     }
   };

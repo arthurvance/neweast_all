@@ -108,7 +108,8 @@ const createRouteHandlers = (config, options = {}) => {
       auditService,
       tenantUserService,
       tenantRoleService,
-      tenantAccountService
+      tenantAccountService,
+      tenantSessionService
     }
   } = createRouteRuntime({
     options,
@@ -183,7 +184,8 @@ const createRouteHandlers = (config, options = {}) => {
     auditService,
     tenantUserService,
     tenantRoleService,
-    tenantAccountService
+    tenantAccountService,
+    tenantSessionService
   };
 
   return handlers;

@@ -28,6 +28,8 @@ export const createTenantManagementApi = ({ accessToken }) => {
     encodeURIComponent(String(accountId || '').trim());
   const withCustomerId = (customerId) =>
     encodeURIComponent(String(customerId || '').trim());
+  const withConversationId = (conversationId) =>
+    encodeURIComponent(String(conversationId || '').trim());
   const normalizeQueryIdList = (source = []) =>
     [...new Set(
       (Array.isArray(source) ? source : [])
@@ -172,6 +174,103 @@ export const createTenantManagementApi = ({ accessToken }) => {
           status: String(status || '').trim().toLowerCase()
         },
         idempotencyKey: buildIdempotencyKey('ui-tenant-accounts-status')
+      }),
+
+    listSessionAccounts: async (query = {}) =>
+      withToken({
+        path: `/tenant/sessions/account-options${toSearch({
+          scope: String(query.scope || '').trim().toLowerCase()
+        })}`,
+        method: 'GET'
+      }),
+
+    listSessions: async (query = {}) =>
+      withToken({
+        path: `/tenant/sessions/chats${toSearch({
+          page: query.page,
+          page_size: query.pageSize,
+          scope: query.scope,
+          account_wechat_id:
+            query.account_wechat_id
+            ?? query.accountWechatId
+            ?? query.account_id
+            ?? query.accountId,
+          keyword: query.keyword
+        })}`,
+        method: 'GET'
+      }),
+
+    getSessionMessages: async ({
+      conversationId,
+      sessionId,
+      account_wechat_id,
+      accountWechatId,
+      account_id,
+      accountId,
+      scope = 'my',
+      cursor = undefined,
+      limit = 50
+    } = {}) =>
+      withToken({
+        path: `/tenant/sessions/chats/${withConversationId(
+          conversationId ?? sessionId
+        )}/messages${toSearch({
+          scope,
+          account_wechat_id:
+            account_wechat_id
+            ?? accountWechatId
+            ?? account_id
+            ?? accountId,
+          cursor,
+          limit
+        })}`,
+        method: 'GET'
+      }),
+
+    sendSessionMessage: async ({ payload = {} } = {}) =>
+      withToken({
+        path: '/tenant/sessions/messages',
+        method: 'POST',
+        payload: {
+          account_wechat_id: String((
+            payload.account_wechat_id
+            ?? payload.accountWechatId
+            ?? payload.account_id
+            ?? payload.accountId
+            ?? ''
+          )).trim(),
+          account_nickname: String((
+            payload.account_nickname
+            ?? payload.accountNickname
+            ?? ''
+          )).trim(),
+          conversation_id: String((
+            payload.conversation_id
+            ?? payload.conversationId
+            ?? payload.session_id
+            ?? payload.sessionId
+            ?? ''
+          )).trim(),
+          conversation_name: String((
+            payload.conversation_name
+            ?? payload.conversationName
+            ?? ''
+          )).trim(),
+          message_type: String(
+            payload.message_type
+            ?? payload.messageType
+            ?? 'text'
+          ).trim().toLowerCase(),
+          message_payload_json: payload.message_payload_json
+            ?? payload.messagePayloadJson
+            ?? { text: String(payload.content || '').trim() },
+          client_message_id: String((
+            payload.client_message_id
+            ?? payload.clientMessageId
+            ?? ''
+          )).trim() || undefined
+        },
+        idempotencyKey: buildIdempotencyKey('ui-tenant-sessions-send-message')
       }),
 
     listCustomers: async (query = {}) =>

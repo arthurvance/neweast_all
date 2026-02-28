@@ -16,10 +16,21 @@ const {
   TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
   PLATFORM_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
   toPlatformPermissionSnapshotFromCodes,
@@ -116,6 +127,15 @@ const createInMemoryAuthStore = ({
   const tenantCustomerWechatIndexByTenantId = new Map();
   const tenantCustomerProfileByCustomerId = new Map();
   const tenantCustomerOperationLogsByCustomerId = new Map();
+  const tenantSessionConversationsByConversationId = new Map();
+  const tenantSessionConversationIdsByTenantWechatKey = new Map();
+  const tenantSessionConversationUniqueIndex = new Map();
+  const tenantSessionHistoryMessagesByMessageId = new Map();
+  const tenantSessionHistoryMessageIdsByConversationId = new Map();
+  const tenantSessionHistoryMessageSourceEventIndex = new Map();
+  const tenantSessionOutboundMessagesByOutboundMessageId = new Map();
+  const tenantSessionOutboundMessageIdsByTenantId = new Map();
+  const tenantSessionOutboundMessageClientIndex = new Map();
   const systemSensitiveConfigsByKey = new Map();
   const orgsById = new Map();
   const tenantUsershipHistoryByPair = new Map();
@@ -223,10 +243,21 @@ const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
   TENANT_CUSTOMER_MANAGEMENT_VIEW_PERMISSION_CODE,
   TENANT_CUSTOMER_MANAGEMENT_OPERATE_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_MY_OPERATE_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
   TENANT_CUSTOMER_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_CUSTOMER_SCOPE_ALL_OPERATE_PERMISSION_CODE,
   TENANT_ROLE_MANAGEMENT_VIEW_PERMISSION_CODE,
-  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE
+  TENANT_ROLE_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_MANAGEMENT_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_MY_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ASSIST_OPERATE_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_VIEW_PERMISSION_CODE,
+  TENANT_SESSION_SCOPE_ALL_OPERATE_PERMISSION_CODE
 ]);
   const MAX_PLATFORM_ROLE_CODE_LENGTH = 64;
   const MAX_PLATFORM_ROLE_NAME_LENGTH = 128;
@@ -435,6 +466,15 @@ const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
     tenantCustomerWechatIndexByTenantId,
     tenantCustomerProfileByCustomerId,
     tenantCustomerOperationLogsByCustomerId,
+    tenantSessionConversationsByConversationId,
+    tenantSessionConversationIdsByTenantWechatKey,
+    tenantSessionConversationUniqueIndex,
+    tenantSessionHistoryMessagesByMessageId,
+    tenantSessionHistoryMessageIdsByConversationId,
+    tenantSessionHistoryMessageSourceEventIndex,
+    tenantSessionOutboundMessagesByOutboundMessageId,
+    tenantSessionOutboundMessageIdsByTenantId,
+    tenantSessionOutboundMessageClientIndex,
     tenantUsershipHistoryByPair,
     tenantUsershipRolesByMembershipId,
     tenantsByUserId,
@@ -896,6 +936,15 @@ const OWNER_TRANSFER_TAKEOVER_REQUIRED_PERMISSION_CODES = Object.freeze([
     tenantCustomerWechatIndexByTenantId,
     tenantCustomerProfileByCustomerId,
     tenantCustomerOperationLogsByCustomerId,
+    tenantSessionConversationsByConversationId,
+    tenantSessionConversationIdsByTenantWechatKey,
+    tenantSessionConversationUniqueIndex,
+    tenantSessionHistoryMessagesByMessageId,
+    tenantSessionHistoryMessageIdsByConversationId,
+    tenantSessionHistoryMessageSourceEventIndex,
+    tenantSessionOutboundMessagesByOutboundMessageId,
+    tenantSessionOutboundMessageIdsByTenantId,
+    tenantSessionOutboundMessageClientIndex,
     tenantRolePermissionGrantsByRoleId,
     tenantUsershipHistoryByPair,
     tenantUsershipRolesByMembershipId,

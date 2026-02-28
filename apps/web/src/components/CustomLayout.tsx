@@ -350,6 +350,8 @@ const CustomLayout: React.FC<CustomLayoutProps> = ({
           borderRadius: token.borderRadiusLG,
           minHeight: 280,
           minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
           ...contentStyle,
         }}>
           {breadcrumbNode && <div style={{ paddingBottom: token.padding }}>{breadcrumbNode}</div>}
@@ -398,6 +400,8 @@ const CustomLayout: React.FC<CustomLayoutProps> = ({
         borderRadius: token.borderRadiusLG,
         minHeight: 280,
         minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
         ...contentStyle,
       }}>
         {breadcrumbNode && <div style={{ paddingBottom: token.padding }}>{breadcrumbNode}</div>}
@@ -468,14 +472,16 @@ const CustomLayout: React.FC<CustomLayoutProps> = ({
             </Sider>
           )}
           <Layout style={{ marginLeft: hasSiderMenu && fixSiderbar ? currentSiderWidth : 0 }}>
-                        <Content style={{
-                            padding: 0,
-                            background: token.colorBgLayout,
-                            borderRadius: token.borderRadiusLG,
-                            minHeight: 280,
-                            minWidth: 0,
-                            ...contentStyle,
-                          }}>              {breadcrumbNode && <div style={{ paddingBottom: token.padding }}>{breadcrumbNode}</div>}
+            <Content style={{
+              padding: 0,
+              background: token.colorBgLayout,
+              borderRadius: token.borderRadiusLG,
+              minHeight: 280,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              ...contentStyle,
+            }}>              {breadcrumbNode && <div style={{ paddingBottom: token.padding }}>{breadcrumbNode}</div>}
               {children}
             </Content>
             {renderFooter()}

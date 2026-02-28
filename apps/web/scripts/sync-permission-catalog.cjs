@@ -13,6 +13,78 @@ const OUTPUT_FILE = path.resolve(
 );
 const TENANT_PERMISSION_CATALOG_EXTENSIONS = Object.freeze([
   {
+    code: 'tenant.session_management.view',
+    scope: 'tenant',
+    group_key: 'session_management',
+    action_key: 'view',
+    label_key: 'permission.tenant.session_management.view',
+    order: 130,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_management.operate',
+    scope: 'tenant',
+    group_key: 'session_management',
+    action_key: 'operate',
+    label_key: 'permission.tenant.session_management.operate',
+    order: 140,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_scope_my.view',
+    scope: 'tenant',
+    group_key: 'session_scope_my',
+    action_key: 'view',
+    label_key: 'permission.tenant.session_scope_my.view',
+    order: 141,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_scope_my.operate',
+    scope: 'tenant',
+    group_key: 'session_scope_my',
+    action_key: 'operate',
+    label_key: 'permission.tenant.session_scope_my.operate',
+    order: 142,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_scope_assist.view',
+    scope: 'tenant',
+    group_key: 'session_scope_assist',
+    action_key: 'view',
+    label_key: 'permission.tenant.session_scope_assist.view',
+    order: 143,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_scope_assist.operate',
+    scope: 'tenant',
+    group_key: 'session_scope_assist',
+    action_key: 'operate',
+    label_key: 'permission.tenant.session_scope_assist.operate',
+    order: 144,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_scope_all.view',
+    scope: 'tenant',
+    group_key: 'session_scope_all',
+    action_key: 'view',
+    label_key: 'permission.tenant.session_scope_all.view',
+    order: 145,
+    assignable: true
+  },
+  {
+    code: 'tenant.session_scope_all.operate',
+    scope: 'tenant',
+    group_key: 'session_scope_all',
+    action_key: 'operate',
+    label_key: 'permission.tenant.session_scope_all.operate',
+    order: 146,
+    assignable: true
+  },
+  {
     code: 'tenant.account_management.view',
     scope: 'tenant',
     group_key: 'account_management',

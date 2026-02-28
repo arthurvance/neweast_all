@@ -88,7 +88,10 @@ const CustomCard: React.FC<CustomCardProps> = ({
       extra={hasHeader ? extraNode : null}
       variant="borderless"
       style={{ marginBottom: resolvedMarginBottom, overflow: 'hidden', ...style }}
-      styles={{ body: { padding: token.paddingLG, ...bodyStyle } }}
+      styles={{
+        header: { paddingInline: token.padding },
+        body: { padding: token.padding, ...bodyStyle }
+      }}
       className={className}
     >
       {children}

@@ -1,11 +1,12 @@
 import { Empty, Spin } from 'antd';
 import { Suspense, useEffect, useMemo, useState } from 'react';
-import CustomLayout from '../../../../components/CustomLayout';
-import CustomPage from '../../../../components/CustomPage';
+import CustomLayout from '../../../components/CustomLayout';
+import CustomPage from '../../../components/CustomPage';
 import {
   TENANT_DEFAULT_MENU_KEY,
   TENANT_NAV_GROUP_FALLBACK,
   TENANT_PAGE_REGISTRY,
+  SESSION_CENTER_MENU_KEY,
   resolveFirstTenantVisibleMenuKey,
   resolveTenantMenuKeyByPermission,
   resolveTenantNavItemsByPermission,
@@ -72,6 +73,8 @@ export default function TenantManagementLayoutPage({
     subTitle: '组织设置',
     breadcrumbItems: []
   };
+
+  const isSessionCenter = resolvedMenuKey === SESSION_CENTER_MENU_KEY;
   const ActivePageComponent = pageMeta?.Component || null;
 
   const menuItems = useMemo(
@@ -113,7 +116,7 @@ export default function TenantManagementLayoutPage({
   );
 
   return (
-    <section data-testid="tenant-management-panel" style={{ minHeight: 560 }}>
+    <section data-testid="tenant-management-panel" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <CustomLayout
         title={layoutTitle}
         menuItems={menuItems}
@@ -160,19 +163,23 @@ export default function TenantManagementLayoutPage({
         }}
         showNotification={false}
         footerRender={false}
-        showBreadcrumb={false}
         contentStyle={{
           margin: 12,
           padding: 12,
-          minHeight: 420
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden'
         }}
         userInfo={{ name: displayUserName }}
       >
         <CustomPage
-          title={displayPageMeta.title}
-          showBreadcrumb={hasVisiblePage}
+          title={null}
+          showBreadcrumb={false}
           breadcrumbItems={displayPageMeta.breadcrumbItems}
-          bodyStyle={{ display: 'grid', gap: 12 }}
+          style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+          bodyStyle={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', gap: isSessionCenter ? 0 : 12 }}
         >
           {hasVisiblePage && ActivePageComponent ? (
             <Suspense

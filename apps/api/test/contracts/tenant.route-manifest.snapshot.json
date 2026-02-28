@@ -203,6 +203,62 @@
     "scope": "tenant"
   },
   {
+    "method": "POST",
+    "path": "/tenant/sessions/conversations/ingest",
+    "access": "protected",
+    "permission_code": "tenant.session_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/sessions/history/ingest",
+    "access": "protected",
+    "permission_code": "tenant.session_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/sessions/chats",
+    "access": "protected",
+    "permission_code": "tenant.session_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/sessions/chats/:conversation_id/messages",
+    "access": "protected",
+    "permission_code": "tenant.session_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/sessions/account-options",
+    "access": "protected",
+    "permission_code": "tenant.session_management.view",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/sessions/messages",
+    "access": "protected",
+    "permission_code": "tenant.session_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "GET",
+    "path": "/tenant/sessions/outbound-messages/pull",
+    "access": "protected",
+    "permission_code": "tenant.session_management.operate",
+    "scope": "tenant"
+  },
+  {
+    "method": "POST",
+    "path": "/tenant/sessions/outbound-messages/status",
+    "access": "protected",
+    "permission_code": "tenant.session_management.operate",
+    "scope": "tenant"
+  },
+  {
     "method": "GET",
     "path": "/tenant/audit/events",
     "access": "protected",

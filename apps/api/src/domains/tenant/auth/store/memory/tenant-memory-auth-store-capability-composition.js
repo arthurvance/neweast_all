@@ -12,12 +12,16 @@ const {
 const {
   createTenantMemoryAuthStoreCustomer
 } = require('./tenant-memory-auth-store-customer.js');
+const {
+  createTenantMemoryAuthStoreSession
+} = require('./tenant-memory-auth-store-session.js');
 
 const createTenantMemoryAuthStoreCapabilityComposition = (dependencies = {}) => ({
   ...createTenantMemoryAuthStoreUsershipGovernance(dependencies),
   ...createTenantMemoryAuthStoreRolePermission(dependencies),
   ...createTenantMemoryAuthStoreAccountMatrix(dependencies),
   ...createTenantMemoryAuthStoreCustomer(dependencies),
+  ...createTenantMemoryAuthStoreSession(dependencies),
 });
 
 module.exports = {

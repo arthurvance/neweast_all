@@ -61,7 +61,8 @@ const createRouteRuntime = ({
       tenantUserService: tenantRuntime.tenantUserService,
       tenantRoleService: tenantRuntime.tenantRoleService,
       tenantAccountService: tenantRuntime.tenantAccountService,
-      tenantCustomerService: tenantRuntime.tenantCustomerService
+      tenantCustomerService: tenantRuntime.tenantCustomerService,
+      tenantSessionService: tenantRuntime.tenantSessionService
     }
   };
 };

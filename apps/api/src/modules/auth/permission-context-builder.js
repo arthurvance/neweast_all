@@ -22,6 +22,14 @@ const buildTenantUnselectedPermissionContext = () => ({
   can_operate_customer_scope_assist: false,
   can_view_customer_scope_all: false,
   can_operate_customer_scope_all: false,
+  can_view_session_management: false,
+  can_operate_session_management: false,
+  can_view_session_scope_my: false,
+  can_operate_session_scope_my: false,
+  can_view_session_scope_assist: false,
+  can_operate_session_scope_assist: false,
+  can_view_session_scope_all: false,
+  can_operate_session_scope_all: false,
   can_view_role_management: false,
   can_operate_role_management: false
 });
@@ -40,6 +48,14 @@ const buildTenantPlatformEntryPermissionContext = () => ({
   can_operate_customer_scope_assist: false,
   can_view_customer_scope_all: false,
   can_operate_customer_scope_all: false,
+  can_view_session_management: false,
+  can_operate_session_management: false,
+  can_view_session_scope_my: false,
+  can_operate_session_scope_my: false,
+  can_view_session_scope_assist: false,
+  can_operate_session_scope_assist: false,
+  can_view_session_scope_all: false,
+  can_operate_session_scope_all: false,
   can_view_role_management: false,
   can_operate_role_management: false
 });
@@ -125,6 +141,35 @@ const normalizeTenantPermissionContext = (permissionContext, fallbackScopeLabel)
     ),
     can_operate_customer_scope_all: Boolean(
       permissionContext.canOperateCustomerScopeAll ?? permissionContext.can_operate_customer_scope_all
+    ),
+    can_view_session_management: Boolean(
+      permissionContext.canViewSessionManagement ?? permissionContext.can_view_session_management
+    ),
+    can_operate_session_management: Boolean(
+      permissionContext.canOperateSessionManagement
+      ?? permissionContext.can_operate_session_management
+    ),
+    can_view_session_scope_my: Boolean(
+      permissionContext.canViewSessionScopeMy ?? permissionContext.can_view_session_scope_my
+    ),
+    can_operate_session_scope_my: Boolean(
+      permissionContext.canOperateSessionScopeMy
+      ?? permissionContext.can_operate_session_scope_my
+    ),
+    can_view_session_scope_assist: Boolean(
+      permissionContext.canViewSessionScopeAssist
+      ?? permissionContext.can_view_session_scope_assist
+    ),
+    can_operate_session_scope_assist: Boolean(
+      permissionContext.canOperateSessionScopeAssist
+      ?? permissionContext.can_operate_session_scope_assist
+    ),
+    can_view_session_scope_all: Boolean(
+      permissionContext.canViewSessionScopeAll ?? permissionContext.can_view_session_scope_all
+    ),
+    can_operate_session_scope_all: Boolean(
+      permissionContext.canOperateSessionScopeAll
+      ?? permissionContext.can_operate_session_scope_all
     ),
     can_view_role_management: Boolean(
       permissionContext.canViewRoleManagement ?? permissionContext.can_view_role_management

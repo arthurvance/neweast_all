@@ -94,8 +94,8 @@ export default function PlatformManagementLayoutPage({
         userInfo={{ name: displayUserName }}
       >
         <CustomPage
-          title={displayPageMeta.title}
-          showBreadcrumb={hasVisiblePage}
+          title={null}
+          showBreadcrumb={false}
           breadcrumbItems={displayPageMeta.breadcrumbItems}
           bodyStyle={{ display: 'grid', gap: 12 }}
         >

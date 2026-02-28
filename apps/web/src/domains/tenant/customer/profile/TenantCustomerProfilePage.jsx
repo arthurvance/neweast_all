@@ -1112,6 +1112,8 @@ export default function TenantCustomerProfilePage({
       {visibleScopes.length > 0 ? (
         <Tabs
           activeKey={activeScope}
+          style={{ margin: '-12px 0 0 0' }}
+          tabBarStyle={{ margin: '0 0 12px 0' }}
           onChange={(scope) => {
             setActiveScope(scope);
             refreshCustomerTable();
